@@ -2,25 +2,14 @@
 # STO2 overnight — ESRF ID03 (proposal ma6778, 2025-10-29)
 # Shipped experiment preset for the DFXM pipeline.
 #
-# Calibration fields (ccmth_ref_deg, mu_ref_deg, pixel_size_x_um,
-# pixel_size_y_um) are PHYSICALLY MEANINGFUL. Wrong values produce meaningless
-# strain maps. The GUI flags these fields visually.
-#
-# >>> CALIBRATION DISCREPANCY — mu_ref_deg <<<
-# This preset ships mu_ref_deg = 11.5015 (the value stated for the STO2
-# overnight experiment in CLAUDE.local.md). The legacy strain scripts
-# (e.g. y_calc_axial_strain_v6_batch.py) instead hardcode MU_REF_DEG = 11.2491.
-# These disagree. 11.5015 is used here per the user's stated current value, but
-# CONFIRM which is canonical before trusting absolute strain values — the same
-# caveat is repeated in `notes` below so it survives a load/save round-trip.
+# Calibration fields (ccmth_ref_deg, pixel_size_x_um, pixel_size_y_um) are
+# PHYSICALLY MEANINGFUL. Wrong values produce meaningless strain maps. The
+# GUI flags these fields visually.
 # =============================================================================
 
 name: STO2_overnight
 description: STO2 overnight — ESRF ID03, proposal ma6778, beamtime 2025-10-29
-notes: >-
-  CALIBRATION CAVEAT: mu_ref_deg ships as 11.5015 (CLAUDE.local.md), but the
-  legacy strain scripts hardcode 11.2491. Confirm which is canonical before
-  trusting absolute strain values.
+notes: STO2 overnight reference dataset.
 
 # --- data roots --------------------------------------------------------------
 raw_root: /media/albert/DIC_SSD_3/ESRF/ma6778/id03/20251029/RAW_DATA/STO2_overnight
@@ -32,7 +21,6 @@ entry_suffix: ".1"
 
 # --- calibration (physically meaningful) -------------------------------------
 ccmth_ref_deg: 7.144      # reference ccmth / monochromator Bragg angle (deg)
-mu_ref_deg: 11.5015       # reference mu / sample Bragg angle (deg) — SEE DISCREPANCY NOTE
 pixel_size_x_um: 0.152    # µm per pixel, X
 pixel_size_y_um: 0.385    # µm per pixel, Y
 
@@ -44,4 +32,3 @@ detector_write_path: measurement/pco_ff
 samy_key: samy
 samz_key: samz
 ccmth_com_path: /entry/ccmth/Center of mass/Center of mass
-mu_com_path: /entry/mu/Center of mass/Center of mass

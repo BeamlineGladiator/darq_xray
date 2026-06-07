@@ -130,7 +130,6 @@ class Experiment:
 
     # --- calibration (physically meaningful — wrong values ruin the maps) ----
     ccmth_ref_deg: float = 0.0  # reference ccmth / monochromator Bragg angle
-    mu_ref_deg: float = 0.0  # reference mu / sample Bragg angle (theta_s)
     pixel_size_x_um: float = 1.0  # detector pixel scale, X
     pixel_size_y_um: float = 1.0  # detector pixel scale, Y
 
@@ -142,7 +141,6 @@ class Experiment:
     samy_key: str = "samy"  # sample-Y stage name under positioners
     samz_key: str = "samz"  # sample-Z stage name under positioners
     ccmth_com_path: str = "/entry/ccmth/Center of mass/Center of mass"
-    mu_com_path: str = "/entry/mu/Center of mass/Center of mass"
 
     def to_dict(self) -> dict[str, Any]:
         """Plain dict for YAML serialisation (preserves field order)."""
@@ -197,7 +195,6 @@ EXPERIMENT_SCHEMA: tuple[Param, ...] = (
     ),
     Param("entry_suffix", ParamType.STR, "Entry suffix", help="BLISS entry filter, e.g. .1"),
     Param("ccmth_ref_deg", ParamType.FLOAT, "ccmth reference", unit="deg", calibration=True),
-    Param("mu_ref_deg", ParamType.FLOAT, "mu reference", unit="deg", calibration=True),
     Param("pixel_size_x_um", ParamType.FLOAT, "Pixel size X", unit="µm", calibration=True),
     Param("pixel_size_y_um", ParamType.FLOAT, "Pixel size Y", unit="µm", calibration=True),
     Param("maps_filename", ParamType.STR, "darfix maps filename"),
@@ -207,7 +204,6 @@ EXPERIMENT_SCHEMA: tuple[Param, ...] = (
     Param("samy_key", ParamType.STR, "samy key"),
     Param("samz_key", ParamType.STR, "samz key"),
     Param("ccmth_com_path", ParamType.STR, "ccmth COM path"),
-    Param("mu_com_path", ParamType.STR, "mu COM path"),
 )
 
 #: Names of the physically-meaningful calibration fields (for prominent flagging).
