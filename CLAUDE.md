@@ -68,10 +68,9 @@ Dependencies: `numpy h5py scipy matplotlib PySide6 pyvista pyvistaqt vtk`
   samy-shift / Z-interpolation. The fixed order is
   `abs(FWHM) → ROI → samy X-shift → uniform-Z interp → centre`; don't reorder.
   Strain always **detrends before ROI**.
-- **Calibration is physical.** `ccmth_ref_deg`, `mu_ref_deg`, and the pixel
-  scales are flagged `calibration=True`. The STO2 preset ships
-  `mu_ref_deg = 11.5015` (per the user) while the legacy scripts used `11.2491` —
-  flag this and confirm which is canonical before trusting absolute strain.
+- **Calibration is physical.** `ccmth_ref_deg` and the pixel scales are flagged
+  `calibration=True`; wrong values produce meaningless strain maps — confirm them
+  against the beamline calibration for your experiment.
 - **Versioned, schema-driven config.** A stage declares its parameters as a
   `StageSpec`; the GUI auto-builds the form (enum→dropdown, path→file picker,
   number→spin, multi-line JSON→`ParamType.TEXT`). Don't hard-code stage fields in
