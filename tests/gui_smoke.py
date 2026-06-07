@@ -111,6 +111,9 @@ def main() -> int:
         "rocking",
         "visualize",
         "paraview",
+        "slices",
+        "profiles",
+        "matched",
     }
     sview = win._views["strain"]
     sfolder = _make_maps(folder)

@@ -283,6 +283,41 @@ def _summarize(result) -> str:
             lines.append(f"skipped: {len(result.skipped)}")
         return "\n".join(lines)
 
+    if hasattr(result, "n_planes_total"):  # SlicesResult
+        lines = [
+            f"output: {result.output_h5}",
+            f"volumes: {len(result.volume_ids)}   slices: {len(result.slice_names)}   "
+            f"planes: {result.n_planes_total}   pngs: {len(result.pngs)}",
+        ]
+        lines += [f"  {vid}" for vid in result.volume_ids]
+        lines += [f"skipped: {s}" for s in result.skipped]
+        return "\n".join(lines)
+
+    if hasattr(result, "jobs") and hasattr(result, "mode"):  # ProfilesResult
+        lines = [
+            f"mode: {result.mode}",
+            f"output: {result.output_dir}",
+            f"jobs: {len(result.jobs)}",
+        ]
+        for j in result.jobs:
+            extra = (
+                f" csv={len(j.csvs)} overviews={len(j.overviews)}" if j.csvs or j.overviews else ""
+            )
+            lines.append(f"  {j.name} @ {j.offset_used_um:+.2f} µm -> {j.figure}{extra}")
+        lines += [f"skipped: {s}" for s in result.skipped]
+        return "\n".join(lines)
+
+    if hasattr(result, "n_matched"):  # MatchedResult
+        lines = [
+            f"output: {result.layers_dir}",
+            f"matched {result.n_matched}/{result.n_strain}, saved {result.n_saved} "
+            f"(frame {result.frame_index})",
+            f"max match dist: {result.max_match_dist_um:.3f} µm   clim=({result.vmin:.4g}, "
+            f"{result.vmax:.4g})",
+        ]
+        lines += [f"skipped: {s}" for s in result.skipped[:5]]
+        return "\n".join(lines)
+
     return repr(result)
 
 
@@ -307,4 +342,10 @@ def _representative_image(result) -> str | None:
                 pngs = sorted(p for p in os.listdir(ld) if p.endswith(".png"))
                 if pngs:
                     return os.path.join(ld, pngs[0])
+    pngs = getattr(result, "pngs", None)  # SlicesResult / MatchedResult
+    if isinstance(pngs, list) and pngs:
+        return pngs[0]
+    jobs = getattr(result, "jobs", None)  # ProfilesResult
+    if isinstance(jobs, list) and jobs and getattr(jobs[0], "figure", None):
+        return jobs[0].figure
     return None

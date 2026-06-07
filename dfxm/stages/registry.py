@@ -21,6 +21,9 @@ STAGE_TARGETS: dict[str, str] = {
     "visualize": "dfxm.stages.visualize:run",
     "rocking": "dfxm.stages.rocking:run",
     "paraview": "dfxm.stages.paraview:run",
+    "slices": "dfxm.stages.slices:run",
+    "profiles": "dfxm.stages.profiles:run",
+    "matched": "dfxm.stages.matched:run",
 }
 
 

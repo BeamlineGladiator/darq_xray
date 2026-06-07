@@ -14,7 +14,17 @@ from __future__ import annotations
 import os
 
 from dfxm.config.models import Experiment, StageSpec
-from dfxm.stages import concat, mosaicity, paraview, rocking, strain, visualize
+from dfxm.stages import (
+    concat,
+    matched,
+    mosaicity,
+    paraview,
+    profiles,
+    rocking,
+    slices,
+    strain,
+    visualize,
+)
 
 # Display order in the navigation panel (pipeline order; darfix runs between
 # concat and strain/mosaicity, outside the app).
@@ -25,6 +35,9 @@ STAGE_ORDER: tuple[str, ...] = (
     "rocking",
     "visualize",
     "paraview",
+    "slices",
+    "profiles",
+    "matched",
 )
 
 STAGE_SPECS: dict[str, StageSpec] = {
@@ -34,12 +47,18 @@ STAGE_SPECS: dict[str, StageSpec] = {
     "rocking": rocking.STAGE,
     "visualize": visualize.STAGE,
     "paraview": paraview.STAGE,
+    "slices": slices.STAGE,
+    "profiles": profiles.STAGE,
+    "matched": matched.STAGE,
 }
 
-# Default stacked-output filenames (kept in sync with each stage's defaults) so
+# Default output filenames (kept in sync with each stage's defaults) so
 # downstream stages can auto-fill their inputs.
 _STRAIN_VOLUME = "stacked_strain_volumes.h5"
 _MOSA_VOLUME = "stacked_volumes.h5"
+_ALIGNED_ROCKING = "aligned_raw_rocking_volumes.h5"
+_SLICES_SUBDIR = "oblique_slices"
+_SLICES_H5 = "oblique_slices.h5"
 
 
 def experiment_overrides(stage_name: str, exp: Experiment) -> dict:
@@ -108,6 +127,36 @@ def experiment_overrides(stage_name: str, exp: Experiment) -> dict:
             strain_pattern=exp.folder_pattern,
             samy_path=f"1.1/{exp.positioners_path}/{exp.samy_key}",
             samz_path=f"1.1/{exp.positioners_path}/{exp.samz_key}",
+            pixel_size_x_um=exp.pixel_size_x_um,
+            pixel_size_y_um=exp.pixel_size_y_um,
+        )
+    if stage_name == "slices":
+        proc = exp.processed_root.rstrip("/")
+        return dict(
+            mosa_volume_file=os.path.join(proc, _MOSA_VOLUME) if proc else "",
+            strain_volume_file=os.path.join(proc, _STRAIN_VOLUME) if proc else "",
+            aligned_rocking_file=os.path.join(proc, _ALIGNED_ROCKING) if proc else "",
+            raw_root=exp.raw_root,
+            mosa_pattern=exp.mosa_pattern,
+            strain_pattern=exp.folder_pattern,
+            samy_path=f"1.1/{exp.positioners_path}/{exp.samy_key}",
+            samz_path=f"1.1/{exp.positioners_path}/{exp.samz_key}",
+            pixel_size_x_um=exp.pixel_size_x_um,
+            pixel_size_y_um=exp.pixel_size_y_um,
+        )
+    if stage_name == "profiles":
+        proc = exp.processed_root.rstrip("/")
+        return dict(
+            consolidated_h5=os.path.join(proc, _SLICES_SUBDIR, _SLICES_H5) if proc else "",
+        )
+    if stage_name == "matched":
+        return dict(
+            raw_root=exp.raw_root,
+            strain_pattern=exp.folder_pattern,
+            rocking_pattern=exp.rocking_pattern,
+            samy_path=f"1.1/{exp.positioners_path}/{exp.samy_key}",
+            samz_path=f"1.1/{exp.positioners_path}/{exp.samz_key}",
+            pco_ff_path=f"1.1/{exp.detector_write_path}",
             pixel_size_x_um=exp.pixel_size_x_um,
             pixel_size_y_um=exp.pixel_size_y_um,
         )
