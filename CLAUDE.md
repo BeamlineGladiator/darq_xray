@@ -79,13 +79,18 @@ Dependencies: `numpy h5py scipy matplotlib PySide6 pyvista pyvistaqt vtk`
 
 ## Documentation (keep it in sync)
 
-`docs/Usage.md` is the user-facing guide (Obsidian-flavoured). **It is part of
-the contract: whenever you change a stage's parameters, behaviour,
-inputs/outputs, add or remove a stage, or change how a viewer works, update the
-matching section of `docs/Usage.md` in the SAME change** — not as a follow-up.
-A PostToolUse hook (`.claude/settings.json`) prints a reminder whenever you edit
-`dfxm/stages/` or `gui/`. Treat a code change that alters user-visible behaviour
-without a `docs/Usage.md` update as incomplete.
+Two docs live under `docs/` (both Obsidian-flavoured):
+- `docs/Usage.md` — the **user** guide (how to operate each stage/viewer).
+- `docs/Codebase.md` — the **code** reference (every module/class/function).
+
+**It is part of the contract: whenever you change a stage's parameters,
+behaviour, inputs/outputs, add or remove a stage/module/public function, or
+change how a viewer works, update the matching sections of BOTH docs in the SAME
+change** — `Usage.md` for user-visible behaviour, `Codebase.md` for the code
+structure — not as a follow-up. A PostToolUse hook (`.claude/settings.json`)
+prints a reminder whenever you edit `dfxm/stages/` or `gui/`. Treat a code change
+that alters behaviour or structure without the matching `docs/` update as
+incomplete.
 
 ## Adding a stage
 
@@ -98,8 +103,9 @@ without a `docs/Usage.md` update as incomplete.
 4. Add a result summary branch in `gui/stage_view.py::_summarize`.
 5. Add tests under `tests/` (synthetic HDF5 fixtures; golden comparison where a
    reference output exists).
-6. Document it: add a section to `docs/Usage.md` ([[#Stage reference]]) and
-   update the pipeline diagram.
+6. Document it: add a section to `docs/Usage.md` (Stage reference) and update the
+   pipeline diagram, and add the module/functions to `docs/Codebase.md`
+   (`dfxm/stages` + the data-flow table).
 
 ## Provenance
 

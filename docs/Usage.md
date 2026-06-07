@@ -374,6 +374,7 @@ ruff check . && ruff format . # lint + format
 
 ## See also
 
+- [[Codebase]] — file-by-file code reference (what every module/function does).
 - `CLAUDE.md` — architecture & contributor conventions.
 - `README.md` — short project summary.
 - `experiments/STO2_overnight.yaml` — the shipped preset (and the calibration note).
