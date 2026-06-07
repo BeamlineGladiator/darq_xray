@@ -97,7 +97,7 @@ STAGE = StageSpec(
             default="",
             help="comma-separated ids to profile/order (blank = all)",
         ),
-        Param("jobs_json", ParamType.STR, "Jobs (JSON)", default=_DEFAULT_JOBS),
+        Param("jobs_json", ParamType.TEXT, "Jobs (JSON)", default=_DEFAULT_JOBS),
         Param("save_csv", ParamType.BOOL, "Save CSV", default=True),
         Param("save_overview", ParamType.BOOL, "Save overviews", default=True),
         Param("line_color", ParamType.STR, "Line colour", default="", help="blank = auto per cmap"),

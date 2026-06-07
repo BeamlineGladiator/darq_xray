@@ -152,7 +152,7 @@ STAGE = StageSpec(
         Param("include_strain", ParamType.BOOL, "Slice strain", default=True),
         Param("include_raw_sum", ParamType.BOOL, "Slice raw sum", default=True),
         Param("include_raw_specific", ParamType.BOOL, "Slice raw specific", default=True),
-        Param("slices_json", ParamType.STR, "Slices (JSON)", default=_DEFAULT_SLICES),
+        Param("slices_json", ParamType.TEXT, "Slices (JSON)", default=_DEFAULT_SLICES),
         Param("output_dir", ParamType.DIR, "Output dir"),
         Param("output_h5_name", ParamType.STR, "Output filename", default="oblique_slices.h5"),
         Param("save_png", ParamType.BOOL, "Save PNGs", default=True),

@@ -140,6 +140,16 @@ def main() -> int:
     assert sview._image.pixmap() is not None and not sview._image.pixmap().isNull()
     print("[4] strain ran through the UI: status ✓; strain-map image previewed")
 
+    # Interactive viewers are present but LAZY: a 3D tab on volume stages, a
+    # pick button on profiles, and pyvista must NOT have been imported yet.
+    for name in ("visualize", "rocking"):
+        tabs = win._views[name]._tabs
+        assert any(tabs.tabText(i) == "3D" for i in range(tabs.count())), name
+    assert win._views["profiles"]._pick_btn is not None
+    assert win._views["visualize"]._vol3d is not None
+    assert "pyvista" not in sys.modules and "pyvistaqt" not in sys.modules
+    print("[5] interactive viewers wired and lazy (no pyvista import at startup)")
+
     # Cancel kills the worker.
     runner = StageRunner(_sleeper, {}, start_method="fork")
     runner.start()
@@ -147,7 +157,7 @@ def main() -> int:
     assert runner.is_alive()
     runner.cancel(timeout=2.0)
     assert not runner.is_alive()
-    print("[5] cancel terminated a long-running worker")
+    print("[6] cancel terminated a long-running worker")
 
     print("\nGUI SMOKE PASSED")
     return 0

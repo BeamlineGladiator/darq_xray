@@ -34,6 +34,7 @@ class ParamType(str, Enum):
     DIR = "dir"  # an existing input directory
     SAVE_PATH = "save_path"  # an output file path (need not exist yet)
     ENUM = "enum"  # one of a small finite set -> dropdown
+    TEXT = "text"  # multi-line free text (e.g. JSON) -> text area
 
 
 @dataclass(frozen=True)

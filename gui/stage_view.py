@@ -29,10 +29,15 @@ from dfxm.runner import Done, Failed, Log, Progress, StageRunner
 from dfxm.stages.registry import STAGE_TARGETS
 
 from .bindings import experiment_overrides
+from .viewers import inject_line_into_jobs, volume_sources
 from .widgets.log_console import LogConsole
 from .widgets.param_form import ParamForm
+from .widgets.volume3d import Volume3DPanel
 
 _POLL_MS = 50
+
+# Stages whose run yields an aligned 3-D volume worth viewing interactively.
+_VOLUME_STAGES = ("visualize", "rocking")
 
 
 class StageView(QWidget):
@@ -52,6 +57,7 @@ class StageView(QWidget):
         self._spec = spec
         self._experiment = experiment
         self._runner: StageRunner | None = None
+        self._last_params: dict = {}
 
         self._timer = QTimer(self)
         self._timer.setInterval(_POLL_MS)
@@ -68,6 +74,12 @@ class StageView(QWidget):
         btn_row = QHBoxLayout()
         btn_row.addWidget(self._run_btn)
         btn_row.addWidget(self._cancel_btn)
+        # profiles: an interactive line picker (built lazily on click)
+        self._pick_btn: QPushButton | None = None
+        if stage_name == "profiles":
+            self._pick_btn = QPushButton("Pick line…")
+            self._pick_btn.clicked.connect(self._on_pick_line)
+            btn_row.addWidget(self._pick_btn)
         btn_row.addStretch(1)
 
         left = QWidget()
@@ -89,6 +101,11 @@ class StageView(QWidget):
         self._tabs.addTab(self._log, "Log")
         self._tabs.addTab(self._results, "Results")
         self._tabs.addTab(self._image_scroll, "Output")
+        # interactive 3-D tab for volume-producing stages (PvCanvas stays lazy)
+        self._vol3d: Volume3DPanel | None = None
+        if stage_name in _VOLUME_STAGES:
+            self._vol3d = Volume3DPanel()
+            self._tabs.addTab(self._vol3d, "3D")
 
         splitter = QSplitter()
         splitter.addWidget(left)
@@ -116,6 +133,7 @@ class StageView(QWidget):
         if self._runner is not None and self._runner.is_alive():
             return
         params = self._form.values()
+        self._last_params = dict(params)
         target = STAGE_TARGETS[self._stage_name]
         self._log.clear()
         self._results.clear()
@@ -131,6 +149,49 @@ class StageView(QWidget):
         self._timer.stop()
         self._log.set_status("Cancelled.", error=True)
         self._set_running(False)
+
+    # -- profiles interactive line picker (lazy) --------------------------
+    def _on_pick_line(self) -> None:
+        import json
+
+        vals = self._form.values()
+        h5 = vals.get("consolidated_h5", "")
+        if not h5 or not os.path.exists(h5):
+            self._log.append("Pick line: set a valid 'consolidated_h5' (run slices first).")
+            self._tabs.setCurrentWidget(self._log)
+            return
+        try:
+            jobs = json.loads(vals.get("jobs_json", "") or "[]")
+        except json.JSONDecodeError:
+            jobs = []
+        first = jobs[0] if jobs and isinstance(jobs[0], dict) else {}
+        slice_name = first.get("name", "oblique_full")
+        offset = float(first.get("offset_um", 0.0))
+
+        from .widgets.line_picker import LinePickerDialog  # imported on demand
+
+        try:
+            dlg = LinePickerDialog(
+                h5,
+                slice_name,
+                init_offset=offset,
+                ref_pref=vals.get("reference_volume_id", ""),
+                parent=self,
+            )
+        except Exception as exc:  # noqa: BLE001 - missing slice / unreadable file
+            self._log.append(f"Pick line failed: {exc}")
+            self._tabs.setCurrentWidget(self._log)
+            return
+        if dlg.exec() and dlg.result:
+            start, end, off = dlg.result
+            new_jobs = inject_line_into_jobs(
+                vals.get("jobs_json", "") or "[]", slice_name, start, end, off
+            )
+            self._form.set_values({"jobs_json": new_jobs})
+            self._log.append(
+                f"Picked line on '{slice_name}' @ {off:+.3f} µm -> jobs_json updated; Run to profile."
+            )
+            self._tabs.setCurrentWidget(self._log)
 
     def _poll(self) -> None:
         runner = self._runner
@@ -178,6 +239,10 @@ class StageView(QWidget):
                 shown = True
         if not shown:
             self._tabs.setCurrentWidget(self._results)
+        if self._vol3d is not None:
+            # lazy: install source callables only; nothing loads/renders until
+            # the user picks a volume and clicks Render 3-D.
+            self._vol3d.set_sources(volume_sources(self._stage_name, result, self._last_params))
         self._set_running(False)
         self.runFinished.emit(self._stage_name, True)
 

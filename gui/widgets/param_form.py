@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QPlainTextEdit,
     QPushButton,
     QSpinBox,
     QWidget,
@@ -107,6 +108,8 @@ class ParamForm(QWidget):
             return self._float_editor(p, value)
         if p.type in (ParamType.PATH, ParamType.DIR, ParamType.SAVE_PATH):
             return self._path_editor(p, value)
+        if p.type is ParamType.TEXT:
+            return self._text_editor(p, value)
         return self._str_editor(p, value)
 
     def _register(self, name, getter, setter, signal=None) -> None:
@@ -166,6 +169,16 @@ class ParamForm(QWidget):
             le.setToolTip(p.help)
         self._register(p.name, le.text, lambda v: le.setText(str(v)), le.textChanged)
         return le
+
+    def _text_editor(self, p: Param, value: Any) -> QWidget:
+        te = QPlainTextEdit()
+        te.setMinimumHeight(120)
+        if value is not None:
+            te.setPlainText(str(value))
+        if p.help:
+            te.setToolTip(p.help)
+        self._register(p.name, te.toPlainText, lambda v: te.setPlainText(str(v)), te.textChanged)
+        return te
 
     def _path_editor(self, p: Param, value: Any) -> QWidget:
         container = QWidget()

@@ -359,6 +359,86 @@ def run(params: dict, progress: ProgressFn | None = None) -> VisualizeResult:
     return result
 
 
+# -----------------------------------------------------------------------------
+# Single-field alignment (used by the GUI's lazy 3-D viewer)
+# -----------------------------------------------------------------------------
+def mosa_field_names(path: str) -> list[str]:
+    """List the chi/mu field ids in a stacked mosaicity file (no data read)."""
+    names = []
+    with h5py.File(path, "r") as f:
+        for grp in ("chi", "mu"):
+            if grp in f:
+                names.extend(f"{grp}_{ds.replace(' ', '_')}" for ds in f[grp].keys())
+    return names
+
+
+def available_fields(params: dict) -> list[str]:
+    """Field ids that can be aligned for 3-D, given the configured volume files."""
+    p = {**STAGE.defaults(), **params}
+    out: list[str] = []
+    if p["mosa_volume_file"] and os.path.exists(p["mosa_volume_file"]):
+        out.extend(mosa_field_names(p["mosa_volume_file"]))
+    if p["strain_volume_file"] and os.path.exists(p["strain_volume_file"]):
+        out.append("strain")
+    return out
+
+
+def aligned_field(params: dict, name: str):
+    """Align a single field for display. Returns (volume, spacing_xyz, cmap, clim).
+
+    Reuses the exact alignment + centering the stage applies, so the 3-D view
+    matches the rendered PNGs. Heavy (loads + aligns one volume) — the GUI calls
+    it only when the user asks to render.
+    """
+    p = {**STAGE.defaults(), **params}
+    scale_x, scale_y = float(p["pixel_size_x_um"]), float(p["pixel_size_y_um"])
+    samy_dir = int(p["samy_direction"])
+    roi_x, roi_y = _parse_pair(p["roi_x"]), _parse_pair(p["roi_y"])
+    raw_root = (p["raw_root"] or "").rstrip("/")
+
+    def motors(pattern):
+        if not raw_root or not pattern:
+            return np.array([]), np.array([])
+        folders = find_matching_folders(raw_root, pattern)
+        if not folders:
+            return np.array([]), np.array([])
+        samy, samz, _ = extract_motor_positions(folders, p["samy_path"], p["samz_path"])
+        return samy, samz
+
+    if name == "strain":
+        vol = load_strain_volume(p["strain_volume_file"])
+        if vol is None:
+            raise KeyError("strain dataset not found")
+        samy, samz = motors(p["strain_pattern"])
+        data, _z, scale_z = _align(
+            vol, samy, samz, scale_x=scale_x, samy_direction=samy_dir, roi_x=roi_x, roi_y=roi_y
+        )
+        vmin, vmax = _symmetric_range(data)
+        cmap = "RdBu_r"
+    else:
+        datasets = load_mosa_datasets(p["mosa_volume_file"])
+        if name not in datasets:
+            raise KeyError(name)
+        samy, samz = motors(p["mosa_pattern"])
+        data, _z, scale_z = _align(
+            datasets[name],
+            samy,
+            samz,
+            scale_x=scale_x,
+            samy_direction=samy_dir,
+            roi_x=roi_x,
+            roi_y=roi_y,
+        )
+        if "Center_of_mass" in name:
+            data, vmin, vmax = _center_com_and_range(
+                data, p["center_method"], float(p["range_pct"])
+            )
+        else:
+            vmin, vmax = _colorbar_range(data)
+        _, _, cmap = _display_info(name)
+    return data, (scale_x, scale_y, scale_z), cmap, (float(vmin), float(vmax))
+
+
 def _main(argv: list[str] | None = None) -> int:
     import argparse
 
