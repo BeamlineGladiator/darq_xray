@@ -104,7 +104,14 @@ def main() -> int:
     print(f"[3] concat ran through the UI: {results.splitlines()[0]}; status ✓; output written")
 
     # Run the strain stage through the UI and confirm the image preview.
-    assert set(win._views) == {"concat", "strain", "mosaicity", "visualize"}
+    assert set(win._views) == {
+        "concat",
+        "strain",
+        "mosaicity",
+        "rocking",
+        "visualize",
+        "paraview",
+    }
     sview = win._views["strain"]
     sfolder = _make_maps(folder)
     sview._form.set_values(

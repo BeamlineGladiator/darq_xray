@@ -29,30 +29,55 @@ def apply_roi_3d(data: np.ndarray, roi_x: tuple | None, roi_y: tuple | None) -> 
     return data[:, ys:ye, xs:xe]
 
 
-def compute_pad_left(samy: np.ndarray, scale_x: float, samy_direction: int = 1) -> int:
+def _samy_ref(samy: np.ndarray, ref_samy: float | None) -> float:
+    """Resolve the samy reference: explicit value, else the first layer."""
+    return float(samy[0]) if ref_samy is None else float(ref_samy)
+
+
+def compute_pad_left(
+    samy: np.ndarray, scale_x: float, samy_direction: int = 1, ref_samy: float | None = None
+) -> int:
     """Left X-padding (px) that :func:`apply_samy_shifts_to_volume` will add.
 
     Same formula as the shift, so a world origin can be anchored to the
-    reference (un-shifted) column.
+    reference (un-shifted) column. ``ref_samy`` overrides the default
+    first-layer reference (the rocking stage anchors to the mosa frame).
     """
     if samy is None or len(samy) == 0:
         return 0
-    offsets_px = samy_direction * (np.asarray(samy) - samy[0]) * 1000.0 / scale_x
+    offsets_px = samy_direction * (np.asarray(samy) - _samy_ref(samy, ref_samy)) * 1000.0 / scale_x
     return max(0, int(np.ceil(-np.min(offsets_px))))
 
 
+def compute_pad_right(
+    samy: np.ndarray, scale_x: float, samy_direction: int = 1, ref_samy: float | None = None
+) -> int:
+    """Right X-padding (px) that :func:`apply_samy_shifts_to_volume` will add."""
+    if samy is None or len(samy) == 0:
+        return 0
+    offsets_px = samy_direction * (np.asarray(samy) - _samy_ref(samy, ref_samy)) * 1000.0 / scale_x
+    return max(0, int(np.ceil(np.max(offsets_px))))
+
+
 def apply_samy_shifts_to_volume(
-    volume: np.ndarray, samy: np.ndarray, scale_x: float, samy_direction: int = 1
+    volume: np.ndarray,
+    samy: np.ndarray,
+    scale_x: float,
+    samy_direction: int = 1,
+    ref_samy: float | None = None,
 ) -> np.ndarray:
     """Shift each Z-layer along image-X by its samy offset, expanding the canvas.
 
-    samy is in mm; offsets are relative to the first layer. The canvas grows so
-    nothing is clipped, and exposed regions are NaN-padded.
+    samy is in mm; offsets are relative to ``ref_samy`` (default: the first
+    layer). The canvas grows so nothing is clipped, and exposed regions are
+    NaN-padded. Pass ``ref_samy`` to anchor to an external frame (e.g. the
+    rocking volume to the mosa reference column).
     """
     n_layers = volume.shape[0]
     n_use = n_layers if len(samy) == n_layers else min(n_layers, len(samy))
 
-    samy_offsets_px = samy_direction * (np.asarray(samy[:n_use]) - samy[0]) * 1000.0 / scale_x
+    ref = _samy_ref(samy, ref_samy)
+    samy_offsets_px = samy_direction * (np.asarray(samy[:n_use]) - ref) * 1000.0 / scale_x
     pad_left = max(0, int(np.ceil(-np.min(samy_offsets_px))))
     pad_right = max(0, int(np.ceil(np.max(samy_offsets_px))))
 
@@ -72,14 +97,17 @@ def apply_samy_shifts_to_volume(
 
 
 def interpolate_to_uniform_z(
-    volume: np.ndarray, samz: np.ndarray
+    volume: np.ndarray, samz: np.ndarray, ref_samz: float | None = None
 ) -> tuple[np.ndarray, np.ndarray, float]:
     """Resample irregular samz (mm) layers onto a uniform Z grid (µm).
 
-    Returns ``(interp_volume, z_uniform_um, scale_z_um)``.
+    Z origin is ``ref_samz`` (default: the first layer); pass it to anchor the
+    rocking volume to the mosa Z reference. Returns
+    ``(interp_volume, z_uniform_um, scale_z_um)``.
     """
     n_use = min(volume.shape[0], len(samz))
-    z_um = (np.asarray(samz[:n_use]) - samz[0]) * 1000.0
+    ref = float(samz[0]) if ref_samz is None else float(ref_samz)
+    z_um = (np.asarray(samz[:n_use]) - ref) * 1000.0
 
     median_step = float(np.median(np.abs(np.diff(z_um)))) if n_use > 1 else 1.0
     if median_step < 1e-6:

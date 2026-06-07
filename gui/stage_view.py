@@ -227,6 +227,39 @@ def _summarize(result) -> str:
             lines.append(f"skipped: {len(result.skipped)}")
         return "\n".join(lines)
 
+    if hasattr(result, "aligned_path"):  # RockingResult
+        lines = [
+            f"output: {result.output_dir}",
+            f"aligned: {result.aligned_path}",
+            f"layers used: {result.n_layers_used}   volume: {result.volume_shape}",
+            f"specific frame: {result.specific_frame_idx}   z-span: {result.z_span_um:.2f} µm",
+        ]
+        for d in result.datasets:
+            made = [
+                n
+                for n, v in (("layers", d.layers_dir), ("anim", d.animation), ("3d", d.top_view))
+                if v
+            ]
+            lines.append(f"  {d.name}: [{', '.join(made)}]")
+            for note in d.notes:
+                lines.append(f"      {note}")
+        lines += [f"skipped: {s}" for s in result.skipped]
+        return "\n".join(lines)
+
+    exports = getattr(result, "exports", None)
+    if exports is not None:  # ParaviewResult
+        lines = [f"output: {result.output_dir}", f"exports: {len(exports)}"]
+        for e in exports:
+            lines.append(f"  {e.name}: {e.pvti_path}")
+            lines.append(
+                f"      dims={e.dimensions_xyz} spacing={e.spacing_um_xyz} "
+                f"pieces={e.n_pieces} fields={e.fields}"
+            )
+        lines += [f"skipped: {s}" for s in result.skipped]
+        if result.info_path:
+            lines.append(f"info: {result.info_path}")
+        return "\n".join(lines)
+
     datasets = getattr(result, "datasets", None)
     if hasattr(result, "output_dir") and isinstance(datasets, list):  # VisualizeResult
         lines = [f"output: {result.output_dir}", f"datasets: {len(datasets)}"]

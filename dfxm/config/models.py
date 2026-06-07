@@ -124,6 +124,7 @@ class Experiment:
     processed_root: str = ""  # PROCESSED_DATA root (darfix maps.h5 / strain input)
     folder_pattern: str = "*"  # glob for the per-layer subfolders (concat/strain)
     mosa_pattern: str = "*"  # glob for the mosaicity layer subfolders (often *_mosa__*)
+    rocking_pattern: str = "*"  # glob for the rocking layer subfolders (often *_rocking__*)
     entry_suffix: str = ".1"  # BLISS entry filter for concat (e.g. 1.1, 2.1, ...)
 
     # --- calibration (physically meaningful — wrong values ruin the maps) ----
@@ -186,6 +187,12 @@ EXPERIMENT_SCHEMA: tuple[Param, ...] = (
         ParamType.STR,
         "Mosaicity pattern",
         help="glob for mosaicity layer subfolders",
+    ),
+    Param(
+        "rocking_pattern",
+        ParamType.STR,
+        "Rocking pattern",
+        help="glob for rocking layer subfolders",
     ),
     Param("entry_suffix", ParamType.STR, "Entry suffix", help="BLISS entry filter, e.g. .1"),
     Param("ccmth_ref_deg", ParamType.FLOAT, "ccmth reference", unit="deg", calibration=True),

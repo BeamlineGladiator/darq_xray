@@ -24,14 +24,10 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 
 import h5py
-import matplotlib.colors as mcolors
 import numpy as np
-from matplotlib.animation import FFMpegWriter, FuncAnimation, PillowWriter
-from matplotlib.figure import Figure
-from matplotlib.patches import Rectangle
 
 from ..common import alignment as A
-from ..common import plotting as P
+from ..common import render as Rnd
 from ..common.raster import extract_motor_positions
 from ..common.sort import find_matching_folders
 from ..config.models import Param, ParamType, StageSpec
@@ -185,12 +181,6 @@ def _colorbar_range(data):
     return (float(np.percentile(valid, 1)), float(np.percentile(valid, 99)))
 
 
-def _cmap_nan_transparent(name):
-    cmap = P.get_cmap(name).copy()
-    cmap.set_bad(color="white", alpha=0.0)
-    return cmap
-
-
 def _display_info(dataset_name, is_strain=False):
     if is_strain:
         return ("Strain (cot method)", "Strain (ε)", "RdBu_r")
@@ -206,31 +196,6 @@ def _display_info(dataset_name, is_strain=False):
     if "FWHM" in dataset_name:
         return (f"{axis} Peak Broadening", "Peak broadening (°)", "magma")
     return (dataset_name.replace("_", " "), "(°)", "magma")
-
-
-def _add_scale_bar(ax, ext_x, ext_y, color="black"):
-    target = ext_x * 0.15
-    if target >= 100:
-        sl = round(target / 50) * 50
-    elif target >= 10:
-        sl = round(target / 10) * 10
-    elif target >= 1:
-        sl = round(target)
-    else:
-        sl = round(target, 1)
-    sl = sl or target
-    bx, by, bh = ext_x * 0.95 - sl, ext_y * 0.05, ext_y * 0.01
-    ax.add_patch(Rectangle((bx, by), sl, bh, facecolor=color, edgecolor=color))
-    ax.text(
-        bx + sl / 2,
-        by + bh * 3,
-        f"{sl:.0f} µm",
-        color=color,
-        fontsize=10,
-        ha="center",
-        va="bottom",
-        fontweight="bold",
-    )
 
 
 # -----------------------------------------------------------------------------
@@ -249,114 +214,6 @@ def load_mosa_datasets(path):
 def load_strain_volume(path):
     with h5py.File(path, "r") as f:
         return f["strain"][:] if "strain" in f else None
-
-
-# -----------------------------------------------------------------------------
-# Rendering
-# -----------------------------------------------------------------------------
-def _layer_figure(layer, vmin, vmax, cmap, ext_x, ext_y, title, cbar_label):
-    fig = Figure(figsize=(12, 10), facecolor="white")
-    ax = fig.add_subplot(111)
-    im = ax.imshow(
-        layer,
-        cmap=_cmap_nan_transparent(cmap),
-        norm=mcolors.Normalize(vmin=vmin, vmax=vmax),
-        extent=[0, ext_x, 0, ext_y],
-        origin="lower",
-        aspect="equal",
-    )
-    ax.set_xlabel("X (µm)")
-    ax.set_ylabel("Y (µm)")
-    ax.set_title(title)
-    fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04).set_label(cbar_label)
-    _add_scale_bar(ax, ext_x, ext_y)
-    return fig, ax, im
-
-
-def _save_layers(volume, z_um, out_dir, name, vmin, vmax, cmap, title, cbar, sx, sy):
-    layers_dir = os.path.join(out_dir, f"{name}_layers")
-    os.makedirs(layers_dir, exist_ok=True)
-    ext_x, ext_y = volume.shape[2] * sx, volume.shape[1] * sy
-    z_size = volume.shape[0]
-    for z in range(z_size):
-        full_title = f"{title}\nZ = {z_um[z]:.2f} µm (Layer {z}/{z_size - 1})"
-        fig, _, _ = _layer_figure(volume[z], vmin, vmax, cmap, ext_x, ext_y, full_title, cbar)
-        fig.savefig(
-            os.path.join(layers_dir, f"layer_{z:04d}.png"),
-            dpi=150,
-            facecolor="white",
-            bbox_inches="tight",
-        )
-    return layers_dir
-
-
-def _save_animation(volume, z_um, base_path, name, vmin, vmax, cmap, title, cbar, fmt, sx, sy):
-    ext_x, ext_y = volume.shape[2] * sx, volume.shape[1] * sy
-    z_size = volume.shape[0]
-    fig, ax, im = _layer_figure(volume[0], vmin, vmax, cmap, ext_x, ext_y, title, cbar)
-    title_obj = ax.set_title(f"{title}\nZ = {z_um[0]:.2f} µm (Layer 0/{z_size - 1})")
-
-    def update(frame):
-        z = frame % z_size
-        im.set_data(volume[z])
-        title_obj.set_text(f"{title}\nZ = {z_um[z]:.2f} µm (Layer {z}/{z_size - 1})")
-        return [im, title_obj]
-
-    anim = FuncAnimation(fig, update, frames=z_size, blit=False)
-    written = None
-    want_mp4 = fmt in ("mp4", "both")
-    want_gif = fmt in ("gif", "both")
-    if want_mp4:
-        try:
-            anim.save(base_path + ".mp4", writer=FFMpegWriter(fps=15), dpi=120)
-            written = base_path + ".mp4"
-        except Exception:  # noqa: BLE001 - ffmpeg missing -> fall back to GIF
-            want_gif = True
-    if want_gif:
-        anim.save(base_path + ".gif", writer=PillowWriter(fps=15), dpi=120)
-        written = written or base_path + ".gif"
-    return written
-
-
-def _create_pyvista_grid(data, spacing):
-    import pyvista as pv
-
-    dt = np.transpose(data, (2, 1, 0))
-    finite = dt[np.isfinite(dt)]
-    sentinel = (
-        (float(np.min(finite)) - 1000.0 * (float(np.ptp(finite)) + 1.0)) if finite.size else -1e30
-    )
-    dc = np.where(np.isfinite(dt), dt, sentinel)
-    grid = pv.ImageData()
-    grid.dimensions = np.array(dc.shape) + 1
-    grid.spacing = spacing
-    grid.origin = (0, 0, 0)
-    grid.cell_data["values"] = dc.flatten(order="F")
-    thresh = sentinel * 0.5 if sentinel < 0 else sentinel + 1.0
-    return grid.threshold(value=thresh, scalars="values")
-
-
-def _save_top_view(volume, scale_z, sx, sy, vmin, vmax, cmap, opacity, path):
-    import pyvista as pv
-
-    pv.OFF_SCREEN = True
-    grid = _create_pyvista_grid(volume, spacing=(sx, sy, scale_z))
-    if grid.n_cells == 0:
-        return None
-    pl = pv.Plotter(off_screen=True)
-    pl.add_mesh(
-        grid,
-        scalars="values",
-        cmap=cmap,
-        clim=[vmin, vmax],
-        opacity=opacity,
-        smooth_shading=True,
-        show_edges=False,
-    )
-    pl.view_xy()
-    pl.screenshot(path)
-    pl.close()
-    return path
 
 
 # -----------------------------------------------------------------------------
@@ -390,11 +247,11 @@ def _process_dataset(data, z_pos, scale_z, name, vmin, vmax, cmap, title, cbar, 
     prod = DatasetProducts(name=name, shape=tuple(data.shape), vmin=float(vmin), vmax=float(vmax))
 
     if p["save_layers"]:
-        prod.layers_dir = _save_layers(
+        prod.layers_dir = Rnd.save_layer_pngs(
             data, z_pos, ds_dir, name, vmin, vmax, cmap, title, cbar, sx, sy
         )
     if p["save_animation"]:
-        prod.animation = _save_animation(
+        prod.animation = Rnd.save_layer_animation(
             data,
             z_pos,
             os.path.join(ds_dir, f"{name}_layer_anim"),
@@ -410,7 +267,7 @@ def _process_dataset(data, z_pos, scale_z, name, vmin, vmax, cmap, title, cbar, 
         )
     if p["save_topview"]:
         try:
-            prod.top_view = _save_top_view(
+            prod.top_view = Rnd.save_top_view(
                 data,
                 scale_z,
                 sx,

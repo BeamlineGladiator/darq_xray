@@ -14,17 +14,26 @@ from __future__ import annotations
 import os
 
 from dfxm.config.models import Experiment, StageSpec
-from dfxm.stages import concat, mosaicity, strain, visualize
+from dfxm.stages import concat, mosaicity, paraview, rocking, strain, visualize
 
 # Display order in the navigation panel (pipeline order; darfix runs between
 # concat and strain/mosaicity, outside the app).
-STAGE_ORDER: tuple[str, ...] = ("concat", "strain", "mosaicity", "visualize")
+STAGE_ORDER: tuple[str, ...] = (
+    "concat",
+    "strain",
+    "mosaicity",
+    "rocking",
+    "visualize",
+    "paraview",
+)
 
 STAGE_SPECS: dict[str, StageSpec] = {
     "concat": concat.STAGE,
     "strain": strain.STAGE,
     "mosaicity": mosaicity.STAGE,
+    "rocking": rocking.STAGE,
     "visualize": visualize.STAGE,
+    "paraview": paraview.STAGE,
 }
 
 # Default stacked-output filenames (kept in sync with each stage's defaults) so
@@ -71,6 +80,32 @@ def experiment_overrides(stage_name: str, exp: Experiment) -> dict:
             mosa_pattern=exp.mosa_pattern,
             strain_pattern=exp.folder_pattern,
             # motor positions live under the first BLISS scan entry (1.1)
+            samy_path=f"1.1/{exp.positioners_path}/{exp.samy_key}",
+            samz_path=f"1.1/{exp.positioners_path}/{exp.samz_key}",
+            pixel_size_x_um=exp.pixel_size_x_um,
+            pixel_size_y_um=exp.pixel_size_y_um,
+        )
+    if stage_name == "rocking":
+        return dict(
+            raw_root=exp.raw_root,
+            rocking_pattern=exp.rocking_pattern,
+            mosa_pattern=exp.mosa_pattern,
+            strain_pattern=exp.folder_pattern,
+            samy_path=f"1.1/{exp.positioners_path}/{exp.samy_key}",
+            samz_path=f"1.1/{exp.positioners_path}/{exp.samz_key}",
+            # raw rocking frames live at the measurement soft-link, under 1.1
+            detector_path=f"1.1/{exp.detector_write_path}",
+            pixel_size_x_um=exp.pixel_size_x_um,
+            pixel_size_y_um=exp.pixel_size_y_um,
+        )
+    if stage_name == "paraview":
+        proc = exp.processed_root.rstrip("/")
+        return dict(
+            mosa_volume_file=os.path.join(proc, _MOSA_VOLUME) if proc else "",
+            strain_volume_file=os.path.join(proc, _STRAIN_VOLUME) if proc else "",
+            raw_root=exp.raw_root,
+            mosa_pattern=exp.mosa_pattern,
+            strain_pattern=exp.folder_pattern,
             samy_path=f"1.1/{exp.positioners_path}/{exp.samy_key}",
             samz_path=f"1.1/{exp.positioners_path}/{exp.samz_key}",
             pixel_size_x_um=exp.pixel_size_x_um,

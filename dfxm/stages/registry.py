@@ -19,6 +19,8 @@ STAGE_TARGETS: dict[str, str] = {
     "strain": "dfxm.stages.strain:run",
     "mosaicity": "dfxm.stages.mosaicity:run",
     "visualize": "dfxm.stages.visualize:run",
+    "rocking": "dfxm.stages.rocking:run",
+    "paraview": "dfxm.stages.paraview:run",
 }
 
 
