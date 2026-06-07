@@ -48,15 +48,13 @@ def _make_input() -> str:
 
 
 def _make_maps(base_folder: str) -> str:
-    """A folder with a synthetic darfix maps.h5 (ccmth + mu COM maps)."""
+    """A folder with a synthetic darfix maps.h5 (ccmth COM map only)."""
     folder = os.path.join(os.path.dirname(base_folder), "strain_layer__1")
     os.makedirs(folder, exist_ok=True)
     X, Y = np.meshgrid(np.linspace(-3, 3, 30), np.linspace(-2, 2, 24))
     ccmth = 7.144 + 0.002 * np.arctan(2 * X) + 0.001 * np.arctan(1.5 * Y)
-    mu = 11.2491 + 0.0015 * X + 0.0008 * Y
     with h5py.File(os.path.join(folder, "maps.h5"), "w") as f:
         f.create_dataset("/entry/ccmth/Center of mass/Center of mass", data=ccmth)
-        f.create_dataset("/entry/mu/Center of mass/Center of mass", data=mu)
     return folder
 
 
@@ -80,10 +78,9 @@ def main() -> int:
 
     exp = win._experiment_panel.current_experiment()
     assert exp.name == "STO2_overnight", exp.name
-    assert exp.mu_ref_deg == 11.5015 and exp.ccmth_ref_deg == 7.144
+    assert exp.ccmth_ref_deg == 7.144
     assert win._experiment_panel._notes.isVisible()
-    assert "11.2491" in win._experiment_panel._notes.text()
-    print("[2] STO2 preset loaded; calibration caveat surfaced (mu_ref 11.5015 vs 11.2491)")
+    print("[2] STO2 preset loaded")
 
     view = win._views["concat"]
     folder = _make_input()
@@ -119,11 +116,9 @@ def main() -> int:
     sfolder = _make_maps(folder)
     sview._form.set_values(
         {
-            "method": "ccmth_mu",
             "mode": "single",
             "input_folder": sfolder,
             "ccmth_ref_deg": 7.144,
-            "mu_ref_deg": 11.2491,
             "output_dir": os.path.join(sfolder, "out"),
         }
     )

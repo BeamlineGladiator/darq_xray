@@ -25,20 +25,14 @@ def test_experiment_schema_matches_dataclass_fields():
 
 def test_calibration_fields_flagged():
     flagged = {p.name for p in EXPERIMENT_SCHEMA if p.calibration}
-    assert flagged == {"ccmth_ref_deg", "mu_ref_deg", "pixel_size_x_um", "pixel_size_y_um"}
+    assert flagged == {"ccmth_ref_deg", "pixel_size_x_um", "pixel_size_y_um"}
 
 
 def test_sto2_preset_ships_expected_values():
     exp = presets.load_experiment_by_name("STO2_overnight")
     assert exp.name == "STO2_overnight"
     assert exp.ccmth_ref_deg == 7.144
-    assert exp.mu_ref_deg == 11.5015  # CLAUDE.local.md value, not the 11.2491 in the scripts
     assert exp.pixel_size_x_um == 0.152 and exp.pixel_size_y_um == 0.385
-
-
-def test_sto2_preset_notes_record_mu_discrepancy():
-    exp = presets.load_experiment_by_name("STO2_overnight")
-    assert "11.2491" in exp.notes  # the discrepancy survives a load (and a round-trip)
 
 
 def test_preset_round_trip(tmp_path):

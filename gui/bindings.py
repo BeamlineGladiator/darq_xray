@@ -78,9 +78,7 @@ def experiment_overrides(stage_name: str, exp: Experiment) -> dict:
             folder_pattern=exp.folder_pattern,
             maps_filename=exp.maps_filename,
             ccmth_com_path=exp.ccmth_com_path,
-            mu_com_path=exp.mu_com_path,
             ccmth_ref_deg=exp.ccmth_ref_deg,
-            mu_ref_deg=exp.mu_ref_deg,
             pixel_size_x_um=exp.pixel_size_x_um,
             pixel_size_y_um=exp.pixel_size_y_um,
         )

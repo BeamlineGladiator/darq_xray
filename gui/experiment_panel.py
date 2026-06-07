@@ -2,7 +2,7 @@
 
 Lets the user pick a named preset, edit its fields (calibration constants are
 flagged red by :class:`~gui.widgets.param_form.ParamForm`), surface the preset's
-notes (e.g. the ``mu_ref`` discrepancy), and Save-as a new preset. Emits
+notes (shown in red when present), and Save-as a new preset. Emits
 :attr:`experimentChanged` whenever the active experiment changes so the stage
 views can re-pull their defaults.
 """

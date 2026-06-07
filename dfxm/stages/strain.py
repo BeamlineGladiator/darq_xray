@@ -1,24 +1,19 @@
-"""Strain stage — per-pixel axial strain (cot method) + 3D stacking.
+"""Strain stage — per-pixel axial strain (cot method, ccmth-only) + 3D stacking.
 
-Faithful port of the two legacy strain calculators, unified under a ``method``
-choice:
+Port of the legacy ``calc_axial_strain_v7_batch`` calculator:
 
-* ``ccmth_mu``   (y_calc_axial_strain_v6_batch):
-  ``ε = cot(ccmth_ref)·Δccmth − cot(mu_ref)·Δmu``
-* ``ccmth_only`` (calc_axial_strain_v7_batch):
-  ``ε = cot(ccmth_ref)·Δccmth``
+    ε = cot(ccmth_ref) · Δccmth
 
 Pipeline per layer (order is a physics constraint — **detrend before ROI**):
 
-1. load the ccmth (and, for ``ccmth_mu``, mu) Center-of-mass maps from maps.h5;
+1. load the ccmth Center-of-mass map from maps.h5;
 2. detrend ccmth on the *full* map (separable 2-D arctan);
 3. crop the ROI;
 4. compute strain;
-5. save diagnostic plots;
-6. stack every layer's 2-D strain into a 3-D ``strain`` volume.
+5. stack all layers into a 3-D volume.
 
-Plotting uses the explicit Figure/Agg API (no ``pyplot``/``matplotlib.use``) so
-this module is safe to import in the Qt GUI process for its schema.
+Plotting uses the explicit Figure/Agg API (no pyplot) so this module is safe
+to import in the Qt GUI process.
 """
 
 from __future__ import annotations
@@ -46,18 +41,10 @@ STAGE = StageSpec(
     name="strain",
     label="Axial strain",
     description=(
-        "Per-pixel axial strain (cot method) from darfix maps.h5: detrend ccmth, "
+        "Per-pixel axial strain from ccmth COM (cot method, ccmth-only): detrend ccmth, "
         "crop ROI, compute strain, and stack layers into a 3D volume."
     ),
     params=(
-        Param(
-            "method",
-            ParamType.ENUM,
-            "Method",
-            default="ccmth_mu",
-            choices=("ccmth_mu", "ccmth_only"),
-            help="ccmth_mu = cot(ccmth)·Δccmth − cot(mu)·Δmu; ccmth_only drops the mu term",
-        ),
         Param("mode", ParamType.ENUM, "Mode", default="batch", choices=("single", "batch")),
         Param(
             "input_folder",
@@ -77,25 +64,11 @@ STAGE = StageSpec(
             default="/entry/ccmth/Center of mass/Center of mass",
         ),
         Param(
-            "mu_com_path",
-            ParamType.STR,
-            "mu COM path",
-            default="/entry/mu/Center of mass/Center of mass",
-        ),
-        Param(
             "ccmth_ref_deg",
             ParamType.FLOAT,
             "ccmth reference",
             unit="deg",
             default=7.144,
-            calibration=True,
-        ),
-        Param(
-            "mu_ref_deg",
-            ParamType.FLOAT,
-            "mu reference",
-            unit="deg",
-            default=11.5015,
             calibration=True,
         ),
         Param(
@@ -145,7 +118,6 @@ class LayerResult:
 
 @dataclass
 class StrainResult:
-    method: str
     stacked_path: str | None = None
     volume_shape: tuple[int, int, int] | None = None
     output_dir: str = ""
@@ -216,22 +188,14 @@ def apply_roi(map_2d: np.ndarray, roi: list | None) -> np.ndarray:
 def compute_strain(
     ccmth_map_deg: np.ndarray,
     ccmth_ref_deg: float,
-    mu_map_deg: np.ndarray | None = None,
-    mu_ref_deg: float | None = None,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Per-pixel strain. With *mu* given, includes the −cot(mu)·Δmu term.
+) -> np.ndarray:
+    """Per-pixel axial strain (cot method), ccmth-only.
 
-    Returns ``(strain, ccmth_term, mu_term)`` (mu_term is zeros for ccmth-only).
+    ``ε = cot(ccmth_ref) · (ccmth − ccmth_ref)`` with angles converted to radians.
     """
     ccmth_rad = np.deg2rad(ccmth_map_deg)
     ccmth_ref_rad = np.deg2rad(ccmth_ref_deg)
-    ccmth_term = cot(ccmth_ref_rad) * (ccmth_rad - ccmth_ref_rad)
-    if mu_map_deg is None:
-        return ccmth_term, ccmth_term, np.zeros_like(ccmth_term)
-    mu_rad = np.deg2rad(mu_map_deg)
-    mu_ref_rad = np.deg2rad(mu_ref_deg)
-    mu_term = -cot(mu_ref_rad) * (mu_rad - mu_ref_rad)
-    return ccmth_term + mu_term, ccmth_term, mu_term
+    return cot(ccmth_ref_rad) * (ccmth_rad - ccmth_ref_rad)
 
 
 def load_map(filepath: str, dataset_path: str) -> np.ndarray:
@@ -302,43 +266,6 @@ def _save_detrend_diag(original, detrended, surface, path):
     fig.savefig(path, dpi=120, bbox_inches="tight", facecolor="white")
 
 
-def _save_contributions(ccmth_term, mu_term, strain, px, py, roi, path):
-    extent = physical_extent(strain.shape, px, py, roi)
-    allv = np.concatenate(
-        [
-            ccmth_term[np.isfinite(ccmth_term)].ravel(),
-            mu_term[np.isfinite(mu_term)].ravel(),
-            strain[np.isfinite(strain)].ravel(),
-        ]
-    )
-    if allv.size == 0:
-        return
-    vmin, vmax = symmetric_limits(allv, percentile=99)
-    fig = new_figure((22, 7))
-    axes = fig.subplots(1, 3)
-    panels = [
-        (ccmth_term, "cot(ccmth_ref)·Δccmth"),
-        (-mu_term, "−cot(mu_ref)·Δmu"),
-        (strain, "Total strain"),
-    ]
-    for ax, (data, title) in zip(axes, panels):
-        im = ax.imshow(
-            data,
-            origin="lower",
-            extent=extent,
-            aspect="equal",
-            cmap="RdBu_r",
-            vmin=vmin,
-            vmax=vmax,
-            interpolation="nearest",
-        )
-        ax.set_title(title)
-        ax.set_xlabel("X (µm)")
-        ax.set_ylabel("Y (µm)")
-        fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-    fig.savefig(path, dpi=120, bbox_inches="tight", facecolor="white")
-
-
 # -----------------------------------------------------------------------------
 # Per-folder processing
 # -----------------------------------------------------------------------------
@@ -346,11 +273,8 @@ def process_maps_file(
     maps_path: str,
     name: str,
     *,
-    method: str,
     ccmth_com_path: str,
-    mu_com_path: str,
     ccmth_ref_deg: float,
-    mu_ref_deg: float,
     pixel_size_x_um: float,
     pixel_size_y_um: float,
     roi: list | None,
@@ -360,9 +284,6 @@ def process_maps_file(
 ) -> tuple[np.ndarray, LayerResult]:
     """Compute the 2-D strain map for one maps.h5 and (optionally) save plots."""
     ccmth_map = load_map(maps_path, ccmth_com_path)
-    mu_map = load_map(maps_path, mu_com_path) if method == "ccmth_mu" else None
-    if mu_map is not None and ccmth_map.shape != mu_map.shape:
-        raise ValueError(f"shape mismatch ccmth {ccmth_map.shape} vs mu {mu_map.shape}")
 
     # detrend ccmth on the FULL map, THEN crop ROI (order matters)
     ccmth_original = ccmth_map.copy()
@@ -370,10 +291,8 @@ def process_maps_file(
     ccmth_map = apply_roi(ccmth_map, roi)
     surface = apply_roi(surface, roi)
     ccmth_original = apply_roi(ccmth_original, roi)
-    if mu_map is not None:
-        mu_map = apply_roi(mu_map, roi)
 
-    strain, ccmth_term, mu_term = compute_strain(ccmth_map, ccmth_ref_deg, mu_map, mu_ref_deg)
+    strain = compute_strain(ccmth_map, ccmth_ref_deg)
 
     plots: list[str] = []
     if save_plots and out_dir:
@@ -387,12 +306,6 @@ def process_maps_file(
         pd = os.path.join(out_dir, f"{name}_detrend_diag.png")
         _save_detrend_diag(ccmth_original, ccmth_map, surface, pd)
         plots.append(pd)
-        if method == "ccmth_mu":
-            pc = os.path.join(out_dir, f"{name}_contributions.png")
-            _save_contributions(
-                ccmth_term, mu_term, strain, pixel_size_x_um, pixel_size_y_um, roi, pc
-            )
-            plots.append(pc)
 
     layer = LayerResult(
         name=name,
@@ -446,7 +359,6 @@ def _parse_float(text) -> float | None:
 def run(params: dict, progress: ProgressFn | None = None) -> StrainResult:
     progress = progress or _noop
     p = {**STAGE.defaults(), **params}
-    method = p["method"]
     roi = _parse_roi(p["roi"])
     vlim = (_parse_float(p["vmin"]), _parse_float(p["vmax"]))
     maps_filename = p["maps_filename"]
@@ -469,7 +381,7 @@ def run(params: dict, progress: ProgressFn | None = None) -> StrainResult:
         default_out_root = root
 
     out_dir = p["output_dir"] or os.path.join(default_out_root, "strain_maps")
-    result = StrainResult(method=method, output_dir=out_dir)
+    result = StrainResult(output_dir=out_dir)
 
     slices: list[np.ndarray] = []
     names: list[str] = []
@@ -482,11 +394,8 @@ def run(params: dict, progress: ProgressFn | None = None) -> StrainResult:
             strain, layer = process_maps_file(
                 maps_path,
                 name,
-                method=method,
                 ccmth_com_path=p["ccmth_com_path"],
-                mu_com_path=p["mu_com_path"],
                 ccmth_ref_deg=float(p["ccmth_ref_deg"]),
-                mu_ref_deg=float(p["mu_ref_deg"]),
                 pixel_size_x_um=float(p["pixel_size_x_um"]),
                 pixel_size_y_um=float(p["pixel_size_y_um"]),
                 roi=roi,
@@ -511,12 +420,10 @@ def run(params: dict, progress: ProgressFn | None = None) -> StrainResult:
 
     stacked_path = os.path.join(default_out_root, p["stacked_filename"])
     attrs = dict(
-        description=f"Stacked 3D strain volume ({method})",
+        description="Stacked 3D strain volume (cot, ccmth-only)",
         ccmth_ref_deg=float(p["ccmth_ref_deg"]),
-        mu_ref_deg=float(p["mu_ref_deg"]),
         scale_x_um=float(p["pixel_size_x_um"]),
         scale_y_um=float(p["pixel_size_y_um"]),
-        method=method,
     )
     shape = save_stacked_volume(stacked_path, slices, names, attrs)
     result.stacked_path = stacked_path
@@ -529,26 +436,22 @@ def _main(argv: list[str] | None = None) -> int:
     import argparse
 
     ap = argparse.ArgumentParser(description="Axial strain (cot method).")
-    ap.add_argument("--method", choices=("ccmth_mu", "ccmth_only"), default="ccmth_mu")
     ap.add_argument("--mode", choices=("single", "batch"), default="batch")
     ap.add_argument("--input-folder", default="")
     ap.add_argument("--root-folder", default="")
     ap.add_argument("--folder-pattern", default="*")
     ap.add_argument("--ccmth-ref", type=float, default=7.144)
-    ap.add_argument("--mu-ref", type=float, default=11.5015)
     ap.add_argument("--roi", default="")
     ap.add_argument("--no-plots", action="store_true")
     args = ap.parse_args(argv)
 
     res = run(
         dict(
-            method=args.method,
             mode=args.mode,
             input_folder=args.input_folder,
             root_folder=args.root_folder,
             folder_pattern=args.folder_pattern,
             ccmth_ref_deg=args.ccmth_ref,
-            mu_ref_deg=args.mu_ref,
             roi=args.roi,
             save_plots=not args.no_plots,
         ),

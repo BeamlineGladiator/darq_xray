@@ -5,7 +5,7 @@ Presets live in the ``experiments/`` folder at the project root (one
 constants for that beamtime. The GUI lists them in a dropdown; "Save as"
 writes a new YAML here.
 
-Comments in a hand-written preset (e.g. the ``mu_ref`` discrepancy note) are
+Comments in a hand-written preset (e.g. per-field unit notes) are
 ignored on load and not regenerated on save — machine-relevant caveats should
 also live in the :attr:`Experiment.notes` field so they survive a round-trip.
 """

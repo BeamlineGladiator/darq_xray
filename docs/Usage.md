@@ -57,12 +57,9 @@ pip install numpy h5py scipy matplotlib PySide6 pyvista pyvistaqt vtk
    preview in **Output**.
 
 > [!warning] Calibration values are physical
-> `ccmth reference`, `mu reference`, and the pixel scales (µm/px) are flagged
-> with **⚠ calibration** in red. Wrong values produce *meaningless* strain maps.
-> The `STO2_overnight` preset ships `mu_ref = 11.5015`, while the older standalone
-> scripts used `11.2491` — **confirm which is correct for your experiment** before
-> trusting absolute strain numbers. The discrepancy is recorded in the preset's
-> notes.
+> `ccmth reference` and the pixel scales (µm/px) are flagged with **⚠ calibration**
+> in red. Wrong values produce *meaningless* strain maps — confirm them against the
+> beamline calibration for your experiment.
 
 ---
 
@@ -166,8 +163,7 @@ Per-pixel axial strain (cot method) from darfix `maps.h5`, then stacked into a
 
 | Param | Meaning |
 |---|---|
-| `method` | `ccmth_mu` = `cot(ccmth)·Δccmth − cot(mu)·Δmu`; `ccmth_only` drops the mu term |
-| `ccmth reference` / `mu reference` | calibration angles (deg) ⚠ |
+| `ccmth reference` | calibration angle (deg) ⚠ — strain is `cot(ccmth_ref)·Δccmth` |
 | `roi` | `r0,r1,c0,c1` (blank = full image) |
 | `vmin` / `vmax` | colour limits (blank = symmetric auto) |
 
@@ -377,4 +373,4 @@ ruff check . && ruff format . # lint + format
 - [[Codebase]] — file-by-file code reference (what every module/function does).
 - `CLAUDE.md` — architecture & contributor conventions.
 - `README.md` — short project summary.
-- `experiments/STO2_overnight.yaml` — the shipped preset (and the calibration note).
+- `experiments/STO2_overnight.yaml` — the shipped preset (paths, calibrated angles, pixel scales).
