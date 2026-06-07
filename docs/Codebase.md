@@ -112,7 +112,7 @@ to build forms.
 | `ParamType` | `str, Enum` | The editor kinds: `INT, FLOAT, STR, BOOL, PATH, DIR, SAVE_PATH, ENUM, TEXT`. The GUI maps each to a widget. `TEXT` = multi-line (JSON). |
 | `Param` | frozen dataclass | One parameter: `name, type, label, default, unit, choices, help, calibration`. `__post_init__` enforces that an `ENUM` has `choices`. `coerce(value)` converts a raw form string to the declared type. |
 | `StageSpec` | frozen dataclass | A stage's identity + its `params` tuple. `defaults()` → dict of defaults; `get(name)` → a `Param`; `coerce_all(values)` → all values coerced with defaults filled in. |
-| `Experiment` | dataclass | The shared, preset-saved state: data roots, folder glob patterns (`folder_pattern`, `mosa_pattern`, `rocking_pattern`), calibration (`ccmth_ref_deg`, `mu_ref_deg`, pixel scales), and beamline HDF5/motor paths. `to_dict()` / `from_dict()` (the latter warns on unknown keys). |
+| `Experiment` | dataclass | The shared, preset-saved state: data roots, folder glob patterns (`folder_pattern`, `mosa_pattern`, `rocking_pattern`), calibration (`ccmth_ref_deg`, pixel scales), and beamline HDF5/motor paths. `to_dict()` / `from_dict()` (the latter warns on unknown keys). |
 | `EXPERIMENT_SCHEMA` | `tuple[Param]` | The display schema for `Experiment`, in field order. A test asserts it stays in lock-step with the dataclass fields. |
 | `CALIBRATION_FIELDS` | tuple[str] | Names of the physically-meaningful fields (flagged red in the form). |
 | `experiment_schema()` | fn | Returns `EXPERIMENT_SCHEMA`. |
@@ -211,11 +211,11 @@ BLISS file's `*.1` entries into one darfix-ready `entry_0000`.
 - `run(params, progress)` — dispatch `single`/`batch` mode; `_main()` — CLI.
 
 #### `strain.py`
-Port of `y_calc_axial_strain_v6_batch` (+ `calc_axial_strain_v7_batch`). Per-pixel
-axial strain (cot method) → stacked 3-D volume.
+Port of `calc_axial_strain_v7_batch`. Per-pixel axial strain (cot method,
+ccmth-only) → stacked 3-D volume.
 - `LayerResult` / `StrainResult` — per-layer stats + the stacked path/shape.
 - `cot`, `_arctan_model`, `_fit_arctan_1d`, `detrend_arctan_2d` — the separable arctan **detrend** (run on the full map, **before** ROI).
-- `compute_strain(ccmth, ccmth_ref, mu, mu_ref)` — `cot(ref)·Δ` terms; `method` chooses `ccmth_mu` vs `ccmth_only`.
+- `compute_strain(ccmth, ccmth_ref)` — single-array `cot(ccmth_ref)·Δccmth`.
 - `process_maps_file(...)` — one `maps.h5` → 2-D strain + diagnostic PNGs.
 - `save_stacked_volume(...)` — stack all layers into `stacked_strain_volumes.h5`.
 - `run` / `_main`.
@@ -296,7 +296,7 @@ Runs a stage in a **child process** and streams messages back; UI-agnostic.
 |---|---|
 | `app.py` | Entry point `main()` (`python3 -m gui.app`). Sets `QT_API=pyside6`, then **defers** Qt imports so the spawn-reimported worker child stays Qt-free. |
 | `main_window.py` | `MainWindow`: left column = `ExperimentPanel` + stage nav list + per-stage status panel; right = a `QStackedWidget` of one `StageView` per stage. Wires experiment changes into every view and updates a stage's ✓/✗ status on `runFinished`. |
-| `experiment_panel.py` | `ExperimentPanel`: preset dropdown + reload, a `ParamForm` over `EXPERIMENT_SCHEMA`, the preset's notes (red, e.g. the `mu_ref` caveat), **Apply** and **Save as…**. Emits `experimentChanged(Experiment)`. |
+| `experiment_panel.py` | `ExperimentPanel`: preset dropdown + reload, a `ParamForm` over `EXPERIMENT_SCHEMA`, the preset's notes (red when present), **Apply** and **Save as…**. Emits `experimentChanged(Experiment)`. |
 | `stage_view.py` | `StageView`: the generic per-stage panel — param form + **Run/Cancel** + Log/Results/Output tabs (and a **3D** tab for volume stages, a **Pick line…** button for profiles). Launches the stage via `StageRunner` and polls it on a `QTimer`. Module helpers `_summarize(result)` (per-stage text summary) and `_representative_image(result)` (preview picker). `_VOLUME_STAGES = (visualize, rocking)`. |
 | `bindings.py` | The glue: `STAGE_ORDER` (nav order), `STAGE_SPECS` (name→`StageSpec`), and `experiment_overrides(stage, exp)` — how an `Experiment` pre-fills each stage *and* how an upstream output auto-fills the next stage's input (the auto-chaining). |
 | `viewers.py` | Lazy interactive-viewer glue: `volume_sources(stage, result, params)` → `{name: callable}` where each callable loads/aligns one volume **only when invoked**; `_rocking_source(...)`; `inject_line_into_jobs(jobs_json, …)` writes a picked line back into a profiles job (pure, unit-tested). |
@@ -322,7 +322,7 @@ Runs a stage in a **child process** and streams messages back; UI-agnostic.
 |---|---|
 | `conftest.py` | Fixtures `bliss_factory` / `batch_root` that write tiny synthetic BLISS HDF5 files (detector stack + positioners), so stages run without the SSD. |
 | `test_common_sort.py`, `test_common_alignment.py`, `test_common_h5io.py` | The shared primitives (incl. alignment **vs-legacy parity**). |
-| `test_config.py` | `Param`/`StageSpec` coercion, the `EXPERIMENT_SCHEMA`↔dataclass sync, preset round-trip, the shipped `mu_ref` value/notes. |
+| `test_config.py` | `Param`/`StageSpec` coercion, the `EXPERIMENT_SCHEMA`↔dataclass sync, preset round-trip, the shipped calibration values. |
 | `test_stage_*.py` | One per stage: synthetic-data end-to-end + targeted unit tests (and golden comparison vs the legacy script where available). |
 | `test_gui_viewers.py` | `visualize.aligned_field`, `viewers.volume_sources` (lazy), `inject_line_into_jobs` — the headless parts of the interactive viewers. |
 | `gui_smoke.py` | A scripted Qt smoke test (offscreen): builds the window, loads the preset, runs concat + strain through the UI, checks the 3D tab / pick button exist and that `pyvista` isn't imported at startup, and that Cancel kills a worker. Run directly, not via pytest. |
@@ -367,7 +367,7 @@ auto-fill from the experiment + the previous stage's outputs.
 | `README.md` | Short project summary. |
 | `docs/Usage.md` | The user-facing how-to ([[Usage]]). |
 | `docs/Codebase.md` | This file. |
-| `experiments/STO2_overnight.yaml` | The shipped preset (paths, calibrated angles, pixel scales, and the `mu_ref` discrepancy note). |
+| `experiments/STO2_overnight.yaml` | The shipped preset (paths, calibrated angles, pixel scales). |
 
 ---
 
