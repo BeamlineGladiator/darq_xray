@@ -254,6 +254,10 @@ def run(params: dict, progress: ProgressFn | None = None) -> MatchedResult:
         if img is None:
             result.skipped.append(f"layer {i}: image load failed")
             continue
+        if img.shape != (ny, nx_orig):
+            # a scan with a different detector ROI/shape can't share the canvas
+            result.skipped.append(f"layer {i}: frame shape {img.shape} != {(ny, nx_orig)}")
+            continue
         shifted = _apply_shift_single(img, shifts_px[i], pad_left, nx_new)
         title = (
             f"Rocking Curve (frame {frame_index}, median-subtracted)\n"

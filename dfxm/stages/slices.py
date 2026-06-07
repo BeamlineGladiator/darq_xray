@@ -304,7 +304,7 @@ def _union_box(boxes):
     )
 
 
-def resolve_auto_extent(sl, box):
+def resolve_auto_extent(sl, box, default_du=0.152):
     if sl.get("extent") != "auto":
         return sl
     u_hat, v_hat, n_hat = build_basis(sl["normal"], sl.get("up"))
@@ -326,7 +326,7 @@ def resolve_auto_extent(sl, box):
     out["sweep_start_um"] = float(n_p.min() - margin)
     out["sweep_stop_um"] = float(n_p.max() + margin)
     if not out.get("sweep_step_um"):
-        out["sweep_step_um"] = float(out.get("du", 0.152))
+        out["sweep_step_um"] = float(out.get("du", default_du))
     return out
 
 
@@ -610,7 +610,19 @@ def run(params: dict, progress: ProgressFn | None = None) -> SlicesResult:
         progress(0.05, "estimating data bounding box")
         boxes = [_estimate_box(cfg, p, scale_x, scale_y, samy_dir) for cfg in volumes]
         box = _union_box(boxes)
-        slices = [resolve_auto_extent(sl, box) for sl in slices]
+        slices = [resolve_auto_extent(sl, box, default_du=scale_x) for sl in slices]
+
+    # Validate each (resolved) slice up front so a bad spec fails clearly here
+    # rather than as a ZeroDivisionError / KeyError deep inside sampling.
+    for sl in slices:
+        name = sl.get("name", "?")
+        for key in ("du", "dv"):
+            if key in sl and float(sl[key]) <= 0:
+                raise ValueError(f"slice {name!r}: {key} must be > 0")
+        if "half_u" not in sl or "half_v" not in sl:
+            raise ValueError(f"slice {name!r}: needs half_u and half_v (or extent: 'auto')")
+        if float(sl["half_u"]) <= 0 or float(sl["half_v"]) <= 0:
+            raise ValueError(f"slice {name!r}: half_u and half_v must be > 0")
 
     out_h5 = os.path.join(out_dir, p["output_h5_name"])
     save_png = bool(p["save_png"])

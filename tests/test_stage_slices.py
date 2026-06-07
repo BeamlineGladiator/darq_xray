@@ -6,6 +6,7 @@ import os
 
 import h5py
 import numpy as np
+import pytest
 
 from dfxm.stages import slices as S
 
@@ -58,6 +59,14 @@ def test_resolve_auto_extent_fits_box():
     assert out["half_u"] > 0 and out["half_v"] > 0
     assert out["sweep_start_um"] <= 0.0 <= out["sweep_stop_um"]
     assert out["sweep_step_um"] == 1.0
+
+
+def test_resolve_auto_extent_default_step_uses_pixel_scale():
+    """No du / no sweep_step_um -> step defaults to the configured pixel scale."""
+    box = (0.0, 10.0, 0.0, 8.0, 0.0, 6.0)
+    sl = {"name": "z", "normal": [0, 0, 1], "origin": [0, 0, 0], "extent": "auto"}
+    out = S.resolve_auto_extent(sl, box, default_du=0.385)
+    assert out["sweep_step_um"] == 0.385
 
 
 # -- end to end ---------------------------------------------------------------
@@ -143,3 +152,33 @@ def test_run_writes_consolidated_h5_and_pngs(tmp_path):
 def test_run_no_volumes_selected(tmp_path):
     res = S.run({"mosa_volume_file": "", "strain_volume_file": "", "aligned_rocking_file": ""})
     assert any("no input volumes" in s for s in res.skipped)
+
+
+def test_run_rejects_nonpositive_du(tmp_path):
+    proc, raw = _setup(tmp_path)
+    bad = '[{"name":"mid","normal":[0,0,1],"origin":[0,0,0],"half_u":1,"half_v":1,"du":0,"dv":0.2}]'
+    with pytest.raises(ValueError, match="du must be > 0"):
+        S.run(
+            {
+                "mosa_volume_file": str(proc / "stacked_volumes.h5"),
+                "raw_root": str(raw),
+                "mosa_pattern": "mosa__*",
+                "slices_json": bad,
+                "output_dir": str(tmp_path / "sl"),
+            }
+        )
+
+
+def test_run_rejects_missing_half(tmp_path):
+    proc, raw = _setup(tmp_path)
+    bad = '[{"name":"mid","normal":[0,0,1],"origin":[0,0,0],"du":0.2,"dv":0.2}]'
+    with pytest.raises(ValueError, match="half_u and half_v"):
+        S.run(
+            {
+                "mosa_volume_file": str(proc / "stacked_volumes.h5"),
+                "raw_root": str(raw),
+                "mosa_pattern": "mosa__*",
+                "slices_json": bad,
+                "output_dir": str(tmp_path / "sl"),
+            }
+        )

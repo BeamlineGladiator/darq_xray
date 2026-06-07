@@ -83,6 +83,32 @@ def test_run_saves_matched_layers(tmp_path):
     assert len(pngs) == 3
 
 
+def test_run_skips_mismatched_frame_shape(tmp_path):
+    """A matched rocking scan with a different detector shape is skipped, not fatal."""
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    samy = [0.0, 0.001, 0.002]
+    samz = [0.0, 0.001, 0.002]
+    for i in range(3):
+        _write_strain(str(raw), f"strain__{i + 1}", samy[i], samz[i])
+    rng = np.random.default_rng(0)
+    _write_rocking(str(raw), "rock__1", samy[0], samz[0], rng.standard_normal((NF, H, W)) + 10)
+    _write_rocking(str(raw), "rock__2", samy[1], samz[1], rng.standard_normal((NF, H, W)) + 10)
+    # rock__3 has a wider detector -> cannot share the canvas built from rock__1
+    _write_rocking(str(raw), "rock__3", samy[2], samz[2], rng.standard_normal((NF, H, W + 3)) + 10)
+    res = M.run(
+        {
+            "raw_root": str(raw),
+            "strain_pattern": "strain__*",
+            "rocking_pattern": "rock__*",
+            "match_threshold_mm": 0.001,
+            "output_dir": str(tmp_path / "out"),
+        }
+    )
+    assert res.n_matched == 3 and res.n_saved == 2  # mismatched one skipped, no crash
+    assert any("shape" in s for s in res.skipped)
+
+
 def test_run_requires_raw_root():
     with pytest.raises(ValueError, match="raw_root"):
         M.run({"raw_root": ""})
