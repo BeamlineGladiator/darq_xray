@@ -10,7 +10,8 @@ Pipeline per layer (order is a physics constraint — **detrend before ROI**):
 2. detrend ccmth on the *full* map (separable 2-D arctan);
 3. crop the ROI;
 4. compute strain;
-5. stack all layers into a 3-D volume.
+5. save per-layer diagnostic plots (when ``save_plots``);
+6. stack all layers into a 3-D volume.
 
 Plotting uses the explicit Figure/Agg API (no pyplot) so this module is safe
 to import in the Qt GUI process.

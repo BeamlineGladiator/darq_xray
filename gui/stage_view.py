@@ -278,7 +278,14 @@ def _summarize(result) -> str:
                 lines.append(f"        {detail}")
         return "\n".join(lines)
 
-    if hasattr(result, "volume_shape") and hasattr(result, "layers"):  # StrainResult
+    # StrainResult: has volume_shape and layers of LayerResult (each with .plots);
+    # MosaicityResult.layers are plain strings, RockingResult has no layers.
+    layers = getattr(result, "layers", None)
+    if (
+        hasattr(result, "volume_shape")
+        and layers is not None
+        and (not layers or hasattr(layers[0], "plots"))
+    ):
         lines = [
             f"layers: {result.n_layers}   volume: {result.volume_shape}",
             f"stacked: {result.stacked_path}",
