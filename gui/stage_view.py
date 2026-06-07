@@ -278,9 +278,8 @@ def _summarize(result) -> str:
                 lines.append(f"        {detail}")
         return "\n".join(lines)
 
-    if hasattr(result, "method") and hasattr(result, "volume_shape"):  # StrainResult
+    if hasattr(result, "volume_shape") and hasattr(result, "layers"):  # StrainResult
         lines = [
-            f"method: {result.method}",
             f"layers: {result.n_layers}   volume: {result.volume_shape}",
             f"stacked: {result.stacked_path}",
         ]
