@@ -26,6 +26,7 @@ notes: >-
 raw_root: /media/albert/DIC_SSD_3/ESRF/ma6778/id03/20251029/RAW_DATA/STO2_overnight
 processed_root: /media/albert/DIC_SSD_3/ESRF/ma6778/id03/20251029/PROCESSED_DATA/STO2_overnight
 folder_pattern: STO2_overnight_layer_2x_energy_strain__*
+mosa_pattern: STO2_overnight_layer_2x_mosa__*
 entry_suffix: ".1"
 
 # --- calibration (physically meaningful) -------------------------------------

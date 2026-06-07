@@ -1,24 +1,36 @@
 """Glue between the Qt-free core and the GUI.
 
-* ``STAGE_SPECS`` — the parameter schema for each stage the GUI exposes.
+* ``STAGE_ORDER`` / ``STAGE_SPECS`` — the stages the GUI exposes and their
+  parameter schemas.
 * ``experiment_overrides`` — how an :class:`~dfxm.config.models.Experiment`
-  pre-fills a stage's form (so shared paths/angles are entered once).
+  pre-fills each stage's form (shared paths/angles entered once), and how an
+  upstream stage's output auto-fills the next stage's input.
 
 Run targets themselves come from :data:`dfxm.stages.registry.STAGE_TARGETS`.
-New stages are added here (spec) and in the registry (target) as they land.
 """
 
 from __future__ import annotations
 
-from dfxm.config.models import Experiment, StageSpec
-from dfxm.stages import concat
+import os
 
-# Display order of the stages in the navigation panel.
-STAGE_ORDER: tuple[str, ...] = ("concat",)
+from dfxm.config.models import Experiment, StageSpec
+from dfxm.stages import concat, mosaicity, strain, visualize
+
+# Display order in the navigation panel (pipeline order; darfix runs between
+# concat and strain/mosaicity, outside the app).
+STAGE_ORDER: tuple[str, ...] = ("concat", "strain", "mosaicity", "visualize")
 
 STAGE_SPECS: dict[str, StageSpec] = {
     "concat": concat.STAGE,
+    "strain": strain.STAGE,
+    "mosaicity": mosaicity.STAGE,
+    "visualize": visualize.STAGE,
 }
+
+# Default stacked-output filenames (kept in sync with each stage's defaults) so
+# downstream stages can auto-fill their inputs.
+_STRAIN_VOLUME = "stacked_strain_volumes.h5"
+_MOSA_VOLUME = "stacked_volumes.h5"
 
 
 def experiment_overrides(stage_name: str, exp: Experiment) -> dict:
@@ -31,5 +43,37 @@ def experiment_overrides(stage_name: str, exp: Experiment) -> dict:
             detector_read_path=exp.detector_read_path,
             detector_write_path=exp.detector_write_path,
             positioners_path=exp.positioners_path,
+        )
+    if stage_name == "strain":
+        return dict(
+            root_folder=exp.processed_root,
+            folder_pattern=exp.folder_pattern,
+            maps_filename=exp.maps_filename,
+            ccmth_com_path=exp.ccmth_com_path,
+            mu_com_path=exp.mu_com_path,
+            ccmth_ref_deg=exp.ccmth_ref_deg,
+            mu_ref_deg=exp.mu_ref_deg,
+            pixel_size_x_um=exp.pixel_size_x_um,
+            pixel_size_y_um=exp.pixel_size_y_um,
+        )
+    if stage_name == "mosaicity":
+        return dict(
+            root_folder=exp.processed_root,
+            folder_pattern=exp.mosa_pattern,
+            maps_filename=exp.maps_filename,
+        )
+    if stage_name == "visualize":
+        proc = exp.processed_root.rstrip("/")
+        return dict(
+            mosa_volume_file=os.path.join(proc, _MOSA_VOLUME) if proc else "",
+            strain_volume_file=os.path.join(proc, _STRAIN_VOLUME) if proc else "",
+            raw_root=exp.raw_root,
+            mosa_pattern=exp.mosa_pattern,
+            strain_pattern=exp.folder_pattern,
+            # motor positions live under the first BLISS scan entry (1.1)
+            samy_path=f"1.1/{exp.positioners_path}/{exp.samy_key}",
+            samz_path=f"1.1/{exp.positioners_path}/{exp.samz_key}",
+            pixel_size_x_um=exp.pixel_size_x_um,
+            pixel_size_y_um=exp.pixel_size_y_um,
         )
     return {}

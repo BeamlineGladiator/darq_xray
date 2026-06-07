@@ -47,6 +47,19 @@ def _make_input() -> str:
     return folder
 
 
+def _make_maps(base_folder: str) -> str:
+    """A folder with a synthetic darfix maps.h5 (ccmth + mu COM maps)."""
+    folder = os.path.join(os.path.dirname(base_folder), "strain_layer__1")
+    os.makedirs(folder, exist_ok=True)
+    X, Y = np.meshgrid(np.linspace(-3, 3, 30), np.linspace(-2, 2, 24))
+    ccmth = 7.144 + 0.002 * np.arctan(2 * X) + 0.001 * np.arctan(1.5 * Y)
+    mu = 11.2491 + 0.0015 * X + 0.0008 * Y
+    with h5py.File(os.path.join(folder, "maps.h5"), "w") as f:
+        f.create_dataset("/entry/ccmth/Center of mass/Center of mass", data=ccmth)
+        f.create_dataset("/entry/mu/Center of mass/Center of mass", data=mu)
+    return folder
+
+
 def _sleeper(_params, progress=None):
     for i in range(400):
         if progress:
@@ -90,6 +103,33 @@ def main() -> int:
     assert os.path.exists(os.path.join(folder, "layer__3_concat.h5"))
     print(f"[3] concat ran through the UI: {results.splitlines()[0]}; status ✓; output written")
 
+    # Run the strain stage through the UI and confirm the image preview.
+    assert set(win._views) == {"concat", "strain", "mosaicity", "visualize"}
+    sview = win._views["strain"]
+    sfolder = _make_maps(folder)
+    sview._form.set_values(
+        {
+            "method": "ccmth_mu",
+            "mode": "single",
+            "input_folder": sfolder,
+            "ccmth_ref_deg": 7.144,
+            "mu_ref_deg": 11.2491,
+            "output_dir": os.path.join(sfolder, "out"),
+        }
+    )
+    sdone: list[tuple[str, bool]] = []
+    sview.runFinished.connect(lambda name, ok: sdone.append((name, ok)))
+    sview._on_run()
+    t0 = time.time()
+    while not sdone and time.time() - t0 < 90:
+        app.processEvents()
+        time.sleep(0.02)
+    assert sdone == [("strain", True)], sdone
+    app.processEvents()
+    assert win._status_items["strain"].text().startswith("✓")
+    assert sview._image.pixmap() is not None and not sview._image.pixmap().isNull()
+    print("[4] strain ran through the UI: status ✓; strain-map image previewed")
+
     # Cancel kills the worker.
     runner = StageRunner(_sleeper, {}, start_method="fork")
     runner.start()
@@ -97,7 +137,7 @@ def main() -> int:
     assert runner.is_alive()
     runner.cancel(timeout=2.0)
     assert not runner.is_alive()
-    print("[4] cancel terminated a long-running worker")
+    print("[5] cancel terminated a long-running worker")
 
     print("\nGUI SMOKE PASSED")
     return 0

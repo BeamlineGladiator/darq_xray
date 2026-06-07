@@ -16,6 +16,9 @@ from collections.abc import Callable
 # name -> "module:function" (a stage's run(params, progress=None) entry point)
 STAGE_TARGETS: dict[str, str] = {
     "concat": "dfxm.stages.concat:run",
+    "strain": "dfxm.stages.strain:run",
+    "mosaicity": "dfxm.stages.mosaicity:run",
+    "visualize": "dfxm.stages.visualize:run",
 }
 
 

@@ -8,11 +8,16 @@ process via :class:`~dfxm.runner.StageRunner`, and polls it from a
 
 from __future__ import annotations
 
-from PySide6.QtCore import QTimer, Signal
+import os
+
+from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QHBoxLayout,
+    QLabel,
     QPlainTextEdit,
     QPushButton,
+    QScrollArea,
     QSplitter,
     QTabWidget,
     QVBoxLayout,
@@ -75,9 +80,15 @@ class StageView(QWidget):
         self._log = LogConsole()
         self._results = QPlainTextEdit()
         self._results.setReadOnly(True)
+        self._image = QLabel("(no preview)")
+        self._image.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._image_scroll = QScrollArea()
+        self._image_scroll.setWidgetResizable(True)
+        self._image_scroll.setWidget(self._image)
         self._tabs = QTabWidget()
         self._tabs.addTab(self._log, "Log")
         self._tabs.addTab(self._results, "Results")
+        self._tabs.addTab(self._image_scroll, "Output")
 
         splitter = QSplitter()
         splitter.addWidget(left)
@@ -155,7 +166,18 @@ class StageView(QWidget):
         self._timer.stop()
         self._log.set_progress(1.0, "Done.")
         self._results.setPlainText(_summarize(result))
-        self._tabs.setCurrentWidget(self._results)
+        img = _representative_image(result)
+        shown = False
+        if img and os.path.exists(img):
+            pix = QPixmap(img)
+            if not pix.isNull():
+                self._image.setPixmap(
+                    pix.scaledToWidth(700, Qt.TransformationMode.SmoothTransformation)
+                )
+                self._tabs.setCurrentWidget(self._image_scroll)
+                shown = True
+        if not shown:
+            self._tabs.setCurrentWidget(self._results)
         self._set_running(False)
         self.runFinished.emit(self._stage_name, True)
 
@@ -173,25 +195,83 @@ class StageView(QWidget):
 
 
 def _summarize(result) -> str:
-    """Human-readable summary of a stage result (duck-typed)."""
+    """Human-readable summary of a stage result (duck-typed per stage)."""
     files = getattr(result, "files", None)
-    if files is not None:  # ConcatResult-like
-        lines = [
-            f"{result.n_ok} ok, {result.n_skipped} skipped, {result.n_failed} failed",
-            "",
-        ]
+    if files is not None:  # ConcatResult
+        lines = [f"{result.n_ok} ok, {result.n_skipped} skipped, {result.n_failed} failed", ""]
         for fr in files:
             status = "OK" if fr.ok else ("SKIP" if fr.skipped else "FAIL")
-            if fr.ok:
-                detail = (
-                    f"{fr.n_entries} scans, {fr.total_frames} frames, "
-                    f"{fr.n_motors} motors ({fr.n_varying} varying), "
-                    f"{'copy' if fr.copied else 'vds'}"
-                )
-            else:
-                detail = fr.error or ""
+            detail = (
+                f"{fr.n_entries} scans, {fr.total_frames} frames, "
+                f"{fr.n_motors} motors ({fr.n_varying} varying), "
+                f"{'copy' if fr.copied else 'vds'}"
+                if fr.ok
+                else (fr.error or "")
+            )
             lines.append(f"[{status}] {fr.output_path}")
             if detail:
                 lines.append(f"        {detail}")
         return "\n".join(lines)
+
+    if hasattr(result, "method") and hasattr(result, "volume_shape"):  # StrainResult
+        lines = [
+            f"method: {result.method}",
+            f"layers: {result.n_layers}   volume: {result.volume_shape}",
+            f"stacked: {result.stacked_path}",
+        ]
+        for layer in result.layers:
+            lines.append(
+                f"  {layer.name}: shape={layer.shape} mean={layer.mean:.3e} std={layer.std:.3e}"
+            )
+        if result.skipped:
+            lines.append(f"skipped: {len(result.skipped)}")
+        return "\n".join(lines)
+
+    datasets = getattr(result, "datasets", None)
+    if hasattr(result, "output_dir") and isinstance(datasets, list):  # VisualizeResult
+        lines = [f"output: {result.output_dir}", f"datasets: {len(datasets)}"]
+        for d in datasets:
+            made = [
+                n
+                for n, v in (("layers", d.layers_dir), ("anim", d.animation), ("3d", d.top_view))
+                if v
+            ]
+            lines.append(f"  {d.name}: shape={d.shape} [{', '.join(made)}]")
+            for note in d.notes:
+                lines.append(f"      {note}")
+        lines += [f"skipped: {s}" for s in result.skipped]
+        return "\n".join(lines)
+
+    if hasattr(result, "stacked_path") and isinstance(datasets, dict):  # MosaicityResult
+        lines = [f"layers: {result.n_layers}", f"stacked: {result.stacked_path}"]
+        for key, shape in datasets.items():
+            lines.append(f"  {key}: {shape}")
+        if result.skipped:
+            lines.append(f"skipped: {len(result.skipped)}")
+        return "\n".join(lines)
+
     return repr(result)
+
+
+def _representative_image(result) -> str | None:
+    """Pick a representative output image to preview, if the stage made one."""
+    layers = getattr(result, "layers", None)
+    if layers and hasattr(layers[0], "plots"):  # StrainResult
+        for layer in layers:
+            for png in layer.plots:
+                if png.endswith("_strain.png"):
+                    return png
+            if layer.plots:
+                return layer.plots[0]
+    datasets = getattr(result, "datasets", None)
+    if isinstance(datasets, list) and datasets and hasattr(datasets[0], "name"):  # VisualizeResult
+        for d in datasets:
+            if getattr(d, "top_view", None):
+                return d.top_view
+        for d in datasets:
+            ld = getattr(d, "layers_dir", None)
+            if ld and os.path.isdir(ld):
+                pngs = sorted(p for p in os.listdir(ld) if p.endswith(".png"))
+                if pngs:
+                    return os.path.join(ld, pngs[0])
+    return None
