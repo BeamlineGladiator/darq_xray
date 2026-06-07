@@ -593,7 +593,6 @@ def run(params: dict, progress: ProgressFn | None = None) -> SlicesResult:
     out_dir = p["output_dir"] or os.path.join(
         os.path.dirname(p["mosa_volume_file"] or p["strain_volume_file"] or "."), "oblique_slices"
     )
-    os.makedirs(out_dir, exist_ok=True)
     result = SlicesResult(output_dir=out_dir)
 
     volumes = _standard_volumes(p, roi_x, roi_y)
@@ -601,6 +600,7 @@ def run(params: dict, progress: ProgressFn | None = None) -> SlicesResult:
         result.skipped.append("no input volumes found / selected")
         progress(1.0, "no volumes to slice")
         return result
+    os.makedirs(out_dir, exist_ok=True)  # only once we know there is work to do
     slices = json.loads(p["slices_json"])
     if not isinstance(slices, list) or not slices:
         raise ValueError("slices_json must be a non-empty JSON list of slice specs")
