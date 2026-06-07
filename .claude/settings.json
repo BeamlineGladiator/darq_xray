@@ -1,0 +1,29 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -c \"import sys,json,subprocess; d=json.load(sys.stdin); f=d.get('tool_input',{}).get('file_path','') or d.get('tool_response',{}).get('filePath',''); f.endswith('.py') and subprocess.run(['/home/albert/.local/bin/ruff','format',f])\" 2>/dev/null || true",
+            "timeout": 30,
+            "statusMessage": "Formatting Python file..."
+          },
+          {
+            "type": "command",
+            "command": "python3 -c \"import sys,json,subprocess; d=json.load(sys.stdin); f=d.get('tool_input',{}).get('file_path','') or d.get('tool_response',{}).get('filePath',''); f.endswith('.py') and subprocess.run(['/home/albert/.local/bin/ruff','check',f])\" || true",
+            "timeout": 30,
+            "statusMessage": "Linting Python file..."
+          },
+          {
+            "type": "command",
+            "command": "python3 -c \"import sys,json; d=json.load(sys.stdin); f=d.get('tool_input',{}).get('file_path','') or d.get('tool_response',{}).get('filePath',''); hit=f.endswith('.py') and ('/dfxm/stages/' in f or '/gui/' in f); msg='Reminder: you edited pipeline code ('+f+'). If a stage parameter, behaviour, input/output, or a viewer changed, update docs/Usage.md in this SAME change (see CLAUDE.md).'; print(json.dumps({'hookSpecificOutput':{'hookEventName':'PostToolUse','additionalContext':msg}}) if hit else '')\" 2>/dev/null || true",
+            "timeout": 15,
+            "statusMessage": "Checking docs sync..."
+          }
+        ]
+      }
+    ]
+  }
+}

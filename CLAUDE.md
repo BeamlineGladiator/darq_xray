@@ -77,6 +77,16 @@ Dependencies: `numpy h5py scipy matplotlib PySide6 pyvista pyvistaqt vtk`
   number→spin, multi-line JSON→`ParamType.TEXT`). Don't hard-code stage fields in
   the GUI.
 
+## Documentation (keep it in sync)
+
+`docs/Usage.md` is the user-facing guide (Obsidian-flavoured). **It is part of
+the contract: whenever you change a stage's parameters, behaviour,
+inputs/outputs, add or remove a stage, or change how a viewer works, update the
+matching section of `docs/Usage.md` in the SAME change** — not as a follow-up.
+A PostToolUse hook (`.claude/settings.json`) prints a reminder whenever you edit
+`dfxm/stages/` or `gui/`. Treat a code change that alters user-visible behaviour
+without a `docs/Usage.md` update as incomplete.
+
 ## Adding a stage
 
 1. New module in `dfxm/stages/` with a module-level `STAGE: StageSpec` and
@@ -88,6 +98,8 @@ Dependencies: `numpy h5py scipy matplotlib PySide6 pyvista pyvistaqt vtk`
 4. Add a result summary branch in `gui/stage_view.py::_summarize`.
 5. Add tests under `tests/` (synthetic HDF5 fixtures; golden comparison where a
    reference output exists).
+6. Document it: add a section to `docs/Usage.md` ([[#Stage reference]]) and
+   update the pipeline diagram.
 
 ## Provenance
 
