@@ -309,33 +309,38 @@ def _summarize_mosaicity(result) -> str:
     return "\n".join(lines)
 
 
-def _summarize_rocking(result) -> str:
-    lines = [
-        f"output: {result.output_dir}",
-        f"aligned: {result.aligned_path}",
-        f"layers used: {result.n_layers_used}   volume: {result.volume_shape}",
-        f"specific frame: {result.specific_frame_idx}   z-span: {result.z_span_um:.2f} µm",
-    ]
-    for d in result.datasets:
+def _dataset_lines(datasets, with_shape: bool) -> list[str]:
+    lines = []
+    for d in datasets:
         made = [
             n for n, v in (("layers", d.layers_dir), ("anim", d.animation), ("3d", d.top_view)) if v
         ]
-        lines.append(f"  {d.name}: [{', '.join(made)}]")
+        shape = f"shape={d.shape} " if with_shape else ""
+        lines.append(f"  {d.name}: {shape}[{', '.join(made)}]")
         for note in d.notes:
             lines.append(f"      {note}")
+    return lines
+
+
+def _summarize_rocking(result) -> str:
+    if result.volume_shape is None:
+        lines = ["no rocking volumes produced"]
+    else:
+        lines = [f"output: {result.output_dir}"]
+        if result.aligned_path:
+            lines.append(f"aligned: {result.aligned_path}")
+        lines += [
+            f"layers used: {result.n_layers_used}   volume: {result.volume_shape}",
+            f"specific frame: {result.specific_frame_idx}   z-span: {result.z_span_um:.2f} µm",
+        ]
+        lines += _dataset_lines(result.datasets, with_shape=False)
     lines += [f"skipped: {s}" for s in result.skipped]
     return "\n".join(lines)
 
 
 def _summarize_visualize(result) -> str:
     lines = [f"output: {result.output_dir}", f"datasets: {len(result.datasets)}"]
-    for d in result.datasets:
-        made = [
-            n for n, v in (("layers", d.layers_dir), ("anim", d.animation), ("3d", d.top_view)) if v
-        ]
-        lines.append(f"  {d.name}: shape={d.shape} [{', '.join(made)}]")
-        for note in d.notes:
-            lines.append(f"      {note}")
+    lines += _dataset_lines(result.datasets, with_shape=True)
     lines += [f"skipped: {s}" for s in result.skipped]
     return "\n".join(lines)
 
@@ -355,12 +360,15 @@ def _summarize_paraview(result) -> str:
 
 
 def _summarize_slices(result) -> str:
-    lines = [
-        f"output: {result.output_h5}",
-        f"volumes: {len(result.volume_ids)}   slices: {len(result.slice_names)}   "
-        f"planes: {result.n_planes_total}   pngs: {len(result.pngs)}",
-    ]
-    lines += [f"  {vid}" for vid in result.volume_ids]
+    if result.output_h5 is None:
+        lines = ["no volumes sliced"]
+    else:
+        lines = [
+            f"output: {result.output_h5}",
+            f"volumes: {len(result.volume_ids)}   slices: {len(result.slice_names)}   "
+            f"planes: {result.n_planes_total}   pngs: {len(result.pngs)}",
+        ]
+        lines += [f"  {vid}" for vid in result.volume_ids]
     lines += [f"skipped: {s}" for s in result.skipped]
     return "\n".join(lines)
 
@@ -379,14 +387,20 @@ def _summarize_profiles(result) -> str:
 
 
 def _summarize_matched(result) -> str:
-    lines = [
-        f"output: {result.layers_dir}",
-        f"matched {result.n_matched}/{result.n_strain}, saved {result.n_saved} "
-        f"(frame {result.frame_index})",
-        f"max match dist: {result.max_match_dist_um:.3f} µm   clim=({result.vmin:.4g}, "
-        f"{result.vmax:.4g})",
-    ]
-    lines += [f"skipped: {s}" for s in result.skipped[:5]]
+    if result.layers_dir is None:
+        lines = [
+            "no matched layers saved",
+            f"matched {result.n_matched}/{result.n_strain}",
+        ]
+    else:
+        lines = [
+            f"output: {result.layers_dir}",
+            f"matched {result.n_matched}/{result.n_strain}, saved {result.n_saved} "
+            f"(frame {result.frame_index})",
+            f"max match dist: {result.max_match_dist_um:.3f} µm   clim=({result.vmin:.4g}, "
+            f"{result.vmax:.4g})",
+        ]
+    lines += [f"skipped: {s}" for s in result.skipped]
     return "\n".join(lines)
 
 

@@ -99,7 +99,9 @@ incomplete.
 3. Wire it in `gui/bindings.py`: `STAGE_ORDER`, `STAGE_SPECS`, and an
    `experiment_overrides` branch (pre-fill from the experiment, chain prior
    outputs).
-4. Add a result summary branch in `gui/stage_view.py::_summarize`.
+4. Add a `_summarize_<stage>` formatter in `gui/stage_view.py` and register it
+   in `_SUMMARIZERS` (plus `_IMAGE_PICKERS` if the stage produces a preview
+   image). A test asserts the tables stay in sync with the registry.
 5. Add tests under `tests/` (synthetic HDF5 fixtures; golden comparison where a
    reference output exists).
 6. Document it: add a section to `docs/Usage.md` (Stage reference) and update the

@@ -122,6 +122,23 @@ def test_run_batch_over_multiple_layers(tmp_path):
     assert res.n_layers == 2 and res.volume_shape == (2, 40, 60)
 
 
+def test_batch_missing_maps_file_records_reason(tmp_path):
+    root = tmp_path / "root"
+    _write_maps(str(root / "layer__1"), _synthetic_ccmth())
+    os.makedirs(root / "layer__2")  # matches the pattern but has no maps.h5
+    res = S.run(
+        {
+            "mode": "batch",
+            "root_folder": str(root),
+            "folder_pattern": "layer__*",
+            "ccmth_ref_deg": 7.144,
+            "save_plots": False,
+        }
+    )
+    assert res.n_layers == 1
+    assert res.skipped == ["layer__2: maps.h5 not found"]
+
+
 def test_detrend_runs_before_roi(tmp_path):
     """ROI must crop the detrended map, not detrend a pre-cropped map."""
     ccmth = _synthetic_ccmth()

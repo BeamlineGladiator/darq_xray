@@ -53,6 +53,15 @@ def test_batch_stacks_four_volumes_in_layer_order(tmp_path):
         assert f.attrs["num_layers"] == 3
 
 
+def test_batch_missing_maps_file_records_reason(tmp_path):
+    root = tmp_path / "root"
+    _write_mosa(str(root / "layer__1"), 0)
+    os.makedirs(root / "layer__2")  # matches the pattern but has no maps.h5
+    res = M.run({"mode": "batch", "root_folder": str(root), "folder_pattern": "layer__*"})
+    assert res.n_layers == 1
+    assert res.skipped == ["layer__2: maps.h5 not found"]
+
+
 def test_single_mode(tmp_path):
     folder = tmp_path / "layer__1"
     _write_mosa(str(folder), 0)

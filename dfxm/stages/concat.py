@@ -399,7 +399,14 @@ def run(params: dict, progress: ProgressFn | None = None) -> ConcatResult:
                 )
                 continue
             if skip_existing and os.path.exists(output_path):
-                result.files.append(ConcatFileResult(input_path, output_path, skipped=True))
+                result.files.append(
+                    ConcatFileResult(
+                        input_path,
+                        output_path,
+                        skipped=True,
+                        error="output exists (skip_existing)",
+                    )
+                )
                 sub(1.0, "skipped (already done)")
                 continue
             try:

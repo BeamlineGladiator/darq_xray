@@ -132,7 +132,7 @@ def run(params: dict, progress: ProgressFn | None = None) -> MosaicityResult:
     for i, (name, maps_path) in enumerate(work):
         progress(i / len(work), f"mosaicity: {name}")
         if not os.path.exists(maps_path):
-            result.skipped.append(name)
+            result.skipped.append(f"{name}: {maps_filename} not found")
             continue
         try:
             with h5py.File(maps_path, "r") as f:

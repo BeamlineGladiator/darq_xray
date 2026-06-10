@@ -12,7 +12,7 @@ Pipeline (steps 1-5 run per layer; order is a physics constraint —
 3. crop the ROI;
 4. compute strain;
 5. save per-layer diagnostic plots (when ``save_plots``);
-6. finally, stack all layers into a 3-D volume.
+6. stack all layers into a 3-D volume.
 
 Plotting uses the explicit Figure/Agg API (no pyplot) so this module is safe
 to import in the Qt GUI process.
@@ -396,7 +396,7 @@ def run(params: dict, progress: ProgressFn | None = None) -> StrainResult:
     for i, (name, maps_path) in enumerate(work):
         progress(i / len(work), f"strain: {name}")
         if not os.path.exists(maps_path):
-            result.skipped.append(name)
+            result.skipped.append(f"{name}: {maps_filename} not found")
             continue
         try:
             strain, layer = process_maps_file(

@@ -78,6 +78,7 @@ def test_batch_skip_existing(batch_root):
         }
     )
     assert again.n_skipped == 3 and again.n_ok == 0
+    assert all(f.error == "output exists (skip_existing)" for f in again.files)
 
 
 def test_batch_no_matching_folders_raises(tmp_path):
