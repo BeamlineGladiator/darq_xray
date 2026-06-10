@@ -297,7 +297,7 @@ Runs a stage in a **child process** and streams messages back; UI-agnostic.
 | `app.py` | Entry point `main()` (`python3 -m gui.app`). Sets `QT_API=pyside6`, then **defers** Qt imports so the spawn-reimported worker child stays Qt-free. |
 | `main_window.py` | `MainWindow`: left column = `ExperimentPanel` + stage nav list + per-stage status panel; right = a `QStackedWidget` of one `StageView` per stage. Wires experiment changes into every view and updates a stage's ✓/✗ status on `runFinished`. |
 | `experiment_panel.py` | `ExperimentPanel`: preset dropdown + reload, a `ParamForm` over `EXPERIMENT_SCHEMA`, the preset's notes (red when present), **Apply** and **Save as…**. Emits `experimentChanged(Experiment)`. |
-| `stage_view.py` | `StageView`: the generic per-stage panel — param form + **Run/Cancel** + Log/Results/Output tabs (and a **3D** tab for volume stages, a **Pick line…** button for profiles). Launches the stage via `StageRunner` and polls it on a `QTimer`. Module helpers `_summarize(result)` (per-stage text summary) and `_representative_image(result)` (preview picker). `_VOLUME_STAGES = (visualize, rocking)`. |
+| `stage_view.py` | `StageView`: the generic per-stage panel — param form + **Run/Cancel** + Log/Results/Output tabs (and a **3D** tab for volume stages, a **Pick line…** button for profiles). Launches the stage via `StageRunner` and polls it on a `QTimer`. Module helpers `_summarize(stage_name, result)` (text summary) and `_representative_image(stage_name, result)` (preview picker) dispatch on the stage name via the `_SUMMARIZERS` / `_IMAGE_PICKERS` tables — one formatter per stage, no result-type sniffing. `_VOLUME_STAGES = (visualize, rocking)`. |
 | `bindings.py` | The glue: `STAGE_ORDER` (nav order), `STAGE_SPECS` (name→`StageSpec`), and `experiment_overrides(stage, exp)` — how an `Experiment` pre-fills each stage *and* how an upstream output auto-fills the next stage's input (the auto-chaining). |
 | `viewers.py` | Lazy interactive-viewer glue: `volume_sources(stage, result, params)` → `{name: callable}` where each callable loads/aligns one volume **only when invoked**; `_rocking_source(...)`; `inject_line_into_jobs(jobs_json, …)` writes a picked line back into a profiles job (pure, unit-tested). |
 
@@ -325,6 +325,7 @@ Runs a stage in a **child process** and streams messages back; UI-agnostic.
 | `test_config.py` | `Param`/`StageSpec` coercion, the `EXPERIMENT_SCHEMA`↔dataclass sync, preset round-trip, the shipped calibration values. |
 | `test_stage_*.py` | One per stage: synthetic-data end-to-end + targeted unit tests (and golden comparison vs the legacy script where available). |
 | `test_gui_viewers.py` | `visualize.aligned_field`, `viewers.volume_sources` (lazy), `inject_line_into_jobs` — the headless parts of the interactive viewers. |
+| `test_stage_summaries.py` | `stage_view._summarize` / `_representative_image` — the stage-name-keyed Results/Output formatters (one per stage), incl. skip-reason listing and the empty-result messages. |
 | `gui_smoke.py` | A scripted Qt smoke test (offscreen): builds the window, loads the preset, runs concat + strain through the UI, checks the 3D tab / pick button exist and that `pyvista` isn't imported at startup, and that Cancel kills a worker. Run directly, not via pytest. |
 
 > [!note] "vs-legacy" tests self-skip here

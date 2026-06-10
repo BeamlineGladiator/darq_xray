@@ -92,7 +92,7 @@ Every stage uses the same layout:
 | **Parameter form** (left) | Auto-generated from the stage's schema: dropdowns for choices, file/folder pickers for paths, spin boxes for numbers, multi-line boxes for JSON. Hover any label for a tooltip. |
 | **Run / Cancel** | Runs the stage in a **separate process** so the UI stays responsive; **Cancel** truly kills it. |
 | **Log** tab | Live progress bar + streamed messages. |
-| **Results** tab | A text summary of what was produced. |
+| **Results** tab | A text summary of what was produced — including every skipped layer/input and the reason it was skipped. |
 | **Output** tab | A representative image preview. |
 | **3D** tab | (visualize & rocking only) interactive volume viewer — see [[#Interactive viewers]]. |
 
@@ -159,7 +159,9 @@ Per-pixel axial strain (cot method) from darfix `maps.h5`, then stacked into a
 3-D volume.
 
 - **Input:** `maps.h5` per layer folder (under the processed root).
-- **Output:** per-layer diagnostic PNGs (`strain_maps/`) + `stacked_strain_volumes.h5`.
+- **Output:** per-layer diagnostic PNGs (`strain_maps/`, or the chosen *Output
+  dir*) + `stacked_strain_volumes.h5` (always written to the input/root
+  folder, regardless of *Output dir*).
 
 | Param | Meaning |
 |---|---|
@@ -168,8 +170,8 @@ Per-pixel axial strain (cot method) from darfix `maps.h5`, then stacked into a
 | `vmin` / `vmax` | colour limits (blank = symmetric auto) |
 
 > [!important] Detrend before ROI
-> The full map is polynomial (arctan) **detrended first**, then the ROI is
-> cropped. This order is a physics constraint and is not configurable.
+> The full map is **detrended first** (separable 2-D arctan fit), then the ROI
+> is cropped. This order is a physics constraint and is not configurable.
 
 ### 3. Mosaicity volume (`mosaicity`)
 

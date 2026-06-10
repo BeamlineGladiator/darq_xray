@@ -4,14 +4,15 @@ Port of the legacy ``calc_axial_strain_v7_batch`` calculator:
 
     ε = cot(ccmth_ref) · Δccmth
 
-Pipeline per layer (order is a physics constraint — **detrend before ROI**):
+Pipeline (steps 1-5 run per layer; order is a physics constraint —
+**detrend before ROI**):
 
 1. load the ccmth Center-of-mass map from maps.h5;
 2. detrend ccmth on the *full* map (separable 2-D arctan);
 3. crop the ROI;
 4. compute strain;
 5. save per-layer diagnostic plots (when ``save_plots``);
-6. stack all layers into a 3-D volume.
+6. finally, stack all layers into a 3-D volume.
 
 Plotting uses the explicit Figure/Agg API (no pyplot) so this module is safe
 to import in the Qt GUI process.
@@ -91,7 +92,13 @@ STAGE = StageSpec(
         Param("roi", ParamType.STR, "ROI", default="", help="r0,r1,c0,c1 (blank = full image)"),
         Param("vmin", ParamType.STR, "vmin", default="", help="colour-limit min (blank = auto)"),
         Param("vmax", ParamType.STR, "vmax", default="", help="colour-limit max (blank = auto)"),
-        Param("output_dir", ParamType.DIR, "Output dir", help="where plots + volume are written"),
+        Param(
+            "output_dir",
+            ParamType.DIR,
+            "Output dir",
+            help="where per-layer plots are written (the stacked volume "
+            "goes to the input/root folder)",
+        ),
         Param(
             "stacked_filename",
             ParamType.STR,
