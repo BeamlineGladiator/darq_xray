@@ -2,3 +2,6 @@ __pycache__/
 *.pyc
 .ruff_cache/
 .pytest_cache/
+
+# superpowers brainstorming sessions
+.superpowers/
