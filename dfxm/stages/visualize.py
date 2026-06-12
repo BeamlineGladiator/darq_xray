@@ -43,27 +43,88 @@ STAGE = StageSpec(
     name="visualize",
     label="Visualize volumes",
     description=(
-        "Align stacked mosaicity/strain volumes (ROI -> samy shift -> uniform Z) "
-        "and render per-layer PNGs, a layer animation, and a 3D top-view."
+        "Aligns the stacked mosaicity/strain volumes into the shared sample frame "
+        "(samy shift + uniform-Z interpolation) and renders per-layer PNGs, a layer "
+        "animation, and a 3-D top view."
     ),
     params=(
         Param(
             "mosa_volume_file",
             ParamType.PATH,
             "Mosaicity volume",
-            help="stacked_volumes.h5 (blank to skip)",
+            must_exist=True,
+            help=(
+                "The stacked mosaicity volume (stacked_volumes.h5) from the mosaicity stage. "
+                "Leave blank to skip mosaicity rendering."
+            ),
         ),
         Param(
             "strain_volume_file",
             ParamType.PATH,
             "Strain volume",
-            help="stacked_strain_volumes.h5 (blank to skip)",
+            must_exist=True,
+            help=(
+                "The stacked strain volume (stacked_strain_volumes.h5) from the strain stage. "
+                "Leave blank to skip strain rendering."
+            ),
         ),
-        Param("raw_root", ParamType.DIR, "Raw data root", help="for samy/samz motor positions"),
-        Param("mosa_pattern", ParamType.STR, "Mosaicity raw pattern", default="*"),
-        Param("strain_pattern", ParamType.STR, "Strain raw pattern", default="*"),
-        Param("samy_path", ParamType.STR, "samy path", default="1.1/instrument/positioners/samy"),
-        Param("samz_path", ParamType.STR, "samz path", default="1.1/instrument/positioners/samz"),
+        Param(
+            "raw_root",
+            ParamType.DIR,
+            "Raw data root",
+            must_exist=True,
+            help=(
+                "RAW_DATA root with the original scan folders — the samy/samz motor positions "
+                "read from there drive the alignment."
+            ),
+        ),
+        Param(
+            "mosa_pattern",
+            ParamType.STR,
+            "Mosaicity raw pattern",
+            default="*",
+            advanced=True,
+            group="Data layout",
+            help=(
+                "Glob matching the raw mosaicity scan folders, used to read their "
+                "samy/samz positions."
+            ),
+        ),
+        Param(
+            "strain_pattern",
+            ParamType.STR,
+            "Strain raw pattern",
+            default="*",
+            advanced=True,
+            group="Data layout",
+            help=(
+                "Glob matching the raw strain scan folders, used to read their samy/samz positions."
+            ),
+        ),
+        Param(
+            "samy_path",
+            ParamType.STR,
+            "samy path",
+            default="1.1/instrument/positioners/samy",
+            advanced=True,
+            group="Data layout",
+            help=(
+                "HDF5 path to the sample-Y motor position inside each scan file (under the first "
+                "BLISS entry). Only change for a different beamline file layout."
+            ),
+        ),
+        Param(
+            "samz_path",
+            ParamType.STR,
+            "samz path",
+            default="1.1/instrument/positioners/samz",
+            advanced=True,
+            group="Data layout",
+            help=(
+                "HDF5 path to the sample-Z motor position inside each scan file (under the first "
+                "BLISS entry). Only change for a different beamline file layout."
+            ),
+        ),
         Param(
             "pixel_size_x_um",
             ParamType.FLOAT,
@@ -71,6 +132,12 @@ STAGE = StageSpec(
             unit="µm",
             default=0.152,
             calibration=True,
+            advanced=True,
+            group="Calibration",
+            help=(
+                "Physical size of one detector pixel along X, in µm — sets the lateral scale of "
+                "the volumes. From the beamline optics calibration."
+            ),
         ),
         Param(
             "pixel_size_y_um",
@@ -79,36 +146,128 @@ STAGE = StageSpec(
             unit="µm",
             default=0.385,
             calibration=True,
+            advanced=True,
+            group="Calibration",
+            help=(
+                "Physical size of one detector pixel along Y, in µm — sets the vertical scale of "
+                "the volumes. From the beamline optics calibration."
+            ),
         ),
         Param(
             "samy_direction",
             ParamType.INT,
             "samy direction",
             default=-1,
-            help="+1 or -1 (motor sign convention)",
+            advanced=True,
+            group="Alignment",
+            help=(
+                "Sign (+1 or −1) relating the samy motor direction to detector X. "
+                "If features visibly march the wrong way between layers, flip the sign."
+            ),
         ),
-        Param("roi_x", ParamType.STR, "ROI X", default="", help="x0,x1 (blank = full)"),
-        Param("roi_y", ParamType.STR, "ROI Y", default="", help="y0,y1 (blank = full)"),
+        Param(
+            "roi_x",
+            ParamType.STR,
+            "ROI X",
+            default="",
+            help=(
+                "Crop along detector X as 'x0,x1' in pixels (blank = full width). "
+                "All volumes must share the same crop to stay co-registered."
+            ),
+        ),
+        Param(
+            "roi_y",
+            ParamType.STR,
+            "ROI Y",
+            default="",
+            help=(
+                "Crop along detector Y as 'y0,y1' in pixels (blank = full height). "
+                "All volumes must share the same crop to stay co-registered."
+            ),
+        ),
         Param(
             "center_method",
             ParamType.ENUM,
             "Centre method",
             default="midrange",
             choices=("midrange", "mean", "median"),
+            advanced=True,
+            group="Alignment",
+            help=(
+                "How the colour scale of the misorientation (CoM) maps is centred: "
+                "midrange = midpoint of the robust limits, or mean/median of the data. "
+                "Display only."
+            ),
         ),
-        Param("range_pct", ParamType.FLOAT, "Range percentile", default=99.5),
-        Param("output_dir", ParamType.DIR, "Output dir"),
+        Param(
+            "range_pct",
+            ParamType.FLOAT,
+            "Range percentile",
+            default=99.5,
+            advanced=True,
+            group="Alignment",
+            help=(
+                "Robust percentile for colour limits, e.g. 99.5 ignores the most extreme "
+                "0.5 % of pixels when setting the scale."
+            ),
+        ),
+        Param(
+            "output_dir",
+            ParamType.DIR,
+            "Output dir",
+            help=(
+                "Where the rendered PNGs, animation and top view are written "
+                "(blank = next to the input volume)."
+            ),
+        ),
         Param(
             "output_format",
             ParamType.ENUM,
             "Animation format",
             default="mp4",
             choices=("mp4", "gif", "both"),
+            advanced=True,
+            group="Output",
+            help=(
+                "Animation container: mp4 needs ffmpeg on PATH; gif always works; both writes both."
+            ),
         ),
-        Param("save_layers", ParamType.BOOL, "Save layer PNGs", default=True),
-        Param("save_animation", ParamType.BOOL, "Save animation", default=True),
-        Param("save_topview", ParamType.BOOL, "Save 3D top-view", default=True),
-        Param("volume_opacity", ParamType.FLOAT, "3D opacity", default=0.85),
+        Param(
+            "save_layers",
+            ParamType.BOOL,
+            "Save layer PNGs",
+            default=True,
+            advanced=True,
+            group="Output",
+            help="Write one PNG per layer of each volume.",
+        ),
+        Param(
+            "save_animation",
+            ParamType.BOOL,
+            "Save animation",
+            default=True,
+            advanced=True,
+            group="Output",
+            help="Write the layer-by-layer animation.",
+        ),
+        Param(
+            "save_topview",
+            ParamType.BOOL,
+            "Save 3D top-view",
+            default=True,
+            advanced=True,
+            group="Output",
+            help="Write the static 3-D top-view image.",
+        ),
+        Param(
+            "volume_opacity",
+            ParamType.FLOAT,
+            "3D opacity",
+            default=0.85,
+            advanced=True,
+            group="Appearance",
+            help="Opacity of the rendered 3-D top view, 0–1.",
+        ),
     ),
 )
 
