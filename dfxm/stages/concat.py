@@ -129,8 +129,8 @@ STAGE = StageSpec(
             advanced=True,
             group="Data layout",
             help=(
-                "Only BLISS entries ending in this suffix are merged (e.g. '.1' keeps 1.1, 2.1, …); "
-                "other entries such as alignment scans are ignored."
+                "Only BLISS entries ending in this suffix are merged (e.g. '.1' keeps "
+                "1.1, 2.1, …); other entries such as alignment scans are ignored."
             ),
         ),
         Param(
@@ -176,7 +176,9 @@ STAGE = StageSpec(
             default="entry_0000",
             advanced=True,
             group="Data layout",
-            help="Name of the single merged entry in the output file. darfix expects 'entry_0000'.",
+            help=(
+                "Name of the single merged entry in the output file. darfix expects 'entry_0000'."
+            ),
         ),
         Param(
             "vds_policy",
@@ -211,7 +213,10 @@ STAGE = StageSpec(
             default=True,
             advanced=True,
             group="Output",
-            help="Replace an existing output file. If off, folders with an existing output fail instead.",
+            help=(
+                "Replace an existing output file. "
+                "If off, folders with an existing output fail instead."
+            ),
         ),
     ),
 )

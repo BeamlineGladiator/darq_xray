@@ -95,7 +95,7 @@ STAGE = StageSpec(
             default="maps.h5",
             advanced=True,
             group="Data layout",
-            help=("Filename of the darfix output inside each layer folder (normally maps.h5)."),
+            help="Filename of the darfix output inside each layer folder (normally maps.h5).",
         ),
         Param(
             "chi_com_path",
@@ -155,7 +155,10 @@ STAGE = StageSpec(
             default="stacked_volumes.h5",
             advanced=True,
             group="Output",
-            help="Filename of the stacked mosaicity volume. Downstream stages expect stacked_volumes.h5.",
+            help=(
+                "Filename of the stacked mosaicity volume. "
+                "Downstream stages expect stacked_volumes.h5."
+            ),
         ),
         Param(
             "compression",
