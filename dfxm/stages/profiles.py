@@ -75,36 +75,129 @@ STAGE = StageSpec(
     name="profiles",
     label="Line profiles",
     description=(
-        "1D line profiles across oblique-slice planes (oblique_slices.h5): one "
-        "line profiles every field at identical in-plane positions -> figures + CSVs."
+        "Draws 1-D line profiles across a slice plane — every field is sampled at the same "
+        "in-plane positions, so intensity, strain and misorientation line up point by point. "
+        "Writes a stacked figure plus CSVs. Use 'Pick line…' to choose the line by clicking "
+        "on the plane."
     ),
     params=(
-        Param("consolidated_h5", ParamType.PATH, "Slices file", help="oblique_slices.h5"),
         Param(
-            "mode", ParamType.ENUM, "Mode", default="parameter", choices=("parameter", "preview")
+            "consolidated_h5",
+            ParamType.PATH,
+            "Slices file",
+            must_exist=True,
+            help="The oblique_slices.h5 file written by the slices stage.",
+        ),
+        Param(
+            "mode",
+            ParamType.ENUM,
+            "Mode",
+            default="parameter",
+            choices=("parameter", "preview"),
+            help=(
+                "'parameter' runs the jobs below and saves figures/CSVs (reproducible); "
+                "'preview' just displays the plane so you can inspect it."
+            ),
         ),
         Param(
             "reference_volume_id",
             ParamType.STR,
             "Reference field",
             default="",
-            help="volume id for the top image (blank = auto: raw_sum, else first)",
+            advanced=True,
+            group="Selection",
+            help=(
+                "Which field is shown as the top image of the figure "
+                "(blank = raw_sum if present, else the first field)."
+            ),
         ),
         Param(
             "volume_ids",
             ParamType.STR,
             "Fields",
             default="",
-            help="comma-separated ids to profile/order (blank = all)",
+            advanced=True,
+            group="Selection",
+            help="Comma-separated field ids to profile, in this order (blank = all fields).",
         ),
-        Param("jobs_json", ParamType.TEXT, "Jobs (JSON)", default=_DEFAULT_JOBS),
-        Param("save_csv", ParamType.BOOL, "Save CSV", default=True),
-        Param("save_overview", ParamType.BOOL, "Save overviews", default=True),
-        Param("line_color", ParamType.STR, "Line colour", default="", help="blank = auto per cmap"),
-        Param("geom_tol_um", ParamType.FLOAT, "Geometry tol", unit="µm", default=1e-4),
-        Param("offset_tol_um", ParamType.FLOAT, "Offset tol", unit="µm", default=1e-3),
-        Param("fig_dpi", ParamType.INT, "Figure DPI", default=200),
-        Param("output_dir", ParamType.DIR, "Output dir"),
+        Param(
+            "jobs_json",
+            ParamType.TEXT,
+            "Jobs (JSON)",
+            default=_DEFAULT_JOBS,
+            help=(
+                "JSON list of profile jobs: slice name, plane offset, line start/end in µm "
+                "('start_uv'/'end_uv'), and band width in pixels. Easiest filled by 'Pick line…'."
+            ),
+        ),
+        Param(
+            "save_csv",
+            ParamType.BOOL,
+            "Save CSV",
+            default=True,
+            advanced=True,
+            group="Output",
+            help="Write one CSV per profiled field.",
+        ),
+        Param(
+            "save_overview",
+            ParamType.BOOL,
+            "Save overviews",
+            default=True,
+            advanced=True,
+            group="Output",
+            help="Write per-field overview images with the profile line drawn on the plane.",
+        ),
+        Param(
+            "line_color",
+            ParamType.STR,
+            "Line colour",
+            default="",
+            advanced=True,
+            group="Appearance",
+            help=(
+                "Colour of the profile line drawn on the overview images "
+                "(blank = automatic per colormap)."
+            ),
+        ),
+        Param(
+            "geom_tol_um",
+            ParamType.FLOAT,
+            "Geometry tol",
+            unit="µm",
+            default=1e-4,
+            advanced=True,
+            group="Matching",
+            help=(
+                "Maximum allowed geometry mismatch between fields sharing a plane, in µm — "
+                "guards against profiling mis-registered slices."
+            ),
+        ),
+        Param(
+            "offset_tol_um",
+            ParamType.FLOAT,
+            "Offset tol",
+            unit="µm",
+            default=1e-3,
+            advanced=True,
+            group="Matching",
+            help="Tolerance when matching the requested plane offset to the stored planes, in µm.",
+        ),
+        Param(
+            "fig_dpi",
+            ParamType.INT,
+            "Figure DPI",
+            default=200,
+            advanced=True,
+            group="Appearance",
+            help="Resolution of the saved figures, in dots per inch.",
+        ),
+        Param(
+            "output_dir",
+            ParamType.DIR,
+            "Output dir",
+            help="Where the figures and CSVs are written (blank = next to the slices file).",
+        ),
     ),
 )
 
