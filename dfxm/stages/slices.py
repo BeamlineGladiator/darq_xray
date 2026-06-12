@@ -94,25 +94,98 @@ STAGE = StageSpec(
     name="slices",
     label="Oblique slices",
     description=(
-        "Extract arbitrary planar slices (defined in physical µm, optionally "
-        "swept) from aligned mosaicity/strain/rocking volumes -> oblique_slices.h5 + PNGs."
+        "Cuts arbitrary planes — defined in physical µm, optionally swept along their normal — "
+        "through all aligned volumes at once, so every quantity is sampled at identical "
+        "positions. Writes oblique_slices.h5 (used by profiles) plus a PNG per plane."
     ),
     params=(
-        Param("mosa_volume_file", ParamType.PATH, "Mosaicity volume", help="stacked_volumes.h5"),
         Param(
-            "strain_volume_file", ParamType.PATH, "Strain volume", help="stacked_strain_volumes.h5"
+            "mosa_volume_file",
+            ParamType.PATH,
+            "Mosaicity volume",
+            must_exist=True,
+            help=(
+                "The stacked mosaicity volume (stacked_volumes.h5) from the mosaicity stage. "
+                "Leave blank to skip mosaicity fields."
+            ),
+        ),
+        Param(
+            "strain_volume_file",
+            ParamType.PATH,
+            "Strain volume",
+            must_exist=True,
+            help=(
+                "The stacked strain volume (stacked_strain_volumes.h5) from the strain stage. "
+                "Leave blank to skip strain."
+            ),
         ),
         Param(
             "aligned_rocking_file",
             ParamType.PATH,
             "Aligned rocking volume",
-            help="aligned_raw_rocking_volumes.h5",
+            must_exist=True,
+            help=(
+                "The aligned rocking volume (aligned_raw_rocking_volumes.h5) from the rocking "
+                "stage. Leave blank to slice without raw intensity."
+            ),
         ),
-        Param("raw_root", ParamType.DIR, "Raw data root", help="for samy/samz of stacked volumes"),
-        Param("mosa_pattern", ParamType.STR, "Mosaicity raw pattern", default="*"),
-        Param("strain_pattern", ParamType.STR, "Strain raw pattern", default="*"),
-        Param("samy_path", ParamType.STR, "samy path", default="1.1/instrument/positioners/samy"),
-        Param("samz_path", ParamType.STR, "samz path", default="1.1/instrument/positioners/samz"),
+        Param(
+            "raw_root",
+            ParamType.DIR,
+            "Raw data root",
+            must_exist=True,
+            help=(
+                "RAW_DATA root with the original scan folders — provides the samy/samz "
+                "positions used to align the stacked volumes."
+            ),
+        ),
+        Param(
+            "mosa_pattern",
+            ParamType.STR,
+            "Mosaicity raw pattern",
+            default="*",
+            advanced=True,
+            group="Data layout",
+            help=(
+                "Glob matching the raw mosaicity scan folders, used to read their "
+                "samy/samz positions."
+            ),
+        ),
+        Param(
+            "strain_pattern",
+            ParamType.STR,
+            "Strain raw pattern",
+            default="*",
+            advanced=True,
+            group="Data layout",
+            help=(
+                "Glob matching the raw strain scan folders, used to read their samy/samz positions."
+            ),
+        ),
+        Param(
+            "samy_path",
+            ParamType.STR,
+            "samy path",
+            default="1.1/instrument/positioners/samy",
+            advanced=True,
+            group="Data layout",
+            help=(
+                "HDF5 path to the sample-Y motor position inside each scan file "
+                "(under the first BLISS entry). Only change for a different beamline file layout."
+            ),
+        ),
+        Param(
+            "samz_path",
+            ParamType.STR,
+            "samz path",
+            default="1.1/instrument/positioners/samz",
+            advanced=True,
+            group="Data layout",
+            help=(
+                "HDF5 path to the sample-Z motor position inside each scan file "
+                "(under the first BLISS entry). Only change for a different beamline file layout."
+            ),
+        ),
         Param(
             "pixel_size_x_um",
             ParamType.FLOAT,
@@ -120,6 +193,12 @@ STAGE = StageSpec(
             unit="µm",
             default=0.152,
             calibration=True,
+            advanced=True,
+            group="Calibration",
+            help=(
+                "Physical size of one detector pixel along X, in µm — sets the physical scale "
+                "the planes are defined in. From the beamline optics calibration."
+            ),
         ),
         Param(
             "pixel_size_y_um",
@@ -128,34 +207,184 @@ STAGE = StageSpec(
             unit="µm",
             default=0.385,
             calibration=True,
+            advanced=True,
+            group="Calibration",
+            help=(
+                "Physical size of one detector pixel along Y, in µm — sets the physical scale "
+                "the planes are defined in. From the beamline optics calibration."
+            ),
         ),
-        Param("samy_direction", ParamType.INT, "samy direction", default=-1),
         Param(
-            "align_roi_x", ParamType.STR, "Align ROI X", default="", help="x0,x1 (match the export)"
+            "samy_direction",
+            ParamType.INT,
+            "samy direction",
+            default=-1,
+            advanced=True,
+            group="Alignment",
+            help=(
+                "Sign (+1 or −1) relating the samy motor direction to detector X. "
+                "If features visibly march the wrong way between layers, flip the sign."
+            ),
         ),
         Param(
-            "align_roi_y", ParamType.STR, "Align ROI Y", default="", help="y0,y1 (match the export)"
+            "align_roi_x",
+            ParamType.STR,
+            "Align ROI X",
+            default="",
+            advanced=True,
+            group="Alignment",
+            help=(
+                "Detector crop 'x0,x1' used during alignment — must match the crop used "
+                "when the volumes were rendered/exported."
+            ),
         ),
-        Param("abs_fwhm", ParamType.BOOL, "abs() FWHM", default=True),
+        Param(
+            "align_roi_y",
+            ParamType.STR,
+            "Align ROI Y",
+            default="",
+            advanced=True,
+            group="Alignment",
+            help=(
+                "Detector crop 'y0,y1' used during alignment — must match the crop used "
+                "when the volumes were rendered/exported."
+            ),
+        ),
+        Param(
+            "abs_fwhm",
+            ParamType.BOOL,
+            "abs() FWHM",
+            default=True,
+            advanced=True,
+            group="Alignment",
+            help="Use absolute FWHM values (darfix fits can produce negative widths).",
+        ),
         Param(
             "center_method",
             ParamType.ENUM,
             "Centre method",
             default="midrange",
             choices=("midrange", "mean", "median"),
+            advanced=True,
+            group="Alignment",
+            help=(
+                "How the colour scale of the misorientation (CoM) fields is centred: "
+                "midrange = midpoint of the robust limits, or mean/median. Display only."
+            ),
         ),
-        Param("range_pct", ParamType.FLOAT, "Range percentile", default=99.5),
-        Param("include_mosa_com_chi", ParamType.BOOL, "Slice χ misorientation", default=True),
-        Param("include_mosa_fwhm_chi", ParamType.BOOL, "Slice χ FWHM", default=True),
-        Param("include_mosa_com_mu", ParamType.BOOL, "Slice μ misorientation", default=True),
-        Param("include_mosa_fwhm_mu", ParamType.BOOL, "Slice μ FWHM", default=True),
-        Param("include_strain", ParamType.BOOL, "Slice strain", default=True),
-        Param("include_raw_sum", ParamType.BOOL, "Slice raw sum", default=True),
-        Param("include_raw_specific", ParamType.BOOL, "Slice raw specific", default=True),
-        Param("slices_json", ParamType.TEXT, "Slices (JSON)", default=_DEFAULT_SLICES),
-        Param("output_dir", ParamType.DIR, "Output dir"),
-        Param("output_h5_name", ParamType.STR, "Output filename", default="oblique_slices.h5"),
-        Param("save_png", ParamType.BOOL, "Save PNGs", default=True),
+        Param(
+            "range_pct",
+            ParamType.FLOAT,
+            "Range percentile",
+            default=99.5,
+            advanced=True,
+            group="Alignment",
+            help=(
+                "Robust percentile for colour limits, e.g. 99.5 ignores the most "
+                "extreme 0.5 % of pixels."
+            ),
+        ),
+        Param(
+            "include_mosa_com_chi",
+            ParamType.BOOL,
+            "Slice χ misorientation",
+            default=True,
+            advanced=True,
+            group="Quantities",
+            help="Slice the χ misorientation (centre-of-mass) volume.",
+        ),
+        Param(
+            "include_mosa_fwhm_chi",
+            ParamType.BOOL,
+            "Slice χ FWHM",
+            default=True,
+            advanced=True,
+            group="Quantities",
+            help="Slice the χ FWHM (rocking-curve width) volume.",
+        ),
+        Param(
+            "include_mosa_com_mu",
+            ParamType.BOOL,
+            "Slice μ misorientation",
+            default=True,
+            advanced=True,
+            group="Quantities",
+            help="Slice the μ misorientation (centre-of-mass) volume.",
+        ),
+        Param(
+            "include_mosa_fwhm_mu",
+            ParamType.BOOL,
+            "Slice μ FWHM",
+            default=True,
+            advanced=True,
+            group="Quantities",
+            help="Slice the μ FWHM (curve width) volume.",
+        ),
+        Param(
+            "include_strain",
+            ParamType.BOOL,
+            "Slice strain",
+            default=True,
+            advanced=True,
+            group="Quantities",
+            help="Slice the axial strain volume.",
+        ),
+        Param(
+            "include_raw_sum",
+            ParamType.BOOL,
+            "Slice raw sum",
+            default=True,
+            advanced=True,
+            group="Quantities",
+            help="Slice the summed raw rocking intensity volume.",
+        ),
+        Param(
+            "include_raw_specific",
+            ParamType.BOOL,
+            "Slice raw specific",
+            default=True,
+            advanced=True,
+            group="Quantities",
+            help="Slice the specific-frame raw intensity volume.",
+        ),
+        Param(
+            "slices_json",
+            ParamType.TEXT,
+            "Slices (JSON)",
+            default=_DEFAULT_SLICES,
+            help=(
+                "JSON list of plane definitions. Each needs a name and a normal vector; "
+                "'extent': 'auto' fits the plane to the data, and 'sweep_step_um' adds "
+                "parallel planes along the normal. The default shows the format."
+            ),
+        ),
+        Param(
+            "output_dir",
+            ParamType.DIR,
+            "Output dir",
+            help="Where oblique_slices.h5 and the per-plane PNGs are written.",
+        ),
+        Param(
+            "output_h5_name",
+            ParamType.STR,
+            "Output filename",
+            default="oblique_slices.h5",
+            advanced=True,
+            group="Output",
+            help=(
+                "Filename of the consolidated slices file. "
+                "The profiles stage expects oblique_slices.h5."
+            ),
+        ),
+        Param(
+            "save_png",
+            ParamType.BOOL,
+            "Save PNGs",
+            default=True,
+            advanced=True,
+            group="Output",
+            help="Write a PNG per plane in addition to the HDF5.",
+        ),
     ),
 )
 
