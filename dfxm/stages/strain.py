@@ -43,27 +43,68 @@ STAGE = StageSpec(
     name="strain",
     label="Axial strain",
     description=(
-        "Per-pixel axial strain from ccmth COM (cot method, ccmth-only): detrend ccmth, "
-        "crop ROI, compute strain, and stack layers into a 3D volume."
+        "Turns the darfix maps.h5 centre-of-mass maps into per-layer axial strain maps "
+        "(cot method) and stacks them into a 3-D volume. Needs maps.h5 from darfix in each "
+        "layer folder; writes per-layer PNGs plus stacked_strain_volumes.h5."
     ),
     params=(
-        Param("mode", ParamType.ENUM, "Mode", default="batch", choices=("single", "batch")),
+        Param(
+            "mode",
+            ParamType.ENUM,
+            "Mode",
+            default="batch",
+            choices=("single", "batch"),
+            help=(
+                "single processes one layer folder ('Input folder'); batch processes every "
+                "subfolder of 'Root folder' matching 'Folder pattern'."
+            ),
+        ),
         Param(
             "input_folder",
             ParamType.DIR,
             "Input folder",
-            help="folder holding maps.h5 (single mode)",
+            must_exist=True,
+            help="Layer folder containing the darfix maps.h5 (single mode only).",
         ),
         Param(
-            "root_folder", ParamType.DIR, "Root folder", help="parent of layer folders (batch mode)"
+            "root_folder",
+            ParamType.DIR,
+            "Root folder",
+            must_exist=True,
+            help=(
+                "Parent of the layer folders (batch mode only); every matching subfolder "
+                "with a maps.h5 becomes one layer of the volume."
+            ),
         ),
-        Param("folder_pattern", ParamType.STR, "Folder pattern", default="*"),
-        Param("maps_filename", ParamType.STR, "maps filename", default="maps.h5"),
+        Param(
+            "folder_pattern",
+            ParamType.STR,
+            "Folder pattern",
+            default="*",
+            advanced=True,
+            group="Data layout",
+            help="Glob selecting which subfolders of the root are strain layers in batch mode.",
+        ),
+        Param(
+            "maps_filename",
+            ParamType.STR,
+            "maps filename",
+            default="maps.h5",
+            advanced=True,
+            group="Data layout",
+            help="Filename of the darfix output inside each layer folder (normally maps.h5).",
+        ),
         Param(
             "ccmth_com_path",
             ParamType.STR,
             "ccmth COM path",
             default="/entry/ccmth/Center of mass/Center of mass",
+            advanced=True,
+            group="Data layout",
+            help=(
+                "HDF5 path of the ccmth centre-of-mass dataset inside maps.h5, as written by "
+                "darfix. Only change for a non-standard darfix export."
+            ),
         ),
         Param(
             "ccmth_ref_deg",
@@ -72,6 +113,13 @@ STAGE = StageSpec(
             unit="deg",
             default=7.144,
             calibration=True,
+            advanced=True,
+            group="Calibration",
+            help=(
+                "Reference Bragg angle θ of the unstrained lattice, in degrees. Strain is "
+                "cot(θ_ref)·Δccmth per pixel, so a wrong reference silently shifts and scales "
+                "every strain value. Confirm against the beamline alignment for your experiment."
+            ),
         ),
         Param(
             "pixel_size_x_um",
@@ -80,6 +128,12 @@ STAGE = StageSpec(
             unit="µm",
             default=0.152,
             calibration=True,
+            advanced=True,
+            group="Calibration",
+            help=(
+                "Physical size of one detector pixel along X, in µm — sets the lateral scale "
+                "of every map and volume. From the beamline optics calibration."
+            ),
         ),
         Param(
             "pixel_size_y_um",
@@ -88,24 +142,81 @@ STAGE = StageSpec(
             unit="µm",
             default=0.385,
             calibration=True,
+            advanced=True,
+            group="Calibration",
+            help=(
+                "Physical size of one detector pixel along Y, in µm — sets the vertical scale "
+                "of every map and volume. From the beamline optics calibration."
+            ),
         ),
-        Param("roi", ParamType.STR, "ROI", default="", help="r0,r1,c0,c1 (blank = full image)"),
-        Param("vmin", ParamType.STR, "vmin", default="", help="colour-limit min (blank = auto)"),
-        Param("vmax", ParamType.STR, "vmax", default="", help="colour-limit max (blank = auto)"),
+        Param(
+            "roi",
+            ParamType.STR,
+            "ROI",
+            default="",
+            help=(
+                "Region of interest as 'r0,r1,c0,c1' in pixels (blank = full image). Cropped "
+                "after detrending, so the trend fit always uses the full map — that order is a "
+                "physics constraint."
+            ),
+        ),
+        Param(
+            "vmin",
+            ParamType.STR,
+            "vmin",
+            default="",
+            advanced=True,
+            group="Appearance",
+            help=(
+                "Lower colour limit of the strain plots (blank = symmetric automatic limits). "
+                "Display only — does not affect the saved data."
+            ),
+        ),
+        Param(
+            "vmax",
+            ParamType.STR,
+            "vmax",
+            default="",
+            advanced=True,
+            group="Appearance",
+            help=(
+                "Upper colour limit of the strain plots (blank = symmetric automatic limits). "
+                "Display only — does not affect the saved data."
+            ),
+        ),
         Param(
             "output_dir",
             ParamType.DIR,
             "Output dir",
-            help="where per-layer plots are written (the stacked volume "
-            "goes to the input/root folder)",
+            help=(
+                "Where the per-layer diagnostic PNGs go (default: a strain_maps folder). "
+                "The stacked 3-D volume is always written to the input/root folder, not here."
+            ),
         ),
         Param(
             "stacked_filename",
             ParamType.STR,
             "Stacked filename",
             default="stacked_strain_volumes.h5",
+            advanced=True,
+            group="Output",
+            help=(
+                "Filename of the stacked 3-D strain volume written to the input/root folder. "
+                "Downstream stages expect stacked_strain_volumes.h5."
+            ),
         ),
-        Param("save_plots", ParamType.BOOL, "Save plots", default=True),
+        Param(
+            "save_plots",
+            ParamType.BOOL,
+            "Save plots",
+            default=True,
+            advanced=True,
+            group="Appearance",
+            help=(
+                "Write the per-layer diagnostic PNGs (raw, detrended, strain). Turn off for a "
+                "faster volume-only run."
+            ),
+        ),
     ),
 )
 
