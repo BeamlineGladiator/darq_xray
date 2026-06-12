@@ -34,19 +34,75 @@ STAGE = StageSpec(
     name="matched",
     label="Rocking-matched layers",
     description=(
-        "For each strain layer, find the nearest rocking scan by (samy, samz), "
-        "load a background-subtracted frame, apply the strain samy shift, and "
-        "save grayscale PNGs pixel-aligned with the strain/mosaicity layers."
+        "For each strain layer, finds the rocking scan taken at the same (samy, samz) sample "
+        "position and saves one background-subtracted detector frame as a grayscale PNG, "
+        "pixel-aligned with the strain/mosaicity layer images."
     ),
     params=(
-        Param("raw_root", ParamType.DIR, "Raw data root"),
-        Param("strain_pattern", ParamType.STR, "Strain pattern", default="*"),
-        Param("rocking_pattern", ParamType.STR, "Rocking pattern", default="*"),
-        Param("samy_path", ParamType.STR, "samy path", default="1.1/instrument/positioners/samy"),
-        Param("samz_path", ParamType.STR, "samz path", default="1.1/instrument/positioners/samz"),
-        Param("pco_ff_path", ParamType.STR, "Detector path", default="1.1/measurement/pco_ff"),
         Param(
-            "frame_index", ParamType.INT, "Frame index", default=0, help="0-based frame in pco_ff"
+            "raw_root",
+            ParamType.DIR,
+            "Raw data root",
+            must_exist=True,
+            help="RAW_DATA root containing both the strain and the rocking scan folders.",
+        ),
+        Param(
+            "strain_pattern",
+            ParamType.STR,
+            "Strain pattern",
+            default="*",
+            advanced=True,
+            group="Data layout",
+            help="Glob matching the strain scan folders (one per layer).",
+        ),
+        Param(
+            "rocking_pattern",
+            ParamType.STR,
+            "Rocking pattern",
+            default="*",
+            advanced=True,
+            group="Data layout",
+            help="Glob matching the rocking scan folders to search for position matches.",
+        ),
+        Param(
+            "samy_path",
+            ParamType.STR,
+            "samy path",
+            default="1.1/instrument/positioners/samy",
+            advanced=True,
+            group="Data layout",
+            help=(
+                "HDF5 path to the sample-Y motor position inside each scan file "
+                "(under the first BLISS entry). Only change for a different beamline file layout."
+            ),
+        ),
+        Param(
+            "samz_path",
+            ParamType.STR,
+            "samz path",
+            default="1.1/instrument/positioners/samz",
+            advanced=True,
+            group="Data layout",
+            help=(
+                "HDF5 path to the sample-Z motor position inside each scan file "
+                "(under the first BLISS entry). Only change for a different beamline file layout."
+            ),
+        ),
+        Param(
+            "pco_ff_path",
+            ParamType.STR,
+            "Detector path",
+            default="1.1/measurement/pco_ff",
+            advanced=True,
+            group="Data layout",
+            help="HDF5 path to the detector frames inside each rocking scan file.",
+        ),
+        Param(
+            "frame_index",
+            ParamType.INT,
+            "Frame index",
+            default=0,
+            help="0-based detector frame to extract from each matched rocking scan.",
         ),
         Param(
             "match_threshold_mm",
@@ -54,7 +110,10 @@ STAGE = StageSpec(
             "Match threshold",
             unit="mm",
             default=0.0004,
-            help="max (samy,samz) distance to accept a match",
+            help=(
+                "Maximum (samy, samz) distance in mm for a rocking scan to count as matching "
+                "a strain layer; layers with no scan inside the threshold are skipped."
+            ),
         ),
         Param(
             "pixel_size_x_um",
@@ -63,6 +122,12 @@ STAGE = StageSpec(
             unit="µm",
             default=0.152,
             calibration=True,
+            advanced=True,
+            group="Calibration",
+            help=(
+                "Physical size of one detector pixel along X, in µm. "
+                "From the beamline optics calibration."
+            ),
         ),
         Param(
             "pixel_size_y_um",
@@ -71,14 +136,76 @@ STAGE = StageSpec(
             unit="µm",
             default=0.385,
             calibration=True,
+            advanced=True,
+            group="Calibration",
+            help=(
+                "Physical size of one detector pixel along Y, in µm. "
+                "From the beamline optics calibration."
+            ),
         ),
-        Param("samy_direction", ParamType.INT, "samy direction", default=-1),
-        Param("colormap", ParamType.STR, "Colormap", default="gray"),
-        Param("vmin", ParamType.STR, "vmin", default="", help="colour min (blank = auto)"),
-        Param("vmax", ParamType.STR, "vmax", default="", help="colour max (blank = auto)"),
-        Param("auto_pct_lo", ParamType.FLOAT, "Auto pct low", default=1.0),
-        Param("auto_pct_hi", ParamType.FLOAT, "Auto pct high", default=95.0),
-        Param("output_dir", ParamType.DIR, "Output dir"),
+        Param(
+            "samy_direction",
+            ParamType.INT,
+            "samy direction",
+            default=-1,
+            advanced=True,
+            group="Alignment",
+            help=(
+                "Sign (+1 or −1) relating the samy motor direction to detector X — "
+                "the same shift convention as the strain layers."
+            ),
+        ),
+        Param(
+            "colormap",
+            ParamType.STR,
+            "Colormap",
+            default="gray",
+            advanced=True,
+            group="Appearance",
+            help="Matplotlib colormap for the saved PNGs (default gray).",
+        ),
+        Param(
+            "vmin",
+            ParamType.STR,
+            "vmin",
+            default="",
+            advanced=True,
+            group="Appearance",
+            help="Lower intensity limit (blank = the automatic percentile below).",
+        ),
+        Param(
+            "vmax",
+            ParamType.STR,
+            "vmax",
+            default="",
+            advanced=True,
+            group="Appearance",
+            help="Upper intensity limit (blank = the automatic percentile below).",
+        ),
+        Param(
+            "auto_pct_lo",
+            ParamType.FLOAT,
+            "Auto pct low",
+            default=1.0,
+            advanced=True,
+            group="Appearance",
+            help="Percentile used for the automatic lower intensity limit.",
+        ),
+        Param(
+            "auto_pct_hi",
+            ParamType.FLOAT,
+            "Auto pct high",
+            default=95.0,
+            advanced=True,
+            group="Appearance",
+            help="Percentile used for the automatic upper intensity limit.",
+        ),
+        Param(
+            "output_dir",
+            ParamType.DIR,
+            "Output dir",
+            help="Where the matched layer PNGs are written.",
+        ),
     ),
 )
 
