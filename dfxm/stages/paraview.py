@@ -39,19 +39,87 @@ STAGE = StageSpec(
     name="paraview",
     label="ParaView export (PVTI)",
     description=(
-        "Align mosaicity/strain volumes and write partitioned PVTI (.pvti + .vti "
-        "pieces) with a valid_mask for parallel ParaView volume rendering."
+        "Aligns the mosaicity/strain volumes and exports them as partitioned .pvti datasets "
+        "(with a validity mask) for 3-D volume rendering in ParaView, outside this app."
     ),
     params=(
-        Param("mosa_volume_file", ParamType.PATH, "Mosaicity volume", help="stacked_volumes.h5"),
         Param(
-            "strain_volume_file", ParamType.PATH, "Strain volume", help="stacked_strain_volumes.h5"
+            "mosa_volume_file",
+            ParamType.PATH,
+            "Mosaicity volume",
+            must_exist=True,
+            help=(
+                "The stacked mosaicity volume (stacked_volumes.h5) from the mosaicity stage. "
+                "Leave blank to skip the mosaicity export."
+            ),
         ),
-        Param("raw_root", ParamType.DIR, "Raw data root", help="for samy/samz motor positions"),
-        Param("mosa_pattern", ParamType.STR, "Mosaicity raw pattern", default="*"),
-        Param("strain_pattern", ParamType.STR, "Strain raw pattern", default="*"),
-        Param("samy_path", ParamType.STR, "samy path", default="1.1/instrument/positioners/samy"),
-        Param("samz_path", ParamType.STR, "samz path", default="1.1/instrument/positioners/samz"),
+        Param(
+            "strain_volume_file",
+            ParamType.PATH,
+            "Strain volume",
+            must_exist=True,
+            help=(
+                "The stacked strain volume (stacked_strain_volumes.h5) from the strain stage. "
+                "Leave blank to skip the strain export."
+            ),
+        ),
+        Param(
+            "raw_root",
+            ParamType.DIR,
+            "Raw data root",
+            must_exist=True,
+            help=(
+                "RAW_DATA root with the original scan folders — the samy/samz motor positions "
+                "read from there drive the alignment."
+            ),
+        ),
+        Param(
+            "mosa_pattern",
+            ParamType.STR,
+            "Mosaicity raw pattern",
+            default="*",
+            advanced=True,
+            group="Data layout",
+            help=(
+                "Glob matching the raw mosaicity scan folders, used to read their samy/samz "
+                "positions."
+            ),
+        ),
+        Param(
+            "strain_pattern",
+            ParamType.STR,
+            "Strain raw pattern",
+            default="*",
+            advanced=True,
+            group="Data layout",
+            help=(
+                "Glob matching the raw strain scan folders, used to read their samy/samz positions."
+            ),
+        ),
+        Param(
+            "samy_path",
+            ParamType.STR,
+            "samy path",
+            default="1.1/instrument/positioners/samy",
+            advanced=True,
+            group="Data layout",
+            help=(
+                "HDF5 path to the sample-Y motor position inside each scan file (under the first "
+                "BLISS entry). Only change for a different beamline file layout."
+            ),
+        ),
+        Param(
+            "samz_path",
+            ParamType.STR,
+            "samz path",
+            default="1.1/instrument/positioners/samz",
+            advanced=True,
+            group="Data layout",
+            help=(
+                "HDF5 path to the sample-Z motor position inside each scan file (under the first "
+                "BLISS entry). Only change for a different beamline file layout."
+            ),
+        ),
         Param(
             "pixel_size_x_um",
             ParamType.FLOAT,
@@ -59,6 +127,12 @@ STAGE = StageSpec(
             unit="µm",
             default=0.152,
             calibration=True,
+            advanced=True,
+            group="Calibration",
+            help=(
+                "Physical size of one detector pixel along X, in µm — sets the voxel spacing of "
+                "the export. From the beamline optics calibration."
+            ),
         ),
         Param(
             "pixel_size_y_um",
@@ -67,50 +141,189 @@ STAGE = StageSpec(
             unit="µm",
             default=0.385,
             calibration=True,
+            advanced=True,
+            group="Calibration",
+            help=(
+                "Physical size of one detector pixel along Y, in µm — sets the voxel spacing of "
+                "the export. From the beamline optics calibration."
+            ),
         ),
-        Param("samy_direction", ParamType.INT, "samy direction", default=-1, help="+1 or -1"),
-        Param("roi_x", ParamType.STR, "ROI X", default="", help="x0,x1 (blank = full)"),
-        Param("roi_y", ParamType.STR, "ROI Y", default="", help="y0,y1 (blank = full)"),
+        Param(
+            "samy_direction",
+            ParamType.INT,
+            "samy direction",
+            default=-1,
+            advanced=True,
+            group="Alignment",
+            help=(
+                "Sign (+1 or −1) relating the samy motor direction to detector X. If features "
+                "visibly march the wrong way between layers, flip the sign."
+            ),
+        ),
+        Param(
+            "roi_x",
+            ParamType.STR,
+            "ROI X",
+            default="",
+            help=(
+                "Crop along detector X as 'x0,x1' in pixels (blank = full width). All volumes "
+                "must share the same crop to stay co-registered."
+            ),
+        ),
+        Param(
+            "roi_y",
+            ParamType.STR,
+            "ROI Y",
+            default="",
+            help=(
+                "Crop along detector Y as 'y0,y1' in pixels (blank = full height). All volumes "
+                "must share the same crop to stay co-registered."
+            ),
+        ),
         Param(
             "center_method",
             ParamType.ENUM,
             "Centre method",
             default="mean",
             choices=("mean", "median"),
+            advanced=True,
+            group="Alignment",
+            help=(
+                "Statistic used to centre the misorientation values before export: mean or median."
+            ),
         ),
-        Param("center_mosa_com", ParamType.BOOL, "Centre mosa CoM", default=True),
-        Param("center_strain", ParamType.BOOL, "Centre strain", default=False),
-        Param("abs_mosa_fwhm", ParamType.BOOL, "abs() FWHM", default=True),
+        Param(
+            "center_mosa_com",
+            ParamType.BOOL,
+            "Centre mosa CoM",
+            default=True,
+            advanced=True,
+            group="Alignment",
+            help=(
+                "Subtract the centre statistic from the χ/μ CoM volumes so misorientation is "
+                "relative to the bulk orientation."
+            ),
+        ),
+        Param(
+            "center_strain",
+            ParamType.BOOL,
+            "Centre strain",
+            default=False,
+            advanced=True,
+            group="Alignment",
+            help=(
+                "Also centre the strain volume (usually off — strain is already relative to the "
+                "reference angle)."
+            ),
+        ),
+        Param(
+            "abs_mosa_fwhm",
+            ParamType.BOOL,
+            "abs() FWHM",
+            default=True,
+            advanced=True,
+            group="Alignment",
+            help="Export FWHM as absolute values (darfix fits can produce negative widths).",
+        ),
         Param(
             "anchor_origin_to_reference",
             ParamType.BOOL,
             "Anchor origin",
             default=False,
-            help="place world origin in the raw-detector-absolute frame (co-register with rocking)",
+            advanced=True,
+            group="Alignment",
+            help=(
+                "Place the world origin in the raw-detector frame shared with the rocking volume, "
+                "so everything co-registers in ParaView."
+            ),
         ),
         Param(
             "mosa_darfix_origin_xy",
             ParamType.STR,
             "Mosa darfix origin",
             default="105,230",
-            help="x,y",
+            advanced=True,
+            group="Alignment",
+            help=(
+                "Pixel position 'x,y' of the darfix crop origin for the mosaicity maps, used "
+                "when anchoring to the reference frame."
+            ),
         ),
         Param(
             "strain_darfix_origin_xy",
             ParamType.STR,
             "Strain darfix origin",
             default="105,230",
-            help="x,y",
+            advanced=True,
+            group="Alignment",
+            help=(
+                "Pixel position 'x,y' of the darfix crop origin for the strain maps, used when "
+                "anchoring to the reference frame."
+            ),
         ),
         Param(
-            "num_pieces_z", ParamType.INT, "Z pieces", default=16, help="match pvserver MPI ranks"
+            "num_pieces_z",
+            ParamType.INT,
+            "Z pieces",
+            default=16,
+            advanced=True,
+            group="Export",
+            help=(
+                "Number of Z chunks the dataset is split into — match the MPI rank count of your "
+                "pvserver for parallel rendering."
+            ),
         ),
-        Param("piece_compression", ParamType.BOOL, "Compress pieces", default=False),
-        Param("replace_nan", ParamType.BOOL, "Replace NaN", default=True),
-        Param("write_valid_mask", ParamType.BOOL, "Write valid_mask", default=True),
-        Param("export_mosaicity", ParamType.BOOL, "Export mosaicity", default=True),
-        Param("export_strain", ParamType.BOOL, "Export strain", default=True),
-        Param("output_dir", ParamType.DIR, "Output dir"),
+        Param(
+            "piece_compression",
+            ParamType.BOOL,
+            "Compress pieces",
+            default=False,
+            advanced=True,
+            group="Export",
+            help="Compress the .vti pieces (smaller files, slower write).",
+        ),
+        Param(
+            "replace_nan",
+            ParamType.BOOL,
+            "Replace NaN",
+            default=True,
+            advanced=True,
+            group="Export",
+            help="Replace NaN padding with a sentinel value so ParaView's volume renderer behaves.",
+        ),
+        Param(
+            "write_valid_mask",
+            ParamType.BOOL,
+            "Write valid_mask",
+            default=True,
+            advanced=True,
+            group="Export",
+            help="Write a 0/1 valid_mask field — threshold on it in ParaView to hide the padding.",
+        ),
+        Param(
+            "export_mosaicity",
+            ParamType.BOOL,
+            "Export mosaicity",
+            default=True,
+            advanced=True,
+            group="Export",
+            help="Export the mosaicity (χ/μ) volumes.",
+        ),
+        Param(
+            "export_strain",
+            ParamType.BOOL,
+            "Export strain",
+            default=True,
+            advanced=True,
+            group="Export",
+            help="Export the strain volume.",
+        ),
+        Param(
+            "output_dir",
+            ParamType.DIR,
+            "Output dir",
+            help="Where the .pvti files and their piece folders are written.",
+        ),
     ),
 )
 
