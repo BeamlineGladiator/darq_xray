@@ -46,39 +46,126 @@ STAGE = StageSpec(
     name="mosaicity",
     label="Mosaicity volume",
     description=(
-        "Stack per-layer darfix chi/mu Center-of-mass and FWHM maps into a 3D "
-        "mosaicity volume (stacked_volumes.h5)."
+        "Stacks the darfix χ (chi) and μ (mu) centre-of-mass and width (FWHM) maps of each layer"
+        " into one 3-D mosaicity volume. Needs maps.h5 from darfix in each layer folder; writes"
+        " stacked_volumes.h5."
     ),
     params=(
-        Param("mode", ParamType.ENUM, "Mode", default="batch", choices=("single", "batch")),
+        Param(
+            "mode",
+            ParamType.ENUM,
+            "Mode",
+            default="batch",
+            choices=("single", "batch"),
+            help=(
+                "single processes one layer folder ('Input folder'); batch processes every"
+                " subfolder of 'Root folder' matching 'Folder pattern'."
+            ),
+        ),
         Param(
             "input_folder",
             ParamType.DIR,
             "Input folder",
-            help="folder holding maps.h5 (single mode)",
+            must_exist=True,
+            help="Layer folder containing the darfix maps.h5 (single mode only).",
         ),
         Param(
             "root_folder",
             ParamType.DIR,
             "Root folder",
-            help="parent of mosaicity layer folders (batch)",
+            must_exist=True,
+            help="Parent of the mosaicity layer folders (batch mode only).",
         ),
-        Param("folder_pattern", ParamType.STR, "Folder pattern", default="*"),
-        Param("maps_filename", ParamType.STR, "maps filename", default="maps.h5"),
-        Param("chi_com_path", ParamType.STR, "chi COM path", default=_DATASETS[0][1]),
-        Param("chi_fwhm_path", ParamType.STR, "chi FWHM path", default=_DATASETS[1][1]),
-        Param("mu_com_path", ParamType.STR, "mu COM path", default=_DATASETS[2][1]),
-        Param("mu_fwhm_path", ParamType.STR, "mu FWHM path", default=_DATASETS[3][1]),
         Param(
-            "output_dir", ParamType.DIR, "Output dir", help="where stacked_volumes.h5 is written"
+            "folder_pattern",
+            ParamType.STR,
+            "Folder pattern",
+            default="*",
+            advanced=True,
+            group="Data layout",
+            help=(
+                "Glob selecting the mosaicity layer subfolders, usually the *_mosa__* naming"
+                " pattern."
+            ),
         ),
-        Param("stacked_filename", ParamType.STR, "Stacked filename", default="stacked_volumes.h5"),
+        Param(
+            "maps_filename",
+            ParamType.STR,
+            "maps filename",
+            default="maps.h5",
+            advanced=True,
+            group="Data layout",
+            help=("Filename of the darfix output inside each layer folder (normally maps.h5)."),
+        ),
+        Param(
+            "chi_com_path",
+            ParamType.STR,
+            "chi COM path",
+            default=_DATASETS[0][1],
+            advanced=True,
+            group="Data layout",
+            help=(
+                "HDF5 path of the χ centre-of-mass map inside maps.h5 (darfix layout). χ CoM is"
+                " the local lattice tilt about the rocking axis."
+            ),
+        ),
+        Param(
+            "chi_fwhm_path",
+            ParamType.STR,
+            "chi FWHM path",
+            default=_DATASETS[1][1],
+            advanced=True,
+            group="Data layout",
+            help=(
+                "HDF5 path of the χ FWHM map — the local rocking-curve width, a measure of mosaic"
+                " spread."
+            ),
+        ),
+        Param(
+            "mu_com_path",
+            ParamType.STR,
+            "mu COM path",
+            default=_DATASETS[2][1],
+            advanced=True,
+            group="Data layout",
+            help=(
+                "HDF5 path of the μ centre-of-mass map — the local lattice tilt about the second"
+                " tilt axis."
+            ),
+        ),
+        Param(
+            "mu_fwhm_path",
+            ParamType.STR,
+            "mu FWHM path",
+            default=_DATASETS[3][1],
+            advanced=True,
+            group="Data layout",
+            help="HDF5 path of the μ FWHM map — the local curve width about the second tilt axis.",
+        ),
+        Param(
+            "output_dir",
+            ParamType.DIR,
+            "Output dir",
+            help="Where stacked_volumes.h5 is written (blank = the input/root folder).",
+        ),
+        Param(
+            "stacked_filename",
+            ParamType.STR,
+            "Stacked filename",
+            default="stacked_volumes.h5",
+            advanced=True,
+            group="Output",
+            help="Filename of the stacked mosaicity volume. Downstream stages expect stacked_volumes.h5.",
+        ),
         Param(
             "compression",
             ParamType.ENUM,
             "Compression",
             default="gzip",
             choices=("gzip", "lzf", "none"),
+            advanced=True,
+            group="Output",
+            help="HDF5 compression for the volume: gzip (small, slower), lzf (fast, larger), none.",
         ),
     ),
 )
