@@ -53,80 +53,166 @@ STAGE = StageSpec(
     name="concat",
     label="Concatenate scans",
     description=(
-        "Combine the *.1 entries of BLISS scan files into a single "
-        "darfix-compatible entry_0000 (detector VDS/copy + merged positioners)."
+        "Merges the separate BLISS scan entries of each raw layer folder into one "
+        "darfix-ready .h5 file (detector frames + motor positions). Optional — skip it "
+        "if your scans are already concatenated. Writes <folder>_concat.h5 next to each input."
     ),
     params=(
-        Param("mode", ParamType.ENUM, "Mode", default="single", choices=("single", "batch")),
+        Param(
+            "mode",
+            ParamType.ENUM,
+            "Mode",
+            default="single",
+            choices=("single", "batch"),
+            help=(
+                "single processes one scan folder ('Input folder'); batch processes every "
+                "subfolder of 'Root folder' whose name matches 'Folder pattern'."
+            ),
+        ),
         # --- single mode ---
         Param(
             "input_folder",
             ParamType.DIR,
             "Input folder",
-            help="folder holding the .h5 (single mode)",
+            must_exist=True,
+            help="The raw scan folder containing the .h5 file to concatenate (single mode only).",
         ),
         Param(
             "h5_filename_override",
             ParamType.STR,
             "H5 filename override",
             default="",
-            help="leave blank to auto-detect <folder>.h5 (single mode)",
+            advanced=True,
+            group="Data layout",
+            help=(
+                "Name of the .h5 file inside the input folder, if it is not "
+                "'<folder name>.h5'. Leave blank to auto-detect (single mode)."
+            ),
         ),
         # --- batch mode ---
         Param(
             "root_folder",
             ParamType.DIR,
             "Root folder",
-            help="parent of the per-layer folders (batch mode)",
+            must_exist=True,
+            help=(
+                "Parent folder holding one subfolder per layer (batch mode only). Each "
+                "matching subfolder is concatenated separately."
+            ),
         ),
         Param(
             "folder_pattern",
             ParamType.STR,
             "Folder pattern",
             default="*",
-            help="glob for subfolders (batch mode)",
+            help=(
+                "Glob pattern selecting which subfolders of the root to process in batch mode, "
+                "e.g. '*' for all or 'layer_*' for a subset."
+            ),
         ),
         Param(
             "skip_existing",
             ParamType.BOOL,
             "Skip existing",
             default=False,
-            help="skip folders that already have a _concat.h5 (batch mode)",
+            help=(
+                "Skip folders that already contain a _concat.h5 output — useful when "
+                "re-running after adding new layers."
+            ),
         ),
         # --- shared ---
-        Param("entry_suffix", ParamType.STR, "Entry suffix", default=".1"),
+        Param(
+            "entry_suffix",
+            ParamType.STR,
+            "Entry suffix",
+            default=".1",
+            advanced=True,
+            group="Data layout",
+            help=(
+                "Only BLISS entries ending in this suffix are merged (e.g. '.1' keeps 1.1, 2.1, …); "
+                "other entries such as alignment scans are ignored."
+            ),
+        ),
         Param(
             "detector_read_path",
             ParamType.STR,
             "Detector read path",
             default="instrument/pco_ff/image",
+            advanced=True,
+            group="Data layout",
+            help=(
+                "HDF5 path to the detector frames inside each scan entry. Only change if your "
+                "beamline files use a different detector or layout."
+            ),
         ),
         Param(
             "detector_write_path",
             ParamType.STR,
             "Detector write path",
             default="measurement/pco_ff",
+            advanced=True,
+            group="Data layout",
+            help=(
+                "HDF5 path where the merged detector data is written inside the output entry "
+                "(darfix reads this location)."
+            ),
         ),
         Param(
-            "positioners_path", ParamType.STR, "Positioners path", default="instrument/positioners"
+            "positioners_path",
+            ParamType.STR,
+            "Positioners path",
+            default="instrument/positioners",
+            advanced=True,
+            group="Data layout",
+            help=(
+                "HDF5 path to the motor-position group inside each scan entry; positions are "
+                "merged across scans."
+            ),
         ),
-        Param("output_entry", ParamType.STR, "Output entry", default="entry_0000"),
+        Param(
+            "output_entry",
+            ParamType.STR,
+            "Output entry",
+            default="entry_0000",
+            advanced=True,
+            group="Data layout",
+            help="Name of the single merged entry in the output file. darfix expects 'entry_0000'.",
+        ),
         Param(
             "vds_policy",
             ParamType.ENUM,
             "VDS policy",
             default="relative",
             choices=("relative", "absolute"),
-            help="how VDS references store source paths (ignored when copy_data)",
+            advanced=True,
+            group="Output",
+            help=(
+                "How the virtual dataset stores references to the source files: relative paths "
+                "survive moving the whole tree together; absolute paths break when anything moves. "
+                "Ignored when 'Copy data' is on."
+            ),
         ),
         Param(
             "copy_data",
             ParamType.BOOL,
             "Copy data",
             default=False,
-            help="False = VDS (fast, fragile); True = self-contained copy",
+            advanced=True,
+            group="Output",
+            help=(
+                "Off = write a virtual dataset (fast and small, but it breaks if the source files "
+                "move). On = copy the frames into a self-contained archival file (slower, larger)."
+            ),
         ),
-        Param("overwrite", ParamType.BOOL, "Overwrite", default=True),
+        Param(
+            "overwrite",
+            ParamType.BOOL,
+            "Overwrite",
+            default=True,
+            advanced=True,
+            group="Output",
+            help="Replace an existing output file. If off, folders with an existing output fail instead.",
+        ),
     ),
 )
 
