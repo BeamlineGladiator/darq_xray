@@ -44,6 +44,9 @@ class Param:
     ``choices`` is required for :attr:`ParamType.ENUM` and renders as a
     dropdown. ``unit`` and ``help`` are advisory text for the form. Mark
     physically-meaningful calibration constants with ``calibration=True``.
+    ``advanced`` params collapse into the form's Advanced expander under
+    their ``group`` header; ``must_exist`` marks input paths the GUI
+    verifies on disk before launching a run (never set it on outputs).
     """
 
     name: str
@@ -54,6 +57,9 @@ class Param:
     choices: tuple[Any, ...] | None = None
     help: str | None = None
     calibration: bool = False
+    advanced: bool = False  # True -> rendered inside the collapsed Advanced expander
+    group: str = ""  # themed section header inside Advanced (required when advanced)
+    must_exist: bool = False  # input path/dir: GUI checks existence before a run
 
     def __post_init__(self) -> None:
         if self.type is ParamType.ENUM and not self.choices:
