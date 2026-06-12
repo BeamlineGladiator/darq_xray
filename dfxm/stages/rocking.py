@@ -46,31 +46,84 @@ STAGE = StageSpec(
     name="rocking",
     label="Aligned rocking volumes",
     description=(
-        "Build aligned 3D raw-rocking volumes (background-subtracted sum + a "
-        "specific frame), anchored to the mosaicity reference, and render them."
+        "Builds aligned 3-D volumes directly from the raw rocking scans — a background-subtracted "
+        "intensity sum plus one chosen frame — anchored to the mosaicity reference so they overlay "
+        "the other volumes. Writes aligned_raw_rocking_volumes.h5 and rendered images."
     ),
     params=(
         Param(
-            "raw_root", ParamType.DIR, "Raw data root", help="RAW_DATA root with the scan folders"
+            "raw_root",
+            ParamType.DIR,
+            "Raw data root",
+            must_exist=True,
+            help="RAW_DATA root containing the rocking (and mosaicity/strain) scan folders.",
         ),
-        Param("rocking_pattern", ParamType.STR, "Rocking pattern", default="*"),
+        Param(
+            "rocking_pattern",
+            ParamType.STR,
+            "Rocking pattern",
+            default="*",
+            advanced=True,
+            group="Data layout",
+            help="Glob matching the raw rocking scan folders.",
+        ),
         Param(
             "mosa_pattern",
             ParamType.STR,
             "Mosaicity pattern",
             default="*",
-            help="provides the samy/samz reference + part of the samz union",
+            advanced=True,
+            group="Data layout",
+            help=(
+                "Glob for the mosaicity scan folders — they provide the alignment reference "
+                "(samy/samz origin) and part of the Z range."
+            ),
         ),
         Param(
             "strain_pattern",
             ParamType.STR,
             "Strain pattern",
             default="*",
-            help="extends the samz union (blank/none = mosa range only)",
+            advanced=True,
+            group="Data layout",
+            help=(
+                "Glob for the strain scan folders; extends the Z range so the rocking volume "
+                "covers both (blank = mosaicity range only)."
+            ),
         ),
-        Param("samy_path", ParamType.STR, "samy path", default="1.1/instrument/positioners/samy"),
-        Param("samz_path", ParamType.STR, "samz path", default="1.1/instrument/positioners/samz"),
-        Param("detector_path", ParamType.STR, "Detector path", default="1.1/measurement/pco_ff"),
+        Param(
+            "samy_path",
+            ParamType.STR,
+            "samy path",
+            default="1.1/instrument/positioners/samy",
+            advanced=True,
+            group="Data layout",
+            help=(
+                "HDF5 path to the sample-Y motor position inside each scan file "
+                "(under the first BLISS entry). Only change for a different beamline file layout."
+            ),
+        ),
+        Param(
+            "samz_path",
+            ParamType.STR,
+            "samz path",
+            default="1.1/instrument/positioners/samz",
+            advanced=True,
+            group="Data layout",
+            help=(
+                "HDF5 path to the sample-Z motor position inside each scan file "
+                "(under the first BLISS entry). Only change for a different beamline file layout."
+            ),
+        ),
+        Param(
+            "detector_path",
+            ParamType.STR,
+            "Detector path",
+            default="1.1/measurement/pco_ff",
+            advanced=True,
+            group="Data layout",
+            help="HDF5 path to the detector frames inside each rocking scan file.",
+        ),
         Param(
             "pixel_size_x_um",
             ParamType.FLOAT,
@@ -78,6 +131,12 @@ STAGE = StageSpec(
             unit="µm",
             default=0.152,
             calibration=True,
+            advanced=True,
+            group="Calibration",
+            help=(
+                "Physical size of one detector pixel along X, in µm. "
+                "From the beamline optics calibration."
+            ),
         ),
         Param(
             "pixel_size_y_um",
@@ -86,50 +145,177 @@ STAGE = StageSpec(
             unit="µm",
             default=0.385,
             calibration=True,
+            advanced=True,
+            group="Calibration",
+            help=(
+                "Physical size of one detector pixel along Y, in µm. "
+                "From the beamline optics calibration."
+            ),
         ),
-        Param("samy_direction", ParamType.INT, "samy direction", default=-1, help="+1 or -1"),
         Param(
-            "roi_x", ParamType.STR, "ROI X", default="", help="x0,x1 read-time crop (blank = full)"
+            "samy_direction",
+            ParamType.INT,
+            "samy direction",
+            default=-1,
+            advanced=True,
+            group="Alignment",
+            help=(
+                "Sign (+1 or −1) relating the samy motor direction to detector X. "
+                "If features visibly march the wrong way between layers, flip the sign."
+            ),
         ),
         Param(
-            "roi_y", ParamType.STR, "ROI Y", default="", help="y0,y1 read-time crop (blank = full)"
+            "roi_x",
+            ParamType.STR,
+            "ROI X",
+            default="",
+            help=(
+                "Detector crop 'x0,x1' in pixels applied while reading frames (blank = full). "
+                "Match the crop used for the other volumes."
+            ),
+        ),
+        Param(
+            "roi_y",
+            ParamType.STR,
+            "ROI Y",
+            default="",
+            help=(
+                "Detector crop 'y0,y1' in pixels applied while reading frames (blank = full). "
+                "Match the crop used for the other volumes."
+            ),
         ),
         Param(
             "specific_frame_idx",
             ParamType.STR,
             "Specific frame",
             default="",
-            help="0-based frame index (blank = central frame of first scan)",
+            help=(
+                "0-based index of the single rocking frame to extract per scan "
+                "(blank = the central frame of the first scan). "
+                "Lets you look at one angular position instead of the sum."
+            ),
         ),
-        Param("samz_tol_mm", ParamType.FLOAT, "samz tolerance", unit="mm", default=0.0),
+        Param(
+            "samz_tol_mm",
+            ParamType.FLOAT,
+            "samz tolerance",
+            unit="mm",
+            default=0.0,
+            advanced=True,
+            group="Alignment",
+            help=(
+                "Extra tolerance in mm when deciding which rocking scans fall inside "
+                "the mosaicity/strain Z range."
+            ),
+        ),
         Param(
             "normalize_sum",
             ParamType.BOOL,
             "Normalize sum",
             default=False,
-            help="divide the summed intensity by frame count (comparable across scans)",
+            advanced=True,
+            group="Alignment",
+            help=(
+                "Divide each summed image by its frame count so intensities are comparable "
+                "across scans with different numbers of frames."
+            ),
         ),
-        Param("output_dir", ParamType.DIR, "Output dir"),
+        Param(
+            "output_dir",
+            ParamType.DIR,
+            "Output dir",
+            help=(
+                "Where the aligned volume and rendered media are written "
+                "(blank = a folder under the raw root)."
+            ),
+        ),
         Param(
             "aligned_h5_name",
             ParamType.STR,
             "Aligned filename",
             default="aligned_raw_rocking_volumes.h5",
+            advanced=True,
+            group="Output",
+            help=(
+                "Filename of the aligned rocking volume. "
+                "The slices stage expects aligned_raw_rocking_volumes.h5."
+            ),
         ),
-        Param("save_aligned_h5", ParamType.BOOL, "Save aligned HDF5", default=True),
-        Param("save_layers", ParamType.BOOL, "Save layer PNGs", default=True),
-        Param("save_animation", ParamType.BOOL, "Save animation", default=True),
-        Param("save_topview", ParamType.BOOL, "Save 3D top-view", default=True),
+        Param(
+            "save_aligned_h5",
+            ParamType.BOOL,
+            "Save aligned HDF5",
+            default=True,
+            advanced=True,
+            group="Output",
+            help="Write the aligned volume file (needed by the slices stage).",
+        ),
+        Param(
+            "save_layers",
+            ParamType.BOOL,
+            "Save layer PNGs",
+            default=True,
+            advanced=True,
+            group="Output",
+            help="Write one PNG per layer.",
+        ),
+        Param(
+            "save_animation",
+            ParamType.BOOL,
+            "Save animation",
+            default=True,
+            advanced=True,
+            group="Output",
+            help="Write the layer-by-layer animation.",
+        ),
+        Param(
+            "save_topview",
+            ParamType.BOOL,
+            "Save 3D top-view",
+            default=True,
+            advanced=True,
+            group="Output",
+            help="Write the static 3-D top-view image.",
+        ),
         Param(
             "output_format",
             ParamType.ENUM,
             "Animation format",
             default="mp4",
             choices=("mp4", "gif", "both"),
+            advanced=True,
+            group="Output",
+            help=(
+                "Animation container: mp4 needs ffmpeg on PATH; gif always works; both writes both."
+            ),
         ),
-        Param("volume_opacity", ParamType.FLOAT, "3D opacity", default=0.85),
-        Param("cbar_pct_lo", ParamType.FLOAT, "Colorbar pct low", default=1.0),
-        Param("cbar_pct_hi", ParamType.FLOAT, "Colorbar pct high", default=99.0),
+        Param(
+            "volume_opacity",
+            ParamType.FLOAT,
+            "3D opacity",
+            default=0.85,
+            advanced=True,
+            group="Appearance",
+            help="Opacity of the rendered 3-D top view, 0–1.",
+        ),
+        Param(
+            "cbar_pct_lo",
+            ParamType.FLOAT,
+            "Colorbar pct low",
+            default=1.0,
+            advanced=True,
+            group="Appearance",
+            help="Lower intensity percentile for the colour scale of the rendered images.",
+        ),
+        Param(
+            "cbar_pct_hi",
+            ParamType.FLOAT,
+            "Colorbar pct high",
+            default=99.0,
+            advanced=True,
+            group="Appearance",
+            help="Upper intensity percentile for the colour scale of the rendered images.",
+        ),
     ),
 )
 
