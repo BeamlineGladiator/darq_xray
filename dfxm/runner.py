@@ -52,6 +52,7 @@ class Done:
 class Failed:
     error: str
     traceback: str
+    hint: str = ""  # actionable advice from StageUserError, "" otherwise
 
 
 Message = Progress | Log | Done | Failed
@@ -98,7 +99,7 @@ def _worker(q: "mp.Queue", target: str, params: dict) -> None:
             sys.stdout.flush()
         except Exception:  # noqa: BLE001
             pass
-        q.put(Failed(str(exc), traceback.format_exc()))
+        q.put(Failed(str(exc), traceback.format_exc(), str(getattr(exc, "hint", "") or "")))
     finally:
         sys.stdout, sys.stderr = old_out, old_err
 
