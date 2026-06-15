@@ -9,9 +9,80 @@ explicit :class:`~matplotlib.figure.Figure` API instead and save via
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import matplotlib
 import numpy as np
 from matplotlib.figure import Figure
+
+
+@dataclass
+class PlotStyle:
+    """How to render a figure for export. ``None`` (not this) means 'as today'."""
+
+    # scale bar (map figures only)
+    scale_bar: bool = True
+    scale_bar_length_um: float | None = None  # None -> auto (~15% of X extent)
+    scale_bar_thickness_pt: float = 3.0
+    scale_bar_label_scale: float = 1.0  # multiplies font_scale for the bar label
+    scale_bar_loc: str = (
+        "lower right"  # "lower right" | "lower left" | "upper right" | "upper left"
+    )
+    scale_bar_color: str = "black"
+    scale_bar_box: bool = False
+    scale_bar_box_color: str = "black"
+    scale_bar_box_alpha: float = 0.45
+    scale_bar_box_margin_pt: float = 4.0
+    # text
+    font_scale: float = 1.0  # multiplies axis labels, ticks, title
+    show_title: bool = True
+    center_axis_labels: bool = True
+    # colourbar
+    colorbar: bool = True
+    colorbar_label: str | None = None  # None -> the figure's own label
+    colorbar_fraction: float = 0.046  # matplotlib colorbar `fraction` (thickness)
+    colorbar_ticks: int = 0  # 0 -> matplotlib default; >=2 -> N evenly spaced incl min/mid/max
+    colorbar_tick_format: str = "auto"  # "auto" | "scientific" | a digit count like "2"
+    # figure
+    figure_width: str | float = "auto"  # "single" | "double" | "auto" | width in inches
+    # output
+    formats: tuple[str, ...] = ("png",)
+    dpi: int = 300
+
+
+PUBLICATION_STYLE = PlotStyle(
+    scale_bar=True,
+    scale_bar_thickness_pt=4.0,
+    scale_bar_label_scale=1.1,
+    scale_bar_color="white",
+    scale_bar_box=True,
+    font_scale=2.2,
+    colorbar_fraction=0.07,
+    colorbar_ticks=5,
+    colorbar_tick_format="scientific",
+    figure_width="single",
+    formats=("png", "pdf", "svg"),
+    dpi=300,
+)
+
+
+def figure_size(style: PlotStyle, ext_x: float, ext_y: float) -> tuple[float, float] | None:
+    """Figure (w, h) in inches from the width preset, preserving physical aspect.
+
+    Returns ``None`` for ``figure_width="auto"`` so the builder keeps its own
+    figsize (the legacy path). Height follows the physical aspect plus ~1in of
+    headroom for the title/colourbar.
+    """
+    presets = {"single": 3.5, "double": 7.0}
+    w = (
+        presets.get(style.figure_width)
+        if isinstance(style.figure_width, str)
+        else style.figure_width
+    )
+    if w in (None, "auto"):
+        return None
+    aspect = (ext_y / ext_x) if ext_x else 1.0
+    return (float(w), float(w) * aspect + 1.0)
 
 
 def symmetric_limits(data: np.ndarray, percentile: float | None = None) -> tuple[float, float]:
