@@ -24,6 +24,7 @@ import h5py
 import numpy as np
 
 from ..common.errors import StageUserError
+from ..common.figures import FigureSpec, register, volume_layer_specs
 from ..common.sort import find_matching_folders
 from ..config.models import Param, ParamType, StageSpec
 
@@ -185,6 +186,70 @@ class MosaicityResult:
     @property
     def n_layers(self) -> int:
         return len(self.layers)
+
+
+# Per-key display metadata (cmap, colorbar label, title prefix).
+# Keys match the "/{group}/{ds_name}" form stored in MosaicityResult.datasets.
+# Conventions mirror visualize._display_info: all mosaicity maps use "magma";
+# CoM = misorientation, FWHM = peak broadening.
+_KEY_DISPLAY: dict[str, tuple[str, str, str]] = {
+    "/chi/Center of mass": ("magma", "Misorientation (°)", "χ Misorientation"),
+    "/chi/FWHM": ("magma", "Peak broadening (°)", "χ Peak Broadening"),
+    "/mu/Center of mass": ("magma", "Misorientation (°)", "μ Misorientation"),
+    "/mu/FWHM": ("magma", "Peak broadening (°)", "μ Peak Broadening"),
+}
+
+# Safe filename stem per key (no spaces/slashes).
+_KEY_STEM: dict[str, str] = {
+    "/chi/Center of mass": "chi_com",
+    "/chi/FWHM": "chi_fwhm",
+    "/mu/Center of mass": "mu_com",
+    "/mu/FWHM": "mu_fwhm",
+}
+
+
+@register("mosaicity")
+def figures(result: "MosaicityResult", params: dict) -> list[FigureSpec]:
+    """Return one ``map`` FigureSpec per Z layer per dataset key in the stacked volume."""
+    if not result.stacked_path or not result.datasets:
+        return []
+
+    # pixel scale — mosaicity has no pixel-size params of its own; use whatever
+    # the caller passes (e.g. chained from strain), falling back to the same
+    # calibrated beamline defaults that strain.figures() uses.
+    px = float(params.get("pixel_size_x_um", 0.152))
+    py = float(params.get("pixel_size_y_um", 0.385))
+
+    specs: list[FigureSpec] = []
+    for key in result.datasets:
+        # The key is already the in-file HDF5 path (e.g. "/chi/Center of mass").
+        cmap, cbar_label, title = _KEY_DISPLAY.get(
+            key,
+            ("magma", "(°)", key.lstrip("/").replace("/", " ")),
+        )
+        stem = _KEY_STEM.get(key, key.lstrip("/").replace("/", "_").replace(" ", "_"))
+
+        # compute vmin/vmax from the volume (read once per key)
+        with h5py.File(result.stacked_path, "r") as fh:
+            vol = fh[key][:]
+        vmin = float(np.nanmin(vol))
+        vmax = float(np.nanmax(vol))
+
+        specs.extend(
+            volume_layer_specs(
+                h5_path=result.stacked_path,
+                dataset=key,
+                id_prefix=stem,
+                title=title,
+                cbar_label=cbar_label,
+                cmap=cmap,
+                sx=px,
+                sy=py,
+                vmin=vmin,
+                vmax=vmax,
+            )
+        )
+    return specs
 
 
 def _read_dataset(h5f: h5py.File, path: str) -> np.ndarray | None:

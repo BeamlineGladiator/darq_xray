@@ -8,6 +8,7 @@ import pytest
 from dfxm.common import figures, render
 from dfxm.common.figures import volume_layer_specs
 from dfxm.common.plotting import PlotStyle
+from dfxm.stages import mosaicity as Mosaicity
 from dfxm.stages import strain as Strain
 from dfxm.stages.registry import STAGE_TARGETS
 
@@ -155,3 +156,58 @@ def test_strain_catalog_map_per_layer(tmp_path):
     specs = [s for s in all_specs if s.kind == "map"]
     assert len(specs) == 2
     assert specs[0].build(None).axes[0].get_aspect() == 1.0
+
+
+def test_mosaicity_figures_no_stacked_path_returns_empty():
+    res = Mosaicity.MosaicityResult(stacked_path=None, datasets={}, layers=[], skipped=[])
+    assert Mosaicity.figures(res, {}) == []
+
+
+def test_mosaicity_catalog_map_per_layer(tmp_path):
+    # Mirror the REAL h5 layout written by mosaicity.run():
+    #   /chi/Center of mass  (Z, Y, X)
+    # i.e. group "chi", dataset "Center of mass"
+    vol = np.random.rand(3, 10, 20).astype(np.float32)
+    h5 = tmp_path / "stacked_volumes.h5"
+    with h5py.File(h5, "w") as f:
+        grp = f.require_group("chi")
+        grp.create_dataset("Center of mass", data=vol)
+
+    # result.datasets key is "/{group}/{ds_name}" as written by mosaicity.run() line 279
+    res = Mosaicity.MosaicityResult(
+        stacked_path=str(h5),
+        datasets={"/chi/Center of mass": vol.shape},
+        layers=["layer0", "layer1", "layer2"],
+        skipped=[],
+    )
+    specs = Mosaicity.figures(res, {"pixel_size_x_um": 0.1, "pixel_size_y_um": 0.3})
+    # one map spec per Z layer
+    assert len(specs) >= 3
+    map_specs = [s for s in specs if s.kind == "map"]
+    assert len(map_specs) == 3
+    # distinct filenames (no collisions across layers)
+    filenames = [s.filename for s in map_specs]
+    assert len(set(filenames)) == 3
+    # equal-aspect rendered axes
+    assert map_specs[0].build(None).axes[0].get_aspect() == 1.0
+
+
+def test_mosaicity_catalog_multiple_keys_no_collision(tmp_path):
+    vol = np.random.rand(2, 8, 12).astype(np.float32)
+    h5 = tmp_path / "stacked_volumes.h5"
+    with h5py.File(h5, "w") as f:
+        grp = f.require_group("chi")
+        grp.create_dataset("Center of mass", data=vol)
+        grp.create_dataset("FWHM", data=vol)
+    res = Mosaicity.MosaicityResult(
+        stacked_path=str(h5),
+        datasets={"/chi/Center of mass": vol.shape, "/chi/FWHM": vol.shape},
+        layers=["l0", "l1"],
+        skipped=[],
+    )
+    specs = Mosaicity.figures(res, {"pixel_size_x_um": 0.1, "pixel_size_y_um": 0.3})
+    # 2 keys x 2 layers = 4 map specs, all distinct ids/filenames
+    assert len(specs) == 4
+    assert all(s.kind == "map" for s in specs)
+    assert len({s.figure_id for s in specs}) == 4
+    assert len({s.filename for s in specs}) == 4
