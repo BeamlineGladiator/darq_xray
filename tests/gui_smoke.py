@@ -154,6 +154,23 @@ def main() -> int:
     assert not runner.is_alive()
     print("[6] cancel terminated a long-running worker")
 
+    # Forms: essentials visible, Advanced expander collapsed, values round-trip.
+    for name, view in win._views.items():
+        form = view._form
+        spec = view._spec
+        assert set(form.values()) == {p.name for p in spec.params}, name
+        n_adv = sum(1 for p in spec.params if p.advanced)
+        if n_adv:
+            assert form._adv_toggle is not None, name
+            assert f"({n_adv} settings)" in form._adv_toggle.text(), name
+            assert not form._adv_box.isVisible(), name
+    # focus_param reveals an advanced field
+    sform = win._views["strain"]._form
+    sform._adv_toggle.setChecked(False)
+    sform.focus_param("ccmth_ref_deg")
+    assert sform._adv_toggle.isChecked()
+    print("[7] grouped forms: essentials/advanced split + value round-trip OK")
+
     print("\nGUI SMOKE PASSED")
     return 0
 

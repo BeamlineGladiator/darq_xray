@@ -18,7 +18,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any, Callable
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import QEvent, QObject, Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -31,6 +31,8 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QPushButton,
     QSpinBox,
+    QToolButton,
+    QVBoxLayout,
     QWidget,
 )
 
@@ -43,11 +45,14 @@ _INT_RANGE = (-(2**31) + 1, 2**31 - 1)
 class ParamForm(QWidget):
     """A form whose rows are generated from a parameter schema.
 
-    Use :meth:`values` to read coerced values and :meth:`set_values` to load a
-    dict (e.g. experiment-derived defaults) back into the widgets.
+    Essentials (``advanced=False``) render first, in spec order; advanced
+    params collapse into one "Advanced (N settings)" expander, grouped under
+    their ``group`` headers. Use :meth:`values` to read coerced values and
+    :meth:`set_values` to load a dict back into the widgets.
     """
 
     changed = Signal()
+    focusedParamChanged = Signal(object)  # the focused Param
 
     def __init__(
         self,
@@ -59,13 +64,79 @@ class ParamForm(QWidget):
         self._params = list(params)
         self._getters: dict[str, Callable[[], Any]] = {}
         self._setters: dict[str, Callable[[Any], None]] = {}
+        self._editors: dict[str, QWidget] = {}
+        self._param_for_widget: dict[QObject, Param] = {}
+        self._param_by_name: dict[str, Param] = {p.name: p for p in self._params}
+        self._adv_toggle: QToolButton | None = None
+        self._adv_box: QWidget | None = None
 
-        layout = QFormLayout(self)
-        layout.setLabelAlignment(layout.labelAlignment())
         initial = values or {}
-        for p in self._params:
-            editor = self._build_editor(p, initial.get(p.name, p.default))
-            layout.addRow(self._label_for(p), editor)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+
+        essentials = [p for p in self._params if not p.advanced]
+        advanced = [p for p in self._params if p.advanced]
+
+        ess_form = QFormLayout()
+        for p in essentials:
+            ess_form.addRow(self._label_for(p), self._make_editor(p, initial))
+        outer.addLayout(ess_form)
+
+        if advanced:
+            self._adv_toggle = QToolButton()
+            self._adv_toggle.setText(f"Advanced ({len(advanced)} settings)")
+            self._adv_toggle.setCheckable(True)
+            self._adv_toggle.setArrowType(Qt.ArrowType.RightArrow)
+            self._adv_toggle.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+            self._adv_box = QWidget()
+            adv_layout = QVBoxLayout(self._adv_box)
+            adv_layout.setContentsMargins(12, 0, 0, 0)
+            group_forms: dict[str, QFormLayout] = {}
+            for p in advanced:
+                form = group_forms.get(p.group)
+                if form is None:
+                    header = QLabel(p.group)
+                    header.setStyleSheet("font-weight: bold; margin-top: 6px;")
+                    adv_layout.addWidget(header)
+                    form = QFormLayout()
+                    adv_layout.addLayout(form)
+                    group_forms[p.group] = form
+                form.addRow(self._label_for(p), self._make_editor(p, initial))
+            self._adv_box.setVisible(False)
+            self._adv_toggle.toggled.connect(self._on_adv_toggled)
+            outer.addWidget(self._adv_toggle)
+            outer.addWidget(self._adv_box)
+
+    def _make_editor(self, p: Param, initial: dict[str, Any]) -> QWidget:
+        editor = self._build_editor(p, initial.get(p.name, p.default))
+        self._editors[p.name] = editor
+        for w in (editor, *editor.findChildren(QWidget)):
+            w.installEventFilter(self)
+            self._param_for_widget[w] = p
+        return editor
+
+    def _on_adv_toggled(self, checked: bool) -> None:
+        assert self._adv_toggle is not None and self._adv_box is not None
+        self._adv_box.setVisible(checked)
+        self._adv_toggle.setArrowType(
+            Qt.ArrowType.DownArrow if checked else Qt.ArrowType.RightArrow
+        )
+
+    def eventFilter(self, obj: QObject, event) -> bool:  # noqa: N802 - Qt API
+        if event.type() == QEvent.Type.FocusIn and obj in self._param_for_widget:
+            self.focusedParamChanged.emit(self._param_for_widget[obj])
+        return super().eventFilter(obj, event)
+
+    def focus_param(self, name: str) -> None:
+        """Reveal (if advanced) and focus the editor for *name*."""
+        editor = self._editors.get(name)
+        param = self._param_by_name.get(name)
+        if editor is None or param is None:
+            return
+        if param.advanced and self._adv_toggle is not None:
+            self._adv_toggle.setChecked(True)
+        target = editor.findChild(QLineEdit) or editor
+        target.setFocus()
 
     # -- public API -------------------------------------------------------
     def values(self) -> dict[str, Any]:
