@@ -8,6 +8,7 @@ import pytest
 from dfxm.common import figures, render
 from dfxm.common.figures import volume_layer_specs
 from dfxm.common.plotting import PlotStyle
+from dfxm.stages import strain as Strain
 from dfxm.stages.registry import STAGE_TARGETS
 
 
@@ -126,3 +127,31 @@ def test_importing_figures_does_not_eager_import_stage_modules():
     out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
     assert out.returncode == 0, out.stderr
     assert "ok" in out.stdout
+
+
+def test_strain_figures_no_stacked_path_returns_empty(tmp_path):
+    res = Strain.StrainResult(
+        stacked_path="", volume_shape=(0, 0, 0), output_dir=str(tmp_path), layers=[]
+    )
+    assert Strain.figures(res, {}) == []
+
+
+def test_strain_catalog_map_per_layer(tmp_path):
+    vol = np.random.rand(2, 15, 25) * 1e-3
+    h5 = tmp_path / "stacked.h5"
+    with h5py.File(h5, "w") as f:
+        f.create_dataset("strain", data=vol)
+    res = Strain.StrainResult(
+        stacked_path=str(h5),
+        volume_shape=vol.shape,
+        output_dir=str(tmp_path),
+        layers=[
+            Strain.LayerResult("L0", (15, 25), -1e-3, 1e-3, 0, 0),
+            Strain.LayerResult("L1", (15, 25), -1e-3, 1e-3, 0, 0),
+        ],
+    )
+    all_specs = Strain.figures(res, {"pixel_size_x_um": 0.1, "pixel_size_y_um": 0.3})
+    assert len(all_specs) == 2  # exactly 2 specs total, no unexpected non-map entries
+    specs = [s for s in all_specs if s.kind == "map"]
+    assert len(specs) == 2
+    assert specs[0].build(None).axes[0].get_aspect() == 1.0

@@ -30,6 +30,7 @@ from matplotlib.figure import Figure
 from scipy.optimize import curve_fit
 
 from ..common.errors import StageUserError
+from ..common.figures import FigureSpec, register
 from ..common.plotting import (
     PlotStyle,
     add_colorbar,
@@ -458,6 +459,43 @@ def build_detrend_diag(
         else:
             fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
     return fig
+
+
+# -----------------------------------------------------------------------------
+# Figure catalog
+# -----------------------------------------------------------------------------
+@register("strain")
+def figures(result: "StrainResult", params: dict) -> list[FigureSpec]:
+    """Return one ``map`` FigureSpec per layer from the stacked strain volume."""
+    if not result.stacked_path:
+        return []
+    px = float(
+        params.get("pixel_size_x_um", 0.152)
+    )  # falls back to the calibrated spec default, not 1.0
+    py = float(
+        params.get("pixel_size_y_um", 0.385)
+    )  # falls back to the calibrated spec default, not 1.0
+    specs = []
+    for i, layer in enumerate(result.layers):
+
+        def build(style, i=i, lr=layer, path=result.stacked_path):
+            with h5py.File(path, "r") as fh:
+                arr = fh["strain"][i]
+            return build_strain_map(arr, px, py, None, (lr.vmin, lr.vmax), style=style)
+
+        specs.append(
+            FigureSpec(
+                figure_id=f"strain_map_{i:04d}",
+                title=f"Strain map — {layer.name}",
+                kind="map",
+                # NOTE: layer.name appears verbatim in the export file stem; sanitise
+                # path-unsafe chars (spaces/parens/etc.) at the savefig/export site (Task 16),
+                # not here — keep the human-readable name in title/filename.
+                filename=f"{layer.name}_strain",
+                build=build,
+            )
+        )
+    return specs
 
 
 # -----------------------------------------------------------------------------
