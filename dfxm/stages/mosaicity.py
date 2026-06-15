@@ -25,6 +25,7 @@ import numpy as np
 
 from ..common.errors import StageUserError
 from ..common.figures import FigureSpec, register, volume_layer_specs
+from ..common.plotting import build_histogram
 from ..common.sort import find_matching_folders
 from ..config.models import Param, ParamType, StageSpec
 
@@ -210,7 +211,7 @@ _KEY_STEM: dict[str, str] = {
 
 @register("mosaicity")
 def figures(result: "MosaicityResult", params: dict) -> list[FigureSpec]:
-    """Return one ``map`` FigureSpec per Z layer per dataset key in the stacked volume."""
+    """Return one ``map`` + one ``plot`` (histogram) FigureSpec per Z layer per dataset key."""
     if not result.stacked_path or not result.datasets:
         return []
 
@@ -229,12 +230,14 @@ def figures(result: "MosaicityResult", params: dict) -> list[FigureSpec]:
         )
         stem = _KEY_STEM.get(key, key.lstrip("/").replace("/", "_").replace(" ", "_"))
 
-        # compute vmin/vmax from the volume (read once per key)
+        # compute vmin/vmax and n_z from the volume (read once per key)
         with h5py.File(result.stacked_path, "r") as fh:
             vol = fh[key][:]
         vmin = float(np.nanmin(vol))
         vmax = float(np.nanmax(vol))
+        n_z = vol.shape[0]
 
+        # map specs (one per layer)
         specs.extend(
             volume_layer_specs(
                 h5_path=result.stacked_path,
@@ -249,6 +252,40 @@ def figures(result: "MosaicityResult", params: dict) -> list[FigureSpec]:
                 vmax=vmax,
             )
         )
+
+        # histogram specs (one per layer, kind="plot")
+        for z in range(n_z):
+
+            def _build_hist(
+                style,
+                _path=result.stacked_path,
+                _key=key,
+                _z=z,
+                _title=title,
+                _xlabel=cbar_label,
+            ):
+                with h5py.File(_path, "r") as fh:
+                    arr = fh[_key][_z]
+                fig = build_histogram(
+                    arr,
+                    title=f"{_title} — layer {_z} distribution",
+                    xlabel=_xlabel,
+                    style=style,
+                )
+                if fig is None:
+                    raise ValueError(f"layer {_z} of {_key!r} has no finite values to histogram")
+                return fig
+
+            specs.append(
+                FigureSpec(
+                    figure_id=f"{stem}_hist_z{z:04d}",
+                    title=f"{title} — layer {z} distribution",
+                    kind="plot",
+                    filename=f"{stem}_hist_layer_{z:04d}",
+                    build=_build_hist,
+                )
+            )
+
     return specs
 
 

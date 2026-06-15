@@ -10,6 +10,7 @@ from dfxm.common.plotting import (
     add_colorbar,
     apply_text_scale,
     auto_scale_bar_length_um,
+    build_histogram,
     colorbar_tick_values,
     draw_scale_bar,
     figure_size,
@@ -173,3 +174,10 @@ def test_tick_formatter_digit_count_and_negative_guard():
     assert _tick_formatter("-1") is None  # negative digit count -> matplotlib default
     assert _tick_formatter("auto") is None  # auto -> matplotlib default
     assert _tick_formatter("nonsense") is None  # unparseable -> matplotlib default
+
+
+def test_build_histogram_respects_figure_width():
+    data = np.random.default_rng(0).normal(size=(20, 20))
+    assert round(build_histogram(data, title="t", xlabel="x").get_size_inches()[0]) == 8
+    fig = build_histogram(data, title="t", xlabel="x", style=PlotStyle(figure_width="single"))
+    assert abs(fig.get_size_inches()[0] - 3.5) < 1e-6

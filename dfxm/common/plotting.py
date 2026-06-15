@@ -267,6 +267,54 @@ def _tick_formatter(fmt: str):
     return None  # matplotlib default
 
 
+def build_histogram(
+    data: np.ndarray,
+    *,
+    title: str,
+    xlabel: str,
+    style: "PlotStyle | None" = None,
+) -> "Figure | None":
+    """Histogram of finite values in *data* (Figure), or None when there are none.
+
+    *title* and *xlabel* are required keyword arguments (no defaults — callers
+    supply stage-specific strings). When *style* is ``None`` the legacy look is
+    reproduced exactly. The caller is responsible for calling ``fig.savefig``.
+    """
+    valid = data[np.isfinite(data)].ravel()
+    if valid.size == 0:
+        return None
+    figsize = (8.0, 5.0)  # legacy default (style is None or figure_width="auto")
+    if style is not None:
+        presets = {"single": 3.5, "double": 7.0}
+        w = (
+            presets.get(style.figure_width)
+            if isinstance(style.figure_width, str)
+            else style.figure_width
+        )
+        if w not in (None, "auto"):
+            figsize = (float(w), float(w) * 5.0 / 8.0)  # keep the histogram's ~8:5 aspect
+    fig = new_figure(figsize)
+    ax = fig.add_subplot(111)
+    ax.hist(valid, bins=200, color="steelblue", alpha=0.85)
+    mean_val = float(valid.mean())
+    median_val = float(np.median(valid))
+    ax.axvline(mean_val, color="red", ls="--", lw=1.5, label=f"mean = {mean_val:.3e}")
+    ax.axvline(
+        median_val,
+        color="orange",
+        ls="--",
+        lw=1.5,
+        label=f"median = {median_val:.3e}",
+    )
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel("Pixel count")
+    ax.set_title(title)
+    ax.legend()
+    if style is not None:
+        apply_text_scale(ax, style)
+    return fig
+
+
 def add_colorbar(fig, im, ax, label: str, style: "PlotStyle"):
     """Add a colourbar honouring thickness, label, tick count and number format."""
     cb = fig.colorbar(im, ax=ax, fraction=style.colorbar_fraction, pad=0.04)

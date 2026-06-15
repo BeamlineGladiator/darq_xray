@@ -302,8 +302,8 @@ def test_mosaicity_catalog_map_per_layer(tmp_path):
         skipped=[],
     )
     specs = Mosaicity.figures(res, {"pixel_size_x_um": 0.1, "pixel_size_y_um": 0.3})
-    # one map spec per Z layer
-    assert len(specs) >= 3
+    # one map spec + one histogram spec per Z layer (3 layers × 2 = 6 total)
+    assert len(specs) == 6
     map_specs = [s for s in specs if s.kind == "map"]
     assert len(map_specs) == 3
     # distinct filenames (no collisions across layers)
@@ -327,11 +327,80 @@ def test_mosaicity_catalog_multiple_keys_no_collision(tmp_path):
         skipped=[],
     )
     specs = Mosaicity.figures(res, {"pixel_size_x_um": 0.1, "pixel_size_y_um": 0.3})
-    # 2 keys x 2 layers = 4 map specs, all distinct ids/filenames
-    assert len(specs) == 4
-    assert all(s.kind == "map" for s in specs)
-    assert len({s.figure_id for s in specs}) == 4
-    assert len({s.filename for s in specs}) == 4
+    # 2 keys x 2 layers = 4 map specs + 4 histogram specs = 8 total, all distinct ids/filenames
+    map_specs = [s for s in specs if s.kind == "map"]
+    hist_specs = [s for s in specs if s.kind == "plot"]
+    assert len(map_specs) == 4
+    assert len(hist_specs) == 4
+    assert len(specs) == 8
+    assert len({s.figure_id for s in specs}) == 8
+    assert len({s.filename for s in specs}) == 8
+
+
+def test_mosaicity_catalog_histogram_specs_per_layer(tmp_path):
+    """figures() emits one histogram plot spec per dataset key per Z layer."""
+    n_z = 3
+    vol = np.random.default_rng(42).random((n_z, 10, 20)).astype(np.float32)
+    h5 = tmp_path / "stacked_volumes.h5"
+    with h5py.File(h5, "w") as f:
+        grp = f.require_group("chi")
+        grp.create_dataset("Center of mass", data=vol)
+
+    res = Mosaicity.MosaicityResult(
+        stacked_path=str(h5),
+        datasets={"/chi/Center of mass": vol.shape},
+        layers=[f"layer{i}" for i in range(n_z)],
+        skipped=[],
+    )
+    specs = Mosaicity.figures(res, {"pixel_size_x_um": 0.1, "pixel_size_y_um": 0.3})
+
+    map_specs = [s for s in specs if s.kind == "map"]
+    hist_specs = [s for s in specs if s.kind == "plot"]
+
+    # n_z map specs + n_z histogram specs = 2*n_z total
+    assert len(map_specs) == n_z
+    assert len(hist_specs) == n_z
+    assert len(specs) == 2 * n_z
+
+    # All figure_ids and filenames are distinct (no collision between map and hist)
+    assert len({s.figure_id for s in specs}) == 2 * n_z
+    assert len({s.filename for s in specs}) == 2 * n_z
+
+    # histogram ids contain "hist"; map ids do not
+    assert all("hist" in s.figure_id for s in hist_specs)
+    assert all("hist" not in s.figure_id for s in map_specs)
+
+    # Histogram build(None) returns a real Figure with axes
+    hist_fig = hist_specs[0].build(None)
+    assert hist_fig is not None
+    assert len(hist_fig.axes) >= 1
+
+    # Per-layer distinctness: different layers must render different histogram titles
+    t0 = hist_specs[0].build(None).axes[0].get_title()
+    t1 = hist_specs[1].build(None).axes[0].get_title()
+    assert t0 != t1, f"histogram titles should differ by layer but both are {t0!r}"
+
+    # xlabel comes from _KEY_DISPLAY["/chi/Center of mass"] cbar_label = "Misorientation (°)"
+    ax = hist_specs[0].build(None).axes[0]
+    assert "°" in ax.get_xlabel() or "Misorientation" in ax.get_xlabel()
+
+
+def test_plotting_build_histogram_importable():
+    """build_histogram is importable from dfxm.common.plotting."""
+    from dfxm.common.plotting import build_histogram
+
+    data = np.random.default_rng(0).random((10, 10))
+    fig = build_histogram(data, title="Test hist", xlabel="Values")
+    assert fig is not None
+    assert len(fig.axes) >= 1
+
+
+def test_plotting_build_histogram_all_nan_returns_none():
+    """build_histogram returns None when all values are NaN."""
+    from dfxm.common.plotting import build_histogram
+
+    data = np.full((5, 5), np.nan)
+    assert build_histogram(data, title="t", xlabel="x") is None
 
 
 # ---------------------------------------------------------------------------

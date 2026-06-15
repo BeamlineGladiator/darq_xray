@@ -35,6 +35,7 @@ from ..common.plotting import (
     PlotStyle,
     add_colorbar,
     apply_text_scale,
+    build_histogram,
     draw_scale_bar,
     figure_size,
     new_figure,
@@ -406,26 +407,12 @@ def build_strain_histogram(
 ) -> Figure | None:
     """Build and return a strain-histogram Figure, or ``None`` when *data* has no finite values.
 
-    When *style* is ``None`` the legacy look is reproduced exactly. The caller
-    is responsible for calling ``fig.savefig``.
+    Thin wrapper around :func:`dfxm.common.plotting.build_histogram` that
+    preserves the strain-specific signature and defaults. When *style* is
+    ``None`` the legacy look is reproduced exactly. The caller is responsible
+    for calling ``fig.savefig``.
     """
-    valid = data[np.isfinite(data)].ravel()
-    if valid.size == 0:
-        return None
-    fig = new_figure((8, 5))
-    ax = fig.add_subplot(111)
-    ax.hist(valid, bins=200, color="steelblue", alpha=0.85)
-    ax.axvline(valid.mean(), color="red", ls="--", lw=1.5, label=f"mean = {valid.mean():.3e}")
-    ax.axvline(
-        np.median(valid), color="orange", ls="--", lw=1.5, label=f"median = {np.median(valid):.3e}"
-    )
-    ax.set_xlabel(xlabel)
-    ax.set_ylabel("Pixel count")
-    ax.set_title(title)
-    ax.legend()
-    if style is not None:
-        apply_text_scale(ax, style)
-    return fig
+    return build_histogram(data, title=title, xlabel=xlabel, style=style)
 
 
 def build_detrend_diag(
