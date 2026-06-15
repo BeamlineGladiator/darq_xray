@@ -196,6 +196,28 @@ def main() -> int:
     assert panel.current_experiment().description == "smoke-edited"
     print("[9] compact experiment header + edit dialog round-trip")
 
+    # Pipeline rail: Overview first, darfix row disabled, concat optional.
+    from PySide6.QtCore import Qt as _Qt
+
+    nav = win._nav
+    assert nav.item(0).text().endswith("Overview")
+    texts = [nav.item(i).text() for i in range(nav.count())]
+    darfix_rows = [i for i, t in enumerate(texts) if "darfix" in t]
+    assert len(darfix_rows) == 1
+    assert nav.item(darfix_rows[0]).flags() == _Qt.ItemFlag.NoItemFlags
+    concat_row = next(i for i, t in enumerate(texts) if "Concatenate" in t)
+    assert "(optional)" in texts[concat_row]
+    assert darfix_rows[0] == concat_row + 1
+    # Overview is the landing page; chips navigate.
+    assert win._stack.currentWidget() is win._overview
+    win._overview.stageSelected.emit("strain")
+    app.processEvents()
+    assert win._stack.currentWidget() is win._views["strain"]
+    # Status glyphs survived the runs from steps [3]/[4].
+    assert win._status_items["concat"].text().startswith("✓")
+    assert win._status_items["strain"].text().startswith("✓")
+    print("[10] pipeline rail + overview page wired")
+
     print("\nGUI SMOKE PASSED")
     return 0
 

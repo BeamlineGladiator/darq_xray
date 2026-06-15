@@ -1,15 +1,17 @@
-"""Main window: experiment selector + stage navigation + status panel.
+"""Main window: compact experiment header + pipeline rail + stage stack.
 
-Left column holds the :class:`~gui.experiment_panel.ExperimentPanel`, a stage
-navigation list, and a small per-stage run-status panel. The right side is a
-stacked set of :class:`~gui.stage_view.StageView` panels, one per stage.
-
-Changing the experiment re-pushes its derived defaults into every stage view;
-finishing a run updates that stage's status indicator.
+The left column holds the :class:`~gui.experiment_panel.ExperimentPanel`
+(compact header) above a single *pipeline rail*: Overview first, then the
+stages in pipeline order with a status glyph each. darfix appears as a
+disabled external row after concat; concat is marked optional. The right
+side is a stacked set of :class:`~gui.stage_view.StageView` panels behind
+an :class:`~gui.overview_page.OverviewPage` landing page.
 """
 
 from __future__ import annotations
 
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
@@ -24,58 +26,78 @@ from dfxm.config.models import Experiment
 
 from .bindings import STAGE_ORDER, STAGE_SPECS
 from .experiment_panel import ExperimentPanel
+from .overview_page import OverviewPage
 from .stage_view import StageView
 
-_STATUS_IDLE = "—"
-_STATUS_OK = "✓"
-_STATUS_FAIL = "✗"
+_GLYPH_IDLE = "—"
+_GLYPH_RUNNING = "▶"
+_GLYPH_OK = "✓"
+_GLYPH_FAIL = "✗"
 
 
 class MainWindow(QMainWindow):
-    """Top-level window wiring experiment + stages + status together."""
+    """Top-level window wiring experiment + rail + overview + stages."""
 
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("DFXM pipeline")
         self.resize(1100, 720)
 
-        # Experiment panel (loads the first preset on construction).
         self._experiment_panel = ExperimentPanel()
         experiment = self._experiment_panel.current_experiment()
 
-        # Stage navigation + status.
-        self._nav = QListWidget()
-        self._status = QListWidget()
-        self._status.setMaximumHeight(140)
-        self._status.setSelectionMode(QListWidget.SelectionMode.NoSelection)
-
-        # Stage views (stacked).
+        # Stage views + overview page (stacked).
         self._stack = QStackedWidget()
+        self._overview = OverviewPage(STAGE_ORDER, STAGE_SPECS)
+        self._overview.stageSelected.connect(self._show_stage)
+        self._stack.addWidget(self._overview)
         self._views: dict[str, StageView] = {}
-        self._status_items: dict[str, QListWidgetItem] = {}
         for name in STAGE_ORDER:
-            spec = STAGE_SPECS[name]
-            view = StageView(name, spec, experiment)
+            view = StageView(name, STAGE_SPECS[name], experiment)
+            view.runStarted.connect(self._on_run_started)
             view.runFinished.connect(self._on_run_finished)
             self._views[name] = view
             self._stack.addWidget(view)
-            self._nav.addItem(spec.label)
-            item = QListWidgetItem(f"{_STATUS_IDLE}  {spec.label}")
-            self._status.addItem(item)
+
+        # Pipeline rail: one list = navigation + status.
+        self._nav = QListWidget()
+        self._status_items: dict[str, QListWidgetItem] = {}
+        self._item_base: dict[str, str] = {}
+        self._row_target: list[str | None] = []
+
+        overview_item = QListWidgetItem("☰  Overview")
+        self._nav.addItem(overview_item)
+        self._row_target.append("__overview__")
+        muted = QBrush(QColor("#888888"))
+        for i, name in enumerate(STAGE_ORDER, start=1):
+            label = STAGE_SPECS[name].label
+            base = f"{i} {label}" + (" (optional)" if name == "concat" else "")
+            item = QListWidgetItem(f"{_GLYPH_IDLE}  {base}")
+            if name == "concat":
+                item.setForeground(muted)
+            self._nav.addItem(item)
+            self._row_target.append(name)
             self._status_items[name] = item
+            self._item_base[name] = base
+            if name == "concat":
+                darfix = QListWidgetItem("    ⤷ darfix (external)")
+                darfix.setFlags(Qt.ItemFlag.NoItemFlags)
+                darfix.setToolTip(
+                    "Run darfix outside this app: it turns the concatenated .h5 "
+                    "into the maps.h5 files used by strain and mosaicity."
+                )
+                self._nav.addItem(darfix)
+                self._row_target.append(None)
 
-        self._nav.currentRowChanged.connect(self._stack.setCurrentIndex)
-        self._nav.setCurrentRow(0)
+        self._nav.currentRowChanged.connect(self._on_row_changed)
+        self._nav.setCurrentRow(0)  # land on Overview
 
-        # Wire experiment changes into every stage view.
         self._experiment_panel.experimentChanged.connect(self._on_experiment_changed)
 
-        # Layout.
         left = QWidget()
         left_layout = QVBoxLayout(left)
-        left_layout.addWidget(self._experiment_panel, 1)
-        left_layout.addWidget(self._nav)
-        left_layout.addWidget(self._status)
+        left_layout.addWidget(self._experiment_panel)
+        left_layout.addWidget(self._nav, 1)
 
         splitter = QSplitter()
         splitter.addWidget(left)
@@ -85,15 +107,36 @@ class MainWindow(QMainWindow):
         splitter.setSizes([380, 720])
         self.setCentralWidget(splitter)
 
-    # -- slots ------------------------------------------------------------
+    # -- navigation ---------------------------------------------------------
+    def _on_row_changed(self, row: int) -> None:
+        if not 0 <= row < len(self._row_target):
+            return
+        target = self._row_target[row]
+        if target == "__overview__":
+            self._stack.setCurrentWidget(self._overview)
+        elif target is not None:
+            self._stack.setCurrentWidget(self._views[target])
+
+    def _show_stage(self, name: str) -> None:
+        view = self._views.get(name)
+        if view is None:
+            return
+        self._nav.setCurrentRow(self._row_target.index(name))
+        self._stack.setCurrentWidget(view)
+
+    # -- slots ----------------------------------------------------------------
     def _on_experiment_changed(self, experiment: Experiment) -> None:
         for view in self._views.values():
             view.set_experiment(experiment)
 
-    def _on_run_finished(self, stage_name: str, ok: bool) -> None:
+    def _set_glyph(self, stage_name: str, glyph: str) -> None:
         item = self._status_items.get(stage_name)
-        if item is None:
-            return
-        label = STAGE_SPECS[stage_name].label
-        mark = _STATUS_OK if ok else _STATUS_FAIL
-        item.setText(f"{mark}  {label}")
+        if item is not None:
+            item.setText(f"{glyph}  {self._item_base[stage_name]}")
+        self._overview.set_status(stage_name, glyph)
+
+    def _on_run_started(self, stage_name: str) -> None:
+        self._set_glyph(stage_name, _GLYPH_RUNNING)
+
+    def _on_run_finished(self, stage_name: str, ok: bool) -> None:
+        self._set_glyph(stage_name, _GLYPH_OK if ok else _GLYPH_FAIL)

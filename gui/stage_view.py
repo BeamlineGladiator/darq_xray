@@ -45,6 +45,7 @@ class StageView(QWidget):
     """Form + controls + log/results for a single stage."""
 
     runFinished = Signal(str, bool)  # (stage_name, ok)
+    runStarted = Signal(str)  # stage_name
 
     def __init__(
         self,
@@ -148,6 +149,7 @@ class StageView(QWidget):
         self._results.clear()
         self._log.append(f"Running stage '{self._stage_name}'…")
         self._set_running(True)
+        self.runStarted.emit(self._stage_name)
         self._runner = StageRunner(target, params, start_method="spawn")
         self._runner.start()
         self._timer.start()
