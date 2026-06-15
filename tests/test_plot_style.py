@@ -78,6 +78,46 @@ def test_draw_scale_bar_box_adds_a_second_patch():
     assert len(ax.patches) == 2
 
 
+def test_draw_scale_bar_box_geometry_is_sane():
+    """Box must be a snug corner element, not half the figure (the deferred bug)."""
+    from matplotlib.patches import FancyBboxPatch, Rectangle
+
+    ext_y = 30.0
+    fig, ax = _ax(ext_x=50.0, ext_y=ext_y)
+    style = PlotStyle(
+        scale_bar_box=True,
+        font_scale=2.2,
+        scale_bar_label_scale=1.1,
+        scale_bar_thickness_pt=4.0,
+    )
+    draw_scale_bar(ax, length_um=10.0, style=style)
+
+    boxes = [p for p in ax.patches if isinstance(p, FancyBboxPatch)]
+    rects = [p for p in ax.patches if isinstance(p, Rectangle)]
+    assert len(boxes) == 1, "expected exactly one background FancyBboxPatch"
+    assert len(rects) == 1, "expected exactly one bar Rectangle"
+
+    box = boxes[0]
+    rect = rects[0]
+
+    # Box height must be a snug fraction of the y-extent (bug produced ~14.9, i.e. ~50%).
+    assert box.get_height() > 0, "box height must be positive"
+    assert box.get_height() < 0.25 * ext_y, (
+        f"box height {box.get_height():.2f} is too large (>25% of {ext_y} µm) — "
+        "geometry bug still present"
+    )
+
+    # Box must be wide enough to cover the scale bar.
+    assert box.get_width() >= 10.0, "box width should cover the bar length"
+
+    # Bar rectangle must have no doubled point-based edge.
+    # edgecolor is returned as an RGBA tuple; alpha=0 or "none" both mean invisible.
+    ec = rect.get_edgecolor()  # (R, G, B, A)
+    assert ec[3] == 0 or rect.get_linewidth() == 0, (
+        "bar Rectangle should have no visible edge (edgecolor='none' or linewidth=0)"
+    )
+
+
 def test_apply_text_scale_grows_label_fonts():
     fig, ax = _ax()
     ax.set_xlabel("X (µm)")

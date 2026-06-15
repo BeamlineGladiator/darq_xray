@@ -189,7 +189,9 @@ def draw_scale_bar(ax, length_um: float | None = None, *, style: "PlotStyle") ->
     y0, y1 = ax.get_ylim()
     xr, yr = (x1 - x0), (y1 - y0)
     sl = length_um if length_um is not None else auto_scale_bar_length_um(abs(xr))
-    bh = abs(yr) * 0.012
+    # Bar height in data coords.  Factor 0.004·thickness_pt gives ~0.012·|yr|
+    # at the default thickness_pt=3.0, keeping the legacy look unchanged.
+    bh = abs(yr) * 0.004 * style.scale_bar_thickness_pt
     pad_x, pad_y = 0.05 * abs(xr), 0.05 * abs(yr)
     bx = (x1 - pad_x - sl) if "right" in style.scale_bar_loc else (x0 + pad_x)
     by = (y1 - pad_y - bh) if "upper" in style.scale_bar_loc else (y0 + pad_y)
@@ -197,12 +199,19 @@ def draw_scale_bar(ax, length_um: float | None = None, *, style: "PlotStyle") ->
     label_size = 10.0 * style.font_scale * style.scale_bar_label_scale
 
     if style.scale_bar_box:
-        m = style.scale_bar_box_margin_pt
+        # Box geometry entirely in data/µm coordinates so it snugly encloses
+        # the bar Rectangle (height bh) plus the label (va="bottom" at by+bh*2.5).
+        # A small data-coord allowance for the label text (~0.06·|yr|) is used
+        # instead of the old label_size*0.02*|yr| mix that ballooned the box.
+        label_allowance = 0.06 * abs(yr)
+        box_h = bh * 2.5 + label_allowance
+        # Padding in data units: small fraction of extent, independent of point sizes.
+        pad_data = 0.015 * abs(yr)
         box = FancyBboxPatch(
             (bx, by),
             sl,
-            bh + label_size * 0.02 * abs(yr),
-            boxstyle=f"round,pad={m * 0.01 * abs(yr)}",
+            box_h,
+            boxstyle=f"round,pad={pad_data}",
             transform=ax.transData,
             facecolor=style.scale_bar_box_color,
             edgecolor="none",
@@ -211,14 +220,17 @@ def draw_scale_bar(ax, length_um: float | None = None, *, style: "PlotStyle") ->
         )
         ax.add_patch(box)
 
+    # Bar thickness is expressed once in data coords (bh), with no doubled
+    # point-based edge.  edgecolor="none" + linewidth=0 ensures the visible
+    # thickness is exactly bh.
     ax.add_patch(
         Rectangle(
             (bx, by),
             sl,
             bh,
             facecolor=style.scale_bar_color,
-            edgecolor=style.scale_bar_color,
-            linewidth=style.scale_bar_thickness_pt,
+            edgecolor="none",
+            linewidth=0,
             zorder=5,
         )
     )
