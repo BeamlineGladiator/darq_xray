@@ -6,8 +6,11 @@ from matplotlib.figure import Figure
 from dfxm.common.plotting import (
     PUBLICATION_STYLE,
     PlotStyle,
+    _tick_formatter,
+    add_colorbar,
     apply_text_scale,
     auto_scale_bar_length_um,
+    colorbar_tick_values,
     draw_scale_bar,
     figure_size,
 )
@@ -100,3 +103,33 @@ def test_apply_text_scale_noop_at_font_scale_1():
     assert ax.xaxis.label.get_fontsize() == xb
     assert ax.title.get_fontsize() == tb
     assert ax.get_title() == "keep me"  # title kept when show_title=True
+
+
+def test_colorbar_tick_values_includes_extremes_and_mid():
+    vals = colorbar_tick_values(-2e-3, 2e-3, n=5)
+    assert len(vals) == 5
+    assert vals[0] == -2e-3 and vals[-1] == 2e-3
+    assert abs(vals[2]) < 1e-12  # midpoint of a symmetric range is 0
+
+
+def test_add_colorbar_sets_label_and_tick_count():
+    fig, ax = _ax()
+    im = ax.imshow(
+        np.linspace(-2e-3, 2e-3, 100).reshape(10, 10),
+        extent=[0, 50, 0, 30],
+        origin="lower",
+    )
+    cb = add_colorbar(
+        fig, im, ax, "Strain (ε)", PlotStyle(colorbar_ticks=5, colorbar_tick_format="scientific")
+    )
+    assert cb.ax.get_ylabel() == "Strain (ε)"
+    assert len(cb.get_ticks()) == 5
+
+
+def test_tick_formatter_digit_count_and_negative_guard():
+    f = _tick_formatter("2")
+    assert f is not None
+    assert f(3.14159, 0) == "3.14"  # fixed 2-decimal formatting
+    assert _tick_formatter("-1") is None  # negative digit count -> matplotlib default
+    assert _tick_formatter("auto") is None  # auto -> matplotlib default
+    assert _tick_formatter("nonsense") is None  # unparseable -> matplotlib default

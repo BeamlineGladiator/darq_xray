@@ -15,6 +15,7 @@ from dataclasses import dataclass
 import matplotlib
 import numpy as np
 from matplotlib.figure import Figure
+from matplotlib.ticker import FuncFormatter, ScalarFormatter
 
 
 @dataclass
@@ -232,3 +233,37 @@ def draw_scale_bar(ax, length_um: float | None = None, *, style: "PlotStyle") ->
         va="bottom",
         zorder=6,
     )
+
+
+def colorbar_tick_values(vmin: float, vmax: float, n: int) -> list[float]:
+    """``n`` evenly-spaced tick values from vmin..vmax (always includes both ends)."""
+    return list(np.linspace(vmin, vmax, max(2, n)))
+
+
+def _tick_formatter(fmt: str):
+    if fmt == "scientific":
+        f = ScalarFormatter(useMathText=True)
+        f.set_powerlimits((0, 0))
+        return f
+    if fmt != "auto":
+        try:
+            d = int(fmt)
+            if d >= 0:
+                return FuncFormatter(lambda v, _pos: f"{v:.{d}f}")
+        except ValueError:
+            pass
+    return None  # matplotlib default
+
+
+def add_colorbar(fig, im, ax, label: str, style: "PlotStyle"):
+    """Add a colourbar honouring thickness, label, tick count and number format."""
+    cb = fig.colorbar(im, ax=ax, fraction=style.colorbar_fraction, pad=0.04)
+    text = style.colorbar_label if style.colorbar_label is not None else label
+    cb.set_label(text, fontsize=10 * style.font_scale)
+    if style.colorbar_ticks and style.colorbar_ticks >= 2:
+        cb.set_ticks(colorbar_tick_values(im.norm.vmin, im.norm.vmax, style.colorbar_ticks))
+    fmt = _tick_formatter(style.colorbar_tick_format)
+    if fmt is not None:
+        cb.ax.yaxis.set_major_formatter(fmt)
+    cb.ax.tick_params(labelsize=9 * style.font_scale)
+    return cb
