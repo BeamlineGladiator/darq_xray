@@ -32,6 +32,7 @@ from matplotlib.patches import Rectangle
 from scipy.ndimage import map_coordinates
 
 from ..common import render as Rnd
+from ..common.errors import StageUserError
 from ..config.models import Param, ParamType, StageSpec
 
 ProgressFn = Callable[[float, str], None]
@@ -579,7 +580,13 @@ def run(params: dict, progress: ProgressFn | None = None) -> ProfilesResult:
     p = {**STAGE.defaults(), **params}
     h5_path = p["consolidated_h5"]
     if not h5_path or not os.path.exists(h5_path):
-        raise FileNotFoundError(f"consolidated slice file not found: {h5_path!r}")
+        raise StageUserError(
+            f"consolidated slice file not found: {h5_path!r}",
+            hint=(
+                "Run the slices stage first — it writes oblique_slices.h5, "
+                "which this stage profiles."
+            ),
+        )
     mode = p["mode"].lower()
     if mode not in ("parameter", "preview"):
         raise ValueError(f"mode must be parameter/preview (got {p['mode']!r})")
@@ -589,7 +596,10 @@ def run(params: dict, progress: ProgressFn | None = None) -> ProfilesResult:
 
     jobs = json.loads(p["jobs_json"])
     if not isinstance(jobs, list) or not jobs:
-        raise ValueError("jobs_json must be a non-empty JSON list of jobs")
+        raise StageUserError(
+            "jobs_json must be a non-empty JSON list of jobs",
+            hint="Define at least one job, or use 'Pick line…' to click a line on a slice plane.",
+        )
     ref_pref = p["reference_volume_id"] or ""
     restrict = [v.strip() for v in p["volume_ids"].split(",") if v.strip()] or None
     line_override = p["line_color"] or None

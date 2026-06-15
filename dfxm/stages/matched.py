@@ -19,6 +19,7 @@ from scipy.ndimage import shift as ndi_shift
 
 from ..common import alignment as A
 from ..common import render as Rnd
+from ..common.errors import StageUserError
 from ..common.raster import extract_motor_positions, find_h5_file
 from ..common.sort import find_matching_folders
 from ..config.models import Param, ParamType, StageSpec
@@ -291,7 +292,10 @@ def run(params: dict, progress: ProgressFn | None = None) -> MatchedResult:
     p = {**STAGE.defaults(), **params}
     raw_root = (p["raw_root"] or "").rstrip("/")
     if not raw_root:
-        raise ValueError("matched requires 'raw_root'")
+        raise StageUserError(
+            "matched requires 'raw_root'",
+            hint="Set 'Raw data root' to the RAW_DATA folder that contains the scan folders.",
+        )
     scale_x, scale_y = float(p["pixel_size_x_um"]), float(p["pixel_size_y_um"])
     samy_dir = int(p["samy_direction"])
     frame_index = int(p["frame_index"])
@@ -306,7 +310,10 @@ def run(params: dict, progress: ProgressFn | None = None) -> MatchedResult:
         strain_folders, p["samy_path"], p["samz_path"]
     )
     if len(strain_samy) == 0:
-        raise ValueError(f"no strain motor positions for {p['strain_pattern']!r}")
+        raise StageUserError(
+            f"no strain motor positions for {p['strain_pattern']!r}",
+            hint="Check 'Strain pattern' against the scan folder names under the raw root.",
+        )
 
     progress(0.1, "reading rocking motor positions")
     rock_folders = find_matching_folders(raw_root, p["rocking_pattern"])
@@ -314,7 +321,10 @@ def run(params: dict, progress: ProgressFn | None = None) -> MatchedResult:
         rock_folders, p["samy_path"], p["samz_path"]
     )
     if len(rock_samy) == 0:
-        raise ValueError(f"no rocking motor positions for {p['rocking_pattern']!r}")
+        raise StageUserError(
+            f"no rocking motor positions for {p['rocking_pattern']!r}",
+            hint="Check 'Rocking pattern' against the scan folder names under the raw root.",
+        )
 
     matches, max_dist_mm = match_nearest(
         strain_samy, strain_samz, rock_samy, rock_samz, float(p["match_threshold_mm"])

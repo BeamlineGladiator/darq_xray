@@ -36,6 +36,7 @@ import h5py
 import numpy as np
 
 from ..common import h5io
+from ..common.errors import StageUserError
 from ..common.sort import find_matching_folders
 from ..config.models import Param, ParamType, StageSpec
 
@@ -458,7 +459,13 @@ def run(params: dict, progress: ProgressFn | None = None) -> ConcatResult:
     if p["mode"] == "single":
         folder = p["input_folder"]
         if not folder:
-            raise ValueError("single mode requires 'input_folder'")
+            raise StageUserError(
+                "single mode requires 'input_folder'",
+                hint=(
+                    "Pick the scan folder in 'Input folder', or switch Mode to "
+                    "'batch' and set 'Root folder'."
+                ),
+            )
         override = p.get("h5_filename_override") or None
         input_path = h5io.resolve_input_file(folder, override)
         output_path = h5io.make_output_path(input_path)
@@ -469,10 +476,21 @@ def run(params: dict, progress: ProgressFn | None = None) -> ConcatResult:
     if p["mode"] == "batch":
         root = (p["root_folder"] or "").rstrip("/")
         if not root:
-            raise ValueError("batch mode requires 'root_folder'")
+            raise StageUserError(
+                "batch mode requires 'root_folder'",
+                hint=(
+                    "Pick the parent of the layer folders in 'Root folder', or "
+                    "switch Mode to 'single'."
+                ),
+            )
         folders = find_matching_folders(root, p["folder_pattern"])
         if not folders:
-            raise ValueError(f"no folders matching {p['folder_pattern']!r} in {root}")
+            raise StageUserError(
+                f"no folders matching {p['folder_pattern']!r} in {root}",
+                hint=(
+                    "Check 'Root folder' and 'Folder pattern' — the pattern matched no subfolders."
+                ),
+            )
         skip_existing = bool(p["skip_existing"])
         result = ConcatResult()
         for i, folder in enumerate(folders):

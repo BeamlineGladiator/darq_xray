@@ -31,6 +31,7 @@ import numpy as np
 
 from ..common import alignment as A
 from ..common import render as Rnd
+from ..common.errors import StageUserError
 from ..common.raster import extract_motor_positions, find_h5_file
 from ..common.sort import find_matching_folders
 from ..config.models import Param, ParamType, StageSpec
@@ -588,7 +589,10 @@ def run(params: dict, progress: ProgressFn | None = None) -> RockingResult:
     p = {**STAGE.defaults(), **params}
     raw_root = (p["raw_root"] or "").rstrip("/")
     if not raw_root:
-        raise ValueError("rocking requires 'raw_root'")
+        raise StageUserError(
+            "rocking requires 'raw_root'",
+            hint="Set 'Raw data root' to the RAW_DATA folder that contains the scan folders.",
+        )
     scale_x = float(p["pixel_size_x_um"])
     samy_dir = int(p["samy_direction"])
     roi_x, roi_y = _parse_pair(p["roi_x"]), _parse_pair(p["roi_y"])
@@ -603,7 +607,13 @@ def run(params: dict, progress: ProgressFn | None = None) -> RockingResult:
     progress(0.02, "reading mosaicity motor positions")
     mosa_samy, mosa_samz, _ = _motors(raw_root, p["mosa_pattern"], p["samy_path"], p["samz_path"])
     if len(mosa_samy) == 0:
-        raise ValueError("rocking needs the mosaicity reference; no mosa motor positions found")
+        raise StageUserError(
+            "rocking needs the mosaicity reference; no mosa motor positions found",
+            hint=(
+                "Check 'Mosaicity pattern' — rocking anchors its alignment "
+                "to the mosaicity scans' samy/samz positions."
+            ),
+        )
     samy_ref, samz_ref = float(mosa_samy[0]), float(mosa_samz[0])
     result.samy_reference_mm, result.samz_reference_mm = samy_ref, samz_ref
 
@@ -618,15 +628,22 @@ def run(params: dict, progress: ProgressFn | None = None) -> RockingResult:
         raw_root, p["rocking_pattern"], p["samy_path"], p["samz_path"]
     )
     if len(rock_names) == 0:
-        raise ValueError(f"no rocking folders matching {p['rocking_pattern']!r} in {raw_root}")
+        raise StageUserError(
+            f"no rocking folders matching {p['rocking_pattern']!r} in {raw_root}",
+            hint="Check 'Rocking pattern' against the scan folder names under the raw root.",
+        )
     rock_paths = [os.path.join(raw_root, n) for n in rock_names]
 
     mask = (rock_samz >= z_min - tol) & (rock_samz <= z_max + tol)
     keep_paths = [pp for pp, m in zip(rock_paths, mask) if m]
     keep_samy, keep_samz = rock_samy[mask], rock_samz[mask]
     if not keep_paths:
-        raise ValueError(
-            f"no rocking scans fall in samz union [{z_min:.6f}, {z_max:.6f}] mm (tol={tol})"
+        raise StageUserError(
+            f"no rocking scans fall in samz union [{z_min:.6f}, {z_max:.6f}] mm (tol={tol})",
+            hint=(
+                "Loosen 'samz tolerance' or check that the rocking scans "
+                "cover the mosaicity/strain Z range."
+            ),
         )
     order = np.argsort(keep_samz)
     keep_paths = [keep_paths[i] for i in order]

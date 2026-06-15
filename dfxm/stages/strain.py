@@ -28,6 +28,7 @@ import h5py
 import numpy as np
 from scipy.optimize import curve_fit
 
+from ..common.errors import StageUserError
 from ..common.plotting import new_figure, physical_extent, symmetric_limits
 from ..common.sort import find_matching_folders
 from ..config.models import Param, ParamType, StageSpec
@@ -486,16 +487,34 @@ def run(params: dict, progress: ProgressFn | None = None) -> StrainResult:
     if p["mode"] == "single":
         folder = p["input_folder"]
         if not folder:
-            raise ValueError("single mode requires 'input_folder'")
+            raise StageUserError(
+                "single mode requires 'input_folder'",
+                hint=(
+                    "Pick the layer folder holding maps.h5 in 'Input folder', "
+                    "or switch Mode to 'batch'."
+                ),
+            )
         work = [(os.path.basename(folder.rstrip("/")), os.path.join(folder, maps_filename))]
         default_out_root = folder
     else:
         root = (p["root_folder"] or "").rstrip("/")
         if not root:
-            raise ValueError("batch mode requires 'root_folder'")
+            raise StageUserError(
+                "batch mode requires 'root_folder'",
+                hint=(
+                    "Pick the parent of the layer folders in 'Root folder', or "
+                    "switch Mode to 'single'."
+                ),
+            )
         folders = find_matching_folders(root, p["folder_pattern"])
         if not folders:
-            raise ValueError(f"no folders matching {p['folder_pattern']!r} in {root}")
+            raise StageUserError(
+                f"no folders matching {p['folder_pattern']!r} in {root}",
+                hint=(
+                    "Check 'Folder pattern' — it matched no subfolders. Each "
+                    "matching folder must contain the darfix maps.h5."
+                ),
+            )
         work = [(os.path.basename(f), os.path.join(f, maps_filename)) for f in folders]
         default_out_root = root
 

@@ -33,6 +33,7 @@ from scipy.ndimage import map_coordinates
 
 from ..common import alignment as A
 from ..common import render as Rnd
+from ..common.errors import StageUserError
 from ..common.raster import extract_motor_positions
 from ..common.sort import find_matching_folders
 from ..config.models import Param, ParamType, StageSpec
@@ -832,7 +833,14 @@ def run(params: dict, progress: ProgressFn | None = None) -> SlicesResult:
     os.makedirs(out_dir, exist_ok=True)  # only once we know there is work to do
     slices = json.loads(p["slices_json"])
     if not isinstance(slices, list) or not slices:
-        raise ValueError("slices_json must be a non-empty JSON list of slice specs")
+        raise StageUserError(
+            "slices_json must be a non-empty JSON list of slice specs",
+            hint=(
+                "Provide a JSON list of plane specs — the field's default "
+                "shows the format; 'extent': 'auto' fits the plane "
+                "automatically."
+            ),
+        )
 
     # Resolve extent='auto' planes against a common data box (shared grid).
     if any(sl.get("extent") == "auto" for sl in slices):
