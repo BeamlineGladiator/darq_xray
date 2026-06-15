@@ -8,6 +8,7 @@ import h5py
 import numpy as np
 import pytest
 
+from dfxm.common.plotting import PlotStyle
 from dfxm.stages import slices as S
 
 L, NY, NX = 4, 6, 8
@@ -182,3 +183,70 @@ def test_run_rejects_missing_half(tmp_path):
                 "output_dir": str(tmp_path / "sl"),
             }
         )
+
+
+# -- build_slice_figure -------------------------------------------------------
+
+
+def _prep():
+    return {
+        "cmap_name": "viridis",
+        "title": "t",
+        "cbar_label": "cb",
+        "vmin": -1.0,
+        "vmax": 1.0,
+        "center_zero": False,
+    }
+
+
+def test_build_slice_figure_returns_figure_with_equal_aspect():
+    sl = {"name": "p0"}
+    s2d = np.random.rand(10, 12)
+    fig = S.build_slice_figure(
+        _prep(),
+        sl,
+        s2d,
+        np.linspace(0, 12, 12),
+        np.linspace(0, 10, 10),
+        offset_um=None,
+        style=PlotStyle(scale_bar=False),
+    )
+    assert fig.axes[0].get_aspect() == 1.0
+    assert len(fig.axes[0].patches) == 0
+
+
+def test_build_slice_figure_legacy_figsize_and_colorbar():
+    sl = {"name": "p0"}
+    s2d = np.random.rand(10, 12)
+    fig = S.build_slice_figure(
+        _prep(),
+        sl,
+        s2d,
+        np.linspace(0, 12, 12),
+        np.linspace(0, 10, 10),
+        offset_um=None,
+        style=None,
+    )
+    # legacy figsize is the hardcoded 12x10
+    w, h = fig.get_size_inches()
+    assert (round(w), round(h)) == (12, 10)
+    # main axes + colourbar axes
+    assert len(fig.axes) == 2
+    # legacy draws the (black) scale bar -> at least one patch
+    assert len(fig.axes[0].patches) >= 1
+
+
+def test_build_slice_figure_offset_annotation_in_title():
+    sl = {"name": "p0"}
+    s2d = np.random.rand(10, 12)
+    fig = S.build_slice_figure(
+        _prep(),
+        sl,
+        s2d,
+        np.linspace(0, 12, 12),
+        np.linspace(0, 10, 10),
+        offset_um=3.5,
+        style=None,
+    )
+    title = fig.axes[0].get_title()
+    assert "3.50" in title  # the offset annotation appears as "+3.50" in the title

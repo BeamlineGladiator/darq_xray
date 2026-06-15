@@ -28,12 +28,12 @@ import h5py
 import matplotlib.colors as mcolors
 import numpy as np
 from matplotlib.figure import Figure
-from matplotlib.patches import Rectangle
 from scipy.ndimage import map_coordinates
 
 from ..common import alignment as A
 from ..common import render as Rnd
 from ..common.errors import StageUserError
+from ..common.plotting import PlotStyle, add_colorbar, apply_text_scale, draw_scale_bar, figure_size
 from ..common.raster import extract_motor_positions
 from ..common.sort import find_matching_folders
 from ..config.models import Param, ParamType, StageSpec
@@ -704,38 +704,32 @@ def _make_norm(prep):
     return mcolors.Normalize(vmin=vmin, vmax=vmax)
 
 
-def _scale_bar(ax, color="black"):
-    x0, x1 = ax.get_xlim()
-    y0, y1 = ax.get_ylim()
-    xr, yr = (x1 - x0), (y1 - y0)
-    target = xr * 0.15
-    if target >= 100:
-        sl = round(target / 50) * 50
-    elif target >= 10:
-        sl = round(target / 10) * 10
-    elif target >= 1:
-        sl = round(target)
+_LEGACY_STYLE = PlotStyle(scale_bar_color="black", colorbar_fraction=0.046)
+
+
+def build_slice_figure(
+    prep, sl, slice2d, u_um, v_um, *, offset_um, style: PlotStyle | None = None
+) -> Figure:
+    """Build and return a slice figure. Does NOT call savefig.
+
+    When *style* is ``None`` the legacy appearance is reproduced (black auto
+    scale bar, 0.046 colourbar fraction, 12×10 in figsize). When a
+    :class:`~dfxm.common.plotting.PlotStyle` is supplied its figsize/colourbar/
+    fonts/scale-bar settings are honoured instead.
+    """
+    st = style if style is not None else _LEGACY_STYLE
+    use_legacy = style is None
+
+    if use_legacy:
+        figsize = (12, 10)
     else:
-        sl = round(target, 1)
-    sl = sl or target
-    bx, by, bh = x1 - 0.05 * xr - sl, y0 + 0.05 * yr, 0.01 * yr
-    ax.add_patch(Rectangle((bx, by), sl, bh, facecolor=color, edgecolor=color))
-    ax.text(
-        bx + sl / 2.0,
-        by + bh * 3,
-        f"{sl:.0f} µm",
-        color=color,
-        fontsize=10,
-        ha="center",
-        va="bottom",
-        fontweight="bold",
-    )
+        ext_u = float(u_um[-1] - u_um[0])
+        ext_v = float(v_um[-1] - v_um[0])
+        figsize = figure_size(st, ext_u, ext_v) or (12, 10)
 
-
-def render_slice_png(prep, sl, slice2d, u_um, v_um, out_png, offset_um, dpi=150):
-    extent = [float(u_um[0]), float(u_um[-1]), float(v_um[0]), float(v_um[-1])]
-    fig = Figure(figsize=(12, 10), facecolor="white")
+    fig = Figure(figsize=figsize, facecolor="white")
     ax = fig.add_subplot(111)
+    extent = [float(u_um[0]), float(u_um[-1]), float(v_um[0]), float(v_um[-1])]
     im = ax.imshow(
         slice2d,
         cmap=Rnd.cmap_nan_transparent(prep["cmap_name"]),
@@ -748,9 +742,22 @@ def render_slice_png(prep, sl, slice2d, u_um, v_um, out_png, offset_um, dpi=150)
     ax.set_ylabel("v (µm)")
     sub = sl["name"] if offset_um is None else f"{sl['name']}  (offset {offset_um:+.2f} µm)"
     ax.set_title(f"{prep['title']}\nslice: {sub}")
-    fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04).set_label(prep["cbar_label"])
-    _scale_bar(ax)
-    fig.savefig(out_png, dpi=dpi, facecolor="white", bbox_inches="tight")
+
+    if st.colorbar:
+        add_colorbar(fig, im, ax, prep["cbar_label"], st)
+    if st.scale_bar:
+        draw_scale_bar(ax, st.scale_bar_length_um, style=st)
+    if not use_legacy:
+        apply_text_scale(ax, st)
+
+    return fig
+
+
+def save_slice_png(prep, sl, slice2d, u_um, v_um, out_png, *, offset_um, dpi=150):
+    """Build a legacy-style slice figure and save it to *out_png*."""
+    build_slice_figure(prep, sl, slice2d, u_um, v_um, offset_um=offset_um).savefig(
+        out_png, dpi=dpi, facecolor="white", bbox_inches="tight"
+    )
 
 
 def write_volume_group(fh, prep, slice_records):
@@ -899,13 +906,13 @@ def run(params: dict, progress: ProgressFn | None = None) -> SlicesResult:
                     if save_png:
                         if len(offsets) == 1:
                             png = os.path.join(out_dir, f"{sl['name']}__{prep['volume_id']}.png")
-                            render_slice_png(prep, sl, s2d, u_um, v_um, png, None)
+                            save_slice_png(prep, sl, s2d, u_um, v_um, png, offset_um=None)
                         else:
                             png = os.path.join(
                                 out_dir,
                                 f"{sl['name']}__{prep['volume_id']}__p{pi:03d}_{off:+08.2f}um.png",
                             )
-                            render_slice_png(prep, sl, s2d, u_um, v_um, png, off)
+                            save_slice_png(prep, sl, s2d, u_um, v_um, png, offset_um=off)
                         result.pngs.append(png)
                 stack = np.stack(planes, axis=0)
                 result.n_planes_total += stack.shape[0]
