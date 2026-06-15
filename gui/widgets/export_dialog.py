@@ -6,7 +6,7 @@ import os
 import re
 from dataclasses import replace
 
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import QTimer, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -29,12 +29,382 @@ from dfxm.common.plotting import PlotStyle
 
 from .mpl_canvas import MplCanvas
 
-# Module-level constants for option lists — shared by _build_controls and
-# _sync_controls_from_style so the two places can never drift apart.
+# Module-level constants for option lists — shared by StyleControls so the
+# two places can never drift apart.
 _COLORS = ["black", "white", "red", "green", "blue", "yellow", "grey"]
 _WIDTHS = ["auto", "single", "double"]
 _TICK_FMTS = ["auto", "scientific", "0", "1", "2", "3"]
 _LOCS = ["lower right", "lower left", "upper right", "upper left"]
+
+
+class StyleControls(QWidget):
+    """Widget encapsulating all ~21 PlotStyle controls.
+
+    Holds a reference to the supplied *style* object and mutates it in place
+    whenever a control changes.  Emits :attr:`changed` after each mutation so
+    callers can connect a debounced re-render or any other side-effect.
+
+    Call :meth:`sync_from_style` to push the style's current values back into
+    all widgets (e.g. after a "Reset" that replaces the style's fields).
+    """
+
+    changed = Signal()
+
+    def __init__(self, style: PlotStyle, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._style = style
+        self._build_controls()
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
+    def sync_from_style(self) -> None:
+        """Re-push all style values into the widgets (used after reset).
+
+        Signals are blocked during the sync so no spurious ``changed`` emissions
+        occur while we programmatically set widget values.
+        """
+        s = self._style
+        # Block signals on every widget to prevent feedback loops.
+        for w in self._all_widgets():
+            w.blockSignals(True)
+
+        self._w_scale_bar.setChecked(s.scale_bar)
+        self._w_bar_auto.setChecked(s.scale_bar_length_um is None)
+        self._w_bar_len.setValue(
+            s.scale_bar_length_um if s.scale_bar_length_um is not None else 10.0
+        )
+        self._w_bar_len.setEnabled(s.scale_bar_length_um is not None)
+        self._w_bar_thick.setValue(s.scale_bar_thickness_pt)
+        self._w_bar_label_scale.setValue(s.scale_bar_label_scale)
+        self._w_bar_color.setCurrentText(
+            s.scale_bar_color if s.scale_bar_color in _COLORS else _COLORS[0]
+        )
+        self._w_bar_loc.setCurrentText(s.scale_bar_loc)
+        self._w_bar_box.setChecked(s.scale_bar_box)
+        self._w_box_color.setCurrentText(
+            s.scale_bar_box_color if s.scale_bar_box_color in _COLORS else _COLORS[0]
+        )
+        self._w_box_alpha.setValue(s.scale_bar_box_alpha)
+        self._w_box_margin.setValue(s.scale_bar_box_margin_pt)
+        self._w_font_scale.setValue(s.font_scale)
+        self._w_show_title.setChecked(s.show_title)
+        self._w_center_labels.setChecked(s.center_axis_labels)
+        self._w_colorbar.setChecked(s.colorbar)
+        self._w_cbar_label.setText(s.colorbar_label or "")
+        self._w_cbar_frac.setValue(s.colorbar_fraction)
+        self._w_cbar_ticks.setValue(s.colorbar_ticks)
+        self._w_cbar_fmt.setCurrentText(
+            s.colorbar_tick_format if s.colorbar_tick_format in _TICK_FMTS else "auto"
+        )
+        self._w_fig_width.setCurrentText(
+            s.figure_width
+            if isinstance(s.figure_width, str) and s.figure_width in _WIDTHS
+            else "auto"
+        )
+        for cb, name in zip(self._format_checkboxes, self._format_names):
+            cb.setChecked(name in s.formats)
+        self._w_dpi.setValue(s.dpi)
+
+        for w in self._all_widgets():
+            w.blockSignals(False)
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    def set_style(self, style: PlotStyle) -> None:
+        """Rebind to a new PlotStyle object and refresh all widgets from it."""
+        self._style = style
+        self.sync_from_style()
+
+    def _all_widgets(self) -> list[QWidget]:
+        """Return a flat list of all leaf widgets (for blockSignals)."""
+        return [
+            self._w_scale_bar,
+            self._w_bar_auto,
+            self._w_bar_len,
+            self._w_bar_thick,
+            self._w_bar_label_scale,
+            self._w_bar_color,
+            self._w_bar_loc,
+            self._w_bar_box,
+            self._w_box_color,
+            self._w_box_alpha,
+            self._w_box_margin,
+            self._w_font_scale,
+            self._w_show_title,
+            self._w_center_labels,
+            self._w_colorbar,
+            self._w_cbar_label,
+            self._w_cbar_frac,
+            self._w_cbar_ticks,
+            self._w_cbar_fmt,
+            self._w_fig_width,
+            self._w_fmt_png,
+            self._w_fmt_pdf,
+            self._w_fmt_svg,
+            self._w_dpi,
+        ]
+
+    def _emit(self) -> None:
+        self.changed.emit()
+
+    def _build_controls(self) -> None:
+        """Build the full control set; each widget mutates self._style + emits changed."""
+        form = QFormLayout(self)
+        form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
+
+        s = self._style  # alias (widgets capture self, so mutations always go to self._style)
+
+        # --- Scale bar section ---
+        form.addRow(QLabel("<b>Scale bar</b>"))
+
+        self._w_scale_bar = QCheckBox()
+        self._w_scale_bar.setChecked(s.scale_bar)
+        self._w_scale_bar.toggled.connect(
+            lambda v: (setattr(self._style, "scale_bar", v), self._emit())
+        )
+        form.addRow("Show scale bar", self._w_scale_bar)
+
+        # Auto-length: checked means None (auto); unchecked enables the spin.
+        self._w_bar_auto = QCheckBox("Auto length")
+        self._w_bar_auto.setChecked(s.scale_bar_length_um is None)
+        self._w_bar_len = QDoubleSpinBox()
+        self._w_bar_len.setRange(0.1, 10_000.0)
+        self._w_bar_len.setDecimals(1)
+        self._w_bar_len.setSuffix(" µm")
+        self._w_bar_len.setValue(
+            s.scale_bar_length_um if s.scale_bar_length_um is not None else 10.0
+        )
+        self._w_bar_len.setEnabled(s.scale_bar_length_um is not None)
+        self._w_bar_auto.toggled.connect(self._on_bar_auto_toggled)
+        self._w_bar_len.valueChanged.connect(
+            lambda v: (
+                setattr(self._style, "scale_bar_length_um", v),
+                self._emit(),
+            )
+        )
+        bar_len_layout = QHBoxLayout()
+        bar_len_layout.addWidget(self._w_bar_auto)
+        bar_len_layout.addWidget(self._w_bar_len)
+        form.addRow("Bar length", bar_len_layout)
+
+        self._w_bar_thick = QDoubleSpinBox()
+        self._w_bar_thick.setRange(0.5, 20.0)
+        self._w_bar_thick.setDecimals(1)
+        self._w_bar_thick.setSuffix(" pt")
+        self._w_bar_thick.setValue(s.scale_bar_thickness_pt)
+        self._w_bar_thick.valueChanged.connect(
+            lambda v: (setattr(self._style, "scale_bar_thickness_pt", v), self._emit())
+        )
+        form.addRow("Bar thickness", self._w_bar_thick)
+
+        self._w_bar_label_scale = QDoubleSpinBox()
+        self._w_bar_label_scale.setRange(0.5, 3.0)
+        self._w_bar_label_scale.setDecimals(2)
+        self._w_bar_label_scale.setSingleStep(0.1)
+        self._w_bar_label_scale.setValue(s.scale_bar_label_scale)
+        self._w_bar_label_scale.valueChanged.connect(
+            lambda v: (setattr(self._style, "scale_bar_label_scale", v), self._emit())
+        )
+        form.addRow("Label scale", self._w_bar_label_scale)
+
+        self._w_bar_loc = QComboBox()
+        self._w_bar_loc.addItems(_LOCS)
+        self._w_bar_loc.setCurrentText(s.scale_bar_loc)
+        self._w_bar_loc.currentTextChanged.connect(
+            lambda v: (setattr(self._style, "scale_bar_loc", v), self._emit())
+        )
+        form.addRow("Bar location", self._w_bar_loc)
+
+        self._w_bar_color = QComboBox()
+        self._w_bar_color.addItems(_COLORS)
+        self._w_bar_color.setCurrentText(
+            s.scale_bar_color if s.scale_bar_color in _COLORS else _COLORS[0]
+        )
+        self._w_bar_color.currentTextChanged.connect(
+            lambda v: (setattr(self._style, "scale_bar_color", v), self._emit())
+        )
+        form.addRow("Bar colour", self._w_bar_color)
+
+        self._w_bar_box = QCheckBox()
+        self._w_bar_box.setChecked(s.scale_bar_box)
+        self._w_bar_box.toggled.connect(
+            lambda v: (setattr(self._style, "scale_bar_box", v), self._emit())
+        )
+        form.addRow("Background box", self._w_bar_box)
+
+        self._w_box_color = QComboBox()
+        self._w_box_color.addItems(_COLORS)
+        self._w_box_color.setCurrentText(
+            s.scale_bar_box_color if s.scale_bar_box_color in _COLORS else _COLORS[0]
+        )
+        self._w_box_color.currentTextChanged.connect(
+            lambda v: (setattr(self._style, "scale_bar_box_color", v), self._emit())
+        )
+        form.addRow("Box colour", self._w_box_color)
+
+        self._w_box_alpha = QDoubleSpinBox()
+        self._w_box_alpha.setRange(0.0, 1.0)
+        self._w_box_alpha.setDecimals(2)
+        self._w_box_alpha.setSingleStep(0.05)
+        self._w_box_alpha.setValue(s.scale_bar_box_alpha)
+        self._w_box_alpha.valueChanged.connect(
+            lambda v: (setattr(self._style, "scale_bar_box_alpha", v), self._emit())
+        )
+        form.addRow("Box alpha", self._w_box_alpha)
+
+        self._w_box_margin = QDoubleSpinBox()
+        self._w_box_margin.setRange(0.0, 20.0)
+        self._w_box_margin.setDecimals(1)
+        self._w_box_margin.setSuffix(" pt")
+        self._w_box_margin.setValue(s.scale_bar_box_margin_pt)
+        self._w_box_margin.valueChanged.connect(
+            lambda v: (setattr(self._style, "scale_bar_box_margin_pt", v), self._emit())
+        )
+        form.addRow("Box margin", self._w_box_margin)
+
+        # --- Text section ---
+        form.addRow(QLabel("<b>Text</b>"))
+
+        self._w_font_scale = QDoubleSpinBox()
+        self._w_font_scale.setRange(0.5, 5.0)
+        self._w_font_scale.setDecimals(2)
+        self._w_font_scale.setSingleStep(0.1)
+        self._w_font_scale.setValue(s.font_scale)
+        self._w_font_scale.valueChanged.connect(
+            lambda v: (setattr(self._style, "font_scale", v), self._emit())
+        )
+        form.addRow("Font scale", self._w_font_scale)
+
+        self._w_show_title = QCheckBox()
+        self._w_show_title.setChecked(s.show_title)
+        self._w_show_title.toggled.connect(
+            lambda v: (setattr(self._style, "show_title", v), self._emit())
+        )
+        form.addRow("Show title", self._w_show_title)
+
+        self._w_center_labels = QCheckBox()
+        self._w_center_labels.setChecked(s.center_axis_labels)
+        self._w_center_labels.toggled.connect(
+            lambda v: (setattr(self._style, "center_axis_labels", v), self._emit())
+        )
+        form.addRow("Centre axis labels", self._w_center_labels)
+
+        # --- Colourbar section ---
+        form.addRow(QLabel("<b>Colourbar</b>"))
+
+        self._w_colorbar = QCheckBox()
+        self._w_colorbar.setChecked(s.colorbar)
+        self._w_colorbar.toggled.connect(
+            lambda v: (setattr(self._style, "colorbar", v), self._emit())
+        )
+        form.addRow("Show colourbar", self._w_colorbar)
+
+        self._w_cbar_label = QLineEdit()
+        self._w_cbar_label.setPlaceholderText("(use figure's own label)")
+        self._w_cbar_label.setText(s.colorbar_label or "")
+        self._w_cbar_label.textChanged.connect(
+            lambda v: (
+                setattr(self._style, "colorbar_label", v if v else None),
+                self._emit(),
+            )
+        )
+        form.addRow("Colourbar label", self._w_cbar_label)
+
+        self._w_cbar_frac = QDoubleSpinBox()
+        self._w_cbar_frac.setRange(0.01, 0.3)
+        self._w_cbar_frac.setDecimals(3)
+        self._w_cbar_frac.setSingleStep(0.005)
+        self._w_cbar_frac.setValue(s.colorbar_fraction)
+        self._w_cbar_frac.valueChanged.connect(
+            lambda v: (setattr(self._style, "colorbar_fraction", v), self._emit())
+        )
+        form.addRow("Colourbar fraction", self._w_cbar_frac)
+
+        self._w_cbar_ticks = QSpinBox()
+        self._w_cbar_ticks.setRange(0, 20)
+        self._w_cbar_ticks.setSpecialValueText("auto")
+        self._w_cbar_ticks.setValue(s.colorbar_ticks)
+        self._w_cbar_ticks.valueChanged.connect(
+            lambda v: (setattr(self._style, "colorbar_ticks", v), self._emit())
+        )
+        form.addRow("Colourbar ticks", self._w_cbar_ticks)
+
+        self._w_cbar_fmt = QComboBox()
+        self._w_cbar_fmt.addItems(_TICK_FMTS)
+        self._w_cbar_fmt.setCurrentText(
+            s.colorbar_tick_format if s.colorbar_tick_format in _TICK_FMTS else "auto"
+        )
+        self._w_cbar_fmt.currentTextChanged.connect(
+            lambda v: (setattr(self._style, "colorbar_tick_format", v), self._emit())
+        )
+        form.addRow("Tick format", self._w_cbar_fmt)
+
+        # --- Figure section ---
+        form.addRow(QLabel("<b>Figure</b>"))
+
+        self._w_fig_width = QComboBox()
+        self._w_fig_width.addItems(_WIDTHS)
+        _cur_width = (
+            s.figure_width
+            if isinstance(s.figure_width, str) and s.figure_width in _WIDTHS
+            else "auto"
+        )
+        self._w_fig_width.setCurrentText(_cur_width)
+        self._w_fig_width.currentTextChanged.connect(
+            lambda v: (setattr(self._style, "figure_width", v), self._emit())
+        )
+        form.addRow("Figure width", self._w_fig_width)
+
+        # --- Output section ---
+        form.addRow(QLabel("<b>Output</b>"))
+
+        # 3 checkboxes for format selection
+        self._w_fmt_png = QCheckBox("PNG")
+        self._w_fmt_pdf = QCheckBox("PDF")
+        self._w_fmt_svg = QCheckBox("SVG")
+        self._w_fmt_png.setChecked("png" in s.formats)
+        self._w_fmt_pdf.setChecked("pdf" in s.formats)
+        self._w_fmt_svg.setChecked("svg" in s.formats)
+        for cb in (self._w_fmt_png, self._w_fmt_pdf, self._w_fmt_svg):
+            cb.toggled.connect(self._on_formats_changed)
+        fmt_layout = QHBoxLayout()
+        fmt_layout.addWidget(self._w_fmt_png)
+        fmt_layout.addWidget(self._w_fmt_pdf)
+        fmt_layout.addWidget(self._w_fmt_svg)
+        form.addRow("Formats", fmt_layout)
+
+        self._w_dpi = QSpinBox()
+        self._w_dpi.setRange(72, 1200)
+        self._w_dpi.setSingleStep(50)
+        self._w_dpi.setSuffix(" dpi")
+        self._w_dpi.setValue(s.dpi)
+        self._w_dpi.valueChanged.connect(lambda v: (setattr(self._style, "dpi", v), self._emit()))
+        form.addRow("DPI", self._w_dpi)
+
+        # Keep a reference so sync_from_style can reach them
+        self._format_checkboxes = (self._w_fmt_png, self._w_fmt_pdf, self._w_fmt_svg)
+        self._format_names = ("png", "pdf", "svg")
+
+    def _on_bar_auto_toggled(self, checked: bool) -> None:
+        self._w_bar_len.setEnabled(not checked)
+        if checked:
+            setattr(self._style, "scale_bar_length_um", None)
+        else:
+            setattr(self._style, "scale_bar_length_um", self._w_bar_len.value())
+        self._emit()
+
+    def _on_formats_changed(self) -> None:
+        fmts = tuple(
+            name for cb, name in zip(self._format_checkboxes, self._format_names) if cb.isChecked()
+        )
+        setattr(self._style, "formats", fmts)
+        # No re-render needed for format changes (only affects export, not preview)
+        # Still emit changed so callers can react if they need to.
+        self._emit()
 
 
 class ExportDialog(QDialog):
@@ -74,7 +444,9 @@ class ExportDialog(QDialog):
         self._debounce.setInterval(150)
         self._debounce.timeout.connect(self._render)
 
-        controls_layout = self._build_controls()
+        # StyleControls widget bound to the working-copy style.
+        self._controls = StyleControls(self._style)
+        self._controls.changed.connect(self._schedule)
 
         reset_btn = QPushButton("Reset to global style")
         reset_btn.clicked.connect(self._on_reset)
@@ -88,7 +460,7 @@ class ExportDialog(QDialog):
 
         right = QVBoxLayout()
         right.addWidget(self._selector)
-        right.addLayout(controls_layout)
+        right.addWidget(self._controls)
         right.addStretch(1)
         right.addLayout(btns)
 
@@ -115,7 +487,7 @@ class ExportDialog(QDialog):
 
     def _on_reset(self) -> None:
         self._style = replace(self._global)
-        self._sync_controls_from_style()
+        self._controls.set_style(self._style)
         self._render()
 
     def _schedule(self) -> None:
@@ -183,304 +555,3 @@ class ExportDialog(QDialog):
             "Export complete",
             "Written:\n" + "\n".join(written) + note,
         )
-
-    # ------------------------------------------------------------------
-    # Controls
-    # ------------------------------------------------------------------
-
-    def _build_controls(self) -> QFormLayout:
-        """Build the full control set; each widget mutates self._style + schedules re-render."""
-        form = QFormLayout()
-        form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
-
-        s = self._style  # alias (will be replaced on reset — widgets capture self)
-
-        # --- Scale bar section ---
-        form.addRow(QLabel("<b>Scale bar</b>"))
-
-        self._w_scale_bar = QCheckBox()
-        self._w_scale_bar.setChecked(s.scale_bar)
-        self._w_scale_bar.toggled.connect(
-            lambda v: (setattr(self._style, "scale_bar", v), self._schedule())
-        )
-        form.addRow("Show scale bar", self._w_scale_bar)
-
-        # Auto-length: checked means None (auto); unchecked enables the spin.
-        self._w_bar_auto = QCheckBox("Auto length")
-        self._w_bar_auto.setChecked(s.scale_bar_length_um is None)
-        self._w_bar_len = QDoubleSpinBox()
-        self._w_bar_len.setRange(0.1, 10_000.0)
-        self._w_bar_len.setDecimals(1)
-        self._w_bar_len.setSuffix(" µm")
-        self._w_bar_len.setValue(
-            s.scale_bar_length_um if s.scale_bar_length_um is not None else 10.0
-        )
-        self._w_bar_len.setEnabled(s.scale_bar_length_um is not None)
-        self._w_bar_auto.toggled.connect(self._on_bar_auto_toggled)
-        self._w_bar_len.valueChanged.connect(
-            lambda v: (
-                setattr(self._style, "scale_bar_length_um", v),
-                self._schedule(),
-            )
-        )
-        bar_len_layout = QHBoxLayout()
-        bar_len_layout.addWidget(self._w_bar_auto)
-        bar_len_layout.addWidget(self._w_bar_len)
-        form.addRow("Bar length", bar_len_layout)
-
-        self._w_bar_thick = QDoubleSpinBox()
-        self._w_bar_thick.setRange(0.5, 20.0)
-        self._w_bar_thick.setDecimals(1)
-        self._w_bar_thick.setSuffix(" pt")
-        self._w_bar_thick.setValue(s.scale_bar_thickness_pt)
-        self._w_bar_thick.valueChanged.connect(
-            lambda v: (setattr(self._style, "scale_bar_thickness_pt", v), self._schedule())
-        )
-        form.addRow("Bar thickness", self._w_bar_thick)
-
-        self._w_bar_label_scale = QDoubleSpinBox()
-        self._w_bar_label_scale.setRange(0.5, 3.0)
-        self._w_bar_label_scale.setDecimals(2)
-        self._w_bar_label_scale.setSingleStep(0.1)
-        self._w_bar_label_scale.setValue(s.scale_bar_label_scale)
-        self._w_bar_label_scale.valueChanged.connect(
-            lambda v: (setattr(self._style, "scale_bar_label_scale", v), self._schedule())
-        )
-        form.addRow("Label scale", self._w_bar_label_scale)
-
-        self._w_bar_loc = QComboBox()
-        self._w_bar_loc.addItems(_LOCS)
-        self._w_bar_loc.setCurrentText(s.scale_bar_loc)
-        self._w_bar_loc.currentTextChanged.connect(
-            lambda v: (setattr(self._style, "scale_bar_loc", v), self._schedule())
-        )
-        form.addRow("Bar location", self._w_bar_loc)
-
-        self._w_bar_color = QComboBox()
-        self._w_bar_color.addItems(_COLORS)
-        self._w_bar_color.setCurrentText(
-            s.scale_bar_color if s.scale_bar_color in _COLORS else _COLORS[0]
-        )
-        self._w_bar_color.currentTextChanged.connect(
-            lambda v: (setattr(self._style, "scale_bar_color", v), self._schedule())
-        )
-        form.addRow("Bar colour", self._w_bar_color)
-
-        self._w_bar_box = QCheckBox()
-        self._w_bar_box.setChecked(s.scale_bar_box)
-        self._w_bar_box.toggled.connect(
-            lambda v: (setattr(self._style, "scale_bar_box", v), self._schedule())
-        )
-        form.addRow("Background box", self._w_bar_box)
-
-        self._w_box_color = QComboBox()
-        self._w_box_color.addItems(_COLORS)
-        self._w_box_color.setCurrentText(
-            s.scale_bar_box_color if s.scale_bar_box_color in _COLORS else _COLORS[0]
-        )
-        self._w_box_color.currentTextChanged.connect(
-            lambda v: (setattr(self._style, "scale_bar_box_color", v), self._schedule())
-        )
-        form.addRow("Box colour", self._w_box_color)
-
-        self._w_box_alpha = QDoubleSpinBox()
-        self._w_box_alpha.setRange(0.0, 1.0)
-        self._w_box_alpha.setDecimals(2)
-        self._w_box_alpha.setSingleStep(0.05)
-        self._w_box_alpha.setValue(s.scale_bar_box_alpha)
-        self._w_box_alpha.valueChanged.connect(
-            lambda v: (setattr(self._style, "scale_bar_box_alpha", v), self._schedule())
-        )
-        form.addRow("Box alpha", self._w_box_alpha)
-
-        self._w_box_margin = QDoubleSpinBox()
-        self._w_box_margin.setRange(0.0, 20.0)
-        self._w_box_margin.setDecimals(1)
-        self._w_box_margin.setSuffix(" pt")
-        self._w_box_margin.setValue(s.scale_bar_box_margin_pt)
-        self._w_box_margin.valueChanged.connect(
-            lambda v: (setattr(self._style, "scale_bar_box_margin_pt", v), self._schedule())
-        )
-        form.addRow("Box margin", self._w_box_margin)
-
-        # --- Text section ---
-        form.addRow(QLabel("<b>Text</b>"))
-
-        self._w_font_scale = QDoubleSpinBox()
-        self._w_font_scale.setRange(0.5, 5.0)
-        self._w_font_scale.setDecimals(2)
-        self._w_font_scale.setSingleStep(0.1)
-        self._w_font_scale.setValue(s.font_scale)
-        self._w_font_scale.valueChanged.connect(
-            lambda v: (setattr(self._style, "font_scale", v), self._schedule())
-        )
-        form.addRow("Font scale", self._w_font_scale)
-
-        self._w_show_title = QCheckBox()
-        self._w_show_title.setChecked(s.show_title)
-        self._w_show_title.toggled.connect(
-            lambda v: (setattr(self._style, "show_title", v), self._schedule())
-        )
-        form.addRow("Show title", self._w_show_title)
-
-        self._w_center_labels = QCheckBox()
-        self._w_center_labels.setChecked(s.center_axis_labels)
-        self._w_center_labels.toggled.connect(
-            lambda v: (setattr(self._style, "center_axis_labels", v), self._schedule())
-        )
-        form.addRow("Centre axis labels", self._w_center_labels)
-
-        # --- Colourbar section ---
-        form.addRow(QLabel("<b>Colourbar</b>"))
-
-        self._w_colorbar = QCheckBox()
-        self._w_colorbar.setChecked(s.colorbar)
-        self._w_colorbar.toggled.connect(
-            lambda v: (setattr(self._style, "colorbar", v), self._schedule())
-        )
-        form.addRow("Show colourbar", self._w_colorbar)
-
-        self._w_cbar_label = QLineEdit()
-        self._w_cbar_label.setPlaceholderText("(use figure's own label)")
-        self._w_cbar_label.setText(s.colorbar_label or "")
-        self._w_cbar_label.textChanged.connect(
-            lambda v: (
-                setattr(self._style, "colorbar_label", v if v else None),
-                self._schedule(),
-            )
-        )
-        form.addRow("Colourbar label", self._w_cbar_label)
-
-        self._w_cbar_frac = QDoubleSpinBox()
-        self._w_cbar_frac.setRange(0.01, 0.3)
-        self._w_cbar_frac.setDecimals(3)
-        self._w_cbar_frac.setSingleStep(0.005)
-        self._w_cbar_frac.setValue(s.colorbar_fraction)
-        self._w_cbar_frac.valueChanged.connect(
-            lambda v: (setattr(self._style, "colorbar_fraction", v), self._schedule())
-        )
-        form.addRow("Colourbar fraction", self._w_cbar_frac)
-
-        self._w_cbar_ticks = QSpinBox()
-        self._w_cbar_ticks.setRange(0, 20)
-        self._w_cbar_ticks.setSpecialValueText("auto")
-        self._w_cbar_ticks.setValue(s.colorbar_ticks)
-        self._w_cbar_ticks.valueChanged.connect(
-            lambda v: (setattr(self._style, "colorbar_ticks", v), self._schedule())
-        )
-        form.addRow("Colourbar ticks", self._w_cbar_ticks)
-
-        self._w_cbar_fmt = QComboBox()
-        self._w_cbar_fmt.addItems(_TICK_FMTS)
-        self._w_cbar_fmt.setCurrentText(
-            s.colorbar_tick_format if s.colorbar_tick_format in _TICK_FMTS else "auto"
-        )
-        self._w_cbar_fmt.currentTextChanged.connect(
-            lambda v: (setattr(self._style, "colorbar_tick_format", v), self._schedule())
-        )
-        form.addRow("Tick format", self._w_cbar_fmt)
-
-        # --- Figure section ---
-        form.addRow(QLabel("<b>Figure</b>"))
-
-        self._w_fig_width = QComboBox()
-        self._w_fig_width.addItems(_WIDTHS)
-        _cur_width = (
-            s.figure_width
-            if isinstance(s.figure_width, str) and s.figure_width in _WIDTHS
-            else "auto"
-        )
-        self._w_fig_width.setCurrentText(_cur_width)
-        self._w_fig_width.currentTextChanged.connect(
-            lambda v: (setattr(self._style, "figure_width", v), self._schedule())
-        )
-        form.addRow("Figure width", self._w_fig_width)
-
-        # --- Output section ---
-        form.addRow(QLabel("<b>Output</b>"))
-
-        # 3 checkboxes for format selection
-        self._w_fmt_png = QCheckBox("PNG")
-        self._w_fmt_pdf = QCheckBox("PDF")
-        self._w_fmt_svg = QCheckBox("SVG")
-        self._w_fmt_png.setChecked("png" in s.formats)
-        self._w_fmt_pdf.setChecked("pdf" in s.formats)
-        self._w_fmt_svg.setChecked("svg" in s.formats)
-        for cb in (self._w_fmt_png, self._w_fmt_pdf, self._w_fmt_svg):
-            cb.toggled.connect(self._on_formats_changed)
-        fmt_layout = QHBoxLayout()
-        fmt_layout.addWidget(self._w_fmt_png)
-        fmt_layout.addWidget(self._w_fmt_pdf)
-        fmt_layout.addWidget(self._w_fmt_svg)
-        form.addRow("Formats", fmt_layout)
-
-        self._w_dpi = QSpinBox()
-        self._w_dpi.setRange(72, 1200)
-        self._w_dpi.setSingleStep(50)
-        self._w_dpi.setSuffix(" dpi")
-        self._w_dpi.setValue(s.dpi)
-        self._w_dpi.valueChanged.connect(
-            lambda v: (setattr(self._style, "dpi", v), self._schedule())
-        )
-        form.addRow("DPI", self._w_dpi)
-
-        # Keep a reference so _sync_controls_from_style can reach them
-        self._format_checkboxes = (self._w_fmt_png, self._w_fmt_pdf, self._w_fmt_svg)
-        self._format_names = ("png", "pdf", "svg")
-
-        return form
-
-    def _on_bar_auto_toggled(self, checked: bool) -> None:
-        self._w_bar_len.setEnabled(not checked)
-        if checked:
-            setattr(self._style, "scale_bar_length_um", None)
-        else:
-            setattr(self._style, "scale_bar_length_um", self._w_bar_len.value())
-        self._schedule()
-
-    def _on_formats_changed(self) -> None:
-        fmts = tuple(
-            name for cb, name in zip(self._format_checkboxes, self._format_names) if cb.isChecked()
-        )
-        setattr(self._style, "formats", fmts)
-        # No re-render needed for format changes (only affects export, not preview)
-
-    def _sync_controls_from_style(self) -> None:
-        """Push all self._style values back into the widgets (used after reset)."""
-        s = self._style
-        self._w_scale_bar.setChecked(s.scale_bar)
-        self._w_bar_auto.setChecked(s.scale_bar_length_um is None)
-        self._w_bar_len.setValue(
-            s.scale_bar_length_um if s.scale_bar_length_um is not None else 10.0
-        )
-        self._w_bar_len.setEnabled(s.scale_bar_length_um is not None)
-        self._w_bar_thick.setValue(s.scale_bar_thickness_pt)
-        self._w_bar_label_scale.setValue(s.scale_bar_label_scale)
-        self._w_bar_color.setCurrentText(
-            s.scale_bar_color if s.scale_bar_color in _COLORS else _COLORS[0]
-        )
-        self._w_bar_loc.setCurrentText(s.scale_bar_loc)
-        self._w_bar_box.setChecked(s.scale_bar_box)
-        self._w_box_color.setCurrentText(
-            s.scale_bar_box_color if s.scale_bar_box_color in _COLORS else _COLORS[0]
-        )
-        self._w_box_alpha.setValue(s.scale_bar_box_alpha)
-        self._w_box_margin.setValue(s.scale_bar_box_margin_pt)
-        self._w_font_scale.setValue(s.font_scale)
-        self._w_show_title.setChecked(s.show_title)
-        self._w_center_labels.setChecked(s.center_axis_labels)
-        self._w_colorbar.setChecked(s.colorbar)
-        self._w_cbar_label.setText(s.colorbar_label or "")
-        self._w_cbar_frac.setValue(s.colorbar_fraction)
-        self._w_cbar_ticks.setValue(s.colorbar_ticks)
-        self._w_cbar_fmt.setCurrentText(
-            s.colorbar_tick_format if s.colorbar_tick_format in _TICK_FMTS else "auto"
-        )
-        self._w_fig_width.setCurrentText(
-            s.figure_width
-            if isinstance(s.figure_width, str) and s.figure_width in _WIDTHS
-            else "auto"
-        )
-        for cb, name in zip(self._format_checkboxes, self._format_names):
-            cb.setChecked(name in s.formats)
-        self._w_dpi.setValue(s.dpi)

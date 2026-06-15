@@ -10,18 +10,25 @@ an :class:`~gui.overview_page.OverviewPage` landing page.
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import (
+    QDialog,
+    QDialogButtonBox,
     QListWidget,
     QListWidgetItem,
     QMainWindow,
+    QPushButton,
+    QScrollArea,
     QSplitter,
     QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
 
+from dfxm.common.plotting import PUBLICATION_STYLE, PlotStyle
 from dfxm.config.models import Experiment
 
 from .bindings import STAGE_ORDER, STAGE_SPECS
@@ -42,6 +49,10 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("DFXM pipeline")
         self.resize(1100, 720)
+
+        # Session-wide publication style — seeded from the module constant but
+        # held as an independent copy so mutations never touch PUBLICATION_STYLE.
+        self._plot_style: PlotStyle = replace(PUBLICATION_STYLE)
 
         self._experiment_panel = ExperimentPanel()
         experiment = self._experiment_panel.current_experiment()
@@ -94,10 +105,15 @@ class MainWindow(QMainWindow):
 
         self._experiment_panel.experimentChanged.connect(self._on_experiment_changed)
 
+        # "Publication style…" button — lives in the left column below the rail.
+        self._pub_style_btn = QPushButton("Publication style…")
+        self._pub_style_btn.clicked.connect(self._on_pub_style)
+
         left = QWidget()
         left_layout = QVBoxLayout(left)
         left_layout.addWidget(self._experiment_panel)
         left_layout.addWidget(self._nav, 1)
+        left_layout.addWidget(self._pub_style_btn)
 
         splitter = QSplitter()
         splitter.addWidget(left)
@@ -106,6 +122,42 @@ class MainWindow(QMainWindow):
         splitter.setStretchFactor(1, 1)
         splitter.setSizes([380, 720])
         self.setCentralWidget(splitter)
+
+    # -- global plot style --------------------------------------------------
+
+    def global_plot_style(self) -> PlotStyle:
+        """Return the session-wide publication :class:`PlotStyle`.
+
+        This is the default starting style for every :class:`ExportDialog`
+        opened from any stage.  It can be edited globally via the
+        "Publication style…" button in the left panel.
+        """
+        return self._plot_style
+
+    def _on_pub_style(self) -> None:
+        """Open the global publication-style editor."""
+        from .widgets.export_dialog import StyleControls
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Publication style")
+        dlg.resize(500, 600)
+
+        # StyleControls mutates self._plot_style in place — no copy needed here
+        # because changes should persist in the session style after closing.
+        controls = StyleControls(self._plot_style, parent=dlg)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setWidget(controls)
+
+        btn_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        btn_box.rejected.connect(dlg.reject)
+
+        layout = QVBoxLayout(dlg)
+        layout.addWidget(scroll, 1)
+        layout.addWidget(btn_box)
+
+        dlg.exec()
 
     # -- navigation ---------------------------------------------------------
     def _on_row_changed(self, row: int) -> None:

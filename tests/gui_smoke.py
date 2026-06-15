@@ -356,6 +356,82 @@ def main() -> int:
     assert boom_dlg._canvas.figure is not None  # error figure was installed
     print("[15] plot-kind round-trip, filename sanitisation, build-raising spec")
 
+    # [16] Session global style: MainWindow.global_plot_style() + StyleControls + ExportDialog.
+    from dfxm.common.plotting import PlotStyle as _PlotStyle
+    from gui.widgets.export_dialog import StyleControls as _StyleControls
+
+    # global_plot_style() returns a PlotStyle (a copy of PUBLICATION_STYLE).
+    session_style = win.global_plot_style()
+    assert isinstance(session_style, _PlotStyle), type(session_style)
+    # It must be a copy — not the same object as the module constant.
+    assert session_style is not PUBLICATION_STYLE
+
+    # StyleControls bound to the session style mutates it in place and emits changed.
+    changed_fired: list[int] = []
+    sc = _StyleControls(session_style)
+    sc.changed.connect(lambda: changed_fired.append(1))
+    original_font_scale = session_style.font_scale
+    # Simulate a user changing the font scale via the spin box.
+    new_val = original_font_scale + 0.5
+    sc._w_font_scale.setValue(new_val)
+    app.processEvents()
+    assert session_style.font_scale == new_val, session_style.font_scale
+    assert len(changed_fired) > 0, "StyleControls.changed never fired"
+
+    # ExportDialog constructed from the session style starts with that style.
+    def _mk2(style):
+        from matplotlib.figure import Figure as _Fig2
+
+        f = _Fig2()
+        f.add_subplot(111)
+        return f
+
+    spec2 = _figs.FigureSpec("g", "Global", "map", "global_fig", _mk2)
+    edlg2 = ExportDialog([spec2], 0, win.global_plot_style())
+    assert edlg2._global is win.global_plot_style()
+    edlg2.deleteLater()
+    sc.deleteLater()
+    app.processEvents()
+    print(
+        "[16] global_plot_style() returns PlotStyle; StyleControls mutates it + emits changed;"
+        " ExportDialog uses session style"
+    )
+
+    # [17] ExportDialog._on_reset re-syncs controls via set_style().
+    from dataclasses import replace as _replace
+
+    from dfxm.common.plotting import PUBLICATION_STYLE as _PUB_STYLE2
+    from gui.widgets.export_dialog import ExportDialog as _ExportDialog2
+
+    def _mk3(style):
+        from matplotlib.figure import Figure as _Fig3
+
+        f = _Fig3()
+        f.add_subplot(111)
+        return f
+
+    spec3 = _figs.FigureSpec("r", "Reset", "map", "reset_fig", _mk3)
+    global_for_reset = _replace(_PUB_STYLE2)  # independent baseline
+    rdlg = _ExportDialog2([spec3], 0, global_for_reset)
+    app.processEvents()
+    original_font_scale = global_for_reset.font_scale
+    # Mutate via the widget so the handler fires and _style is updated.
+    rdlg._controls._w_font_scale.setValue(original_font_scale + 1.0)
+    app.processEvents()
+    assert rdlg._style.font_scale == original_font_scale + 1.0, rdlg._style.font_scale
+    # Now reset — should rebind controls to a fresh copy of global_for_reset.
+    rdlg._on_reset()
+    app.processEvents()
+    assert rdlg._style.font_scale == original_font_scale, (
+        f"_style.font_scale after reset: {rdlg._style.font_scale} != {original_font_scale}"
+    )
+    assert rdlg._controls._w_font_scale.value() == original_font_scale, (
+        f"widget value after reset: {rdlg._controls._w_font_scale.value()} != {original_font_scale}"
+    )
+    rdlg.deleteLater()
+    app.processEvents()
+    print("[17] ExportDialog._on_reset re-syncs _style and widget via set_style()")
+
     print("\nGUI SMOKE PASSED")
     return 0
 

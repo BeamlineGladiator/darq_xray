@@ -28,7 +28,6 @@ from PySide6.QtWidgets import (
 )
 
 from dfxm.common.figures import FigureSpec, figures_for
-from dfxm.common.plotting import PUBLICATION_STYLE
 from dfxm.config.models import Experiment, StageSpec
 from dfxm.runner import Done, Failed, Log, Progress, StageRunner
 from dfxm.stages.registry import STAGE_TARGETS
@@ -371,10 +370,12 @@ class StageView(QWidget):
         if not specs:
             QMessageBox.information(self, "Export", "This stage produced no exportable figures.")
             return
-        # TODO(Task 21): use the session global style instead of PUBLICATION_STYLE
         from .widgets.export_dialog import ExportDialog
 
-        dlg = ExportDialog(specs, 0, PUBLICATION_STYLE, parent=self)
+        # Use the session global style held on MainWindow so edits via
+        # "Publication style…" carry through to every future export dialog.
+        session_style = self.window().global_plot_style()
+        dlg = ExportDialog(specs, 0, session_style, parent=self)
         dlg.exec()
 
     def _finish_failed(self, failure: Failed) -> None:
