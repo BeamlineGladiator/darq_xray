@@ -9,6 +9,7 @@ explicit :class:`~matplotlib.figure.Figure` API instead and save via
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 import matplotlib
@@ -135,38 +136,69 @@ def new_figure(figsize: tuple[float, float] = (7.0, 5.0)) -> Figure:
     return fig
 
 
-def add_scale_bar(
-    ax,
-    length_um: float,
-    *,
-    loc: str = "lower right",
-    color: str = "white",
-    label: str | None = None,
-) -> None:
-    """Draw a horizontal µm scale bar in axes-fraction coordinates.
+def auto_scale_bar_length_um(ext_x: float) -> float:
+    """A 'nice' bar length ~15% of the X extent (1-2-5-10 series)."""
+    target = ext_x * 0.15
+    if target <= 0:
+        return target
+    exp = math.floor(math.log10(target))
+    frac = target / (10**exp)
+    nice = 1.0 if frac < 1.5 else (2.0 if frac < 3.5 else (5.0 if frac < 7.5 else 10.0))
+    return nice * (10**exp)
 
-    Assumes *ax* uses data coordinates in microns (see :func:`physical_extent`).
+
+def draw_scale_bar(ax, length_um: float | None = None, *, style: "PlotStyle") -> None:
+    """Draw a µm scale bar (and optional background box) per *style*.
+
+    *ax* must use data coordinates in microns. ``length_um=None`` auto-sizes.
     """
+    from matplotlib.patches import FancyBboxPatch, Rectangle
+
     x0, x1 = ax.get_xlim()
     y0, y1 = ax.get_ylim()
-    span_x = x1 - x0
-    span_y = y1 - y0
-    pad_x = 0.05 * span_x
-    pad_y = 0.06 * span_y
-    if "right" in loc:
-        x_end = x1 - pad_x
-        x_start = x_end - length_um
-    else:
-        x_start = x0 + pad_x
-        x_end = x_start + length_um
-    y = y0 + pad_y if "lower" in loc else y1 - pad_y
-    ax.plot([x_start, x_end], [y, y], color=color, lw=3, solid_capstyle="butt")
+    xr, yr = (x1 - x0), (y1 - y0)
+    sl = length_um if length_um is not None else auto_scale_bar_length_um(abs(xr))
+    bh = abs(yr) * 0.012
+    pad_x, pad_y = 0.05 * abs(xr), 0.05 * abs(yr)
+    bx = (x1 - pad_x - sl) if "right" in style.scale_bar_loc else (x0 + pad_x)
+    by = (y1 - pad_y - bh) if "upper" in style.scale_bar_loc else (y0 + pad_y)
+    label = f"{sl:g} µm"
+    label_size = 10.0 * style.font_scale * style.scale_bar_label_scale
+
+    if style.scale_bar_box:
+        m = style.scale_bar_box_margin_pt
+        box = FancyBboxPatch(
+            (bx, by),
+            sl,
+            bh + label_size * 0.02 * abs(yr),
+            boxstyle=f"round,pad={m * 0.01 * abs(yr)}",
+            transform=ax.transData,
+            facecolor=style.scale_bar_box_color,
+            edgecolor="none",
+            alpha=style.scale_bar_box_alpha,
+            zorder=4,
+        )
+        ax.add_patch(box)
+
+    ax.add_patch(
+        Rectangle(
+            (bx, by),
+            sl,
+            bh,
+            facecolor=style.scale_bar_color,
+            edgecolor=style.scale_bar_color,
+            linewidth=style.scale_bar_thickness_pt,
+            zorder=5,
+        )
+    )
     ax.text(
-        (x_start + x_end) / 2,
-        y + 0.02 * span_y,
-        label if label is not None else f"{length_um:g} µm",
-        color=color,
+        bx + sl / 2.0,
+        by + bh * 2.5,
+        label,
+        color=style.scale_bar_color,
+        fontsize=label_size,
+        fontweight="bold",
         ha="center",
         va="bottom",
-        fontsize=10,
+        zorder=6,
     )
