@@ -9,6 +9,7 @@ from dfxm.common import figures, render
 from dfxm.common.figures import volume_layer_specs
 from dfxm.common.plotting import PlotStyle
 from dfxm.stages import mosaicity as Mosaicity
+from dfxm.stages import rocking as Rocking
 from dfxm.stages import strain as Strain
 from dfxm.stages import visualize as Visualize
 from dfxm.stages.registry import STAGE_TARGETS
@@ -412,3 +413,189 @@ def test_visualize_figures_multi_dataset_no_collision(tmp_path, monkeypatch):
     assert all(s.kind == "map" for s in specs)
     assert len({s.figure_id for s in specs}) == 6
     assert len({s.filename for s in specs}) == 6
+
+
+# ---------------------------------------------------------------------------
+# rocking.figures() tests
+# ---------------------------------------------------------------------------
+
+
+def test_rocking_figures_no_aligned_path_returns_empty():
+    """Guard: no aligned_path → empty list."""
+    res = Rocking.RockingResult(aligned_path=None, datasets=[], output_dir="")
+    assert Rocking.figures(res, {}) == []
+
+
+def test_rocking_figures_empty_datasets_returns_empty(tmp_path):
+    """Guard: aligned_path set but datasets=[] → empty list (no specs to emit)."""
+    aligned_h5 = tmp_path / "aligned.h5"
+    vol = np.zeros((2, 4, 4), dtype=np.float32)
+    with h5py.File(aligned_h5, "w") as f:
+        f.create_dataset("sum_intensity", data=vol)
+        f.create_dataset("z_uniform_um", data=np.array([0.0, 5.0], dtype=np.float32))
+    res = Rocking.RockingResult(aligned_path=str(aligned_h5), datasets=[], output_dir="")
+    assert Rocking.figures(res, {}) == []
+
+
+def test_rocking_catalog_map_per_layer(tmp_path):
+    """figures() with a RockingResult yields one map spec per Z layer per dataset."""
+    # Mirror the REAL h5 layout written by rocking.save_aligned_raw_volumes():
+    #   /sum_intensity   (Z, Y, X)  float32
+    #   /specific_frame  (Z, Y, X)  float32
+    #   /z_uniform_um    (Z,)       float32
+    n_z = 3
+    rng = np.random.default_rng(7)
+    sum_vol = rng.random((n_z, 10, 20)).astype(np.float32)
+    spec_vol = rng.random((n_z, 10, 20)).astype(np.float32)
+    z_um = np.array([0.0, 5.0, 10.0], dtype=np.float32)
+
+    aligned_h5 = tmp_path / "aligned_raw_rocking_volumes.h5"
+    with h5py.File(aligned_h5, "w") as f:
+        f.create_dataset("sum_intensity", data=sum_vol)
+        f.create_dataset("specific_frame", data=spec_vol)
+        f.create_dataset("z_uniform_um", data=z_um)
+
+    # Two RockingProducts (one per dataset, as produced by rocking._render)
+    prod_sum = Rocking.RockingProducts(name="raw_sum_intensity", vmin=0.1, vmax=5.0)
+    prod_spec = Rocking.RockingProducts(name="raw_specific_frame_000", vmin=0.2, vmax=4.0)
+
+    res = Rocking.RockingResult(
+        aligned_path=str(aligned_h5),
+        datasets=[prod_sum, prod_spec],
+        volume_shape=(n_z, 10, 20),
+        output_dir=str(tmp_path),
+    )
+    params = {"pixel_size_x_um": 0.152, "pixel_size_y_um": 0.385}
+
+    specs = Rocking.figures(res, params)
+
+    # 2 products x n_z layers = 2*3 = 6 map specs
+    assert len(specs) == 2 * n_z
+    assert all(s.kind == "map" for s in specs)
+    # All figure_ids and filenames distinct
+    assert len({s.figure_id for s in specs}) == 2 * n_z
+    assert len({s.filename for s in specs}) == 2 * n_z
+    # build(None) returns a Figure with equal-aspect axes
+    assert specs[0].build(None).axes[0].get_aspect() == 1.0
+
+
+def test_rocking_catalog_zum_label_in_title(tmp_path):
+    """Z coordinate from z_uniform_um appears in rendered axes title."""
+    n_z = 2
+    vol = np.random.default_rng(9).random((n_z, 8, 12)).astype(np.float32)
+    z_um = np.array([0.0, 7.5], dtype=np.float32)
+
+    aligned_h5 = tmp_path / "aligned.h5"
+    with h5py.File(aligned_h5, "w") as f:
+        f.create_dataset("sum_intensity", data=vol)
+        f.create_dataset("specific_frame", data=vol)
+        f.create_dataset("z_uniform_um", data=z_um)
+
+    prod = Rocking.RockingProducts(name="raw_sum_intensity", vmin=0.0, vmax=1.0)
+    res = Rocking.RockingResult(
+        aligned_path=str(aligned_h5),
+        datasets=[prod],
+        volume_shape=(n_z, 8, 12),
+        output_dir=str(tmp_path),
+    )
+    params = {"pixel_size_x_um": 0.152, "pixel_size_y_um": 0.385}
+    specs = Rocking.figures(res, params)
+
+    # Should produce n_z specs for the one product
+    assert len(specs) == n_z
+    # The second layer (z=1) title should contain the Z coordinate
+    fig = specs[1].build(None)
+    assert "Z = " in fig.axes[0].get_title()
+
+
+def test_rocking_figures_via_figures_for(tmp_path):
+    """Both import directions work: rocking.figures() and figures_for('rocking')."""
+    n_z = 2
+    vol = np.random.default_rng(11).random((n_z, 6, 10)).astype(np.float32)
+    z_um = np.array([0.0, 4.0], dtype=np.float32)
+
+    aligned_h5 = tmp_path / "aligned.h5"
+    with h5py.File(aligned_h5, "w") as f:
+        f.create_dataset("sum_intensity", data=vol)
+        f.create_dataset("specific_frame", data=vol)
+        f.create_dataset("z_uniform_um", data=z_um)
+
+    prod = Rocking.RockingProducts(name="raw_sum_intensity", vmin=0.0, vmax=1.0)
+    res = Rocking.RockingResult(
+        aligned_path=str(aligned_h5),
+        datasets=[prod],
+        volume_shape=(n_z, 6, 10),
+        output_dir=str(tmp_path),
+    )
+    params = {"pixel_size_x_um": 0.152, "pixel_size_y_um": 0.385}
+
+    # Direct call
+    direct = Rocking.figures(res, params)
+    # Via figures_for
+    via_catalog = figures.figures_for("rocking", res, params)
+
+    assert len(direct) == n_z
+    assert len(via_catalog) == n_z
+
+
+def test_rocking_sum_cbar_label_normalize_sum_aware(tmp_path):
+    """FIX 1: sum_intensity colorbar label includes 'normalized' when normalize_sum=True."""
+    n_z = 1
+    vol = np.ones((n_z, 4, 4), dtype=np.float32)
+    z_um = np.array([0.0], dtype=np.float32)
+
+    aligned_h5 = tmp_path / "aligned.h5"
+    with h5py.File(aligned_h5, "w") as f:
+        f.create_dataset("sum_intensity", data=vol)
+        f.create_dataset("z_uniform_um", data=z_um)
+
+    prod = Rocking.RockingProducts(name="raw_sum_intensity", vmin=0.0, vmax=1.0)
+    res = Rocking.RockingResult(
+        aligned_path=str(aligned_h5),
+        datasets=[prod],
+        volume_shape=(n_z, 4, 4),
+        output_dir=str(tmp_path),
+    )
+    params = {"pixel_size_x_um": 0.152, "pixel_size_y_um": 0.385, "normalize_sum": True}
+
+    specs = Rocking.figures(res, params)
+    assert len(specs) == 1
+    # The colorbar label is set via cb.set_label() which becomes axes[1].get_ylabel()
+    fig = specs[0].build(None)
+    cbar_label = fig.axes[1].get_ylabel()
+    assert "normalized" in cbar_label, (
+        f"Expected 'normalized' in colorbar label, got: {cbar_label!r}"
+    )
+
+
+def test_rocking_specific_frame_title_includes_idx(tmp_path):
+    """FIX 2: specific_frame title includes the frame index from result.specific_frame_idx."""
+    n_z = 1
+    vol = np.ones((n_z, 4, 4), dtype=np.float32)
+    z_um = np.array([0.0], dtype=np.float32)
+
+    aligned_h5 = tmp_path / "aligned.h5"
+    with h5py.File(aligned_h5, "w") as f:
+        f.create_dataset("specific_frame", data=vol)
+        f.create_dataset("z_uniform_um", data=z_um)
+
+    frame_idx = 7
+    prod = Rocking.RockingProducts(name="raw_specific_frame_007", vmin=0.0, vmax=1.0)
+    res = Rocking.RockingResult(
+        aligned_path=str(aligned_h5),
+        datasets=[prod],
+        volume_shape=(n_z, 4, 4),
+        output_dir=str(tmp_path),
+        specific_frame_idx=frame_idx,
+    )
+    params = {"pixel_size_x_um": 0.152, "pixel_size_y_um": 0.385}
+
+    specs = Rocking.figures(res, params)
+    assert len(specs) == 1
+    # Title should contain the frame index (mirrors run()'s f"Background-subtracted Frame {spec_idx}")
+    fig = specs[0].build(None)
+    axes_title = fig.axes[0].get_title()
+    assert str(frame_idx) in axes_title, (
+        f"Expected frame index {frame_idx} in title, got: {axes_title!r}"
+    )
+    assert "Background-subtracted Frame" in axes_title

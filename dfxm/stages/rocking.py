@@ -32,6 +32,7 @@ import numpy as np
 from ..common import alignment as A
 from ..common import render as Rnd
 from ..common.errors import StageUserError
+from ..common.figures import FigureSpec, register, volume_layer_specs
 from ..common.raster import extract_motor_positions, find_h5_file
 from ..common.sort import find_matching_folders
 from ..config.models import Param, ParamType, StageSpec
@@ -743,6 +744,97 @@ def run(params: dict, progress: ProgressFn | None = None) -> RockingResult:
 
     progress(1.0, f"aligned {result.n_layers_used} rocking layers -> {out_dir}")
     return result
+
+
+# ---------------------------------------------------------------------------
+# Figure catalog
+# ---------------------------------------------------------------------------
+
+# Map product name prefix → in-file HDF5 dataset key
+_PRODUCT_DATASET: dict[str, str] = {
+    "raw_sum_intensity": "sum_intensity",
+    "raw_specific_frame": "specific_frame",
+}
+
+# Colorbar labels matching _render() calls (static entries; sum_intensity is built dynamically
+# in figures() because it depends on the normalize_sum param)
+_PRODUCT_CBAR: dict[str, str] = {
+    "specific_frame": "Intensity (a.u.)",
+}
+
+# Titles matching _render() calls (static entries; specific_frame is built dynamically
+# in figures() because it includes the frame index)
+_PRODUCT_TITLE: dict[str, str] = {
+    "sum_intensity": "Background-subtracted Sum Intensity",
+}
+
+
+@register("rocking")
+def figures(result: RockingResult, params: dict) -> list[FigureSpec]:
+    """One map FigureSpec per Z layer per product in the aligned rocking volume."""
+    if not result.aligned_path:
+        return []
+    if not result.datasets:
+        return []
+
+    sx = float(params.get("pixel_size_x_um", STAGE.defaults()["pixel_size_x_um"]))
+    sy = float(params.get("pixel_size_y_um", STAGE.defaults()["pixel_size_y_um"]))
+
+    # Read z_uniform_um once from the aligned h5
+    with h5py.File(result.aligned_path, "r") as f:
+        z_um = f["z_uniform_um"][:].tolist()
+
+    # FIX 1: mirror run()'s normalize_sum-aware label for the sum-intensity product
+    normalize_sum = bool(params.get("normalize_sum", False))
+    sum_tag = "(a.u., normalized)" if normalize_sum else "(a.u.)"
+
+    all_specs: list[FigureSpec] = []
+    for prod in result.datasets:
+        # Resolve in-file dataset key from the product name prefix
+        ds_key: str | None = None
+        for prefix, key in _PRODUCT_DATASET.items():
+            if prod.name.startswith(prefix):
+                ds_key = key
+                break
+        if ds_key is None:
+            # Unknown product type: no catalog mapping. Add it to _PRODUCT_DATASET when a
+            # new RockingProducts kind is rendered in run().
+            continue
+
+        # FIX 1: sum_intensity cbar label is normalize_sum-aware (mirrors run())
+        if ds_key == "sum_intensity":
+            cbar_label = f"Sum intensity {sum_tag}"
+        else:
+            cbar_label = _PRODUCT_CBAR.get(ds_key, prod.name)
+
+        # FIX 2: specific_frame title includes the frame index (mirrors run())
+        if ds_key == "specific_frame":
+            if result.specific_frame_idx is not None:
+                title = f"Background-subtracted Frame {result.specific_frame_idx}"
+            else:
+                title = "Background-subtracted Specific Frame"
+        else:
+            title = _PRODUCT_TITLE.get(ds_key, prod.name)
+        # id_prefix uses the product name so each product gets distinct ids/filenames
+        id_prefix = prod.name
+
+        all_specs.extend(
+            volume_layer_specs(
+                h5_path=result.aligned_path,
+                dataset=ds_key,
+                id_prefix=id_prefix,
+                title=title,
+                cbar_label=cbar_label,
+                cmap="magma",
+                sx=sx,
+                sy=sy,
+                vmin=prod.vmin,
+                vmax=prod.vmax,
+                z_um=z_um,
+            )
+        )
+
+    return all_specs
 
 
 def _main(argv: list[str] | None = None) -> int:
