@@ -6,6 +6,7 @@ from matplotlib.figure import Figure
 from dfxm.common.plotting import (
     PUBLICATION_STYLE,
     PlotStyle,
+    apply_text_scale,
     auto_scale_bar_length_um,
     draw_scale_bar,
     figure_size,
@@ -72,3 +73,30 @@ def test_draw_scale_bar_box_adds_a_second_patch():
     draw_scale_bar(ax, length_um=10.0, style=PlotStyle(scale_bar_box=True))
     # one patch for the bar, one for the background box
     assert len(ax.patches) == 2
+
+
+def test_apply_text_scale_grows_label_fonts():
+    fig, ax = _ax()
+    ax.set_xlabel("X (µm)")
+    base = ax.xaxis.label.get_fontsize()
+    apply_text_scale(ax, PlotStyle(font_scale=2.0))
+    assert ax.xaxis.label.get_fontsize() == base * 2.0
+
+
+def test_apply_text_scale_hides_title_when_asked():
+    fig, ax = _ax()
+    ax.set_title("keep me?")
+    apply_text_scale(ax, PlotStyle(show_title=False))
+    assert ax.get_title() == ""
+
+
+def test_apply_text_scale_noop_at_font_scale_1():
+    fig, ax = _ax()
+    ax.set_xlabel("X (µm)")
+    ax.set_title("keep me")
+    xb = ax.xaxis.label.get_fontsize()
+    tb = ax.title.get_fontsize()
+    apply_text_scale(ax, PlotStyle())  # default font_scale=1.0
+    assert ax.xaxis.label.get_fontsize() == xb
+    assert ax.title.get_fontsize() == tb
+    assert ax.get_title() == "keep me"  # title kept when show_title=True

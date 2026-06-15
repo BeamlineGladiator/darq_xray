@@ -147,6 +147,36 @@ def auto_scale_bar_length_um(ext_x: float) -> float:
     return nice * (10**exp)
 
 
+def apply_text_scale(ax, style: "PlotStyle") -> None:
+    """Scale axis-label/tick/title fonts by ``style.font_scale``; apply title/centre options."""
+    fs = style.font_scale
+    for label in (ax.xaxis.label, ax.yaxis.label):
+        label.set_fontsize(label.get_fontsize() * fs)
+        if style.center_axis_labels:
+            label.set_ha("center")
+    ax.tick_params(
+        axis="x",
+        labelsize=(
+            ax.xaxis.get_ticklabels()[0].get_fontsize() * fs
+            if ax.xaxis.get_ticklabels()
+            else 10 * fs  # matplotlib default; only reachable after set_xticks([])
+        ),
+    )
+    ax.tick_params(
+        axis="y",
+        labelsize=(
+            ax.yaxis.get_ticklabels()[0].get_fontsize() * fs
+            if ax.yaxis.get_ticklabels()
+            else 10 * fs
+        ),
+    )
+    title = ax.title
+    if not style.show_title:
+        ax.set_title("")
+    else:
+        title.set_fontsize(title.get_fontsize() * fs)
+
+
 def draw_scale_bar(ax, length_um: float | None = None, *, style: "PlotStyle") -> None:
     """Draw a µm scale bar (and optional background box) per *style*.
 
