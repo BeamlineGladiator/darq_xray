@@ -80,6 +80,77 @@ def _load_stage_catalogs() -> None:
     _stage_catalogs_loaded = True
 
 
+def _load_layer(h5_path: str, dataset: str, z: int):
+    import h5py
+
+    with h5py.File(h5_path, "r") as f:
+        return f[dataset][z]
+
+
+def volume_layer_specs(
+    *,
+    h5_path: str,
+    dataset: str,
+    id_prefix: str,
+    title: str,
+    cbar_label: str,
+    cmap: str,
+    sx: float,
+    sy: float,
+    vmin: float,
+    vmax: float,
+    z_um: list[float] | None = None,
+) -> list[FigureSpec]:
+    """One ``map`` FigureSpec per Z layer of a (Z,Y,X) HDF5 volume.
+
+    Opens the file once eagerly (for the shape); each ``build(style)`` re-opens
+    it to read exactly one layer (memory-light for large volumes). ``z_um``, if
+    given, must have length == n_z and is used only in the rendered axes title,
+    not in ``FigureSpec.title``.
+    """
+    import h5py
+
+    from . import render
+
+    with h5py.File(h5_path, "r") as f:
+        n_z = f[dataset].shape[0]
+        ext_x = f[dataset].shape[2] * sx
+        ext_y = f[dataset].shape[1] * sy
+
+    if z_um is not None and len(z_um) != n_z:
+        raise ValueError(f"z_um has {len(z_um)} entries but dataset '{dataset}' has {n_z} Z layers")
+
+    def make(z):
+        def build(style):
+            layer = _load_layer(h5_path, dataset, z)
+            zlabel = f"\nZ = {z_um[z]:.2f} µm" if z_um is not None else ""
+            fig, _, _ = render.layer_figure(
+                layer,
+                vmin,
+                vmax,
+                cmap,
+                ext_x,
+                ext_y,
+                f"{title}{zlabel} (layer {z})",
+                cbar_label,
+                style=style,
+            )
+            return fig
+
+        return build
+
+    return [
+        FigureSpec(
+            figure_id=f"{id_prefix}_z{z:04d}",
+            title=f"{title} — layer {z}",
+            kind="map",
+            filename=f"{id_prefix}_layer_{z:04d}",
+            build=make(z),
+        )
+        for z in range(n_z)
+    ]
+
+
 def figures_for(stage_name: str, result, params: dict) -> list[FigureSpec]:
     _load_stage_catalogs()
     fn = _FIGURE_CATALOGS.get(stage_name)

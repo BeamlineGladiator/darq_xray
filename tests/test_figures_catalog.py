@@ -1,9 +1,12 @@
 import subprocess
 import sys
 
+import h5py
 import numpy as np
+import pytest
 
 from dfxm.common import figures, render
+from dfxm.common.figures import volume_layer_specs
 from dfxm.common.plotting import PlotStyle
 from dfxm.stages.registry import STAGE_TARGETS
 
@@ -43,6 +46,74 @@ def test_figures_for_concat_is_empty():
 
 def test_figures_for_unknown_stage_returns_empty():
     assert figures.figures_for("__no_such_stage__", object(), {}) == []
+
+
+def test_volume_layer_specs_one_per_layer(tmp_path):
+    vol = np.random.rand(3, 20, 40)
+    h5 = tmp_path / "v.h5"
+    with h5py.File(h5, "w") as f:
+        f.create_dataset("strain", data=vol)
+    specs = volume_layer_specs(
+        h5_path=str(h5),
+        dataset="strain",
+        id_prefix="strain",
+        title="Strain",
+        cbar_label="Strain (ε)",
+        cmap="RdBu_r",
+        sx=0.1,
+        sy=0.3,
+        vmin=-1.0,
+        vmax=1.0,
+    )
+    assert len(specs) == 3
+    fig = specs[0].build(None)
+    assert fig.axes[0].get_aspect() == 1.0
+
+
+def test_volume_layer_specs_zum_label_and_field_formats(tmp_path):
+    vol = np.random.rand(3, 20, 40)
+    h5 = tmp_path / "v.h5"
+    with h5py.File(h5, "w") as f:
+        f.create_dataset("strain", data=vol)
+    specs = volume_layer_specs(
+        h5_path=str(h5),
+        dataset="strain",
+        id_prefix="strain",
+        title="Strain",
+        cbar_label="Strain (ε)",
+        cmap="RdBu_r",
+        sx=0.1,
+        sy=0.3,
+        vmin=-1.0,
+        vmax=1.0,
+        z_um=[0.0, 1.0, 2.5],
+    )
+    assert specs[0].figure_id == "strain_z0000"
+    assert specs[0].filename == "strain_layer_0000"
+    # z_um appears only in the RENDERED axes title, not FigureSpec.title
+    fig = specs[1].build(None)
+    assert "Z = 1.00 µm" in fig.axes[0].get_title()
+
+
+def test_volume_layer_specs_zum_length_mismatch_raises(tmp_path):
+    vol = np.random.rand(3, 20, 40)
+    h5 = tmp_path / "v.h5"
+    with h5py.File(h5, "w") as f:
+        f.create_dataset("strain", data=vol)
+    with pytest.raises(ValueError):
+        volume_layer_specs(
+            h5_path=str(h5),
+            dataset="strain",
+            id_prefix="strain",
+            title="Strain",
+            cbar_label="cb",
+            cmap="RdBu_r",
+            sx=0.1,
+            sy=0.3,
+            vmin=-1.0,
+            vmax=1.0,
+            z_um=[0.0, 1.0],  # only 2 for 3 layers
+        )
 
 
 def test_importing_figures_does_not_eager_import_stage_modules():
