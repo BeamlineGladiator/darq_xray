@@ -33,6 +33,7 @@ from scipy.ndimage import map_coordinates
 from ..common import alignment as A
 from ..common import render as Rnd
 from ..common.errors import StageUserError
+from ..common.figures import FigureSpec, register
 from ..common.plotting import PlotStyle, add_colorbar, apply_text_scale, draw_scale_bar, figure_size
 from ..common.raster import extract_motor_positions
 from ..common.sort import find_matching_folders
@@ -615,6 +616,10 @@ def _motors(cfg, p):
     return extract_motor_positions(folders, p["samy_path"], p["samz_path"])
 
 
+# Volume kinds whose colour norm is centered on zero (symmetric TwoSlopeNorm).
+_CENTERED_KINDS: frozenset[str] = frozenset({"mosa_com"})
+
+
 def prepare_volume(cfg, p, scale_x, scale_y, samy_dir):
     """Load and (if stacked) align one volume, resolving render style per kind."""
     kind, source = cfg["kind"], cfg["source"]
@@ -681,7 +686,7 @@ def prepare_volume(cfg, p, scale_x, scale_y, samy_dir):
         "vmin": float(auto_vmin),
         "vmax": float(auto_vmax),
         "cmap_name": cfg.get("cmap") or "magma",
-        "center_zero": kind == "mosa_com",
+        "center_zero": kind in _CENTERED_KINDS,
         "title": title,
         "cbar_label": cbar_label,
         "kind": kind,
@@ -947,6 +952,56 @@ def run(params: dict, progress: ProgressFn | None = None) -> SlicesResult:
     result.output_h5 = out_h5
     progress(1.0, f"sliced {len(result.volume_ids)} volumes -> {os.path.basename(out_h5)}")
     return result
+
+
+@register("slices")
+def figures(result: SlicesResult, params: dict) -> list[FigureSpec]:
+    """One map FigureSpec per plane per slice subgroup per volume in oblique_slices.h5."""
+    import h5py
+
+    if not result.output_h5:
+        return []
+    specs = []
+    with h5py.File(result.output_h5, "r") as f:
+        for vid in f.keys():
+            vg = f[vid]
+            # Reconstruct prep keys that build_slice_figure / _make_norm consume.
+            # center_zero is not stored as an attr; derive it from "kind"
+            # (center_zero mirrors prepare_volume via _CENTERED_KINDS).
+            kind = str(vg.attrs.get("kind", ""))
+            prep = {
+                "cmap_name": str(vg.attrs["cmap"]),
+                "title": str(vg.attrs["title"]),
+                "cbar_label": str(vg.attrs["cbar_label"]),
+                "vmin": float(vg.attrs["vmin"]),
+                "vmax": float(vg.attrs["vmax"]),
+                "center_zero": kind in _CENTERED_KINDS,
+            }
+            for sname in vg.keys():
+                n_planes = vg[sname]["slices"].shape[0]
+                for k in range(n_planes):
+
+                    def build(style, vid=vid, sname=sname, k=k, prep=dict(prep)):
+                        with h5py.File(result.output_h5, "r") as g:
+                            sg = g[vid][sname]
+                            s2d = sg["slices"][k]
+                            u = sg["u_um"][:]
+                            v = sg["v_um"][:]
+                            off = float(sg["offsets_um"][k])
+                        return build_slice_figure(
+                            prep, {"name": sname}, s2d, u, v, offset_um=off, style=style
+                        )
+
+                    specs.append(
+                        FigureSpec(
+                            figure_id=f"slice_{vid}_{sname}_{k:03d}",
+                            title=f"{vid} / {sname} / plane {k}",
+                            kind="map",
+                            filename=f"{vid}_{sname}_{k:03d}",
+                            build=build,
+                        )
+                    )
+    return specs
 
 
 def _main(argv: list[str] | None = None) -> int:

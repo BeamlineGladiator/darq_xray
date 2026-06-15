@@ -10,6 +10,7 @@ from dfxm.common.figures import volume_layer_specs
 from dfxm.common.plotting import PlotStyle
 from dfxm.stages import mosaicity as Mosaicity
 from dfxm.stages import rocking as Rocking
+from dfxm.stages import slices as Slices
 from dfxm.stages import strain as Strain
 from dfxm.stages import visualize as Visualize
 from dfxm.stages.registry import STAGE_TARGETS
@@ -599,3 +600,169 @@ def test_rocking_specific_frame_title_includes_idx(tmp_path):
         f"Expected frame index {frame_idx} in title, got: {axes_title!r}"
     )
     assert "Background-subtracted Frame" in axes_title
+
+
+# ---------------------------------------------------------------------------
+# slices.figures() tests
+# ---------------------------------------------------------------------------
+
+
+def _make_oblique_slices_h5(tmp_path, n_planes=2, hu=8, wv=10):
+    """Write a minimal oblique_slices.h5 mirroring write_volume_group's real layout.
+
+    One volume group "strain" with all real attrs, one slice subgroup "z_sweep"
+    with `slices` (n_planes, hu, wv), `u_um`, `v_um`, `offsets_um`.
+    """
+    h5 = tmp_path / "oblique_slices.h5"
+    rng = np.random.default_rng(42)
+    with h5py.File(h5, "w") as f:
+        vg = f.create_group("strain")
+        # attrs written by write_volume_group (lines 765-775 of slices.py)
+        vg.attrs["kind"] = "strain"
+        vg.attrs["dataset_path"] = "strain"
+        vg.attrs["source_volume"] = "/fake/path.h5"
+        vg.attrs["cbar_label"] = "Strain (ε)"
+        vg.attrs["cmap"] = "RdBu_r"
+        vg.attrs["vmin"] = float(-1e-3)
+        vg.attrs["vmax"] = float(1e-3)
+        vg.attrs["title"] = "Strain (cot method)"
+        vg.attrs["scale_x_um_per_px"] = 0.152
+        vg.attrs["scale_y_um_per_px"] = 0.385
+        vg.attrs["scale_z_um_per_px"] = 1.0
+
+        # one slice subgroup
+        sg = vg.create_group("z_sweep")
+        slices_data = rng.random((n_planes, hu, wv)).astype(np.float32)
+        sg.create_dataset("slices", data=slices_data)
+        sg.create_dataset("u_um", data=np.linspace(-40.0, 40.0, wv))
+        sg.create_dataset("v_um", data=np.linspace(-30.0, 30.0, hu))
+        sg.create_dataset("offsets_um", data=np.linspace(0.0, 10.0, n_planes))
+        # subgroup attrs (from write_volume_group lines 784-788)
+        sg.attrs["normal"] = np.array([0.0, 0.0, 1.0])
+        sg.attrs["origin"] = np.array([0.0, 0.0, 0.0])
+        sg.attrs["up"] = np.array([0.0, 1.0, 0.0])
+        sg.attrs["u_hat"] = np.array([1.0, 0.0, 0.0])
+        sg.attrs["v_hat"] = np.array([0.0, 1.0, 0.0])
+        sg.attrs["n_hat"] = np.array([0.0, 0.0, 1.0])
+        sg.attrs["half_u"] = 40.0
+        sg.attrs["half_v"] = 30.0
+        sg.attrs["du"] = 80.0 / wv
+        sg.attrs["dv"] = 60.0 / hu
+        sg.attrs["sweep_step_um"] = 5.0
+        sg.attrs["n_planes"] = n_planes
+    return str(h5)
+
+
+def test_slices_catalog_two_planes(tmp_path):
+    """figures() with 2 planes yields 2 map specs that build with equal aspect."""
+    h5_path = _make_oblique_slices_h5(tmp_path, n_planes=2)
+    res = Slices.SlicesResult(output_h5=h5_path)
+    specs = Slices.figures(res, {})
+    assert len(specs) == 2
+    assert all(s.kind == "map" for s in specs)
+    # distinct filenames
+    filenames = [s.filename for s in specs]
+    assert len(set(filenames)) == 2
+    # equal aspect from build_slice_figure (aspect="equal")
+    assert specs[0].build(None).axes[0].get_aspect() == 1.0
+
+
+def test_slices_catalog_no_output_h5_returns_empty():
+    """Guard: output_h5=None → empty list."""
+    res = Slices.SlicesResult(output_h5=None)
+    assert Slices.figures(res, {}) == []
+
+
+def test_slices_catalog_distinct_ids_multi_plane(tmp_path):
+    """All figure_ids and filenames are distinct across planes."""
+    h5_path = _make_oblique_slices_h5(tmp_path, n_planes=3)
+    res = Slices.SlicesResult(output_h5=h5_path)
+    specs = Slices.figures(res, {})
+    assert len(specs) == 3
+    assert len({s.figure_id for s in specs}) == 3
+    assert len({s.filename for s in specs}) == 3
+
+
+def test_slices_catalog_via_figures_for(tmp_path):
+    """Both import directions work: slices.figures() and figures_for('slices')."""
+    h5_path = _make_oblique_slices_h5(tmp_path, n_planes=2)
+    res = Slices.SlicesResult(output_h5=h5_path)
+    direct = Slices.figures(res, {})
+    via_catalog = figures.figures_for("slices", res, {})
+    assert len(direct) == len(via_catalog) == 2
+
+
+def _make_oblique_slices_h5_mosa_com(tmp_path, n_planes=2, hu=8, wv=10):
+    """Write a minimal oblique_slices.h5 with kind='mosa_com' and asymmetric vmin/vmax.
+
+    vmin=-0.5, vmax=1.0 → asymmetric straddle of zero → _make_norm returns TwoSlopeNorm.
+    """
+    h5 = tmp_path / "oblique_slices_mosa_com.h5"
+    rng = np.random.default_rng(7)
+    with h5py.File(h5, "w") as f:
+        vg = f.create_group("mosa_com")
+        vg.attrs["kind"] = "mosa_com"
+        vg.attrs["dataset_path"] = "mosa_com/chi"
+        vg.attrs["source_volume"] = "/fake/path.h5"
+        vg.attrs["cbar_label"] = "Misorientation (°)"
+        vg.attrs["cmap"] = "RdBu_r"
+        vg.attrs["vmin"] = float(-0.5)
+        vg.attrs["vmax"] = float(1.0)
+        vg.attrs["title"] = "χ Misorientation"
+        vg.attrs["scale_x_um_per_px"] = 0.152
+        vg.attrs["scale_y_um_per_px"] = 0.385
+        vg.attrs["scale_z_um_per_px"] = 1.0
+
+        sg = vg.create_group("z_sweep")
+        slices_data = rng.random((n_planes, hu, wv)).astype(np.float32)
+        sg.create_dataset("slices", data=slices_data)
+        sg.create_dataset("u_um", data=np.linspace(-40.0, 40.0, wv))
+        sg.create_dataset("v_um", data=np.linspace(-30.0, 30.0, hu))
+        sg.create_dataset("offsets_um", data=np.linspace(0.0, 10.0, n_planes))
+        sg.attrs["normal"] = np.array([0.0, 0.0, 1.0])
+        sg.attrs["origin"] = np.array([0.0, 0.0, 0.0])
+        sg.attrs["up"] = np.array([0.0, 1.0, 0.0])
+        sg.attrs["u_hat"] = np.array([1.0, 0.0, 0.0])
+        sg.attrs["v_hat"] = np.array([0.0, 1.0, 0.0])
+        sg.attrs["n_hat"] = np.array([0.0, 0.0, 1.0])
+        sg.attrs["half_u"] = 40.0
+        sg.attrs["half_v"] = 30.0
+        sg.attrs["du"] = 80.0 / wv
+        sg.attrs["dv"] = 60.0 / hu
+        sg.attrs["sweep_step_um"] = 5.0
+        sg.attrs["n_planes"] = n_planes
+    return str(h5)
+
+
+def test_slices_catalog_mosa_com_centered_norm(tmp_path):
+    """mosa_com volume → TwoSlopeNorm (centered); strain volume → plain Normalize.
+
+    Exercises the _CENTERED_KINDS branch end-to-end through figures() → build() →
+    build_slice_figure() → _make_norm().
+    """
+    from matplotlib.colors import Normalize, TwoSlopeNorm
+
+    # --- mosa_com path: asymmetric vmin/vmax straddle zero → TwoSlopeNorm ---
+    h5_mosa = _make_oblique_slices_h5_mosa_com(tmp_path, n_planes=1)
+    res_mosa = Slices.SlicesResult(output_h5=h5_mosa)
+    specs_mosa = Slices.figures(res_mosa, {})
+    assert len(specs_mosa) == 1
+    fig_mosa = specs_mosa[0].build(None)
+    norm_mosa = fig_mosa.axes[0].images[0].norm
+    assert isinstance(norm_mosa, TwoSlopeNorm), (
+        f"Expected TwoSlopeNorm for mosa_com, got {type(norm_mosa).__name__}"
+    )
+
+    # --- strain path: non-centered → plain Normalize, NOT TwoSlopeNorm ---
+    strain_dir = tmp_path / "strain"
+    strain_dir.mkdir()
+    h5_strain = _make_oblique_slices_h5(strain_dir, n_planes=1)
+    res_strain = Slices.SlicesResult(output_h5=h5_strain)
+    specs_strain = Slices.figures(res_strain, {})
+    assert len(specs_strain) == 1
+    fig_strain = specs_strain[0].build(None)
+    norm_strain = fig_strain.axes[0].images[0].norm
+    assert not isinstance(norm_strain, TwoSlopeNorm), (
+        f"Expected non-TwoSlopeNorm for strain, got {type(norm_strain).__name__}"
+    )
+    assert isinstance(norm_strain, Normalize)
