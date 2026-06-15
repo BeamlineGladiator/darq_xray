@@ -10,10 +10,12 @@ from __future__ import annotations
 
 import html
 import os
+from typing import NamedTuple
 
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
+    QFileDialog,
     QHBoxLayout,
     QLabel,
     QMessageBox,
@@ -43,6 +45,14 @@ _POLL_MS = 50
 
 # Stages whose run yields an aligned 3-D volume worth viewing interactively.
 _VOLUME_STAGES = ("visualize", "rocking")
+
+
+class ExportResult(NamedTuple):
+    """Outcome of one figure in an :meth:`StageView.export_all` batch."""
+
+    figure_id: str
+    ok: bool
+    error: str | None
 
 
 class StageView(QWidget):
@@ -119,12 +129,16 @@ class StageView(QWidget):
         self._image_scroll.setWidgetResizable(True)
         self._image_scroll.setWidget(self._image)
 
-        # Export button — disabled until a successful run populates _last_result.
+        # Export buttons — disabled until a successful run populates _last_result.
         self._export_btn = QPushButton("Export…")
         self._export_btn.setEnabled(False)
         self._export_btn.clicked.connect(self._on_export_clicked)
+        self._export_all_btn = QPushButton("Export all…")
+        self._export_all_btn.setEnabled(False)
+        self._export_all_btn.clicked.connect(self._on_export_all_clicked)
         export_row = QHBoxLayout()
         export_row.addStretch(1)
+        export_row.addWidget(self._export_all_btn)
         export_row.addWidget(self._export_btn)
 
         self._output_tab = QWidget()
@@ -236,6 +250,7 @@ class StageView(QWidget):
         self._progress_text.setText("")
         self._log.append(f"Running stage '{self._stage_name}'…")
         self._export_btn.setEnabled(False)
+        self._export_all_btn.setEnabled(False)
         self._set_running(True)
         self.runStarted.emit(self._stage_name)
         self._runner = StageRunner(target, params, start_method="spawn")
@@ -350,6 +365,7 @@ class StageView(QWidget):
             # the user picks a volume and clicks Render 3-D.
             self._vol3d.set_sources(volume_sources(self._stage_name, result, self._last_params))
         self._export_btn.setEnabled(True)
+        self._export_all_btn.setEnabled(True)
         self._set_running(False)
         self.runFinished.emit(self._stage_name, True)
 
@@ -360,6 +376,76 @@ class StageView(QWidget):
         if self._last_result is None:
             return []
         return figures_for(self._stage_name, self._last_result, self._last_params)
+
+    def export_all(self, out_dir: str) -> list[ExportResult]:
+        """Build and save every figure in this stage's catalog to *out_dir*.
+
+        Returns a summary list of :class:`ExportResult` — one entry per spec.
+        A per-figure build failure is recorded (``ok=False, error=str(exc)``)
+        and the batch continues; one bad figure never aborts the rest.
+        Per-format savefig failures are handled inside :func:`save_spec` (the
+        format is skipped; the summary reflects whether any formats were written).
+        """
+        from .widgets.export_dialog import save_spec
+
+        specs = self._figures()
+        style = self.window().global_plot_style()
+        os.makedirs(out_dir, exist_ok=True)
+        summary: list[ExportResult] = []
+        for spec in specs:
+            try:
+                written = save_spec(spec, out_dir, style)
+                if not written:
+                    summary.append(ExportResult(spec.figure_id, False, "no formats written"))
+                elif len(written) < len(style.formats):
+                    summary.append(
+                        ExportResult(
+                            spec.figure_id,
+                            True,
+                            f"wrote {len(written)}/{len(style.formats)} formats",
+                        )
+                    )
+                else:
+                    summary.append(ExportResult(spec.figure_id, True, None))
+            except Exception as exc:  # noqa: BLE001 — record + continue, never abort the batch
+                summary.append(ExportResult(spec.figure_id, False, str(exc)))
+        return summary
+
+    def _on_export_all_clicked(self) -> None:
+        try:
+            specs = self._figures()
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.warning(self, "Export all", f"Could not list figures:\n{exc}")
+            return
+        if not specs:
+            QMessageBox.information(
+                self, "Export all", "This stage produced no exportable figures."
+            )
+            return
+        folder = QFileDialog.getExistingDirectory(self, "Export all figures to folder")
+        if not folder:
+            return
+        try:
+            summary = self.export_all(folder)
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.warning(self, "Export all", f"Export failed:\n{exc}")
+            return
+        n_ok = sum(1 for r in summary if r.ok)
+        n_fail = len(summary) - n_ok
+        failures = "\n".join(f"  {r.figure_id}: {r.error}" for r in summary if not r.ok)
+        note = f"\n\nFailed ({n_fail}):\n{failures}" if n_fail else ""
+        glyph = "✓" if n_fail == 0 else "⚠"
+        self._show_banner(
+            f"{glyph} Exported {n_ok}/{len(summary)} figures to {html.escape(folder)}"
+            + (f" — {n_fail} failed" if n_fail else ""),
+            error=n_fail > 0,
+        )
+        if n_fail:
+            QMessageBox.warning(
+                self,
+                "Export all — partial failure",
+                f"Exported {n_ok} of {len(summary)} figures.{note}",
+            )
 
     def _on_export_clicked(self) -> None:
         try:

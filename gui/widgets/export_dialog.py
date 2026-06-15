@@ -407,6 +407,31 @@ class StyleControls(QWidget):
         self._emit()
 
 
+def sanitize_stem(name: str) -> str:
+    """Replace path-unsafe characters with underscores (shared by ExportDialog and export_all)."""
+    return re.sub(r"[^\w\-.]", "_", name)
+
+
+def save_spec(spec, out_dir: str, style) -> list[str]:
+    """Build *spec* at *style* (scale bar forced off for non-map kinds) and savefig
+    one file per ``style.formats`` into *out_dir* (sanitised stem). Returns the list of
+    written paths; a single format whose savefig fails is skipped (the others still write).
+    ``spec.build`` may raise — the CALLER decides how to record that.
+    """
+    eff_style = style if spec.kind == "map" else replace(style, scale_bar=False)
+    fig = spec.build(eff_style)
+    stem = sanitize_stem(spec.filename)
+    written: list[str] = []
+    for fmt in style.formats:
+        path = os.path.join(out_dir, f"{stem}.{fmt}")
+        try:
+            fig.savefig(path, dpi=style.dpi, bbox_inches="tight", facecolor="white")
+            written.append(path)
+        except Exception:  # noqa: BLE001 — skip a failing format, keep the rest
+            continue
+    return written
+
+
 class ExportDialog(QDialog):
     """Dialog for previewing and exporting a publication-quality figure.
 
@@ -522,20 +547,7 @@ class ExportDialog(QDialog):
         broken backend or permission error does not abort the remaining formats.
         """
         os.makedirs(out_dir, exist_ok=True)
-        spec = self._spec()
-        style = self._style if spec.kind == "map" else replace(self._style, scale_bar=False)
-        fig = spec.build(style)
-        # Sanitise the filename stem: replace anything that's not word char, dash or dot.
-        stem = re.sub(r"[^\w\-.]", "_", spec.filename)
-        written: list[str] = []
-        for fmt in self._style.formats:
-            path = os.path.join(out_dir, f"{stem}.{fmt}")
-            try:
-                fig.savefig(path, dpi=self._style.dpi, bbox_inches="tight", facecolor="white")
-                written.append(path)
-            except Exception:  # noqa: BLE001 — skip formats that can't be written
-                pass
-        return written
+        return save_spec(self._spec(), out_dir, self._style)
 
     def _on_export(self) -> None:
         d = QFileDialog.getExistingDirectory(self, "Export to folder")

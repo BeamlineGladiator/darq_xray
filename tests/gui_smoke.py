@@ -432,6 +432,87 @@ def main() -> int:
     app.processEvents()
     print("[17] ExportDialog._on_reset re-syncs _style and widget via set_style()")
 
+    # [18] export_all: batch a stage's catalog; resilient to a failing figure.
+    import glob as _glob
+    import tempfile as _tempfile
+
+    from dfxm.common.figures import FigureSpec as _FigureSpec
+
+    strain_view = win._views["strain"]
+    assert hasattr(strain_view, "export_all"), "StageView missing export_all"
+    assert hasattr(strain_view, "_export_all_btn"), "StageView missing _export_all_btn"
+    assert strain_view._export_all_btn.isEnabled(), (
+        "Export all… button must be enabled after a successful strain run"
+    )
+    # Not-yet-run view must be disabled.
+    assert not win._views["mosaicity"]._export_all_btn.isEnabled(), (
+        "Export all… must be disabled before any successful run"
+    )
+
+    # 18a: drive export_all on the real strain catalog — every spec should
+    # either succeed or record a graceful per-figure failure; the batch must
+    # never raise.
+    out18 = _tempfile.mkdtemp()
+    summary18 = strain_view.export_all(out18)
+    assert isinstance(summary18, list), f"export_all returned {type(summary18)}"
+    assert len(summary18) > 0, "export_all summary is empty"
+    # Each entry is an ExportResult(figure_id, ok, error_or_None).
+    for r in summary18:
+        assert isinstance(r.figure_id, str), f"figure_id not str: {r.figure_id!r}"
+        assert isinstance(r.ok, bool), f"ok not bool: {r.ok!r}"
+        assert r.ok or isinstance(r.error, str), (
+            f"failed entry {r.figure_id!r} has non-str error: {r.error!r}"
+        )
+    # Map specs should all succeed (the strain stacked volume exists).
+    failed_maps = [(r.figure_id, r.error) for r in summary18 if "map" in r.figure_id and not r.ok]
+    assert not failed_maps, f"Map figure(s) failed in export_all: {failed_maps}"
+    # Files must exist for every successful spec × every format.
+    session_style18 = win.global_plot_style()
+    ok_ids = [r.figure_id for r in summary18 if r.ok]
+    written = _glob.glob(_os.path.join(out18, "*"))
+    assert len(written) >= len(ok_ids) * len(session_style18.formats), (
+        f"Expected ≥{len(ok_ids) * len(session_style18.formats)} files, "
+        f"got {len(written)}: {written}"
+    )
+
+    # 18b: batch resilience — inject a raising spec into a minimal view-like
+    # loop and confirm one bad figure never aborts the rest.
+    from matplotlib.figure import Figure as _Fig18
+
+    def _good(style):
+        f = _Fig18()
+        f.add_subplot(111).plot([0, 1])
+        return f
+
+    def _bad(style):
+        raise RuntimeError("deliberate failure for smoke test")
+
+    good_spec_a = _FigureSpec("g18a", "Good A", "plot", "good_fig18a", _good)
+    good_spec_b = _FigureSpec("g18b", "Good B", "plot", "good_fig18b", _good)
+    bad_spec = _FigureSpec("b18", "Bad", "plot", "bad_fig18", _bad)
+    # Temporarily monkey-patch _figures() to return our synthetic catalog.
+    _orig_figures = strain_view._figures
+    strain_view._figures = lambda: [good_spec_a, bad_spec, good_spec_b]
+    out18b = _tempfile.mkdtemp()
+    summary18b = strain_view.export_all(out18b)
+    strain_view._figures = _orig_figures  # restore
+    assert len(summary18b) == 3, f"Expected 3 entries, got {len(summary18b)}"
+    assert summary18b[0].ok is True, f"first good spec should succeed: {summary18b[0]}"
+    assert summary18b[1].ok is False, f"bad spec should be recorded as failed: {summary18b[1]}"
+    assert summary18b[1].error == "deliberate failure for smoke test"
+    assert summary18b[2].ok is True, f"second good spec should succeed: {summary18b[2]}"
+    # The two good specs wrote files; the bad one wrote nothing.
+    written18b = _glob.glob(_os.path.join(out18b, "*"))
+    assert len(written18b) >= 2 * len(session_style18.formats), (
+        f"Expected ≥{2 * len(session_style18.formats)} files from good specs, "
+        f"got {len(written18b)}: {written18b}"
+    )
+    print(
+        f"[18] export_all: {len(summary18)} strain figures batched "
+        f"({sum(1 for r in summary18 if r.ok)} ok); "
+        "batch-resilience proven (bad spec recorded, good specs still wrote)"
+    )
+
     print("\nGUI SMOKE PASSED")
     return 0
 
