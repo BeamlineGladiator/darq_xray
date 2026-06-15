@@ -30,6 +30,7 @@ from dfxm.stages.registry import STAGE_TARGETS
 
 from .bindings import experiment_overrides
 from .viewers import inject_line_into_jobs, volume_sources
+from .widgets.help_panel import HelpPanel
 from .widgets.log_console import LogConsole
 from .widgets.param_form import ParamForm
 from .widgets.volume3d import Volume3DPanel
@@ -82,10 +83,15 @@ class StageView(QWidget):
             btn_row.addWidget(self._pick_btn)
         btn_row.addStretch(1)
 
+        self._help = HelpPanel()
+        self._help.set_idle(spec.label, spec.description)
+        self._form.focusedParamChanged.connect(self._help.show_param)
+
         left = QWidget()
         left_layout = QVBoxLayout(left)
         left_layout.addWidget(self._form)
         left_layout.addLayout(btn_row)
+        left_layout.addWidget(self._help)
         left_layout.addStretch(1)
 
         # --- right: log + results tabs ---
@@ -108,7 +114,10 @@ class StageView(QWidget):
             self._tabs.addTab(self._vol3d, "3D")
 
         splitter = QSplitter()
-        splitter.addWidget(left)
+        left_scroll = QScrollArea()
+        left_scroll.setWidgetResizable(True)
+        left_scroll.setWidget(left)
+        splitter.addWidget(left_scroll)
         splitter.addWidget(self._tabs)
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)

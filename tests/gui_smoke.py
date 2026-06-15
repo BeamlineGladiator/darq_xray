@@ -171,6 +171,15 @@ def main() -> int:
     assert sform._adv_toggle.isChecked()
     print("[7] grouped forms: essentials/advanced split + value round-trip OK")
 
+    # Help panel follows focus and idles on the stage description.
+    sview = win._views["strain"]
+    assert "strain" in sview._help._label.text().lower()
+    sview._form.focus_param("ccmth_ref_deg")
+    app.processEvents()
+    help_text = sview._help._label.text()
+    assert "Bragg" in help_text and "calibration" in help_text.lower()
+    print("[8] help panel idles on description and follows focus")
+
     print("\nGUI SMOKE PASSED")
     return 0
 
