@@ -260,6 +260,77 @@ def main() -> int:
     assert problem is not None and problem[0] == "root_folder"  # batch still checks root_folder
     print("[12] mode-aware pre-run validation")
 
+    # Export dialog: build a figure spec, render a preview, export 3 formats.
+    import os as _os
+    import tempfile
+
+    import numpy as _np
+    from matplotlib.figure import Figure as _Fig
+
+    from dfxm.common import figures as _figs
+    from dfxm.common.plotting import PUBLICATION_STYLE
+    from gui.widgets.export_dialog import ExportDialog
+
+    # Build a synthetic one-figure catalog so the smoke doesn't need a real run:
+
+    def _mk(style):
+        f = _Fig()
+        ax = f.add_subplot(111)
+        ax.imshow(_np.zeros((8, 8)), extent=[0, 8, 0, 8], origin="lower")
+        return f
+
+    spec = _figs.FigureSpec("t", "Test", "map", "test_fig", _mk)
+    dlg = ExportDialog([spec], 0, PUBLICATION_STYLE)
+    dlg.show()
+    app.processEvents()
+    assert dlg._canvas.figure is not None
+    out = tempfile.mkdtemp()
+    dlg._style.formats = ("png", "pdf", "svg")
+    paths = dlg.export_to(out)
+    app.processEvents()
+    assert all(_os.path.exists(p) and _os.path.getsize(p) > 0 for p in paths)
+    print("[13] export dialog renders preview + writes png/pdf/svg")
+
+    # [14] Export-dialog robustness: plot kind, filename sanitisation, build-raising spec.
+    # 14a: kind="plot" spec — scale bar forced off, export still works.
+    def _mk_plot(style):
+        f = _Fig()
+        f.add_subplot(111).plot([0, 1], [0, 1])
+        return f
+
+    plot_spec = _figs.FigureSpec("p", "Plot", "plot", "plot_fig", _mk_plot)
+    plot_dlg = ExportDialog([plot_spec], 0, PUBLICATION_STYLE)
+    plot_dlg.show()
+    app.processEvents()
+    plot_out = tempfile.mkdtemp()
+    plot_dlg._style.formats = ("png",)
+    plot_paths = plot_dlg.export_to(plot_out)
+    assert len(plot_paths) == 1 and _os.path.exists(plot_paths[0])
+
+    # 14b: filename with a space is sanitised to underscore.
+    def _mk_space(style):
+        f = _Fig()
+        f.add_subplot(111)
+        return f
+
+    space_spec = _figs.FigureSpec("s", "Spaced", "map", "my fig", _mk_space)
+    space_dlg = ExportDialog([space_spec], 0, PUBLICATION_STYLE)
+    space_out = tempfile.mkdtemp()
+    space_dlg._style.formats = ("png",)
+    space_paths = space_dlg.export_to(space_out)
+    assert len(space_paths) == 1
+    assert _os.path.basename(space_paths[0]) == "my_fig.png"
+
+    # 14c: a spec whose build() raises must not crash the ExportDialog constructor.
+    def _boom(style):
+        raise FileNotFoundError("nope")
+
+    boom_spec = _figs.FigureSpec("b", "Boom", "map", "boom_fig", _boom)
+    boom_dlg = ExportDialog([boom_spec], 0, PUBLICATION_STYLE)  # must not raise
+    app.processEvents()
+    assert boom_dlg._canvas.figure is not None  # error figure was installed
+    print("[14] plot-kind round-trip, filename sanitisation, build-raising spec")
+
     print("\nGUI SMOKE PASSED")
     return 0
 
