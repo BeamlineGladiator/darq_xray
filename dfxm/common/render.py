@@ -17,9 +17,15 @@ import matplotlib.colors as mcolors
 import numpy as np
 from matplotlib.animation import FFMpegWriter, FuncAnimation, PillowWriter
 from matplotlib.figure import Figure
-from matplotlib.patches import Rectangle
 
-from .plotting import get_cmap
+from .plotting import (
+    PlotStyle,
+    add_colorbar,
+    apply_text_scale,
+    draw_scale_bar,
+    figure_size,
+    get_cmap,
+)
 
 
 def cmap_nan_transparent(name: str):
@@ -29,35 +35,11 @@ def cmap_nan_transparent(name: str):
     return cmap
 
 
-def add_scale_bar(ax, ext_x: float, ext_y: float, color: str = "black") -> None:
-    """Draw a rounded µm scale bar (~15% of the X extent) in the lower-right."""
-    target = ext_x * 0.15
-    if target >= 100:
-        sl = round(target / 50) * 50
-    elif target >= 10:
-        sl = round(target / 10) * 10
-    elif target >= 1:
-        sl = round(target)
-    else:
-        sl = round(target, 1)
-    sl = sl or target
-    bx, by, bh = ext_x * 0.95 - sl, ext_y * 0.05, ext_y * 0.01
-    ax.add_patch(Rectangle((bx, by), sl, bh, facecolor=color, edgecolor=color))
-    ax.text(
-        bx + sl / 2,
-        by + bh * 3,
-        f"{sl:.0f} µm",
-        color=color,
-        fontsize=10,
-        ha="center",
-        va="bottom",
-        fontweight="bold",
-    )
-
-
-def layer_figure(layer, vmin, vmax, cmap, ext_x, ext_y, title, cbar_label):
-    """Build a single equal-aspect layer figure (µm axes, scale bar, colorbar)."""
-    fig = Figure(figsize=(12, 10), facecolor="white")
+def layer_figure(layer, vmin, vmax, cmap, ext_x, ext_y, title, cbar_label, *, style=None):
+    """Single equal-aspect layer figure (µm axes). ``style=None`` == legacy look."""
+    st = style if style is not None else PlotStyle(scale_bar_color="black", colorbar_fraction=0.046)
+    figsize = (figure_size(st, ext_x, ext_y) or (12, 10)) if style is not None else (12, 10)
+    fig = Figure(figsize=figsize, facecolor="white")
     ax = fig.add_subplot(111)
     im = ax.imshow(
         layer,
@@ -70,8 +52,11 @@ def layer_figure(layer, vmin, vmax, cmap, ext_x, ext_y, title, cbar_label):
     ax.set_xlabel("X (µm)")
     ax.set_ylabel("Y (µm)")
     ax.set_title(title)
-    fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04).set_label(cbar_label)
-    add_scale_bar(ax, ext_x, ext_y)
+    if st.colorbar:
+        add_colorbar(fig, im, ax, cbar_label, st)
+    if st.scale_bar:
+        draw_scale_bar(ax, st.scale_bar_length_um, style=st)
+    apply_text_scale(ax, st)
     return fig, ax, im
 
 
