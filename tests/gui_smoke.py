@@ -218,6 +218,34 @@ def main() -> int:
     assert win._status_items["strain"].text().startswith("✓")
     print("[10] pipeline rail + overview page wired")
 
+    # Success banner from the earlier strain run; progress completed.
+    assert sview._banner.isVisible() and sview._banner.text().startswith("✓")
+    assert sview._progress.value() == 100
+    # Pre-run validation blocks on a missing must_exist path (no child process).
+    mview = win._views["mosaicity"]
+    win._stack.setCurrentWidget(mview)
+    app.processEvents()
+    mview._form.set_values({"mode": "batch", "root_folder": "/nonexistent/nowhere"})
+    mview._on_run()
+    app.processEvents()
+    assert mview._banner.isVisible()
+    assert "/nonexistent/nowhere" in mview._banner.text()
+    assert mview._runner is None  # blocked before launch
+    # A real failing run shows the red banner with the error text.
+    mview._form.set_values({"root_folder": ""})  # empty: passes must_exist, fails in-stage
+    mdone: list[bool] = []
+    mview.runFinished.connect(lambda name, ok: mdone.append(ok))
+    mview._on_run()
+    t0 = time.time()
+    while not mdone and time.time() - t0 < 60:
+        app.processEvents()
+        time.sleep(0.02)
+    assert mdone == [False]
+    assert mview._banner.isVisible()
+    assert "root_folder" in mview._banner.text()
+    assert win._status_items["mosaicity"].text().startswith("✗")
+    print("[11] banner + pre-run validation + progress bar")
+
     print("\nGUI SMOKE PASSED")
     return 0
 

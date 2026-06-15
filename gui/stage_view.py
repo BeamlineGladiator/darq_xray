@@ -8,6 +8,7 @@ process via :class:`~dfxm.runner.StageRunner`, and polls it from a
 
 from __future__ import annotations
 
+import html
 import os
 
 from PySide6.QtCore import Qt, QTimer, Signal
@@ -16,6 +17,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QPlainTextEdit,
+    QProgressBar,
     QPushButton,
     QScrollArea,
     QSplitter,
@@ -84,6 +86,14 @@ class StageView(QWidget):
             btn_row.addWidget(self._pick_btn)
         btn_row.addStretch(1)
 
+        self._progress = QProgressBar()
+        self._progress.setRange(0, 100)
+        self._progress_text = QLabel("")
+        self._progress_text.setWordWrap(True)
+        progress_row = QHBoxLayout()
+        progress_row.addWidget(self._progress, 1)
+        progress_row.addWidget(self._progress_text, 2)
+
         self._help = HelpPanel()
         self._help.set_idle(spec.label, spec.description)
         self._form.focusedParamChanged.connect(self._help.show_param)
@@ -92,6 +102,7 @@ class StageView(QWidget):
         left_layout = QVBoxLayout(left)
         left_layout.addWidget(self._form)
         left_layout.addLayout(btn_row)
+        left_layout.addLayout(progress_row)
         left_layout.addWidget(self._help)
         left_layout.addStretch(1)
 
@@ -114,12 +125,24 @@ class StageView(QWidget):
             self._vol3d = Volume3DPanel()
             self._tabs.addTab(self._vol3d, "3D")
 
-        splitter = QSplitter()
+        self._banner = QLabel("")
+        self._banner.setWordWrap(True)
+        self._banner.setTextFormat(Qt.TextFormat.RichText)
+        self._banner.setVisible(False)
+
+        right = QWidget()
+        right_layout = QVBoxLayout(right)
+        right_layout.setContentsMargins(0, 0, 0, 0)
+        right_layout.addWidget(self._banner)
+        right_layout.addWidget(self._tabs, 1)
+
         left_scroll = QScrollArea()
         left_scroll.setWidgetResizable(True)
         left_scroll.setWidget(left)
+
+        splitter = QSplitter()
         splitter.addWidget(left_scroll)
-        splitter.addWidget(self._tabs)
+        splitter.addWidget(right)
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
         splitter.setSizes([360, 600])
@@ -138,15 +161,50 @@ class StageView(QWidget):
         self._experiment = experiment
         self._form.set_values(experiment_overrides(self._stage_name, experiment))
 
+    # -- banner / validation ------------------------------------------------
+    def _show_banner(self, html_text: str, *, error: bool) -> None:
+        style = (
+            "QLabel { background: #fdecea; border: 1px solid #f5c6cb; "
+            "border-radius: 4px; padding: 6px; }"
+            if error
+            else "QLabel { background: #e6f4ea; border: 1px solid #b7e1c0; "
+            "border-radius: 4px; padding: 6px; }"
+        )
+        self._banner.setStyleSheet(style)
+        self._banner.setText(html_text)
+        self._banner.setVisible(True)
+
+    def _hide_banner(self) -> None:
+        self._banner.setVisible(False)
+
+    def _validate_inputs(self, params: dict) -> tuple[str, str] | None:
+        """First (param_name, message) whose must_exist path is set but absent."""
+        for p in self._spec.params:
+            if not p.must_exist:
+                continue
+            value = params.get(p.name)
+            if value and not os.path.exists(str(value)):
+                return p.name, f"{p.label}: path does not exist: {value}"
+        return None
+
     # -- run lifecycle ----------------------------------------------------
     def _on_run(self) -> None:
         if self._runner is not None and self._runner.is_alive():
             return
         params = self._form.values()
+        problem = self._validate_inputs(params)
+        if problem is not None:
+            name, message = problem
+            self._show_banner(f"✗ {html.escape(message)}", error=True)
+            self._form.focus_param(name)
+            return
+        self._hide_banner()
         self._last_params = dict(params)
         target = STAGE_TARGETS[self._stage_name]
         self._log.clear()
         self._results.clear()
+        self._progress.setValue(0)
+        self._progress_text.setText("")
         self._log.append(f"Running stage '{self._stage_name}'…")
         self._set_running(True)
         self.runStarted.emit(self._stage_name)
@@ -225,7 +283,9 @@ class StageView(QWidget):
     def _handle(self, msg) -> None:
         if isinstance(msg, Progress):
             self._log.set_progress(msg.frac, msg.text)
+            self._progress.setValue(max(0, min(100, int(round(msg.frac * 100)))))
             if msg.text:
+                self._progress_text.setText(msg.text)
                 self._log.append(f"  [{msg.frac * 100:5.1f}%] {msg.text}")
         elif isinstance(msg, Log):
             self._log.append(msg.text)
@@ -237,7 +297,11 @@ class StageView(QWidget):
     def _finish_ok(self, result) -> None:
         self._timer.stop()
         self._log.set_progress(1.0, "Done.")
-        self._results.setPlainText(_summarize(self._stage_name, result))
+        self._progress.setValue(100)
+        summary = _summarize(self._stage_name, result)
+        first_line = summary.splitlines()[0] if summary else "done"
+        self._show_banner(f"✓ {html.escape(first_line)}", error=False)
+        self._results.setPlainText(summary)
         img = _representative_image(self._stage_name, result)
         shown = False
         if img and os.path.exists(img):
@@ -261,6 +325,11 @@ class StageView(QWidget):
         self._timer.stop()
         self._log.set_status(f"Failed: {failure.error}", error=True)
         self._log.append(failure.traceback)
+        text = f"✗ {html.escape(failure.error)}"
+        hint = getattr(failure, "hint", "")
+        if hint:
+            text += f"<br><i>{html.escape(hint)}</i>"
+        self._show_banner(text, error=True)
         self._set_running(False)
         self.runFinished.emit(self._stage_name, False)
 
