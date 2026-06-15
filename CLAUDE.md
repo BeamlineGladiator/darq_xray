@@ -75,6 +75,9 @@ Dependencies: `numpy h5py scipy matplotlib PySide6 pyvista pyvistaqt vtk`
   `StageSpec`; the GUI auto-builds the form (enum→dropdown, path→file picker,
   number→spin, multi-line JSON→`ParamType.TEXT`). Don't hard-code stage fields in
   the GUI.
+- **User-facing errors carry hints.** Input-validation failures raise
+  `StageUserError(message, hint)`; the GUI banner shows both. Don't convert
+  the skip-based reporting (empty results list reasons) into exceptions.
 
 ## Documentation (keep it in sync)
 
@@ -94,7 +97,13 @@ incomplete.
 ## Adding a stage
 
 1. New module in `dfxm/stages/` with a module-level `STAGE: StageSpec` and
-   `run(params, progress=None)` (+ a small `__main__`).
+   `run(params, progress=None)` (+ a small `__main__`). Every param needs
+   `help` (written for a first-time beamline user); advanced params need
+   `group`; input paths set `must_exist=True`. Give the spec a
+   newcomer-friendly `description` (it feeds the Overview page and help
+   panel). `tests/test_param_metadata.py` enforces all of this. Raise
+   `StageUserError(message, hint=...)` from `dfxm.common.errors` for input
+   problems the user can fix.
 2. Register it in `dfxm/stages/registry.py` (`STAGE_TARGETS`).
 3. Wire it in `gui/bindings.py`: `STAGE_ORDER`, `STAGE_SPECS`, and an
    `experiment_overrides` branch (pre-fill from the experiment, chain prior

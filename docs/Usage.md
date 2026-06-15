@@ -49,12 +49,19 @@ pip install numpy h5py scipy matplotlib PySide6 pyvista pyvistaqt vtk
 
 **Typical first run:**
 
-1. Pick an **experiment preset** from the dropdown (ships with `STO2_overnight`),
-   or edit the fields and **Save as…** a new one.
-2. Click a stage in the navigation list.
-3. The parameter form is pre-filled from the experiment — adjust as needed.
-4. Press **Run**. Watch progress in **Log**; results land in **Results** and a
-   preview in **Output**.
+1. The app opens on the **Overview** page — the pipeline drawn left-to-right
+   with one sentence per stage. Concat is **optional** (skip it if your scans
+   are already concatenated) and **darfix runs outside the app**, between
+   concat and the map stages.
+2. Pick an **experiment preset** from the dropdown (ships with `STO2_overnight`).
+   The one-line summary shows its calibration; **Edit…** opens the full editor.
+3. Click a stage in the pipeline rail (or its chip on the Overview page). The
+   form shows the stage's **essentials**; everything else is under
+   **Advanced (N settings)**, grouped by theme.
+4. Click into any field — the **help panel** under the form explains it. Press
+   **Run**. Progress shows next to the buttons; results land in **Results**, a
+   preview in **Output**, and a green/red **banner** summarises the outcome
+   (with a fix-it hint when an input was wrong).
 
 > [!warning] Calibration values are physical
 > `ccmth reference` and the pixel scales (µm/px) are flagged with **⚠ calibration**
@@ -64,6 +71,16 @@ pip install numpy h5py scipy matplotlib PySide6 pyvista pyvistaqt vtk
 ---
 
 ## Core concepts
+
+### The main window
+
+The left column is a **pipeline rail**: *Overview* first, then the stages in
+pipeline order, each with a status glyph (— idle, ▶ running, ✓ ok, ✗ failed).
+**Concat is marked (optional)** — skip it when your scans are already
+concatenated — and **darfix** appears as a greyed, non-clickable row right
+after concat because it runs outside the app. Above the rail, the experiment
+header shows the active preset and its calibration in one line; **Edit…**
+opens the full schema-driven editor (every field explained in its help panel).
 
 ### Experiment presets
 
@@ -89,10 +106,12 @@ Every stage uses the same layout:
 
 | Area | What it does |
 |---|---|
-| **Parameter form** (left) | Auto-generated from the stage's schema: dropdowns for choices, file/folder pickers for paths, spin boxes for numbers, multi-line boxes for JSON. Hover any label for a tooltip. |
-| **Run / Cancel** | Runs the stage in a **separate process** so the UI stays responsive; **Cancel** truly kills it. |
-| **Log** tab | Live progress bar + streamed messages. |
-| **Results** tab | A text summary of what was produced — including every skipped layer/input and the reason it was skipped. |
+| **Parameter form** (left) | Auto-generated from the stage's schema. The few **essential** fields show first; the rest collapse under **Advanced (N settings)**, grouped by theme (Calibration, Data layout, Alignment, Appearance, Output, …). Hover any label for a tooltip. |
+| **Help panel** (under the form) | Explains whichever field has focus — what it does, its unit, and the calibration warning where relevant. Idles on a description of the stage. |
+| **Run / Cancel + progress** | Runs the stage in a **separate process**; the bar and step text track progress; **Cancel** truly kills it. Before launching, input paths are checked on disk — a missing one blocks the run and focuses the offending field. |
+| **Status banner** (above the tabs) | Green one-liner on success; on failure, the error in plain language plus an actionable hint (the full traceback stays in **Log**). |
+| **Log** tab | Live progress + streamed messages. |
+| **Results** tab | A text summary of what was produced — including every skipped layer/input and the reason. |
 | **Output** tab | A representative image preview. |
 | **3D** tab | (visualize & rocking only) interactive volume viewer — see [[#Interactive viewers]]. |
 
@@ -128,9 +147,10 @@ flowchart TD
 
 ## Stage reference
 
-> [!info] Every parameter has a tooltip
-> Tables below list the **key** parameters only. Hover a field's label in the app
-> for the full description and units.
+> [!info] Every parameter is explained in the app
+> Tables below list the **key** parameters only. In the app, click into any
+> field and the help panel under the form explains it (hover tooltips work
+> too). Each stage shows its essentials first; the rest live under *Advanced*.
 
 ### 1. Concatenate (`concat`)
 
@@ -139,6 +159,8 @@ Combine the `*.1` entries of BLISS scan files into a single darfix-compatible
 
 - **Input:** a raw scan folder (single) or a parent of per-layer folders (batch).
 - **Output:** `<folder>_concat.h5` next to each input.
+
+**Essentials:** mode, input/root folder, folder pattern, skip existing
 
 | Param | Meaning |
 |---|---|
@@ -163,6 +185,8 @@ Per-pixel axial strain (cot method) from darfix `maps.h5`, then stacked into a
   dir*) + `stacked_strain_volumes.h5` (always written to the input/root
   folder, regardless of *Output dir*).
 
+**Essentials:** mode, input/root folder, ROI, output dir
+
 | Param | Meaning |
 |---|---|
 | `ccmth reference` | calibration angle (deg) ⚠ — strain is `cot(ccmth_ref)·Δccmth` |
@@ -180,6 +204,8 @@ Stack per-layer χ/μ **Center-of-mass** and **FWHM** maps into a 3-D volume.
 - **Input:** `maps.h5` per mosaicity layer folder.
 - **Output:** `stacked_volumes.h5` with `/chi` and `/mu` groups (CoM + FWHM).
 
+**Essentials:** mode, input/root folder, output dir
+
 | Param | Meaning |
 |---|---|
 | `folder_pattern` | usually the `*_mosa__*` glob |
@@ -196,6 +222,8 @@ the mosaicity reference so they overlay the other volumes.
 - **Output:** `aligned_raw_rocking_volumes.h5` + per-layer PNGs, animation, 3-D
   top-view.
 
+**Essentials:** raw root, ROI X/Y, specific frame, output dir
+
 | Param | Meaning |
 |---|---|
 | `rocking_pattern` / `mosa_pattern` / `strain_pattern` | which raw folders to use |
@@ -211,6 +239,8 @@ Align the stacked mosaicity/strain volumes and render them.
   motors for alignment).
 - **Output:** per-layer PNGs, a layer animation (MP4→GIF fallback), a 3-D
   top-view, and an interactive [[#3-D volume viewer|3-D view]].
+
+**Essentials:** both volume files, raw root, ROI X/Y, output dir
 
 | Param | Meaning |
 |---|---|
@@ -231,6 +261,8 @@ rendering, with a `valid_mask` and NaN sentinels.
 - **Output:** `mosaicity_volume.pvti` + `strain_volume.pvti` (each with a
   `*_pieces/` folder) + `export_info.txt`.
 
+**Essentials:** both volume files, raw root, ROI X/Y, output dir
+
 | Param | Meaning |
 |---|---|
 | `num_pieces_z` | Z pieces — match your `pvserver` MPI rank count |
@@ -250,6 +282,8 @@ through the aligned volumes — all in one world frame so the slices co-register
 
 - **Input:** stacked volumes + the aligned rocking volume.
 - **Output:** `oblique_slices.h5` (consumed by [[#8. Line profiles (`profiles`)|profiles]]) + a PNG per plane.
+
+**Essentials:** three volume files, raw root, slices JSON, output dir
 
 | Param | Meaning |
 |---|---|
@@ -279,6 +313,8 @@ strain and misorientation line up.
 - **Input:** `oblique_slices.h5`.
 - **Output:** a stacked companion figure + per-field CSVs + per-field overviews.
 
+**Essentials:** slices file, mode, jobs JSON, output dir
+
 | Param | Meaning |
 |---|---|
 | `mode` | `parameter` (reproducible run from committed coords) / `preview` (just show the plane) |
@@ -297,6 +333,8 @@ pixel-aligned with the strain/mosaicity layer images.
 
 - **Input:** raw strain + rocking folders.
 - **Output:** `rocking_matched_layers/rocking_layers/layer_*.png`.
+
+**Essentials:** raw root, frame index, match threshold, output dir
 
 | Param | Meaning |
 |---|---|
