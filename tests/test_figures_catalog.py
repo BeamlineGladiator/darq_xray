@@ -10,6 +10,7 @@ from dfxm.common.figures import volume_layer_specs
 from dfxm.common.plotting import PlotStyle
 from dfxm.stages import mosaicity as Mosaicity
 from dfxm.stages import strain as Strain
+from dfxm.stages import visualize as Visualize
 from dfxm.stages.registry import STAGE_TARGETS
 
 
@@ -211,3 +212,203 @@ def test_mosaicity_catalog_multiple_keys_no_collision(tmp_path):
     assert all(s.kind == "map" for s in specs)
     assert len({s.figure_id for s in specs}) == 4
     assert len({s.filename for s in specs}) == 4
+
+
+# ---------------------------------------------------------------------------
+# visualize.figures() tests
+# ---------------------------------------------------------------------------
+
+
+def test_visualize_figures_no_datasets_returns_empty():
+    res = Visualize.VisualizeResult(output_dir="", datasets=[], skipped=[])
+    assert Visualize.figures(res, {}) == []
+
+
+def test_visualize_figures_strain_map_per_layer(tmp_path, monkeypatch):
+    """figures() with a strain DatasetProducts yields one map spec per Z layer."""
+    rng = np.random.default_rng(1)
+    aligned_vol = rng.random((3, 10, 20)).astype(np.float32)
+
+    # Patch _align so we don't need real motor files
+    def fake_align(volume, samy, samz, *, scale_x, samy_direction, roi_x, roi_y):
+        return aligned_vol, np.arange(3) * 2.0, 2.0
+
+    monkeypatch.setattr(Visualize, "_align", fake_align)
+
+    # Write a minimal strain volume file
+    strain_h5 = tmp_path / "stacked_strain.h5"
+    with h5py.File(strain_h5, "w") as f:
+        f.create_dataset("strain", data=aligned_vol)
+
+    monkeypatch.setattr(Visualize, "load_strain_volume", lambda path: aligned_vol.copy())
+
+    ds = Visualize.DatasetProducts(
+        name="strain",
+        shape=(3, 10, 20),
+        vmin=-0.001,
+        vmax=0.001,
+    )
+    res = Visualize.VisualizeResult(
+        output_dir=str(tmp_path),
+        datasets=[ds],
+    )
+    params = {
+        "strain_volume_file": str(strain_h5),
+        "mosa_volume_file": "",
+        "raw_root": "",
+        "mosa_pattern": "*",
+        "strain_pattern": "*",
+        "pixel_size_x_um": 0.1,
+        "pixel_size_y_um": 0.3,
+    }
+    specs = Visualize.figures(res, params)
+
+    # One map spec per Z layer
+    assert len(specs) == 3
+    assert all(s.kind == "map" for s in specs)
+    # Distinct figure_id and filename per layer
+    assert len({s.figure_id for s in specs}) == 3
+    assert len({s.filename for s in specs}) == 3
+    # build(None) returns a Figure with equal-aspect axes
+    fig = specs[0].build(None)
+    assert fig.axes[0].get_aspect() == 1.0
+
+
+def test_visualize_figures_mosa_map_per_layer(tmp_path, monkeypatch):
+    """figures() with a mosaicity DatasetProducts yields one map spec per Z layer."""
+    rng = np.random.default_rng(2)
+    aligned_vol = rng.random((2, 8, 16)).astype(np.float32)
+
+    def fake_align(volume, samy, samz, *, scale_x, samy_direction, roi_x, roi_y):
+        return aligned_vol, np.arange(2) * 2.0, 2.0
+
+    monkeypatch.setattr(Visualize, "_align", fake_align)
+
+    mosa_h5 = tmp_path / "stacked_mosa.h5"
+    with h5py.File(mosa_h5, "w") as f:
+        grp = f.require_group("chi")
+        grp.create_dataset("Center of mass", data=aligned_vol)
+
+    mosa_datasets = {"chi_Center_of_mass": aligned_vol.copy()}
+    monkeypatch.setattr(Visualize, "load_mosa_datasets", lambda path: mosa_datasets)
+
+    ds = Visualize.DatasetProducts(
+        name="chi_Center_of_mass",
+        shape=(2, 8, 16),
+        vmin=-0.5,
+        vmax=0.5,
+    )
+    res = Visualize.VisualizeResult(
+        output_dir=str(tmp_path),
+        datasets=[ds],
+    )
+    params = {
+        "mosa_volume_file": str(mosa_h5),
+        "strain_volume_file": "",
+        "raw_root": "",
+        "mosa_pattern": "*",
+        "strain_pattern": "*",
+        "pixel_size_x_um": 0.1,
+        "pixel_size_y_um": 0.3,
+    }
+    specs = Visualize.figures(res, params)
+
+    assert len(specs) == 2
+    assert all(s.kind == "map" for s in specs)
+    assert len({s.figure_id for s in specs}) == 2
+    assert len({s.filename for s in specs}) == 2
+    fig = specs[0].build(None)
+    assert fig.axes[0].get_aspect() == 1.0
+
+
+def test_visualize_figures_each_layer_renders_its_own_layer(tmp_path, monkeypatch):
+    """Each layer spec's build() must render its own distinct Z slice (not all z=0)."""
+    rng = np.random.default_rng(42)
+    aligned_vol = rng.random((3, 10, 20)).astype(np.float32)
+
+    def fake_align(volume, samy, samz, *, scale_x, samy_direction, roi_x, roi_y):
+        return aligned_vol, np.arange(3) * 2.0, 2.0
+
+    monkeypatch.setattr(Visualize, "_align", fake_align)
+
+    strain_h5 = tmp_path / "stacked_strain.h5"
+    with h5py.File(strain_h5, "w") as f:
+        f.create_dataset("strain", data=aligned_vol)
+
+    monkeypatch.setattr(Visualize, "load_strain_volume", lambda path: aligned_vol.copy())
+
+    ds = Visualize.DatasetProducts(name="strain", shape=(3, 10, 20), vmin=-0.001, vmax=0.001)
+    res = Visualize.VisualizeResult(output_dir=str(tmp_path), datasets=[ds])
+    params = {
+        "strain_volume_file": str(strain_h5),
+        "mosa_volume_file": "",
+        "raw_root": "",
+        "mosa_pattern": "*",
+        "strain_pattern": "*",
+        "pixel_size_x_um": 0.1,
+        "pixel_size_y_um": 0.3,
+    }
+    specs = Visualize.figures(res, params)
+    assert len(specs) == 3
+
+    figs = [s.build(None) for s in specs]
+    titles = [f.axes[0].get_title() for f in figs]
+    # The rendered axes title format is "<title> (layer <z>)"
+    assert "(layer 0)" in titles[0]
+    assert "(layer 1)" in titles[1]
+    assert "(layer 2)" in titles[2]
+
+
+def test_visualize_figures_multi_dataset_no_collision(tmp_path, monkeypatch):
+    """Two DatasetProducts → distinct ids/filenames across all layers."""
+    rng = np.random.default_rng(3)
+    vol2 = rng.random((2, 6, 12)).astype(np.float32)
+
+    def fake_align(volume, samy, samz, *, scale_x, samy_direction, roi_x, roi_y):
+        return vol2, np.arange(2) * 2.0, 2.0
+
+    monkeypatch.setattr(Visualize, "_align", fake_align)
+
+    mosa_h5 = tmp_path / "stacked_mosa.h5"
+    with h5py.File(mosa_h5, "w") as f:
+        grp = f.require_group("chi")
+        grp.create_dataset("Center of mass", data=vol2)
+        grp.create_dataset("FWHM", data=vol2)
+
+    strain_h5 = tmp_path / "stacked_strain.h5"
+    with h5py.File(strain_h5, "w") as f:
+        f.create_dataset("strain", data=vol2)
+
+    mosa_datasets = {
+        "chi_Center_of_mass": vol2.copy(),
+        "chi_FWHM": vol2.copy(),
+    }
+    monkeypatch.setattr(Visualize, "load_mosa_datasets", lambda path: mosa_datasets)
+    monkeypatch.setattr(Visualize, "load_strain_volume", lambda path: vol2.copy())
+
+    res = Visualize.VisualizeResult(
+        output_dir=str(tmp_path),
+        datasets=[
+            Visualize.DatasetProducts(
+                name="chi_Center_of_mass", shape=(2, 6, 12), vmin=-0.5, vmax=0.5
+            ),
+            Visualize.DatasetProducts(name="chi_FWHM", shape=(2, 6, 12), vmin=0.0, vmax=1.0),
+            Visualize.DatasetProducts(name="strain", shape=(2, 6, 12), vmin=-1e-3, vmax=1e-3),
+        ],
+    )
+    params = {
+        "mosa_volume_file": str(mosa_h5),
+        "strain_volume_file": str(strain_h5),
+        "raw_root": "",
+        "mosa_pattern": "*",
+        "strain_pattern": "*",
+        "pixel_size_x_um": 0.1,
+        "pixel_size_y_um": 0.3,
+    }
+    specs = Visualize.figures(res, params)
+
+    # 3 datasets x 2 layers = 6 map specs
+    assert len(specs) == 6
+    assert all(s.kind == "map" for s in specs)
+    assert len({s.figure_id for s in specs}) == 6
+    assert len({s.filename for s in specs}) == 6

@@ -28,6 +28,7 @@ import numpy as np
 
 from ..common import alignment as A
 from ..common import render as Rnd
+from ..common.figures import FigureSpec, register
 from ..common.raster import extract_motor_positions
 from ..common.sort import find_matching_folders
 from ..config.models import Param, ParamType, StageSpec
@@ -376,6 +377,20 @@ def load_strain_volume(path):
 
 
 # -----------------------------------------------------------------------------
+# Motor helper (shared by run(), aligned_field(), and figures())
+# -----------------------------------------------------------------------------
+def _read_motors(raw_root: str, pattern: str, samy_path: str, samz_path: str):
+    """samy/samz positions from raw scan folders; empty arrays if unavailable."""
+    if not raw_root or not pattern:
+        return np.array([]), np.array([])
+    folders = find_matching_folders(raw_root, pattern)
+    if not folders:
+        return np.array([]), np.array([])
+    samy, samz, _ = extract_motor_positions(folders, samy_path, samz_path)
+    return samy, samz
+
+
+# -----------------------------------------------------------------------------
 # Per-dataset + alignment
 # -----------------------------------------------------------------------------
 def _parse_pair(text):
@@ -459,21 +474,12 @@ def run(params: dict, progress: ProgressFn | None = None) -> VisualizeResult:
     os.makedirs(out_dir, exist_ok=True)
     raw_root = (p["raw_root"] or "").rstrip("/")
 
-    def _motors(pattern):
-        if not raw_root or not pattern:
-            return np.array([]), np.array([])
-        folders = find_matching_folders(raw_root, pattern)
-        if not folders:
-            return np.array([]), np.array([])
-        samy, samz, _ = extract_motor_positions(folders, p["samy_path"], p["samz_path"])
-        return samy, samz
-
     # --- mosaicity ---
     mosa_file = p["mosa_volume_file"]
     if mosa_file and os.path.exists(mosa_file):
         progress(0.05, "loading mosaicity volume")
         datasets = load_mosa_datasets(mosa_file)
-        samy, samz = _motors(p["mosa_pattern"])
+        samy, samz = _read_motors(raw_root, p["mosa_pattern"], p["samy_path"], p["samz_path"])
         for i, (name, raw) in enumerate(datasets.items()):
             progress(0.1 + 0.4 * i / max(1, len(datasets)), f"mosaicity: {name}")
             title, cbar, cmap = _display_info(name)
@@ -500,7 +506,7 @@ def run(params: dict, progress: ProgressFn | None = None) -> VisualizeResult:
         progress(0.6, "loading strain volume")
         vol = load_strain_volume(strain_file)
         if vol is not None:
-            samy, samz = _motors(p["strain_pattern"])
+            samy, samz = _read_motors(raw_root, p["strain_pattern"], p["samy_path"], p["samz_path"])
             title, cbar, cmap = _display_info("strain", is_strain=True)
             data, z_pos, scale_z = _align(
                 vol, samy, samz, scale_x=scale_x, samy_direction=samy_dir, roi_x=roi_x, roi_y=roi_y
@@ -555,20 +561,11 @@ def aligned_field(params: dict, name: str):
     roi_x, roi_y = _parse_pair(p["roi_x"]), _parse_pair(p["roi_y"])
     raw_root = (p["raw_root"] or "").rstrip("/")
 
-    def motors(pattern):
-        if not raw_root or not pattern:
-            return np.array([]), np.array([])
-        folders = find_matching_folders(raw_root, pattern)
-        if not folders:
-            return np.array([]), np.array([])
-        samy, samz, _ = extract_motor_positions(folders, p["samy_path"], p["samz_path"])
-        return samy, samz
-
     if name == "strain":
         vol = load_strain_volume(p["strain_volume_file"])
         if vol is None:
             raise KeyError("strain dataset not found")
-        samy, samz = motors(p["strain_pattern"])
+        samy, samz = _read_motors(raw_root, p["strain_pattern"], p["samy_path"], p["samz_path"])
         data, _z, scale_z = _align(
             vol, samy, samz, scale_x=scale_x, samy_direction=samy_dir, roi_x=roi_x, roi_y=roi_y
         )
@@ -578,7 +575,7 @@ def aligned_field(params: dict, name: str):
         datasets = load_mosa_datasets(p["mosa_volume_file"])
         if name not in datasets:
             raise KeyError(name)
-        samy, samz = motors(p["mosa_pattern"])
+        samy, samz = _read_motors(raw_root, p["mosa_pattern"], p["samy_path"], p["samz_path"])
         data, _z, scale_z = _align(
             datasets[name],
             samy,
@@ -596,6 +593,141 @@ def aligned_field(params: dict, name: str):
             vmin, vmax = _colorbar_range(data)
         _, _, cmap = _display_info(name)
     return data, (scale_x, scale_y, scale_z), cmap, (float(vmin), float(vmax))
+
+
+def _make_build(loader, z, vn, vx, cm, ex, ey, t, cb):
+    """Factory: returns a build(style) closure for one layer of an aligned volume.
+
+    ``loader`` is a zero-arg callable that returns the full aligned 3-D volume
+    (cached per dataset by the caller).  ``z`` is captured by value via the
+    default-arg trick so late-binding is not an issue.
+    """
+
+    def build(style, _loader=loader, _z=z, _vn=vn, _vx=vx, _cm=cm, _ex=ex, _ey=ey, _t=t, _cb=cb):
+        vol = _loader()
+        layer = vol[_z]
+        fig, _ax, _im = Rnd.layer_figure(
+            layer, _vn, _vx, _cm, _ex, _ey, f"{_t} (layer {_z})", _cb, style=style
+        )
+        return fig
+
+    return build
+
+
+@register("visualize")
+def figures(result: "VisualizeResult", params: dict) -> list[FigureSpec]:
+    """Return one ``map`` FigureSpec per Z layer per dataset in the VisualizeResult.
+
+    Each ``build(style)`` closure reproduces the aligned layer exactly as the
+    stage does: load the source volume → ``_align`` (ROI + samy shift + uniform-Z
+    interp) → slice layer *z* → ``render.layer_figure``.  Motor data is read from
+    ``params`` (``raw_root`` + pattern), so the alignment matches the original run.
+
+    The full alignment is performed AT MOST ONCE per dataset (lazy cache): listing
+    specs is cheap; the first ``build()`` call for a dataset loads and aligns its
+    volume, and all subsequent layer builds for that same dataset reuse the result.
+
+    Pixel scales fall back to the calibrated beamline defaults (0.152 / 0.385 µm)
+    when not supplied in *params*.
+    """
+    if not result.datasets:
+        return []
+
+    p = {**STAGE.defaults(), **params}
+    sx = float(p["pixel_size_x_um"])
+    sy = float(p["pixel_size_y_um"])
+    scale_x = sx
+    samy_dir = int(p["samy_direction"])
+    roi_x = _parse_pair(p["roi_x"])
+    roi_y = _parse_pair(p["roi_y"])
+    raw_root = (p["raw_root"] or "").rstrip("/")
+
+    specs: list[FigureSpec] = []
+
+    for ds in result.datasets:
+        is_strain = ds.name == "strain"
+        title, cbar_label, cmap = _display_info(ds.name, is_strain=is_strain)
+        n_z = ds.shape[0]
+        ext_x = ds.shape[2] * sx
+        ext_y = ds.shape[1] * sy
+
+        # Per-dataset lazy cache: shared across all layer builds for THIS dataset.
+        # First build() call fills cache["vol"]; the rest reuse it.
+        cache: dict = {}
+
+        if is_strain:
+            src_file = p["strain_volume_file"]
+            pattern = p["strain_pattern"]
+
+            def _aligned_vol(
+                src=src_file,
+                pat=pattern,
+                _cache=cache,
+                _sx=scale_x,
+                _sd=samy_dir,
+                _rx=roi_x,
+                _ry=roi_y,
+                _rr=raw_root,
+                _sp=p["samy_path"],
+                _szp=p["samz_path"],
+            ):
+                if "vol" not in _cache:
+                    raw = load_strain_volume(src)
+                    if raw is None:
+                        raise ValueError(f"strain dataset not found in {src!r}")
+                    samy, samz = _read_motors(_rr, pat, _sp, _szp)
+                    _cache["vol"], _zp, _sz = _align(
+                        raw, samy, samz, scale_x=_sx, samy_direction=_sd, roi_x=_rx, roi_y=_ry
+                    )
+                return _cache["vol"]
+
+        else:
+            src_file = p["mosa_volume_file"]
+            ds_name = ds.name
+            pattern = p["mosa_pattern"]
+
+            def _aligned_vol(
+                src=src_file,
+                name=ds_name,
+                pat=pattern,
+                _cache=cache,
+                _sx=scale_x,
+                _sd=samy_dir,
+                _rx=roi_x,
+                _ry=roi_y,
+                _rr=raw_root,
+                _sp=p["samy_path"],
+                _szp=p["samz_path"],
+            ):
+                if "vol" not in _cache:
+                    all_datasets = load_mosa_datasets(src)
+                    if name not in all_datasets:
+                        raise KeyError(f"mosaicity dataset {name!r} not found in {src!r}")
+                    raw = all_datasets[name]
+                    samy, samz = _read_motors(_rr, pat, _sp, _szp)
+                    _cache["vol"], _zp, _sz = _align(
+                        raw, samy, samz, scale_x=_sx, samy_direction=_sd, roi_x=_rx, roi_y=_ry
+                    )
+                return _cache["vol"]
+
+        # Unique filename stem: sanitise the dataset name (spaces → _, slashes removed)
+        stem = ds.name.replace("/", "_").replace(" ", "_")
+        vmin_ds, vmax_ds = ds.vmin, ds.vmax
+
+        for z in range(n_z):
+            specs.append(
+                FigureSpec(
+                    figure_id=f"visualize_{stem}_z{z:04d}",
+                    title=f"{title} — layer {z}",
+                    kind="map",
+                    filename=f"{stem}_layer_{z:04d}",
+                    build=_make_build(
+                        _aligned_vol, z, vmin_ds, vmax_ds, cmap, ext_x, ext_y, title, cbar_label
+                    ),
+                )
+            )
+
+    return specs
 
 
 def _main(argv: list[str] | None = None) -> int:
