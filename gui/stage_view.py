@@ -16,6 +16,7 @@ from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
+    QMessageBox,
     QPlainTextEdit,
     QProgressBar,
     QPushButton,
@@ -26,6 +27,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from dfxm.common.figures import FigureSpec, figures_for
+from dfxm.common.plotting import PUBLICATION_STYLE
 from dfxm.config.models import Experiment, StageSpec
 from dfxm.runner import Done, Failed, Log, Progress, StageRunner
 from dfxm.stages.registry import STAGE_TARGETS
@@ -62,6 +65,7 @@ class StageView(QWidget):
         self._experiment = experiment
         self._runner: StageRunner | None = None
         self._last_params: dict = {}
+        self._last_result = None
 
         self._timer = QTimer(self)
         self._timer.setInterval(_POLL_MS)
@@ -115,10 +119,25 @@ class StageView(QWidget):
         self._image_scroll = QScrollArea()
         self._image_scroll.setWidgetResizable(True)
         self._image_scroll.setWidget(self._image)
+
+        # Export button — disabled until a successful run populates _last_result.
+        self._export_btn = QPushButton("Export…")
+        self._export_btn.setEnabled(False)
+        self._export_btn.clicked.connect(self._on_export_clicked)
+        export_row = QHBoxLayout()
+        export_row.addStretch(1)
+        export_row.addWidget(self._export_btn)
+
+        self._output_tab = QWidget()
+        output_layout = QVBoxLayout(self._output_tab)
+        output_layout.setContentsMargins(0, 0, 0, 0)
+        output_layout.addWidget(self._image_scroll, 1)
+        output_layout.addLayout(export_row)
+
         self._tabs = QTabWidget()
         self._tabs.addTab(self._log, "Log")
         self._tabs.addTab(self._results, "Results")
-        self._tabs.addTab(self._image_scroll, "Output")
+        self._tabs.addTab(self._output_tab, "Output")
         # interactive 3-D tab for volume-producing stages (PvCanvas stays lazy)
         self._vol3d: Volume3DPanel | None = None
         if stage_name in _VOLUME_STAGES:
@@ -217,6 +236,7 @@ class StageView(QWidget):
         self._progress.setValue(0)
         self._progress_text.setText("")
         self._log.append(f"Running stage '{self._stage_name}'…")
+        self._export_btn.setEnabled(False)
         self._set_running(True)
         self.runStarted.emit(self._stage_name)
         self._runner = StageRunner(target, params, start_method="spawn")
@@ -307,6 +327,7 @@ class StageView(QWidget):
 
     def _finish_ok(self, result) -> None:
         self._timer.stop()
+        self._last_result = result
         self._log.set_progress(1.0, "Done.")
         self._progress.setValue(100)
         summary = _summarize(self._stage_name, result)
@@ -321,7 +342,7 @@ class StageView(QWidget):
                 self._image.setPixmap(
                     pix.scaledToWidth(700, Qt.TransformationMode.SmoothTransformation)
                 )
-                self._tabs.setCurrentWidget(self._image_scroll)
+                self._tabs.setCurrentWidget(self._output_tab)
                 shown = True
         if not shown:
             self._tabs.setCurrentWidget(self._results)
@@ -329,8 +350,32 @@ class StageView(QWidget):
             # lazy: install source callables only; nothing loads/renders until
             # the user picks a volume and clicks Render 3-D.
             self._vol3d.set_sources(volume_sources(self._stage_name, result, self._last_params))
+        self._export_btn.setEnabled(True)
         self._set_running(False)
         self.runFinished.emit(self._stage_name, True)
+
+    # -- export ---------------------------------------------------------------
+
+    def _figures(self) -> list[FigureSpec]:
+        """Return the list of FigureSpecs for the last successful run (or [] if none)."""
+        if self._last_result is None:
+            return []
+        return figures_for(self._stage_name, self._last_result, self._last_params)
+
+    def _on_export_clicked(self) -> None:
+        try:
+            specs = self._figures()
+        except Exception as exc:  # noqa: BLE001 — output file may have moved/changed since the run
+            QMessageBox.warning(self, "Export", f"Could not list figures:\n{exc}")
+            return
+        if not specs:
+            QMessageBox.information(self, "Export", "This stage produced no exportable figures.")
+            return
+        # TODO(Task 21): use the session global style instead of PUBLICATION_STYLE
+        from .widgets.export_dialog import ExportDialog
+
+        dlg = ExportDialog(specs, 0, PUBLICATION_STYLE, parent=self)
+        dlg.exec()
 
     def _finish_failed(self, failure: Failed) -> None:
         self._timer.stop()

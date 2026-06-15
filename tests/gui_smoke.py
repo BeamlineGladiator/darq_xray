@@ -135,6 +135,31 @@ def main() -> int:
     assert sview._image.pixmap() is not None and not sview._image.pixmap().isNull()
     print("[4] strain ran through the UI: status ✓; strain-map image previewed")
 
+    # Export button wired on the Output tab after a successful strain run.
+    from dfxm.common.plotting import PUBLICATION_STYLE as _PUB_STYLE
+    from gui.widgets.export_dialog import ExportDialog as _ExportDialog
+
+    assert hasattr(sview, "_export_btn"), "StageView missing _export_btn"
+    assert sview._export_btn.isEnabled(), "Export button should be enabled after a successful run"
+    figs = sview._figures()
+    assert isinstance(figs, list), f"_figures() returned {type(figs)}, expected list"
+    assert len(figs) > 0, "strain _figures() returned empty list after a successful run"
+    # Construct the dialog (do NOT call .exec() — that blocks).  Destroy it
+    # immediately so it does not steal Qt focus from the main window and
+    # break the help-panel assertions in later steps.
+    _edlg = _ExportDialog(figs, 0, _PUB_STYLE)
+    assert _edlg._canvas.figure is not None
+    _edlg.deleteLater()
+    app.processEvents()
+    # A view that has never had a successful run must start with Export disabled.
+    assert not win._views["mosaicity"]._export_btn.isEnabled(), (
+        "Export button must be disabled before any successful run"
+    )
+    print(
+        "[5] Export… button enabled after strain run; _figures() non-empty; ExportDialog constructs OK"
+        "; Export disabled on un-run mosaicity view"
+    )
+
     # Interactive viewers are present but LAZY: a 3D tab on volume stages, a
     # pick button on profiles, and pyvista must NOT have been imported yet.
     for name in ("visualize", "rocking"):
@@ -143,7 +168,7 @@ def main() -> int:
     assert win._views["profiles"]._pick_btn is not None
     assert win._views["visualize"]._vol3d is not None
     assert "pyvista" not in sys.modules and "pyvistaqt" not in sys.modules
-    print("[5] interactive viewers wired and lazy (no pyvista import at startup)")
+    print("[6] interactive viewers wired and lazy (no pyvista import at startup)")
 
     # Cancel kills the worker.
     runner = StageRunner(_sleeper, {}, start_method="fork")
@@ -152,7 +177,7 @@ def main() -> int:
     assert runner.is_alive()
     runner.cancel(timeout=2.0)
     assert not runner.is_alive()
-    print("[6] cancel terminated a long-running worker")
+    print("[7] cancel terminated a long-running worker")
 
     # Forms: essentials visible, Advanced expander collapsed, values round-trip.
     for name, view in win._views.items():
@@ -169,7 +194,7 @@ def main() -> int:
     sform._adv_toggle.setChecked(False)
     sform.focus_param("ccmth_ref_deg")
     assert sform._adv_toggle.isChecked()
-    print("[7] grouped forms: essentials/advanced split + value round-trip OK")
+    print("[8] grouped forms: essentials/advanced split + value round-trip OK")
 
     # Help panel follows focus and idles on the stage description.
     sview = win._views["strain"]
@@ -178,7 +203,7 @@ def main() -> int:
     app.processEvents()
     help_text = sview._help._label.text()
     assert "Bragg" in help_text and "calibration" in help_text.lower()
-    print("[8] help panel idles on description and follows focus")
+    print("[9] help panel idles on description and follows focus")
 
     # Compact experiment header: summary line + notes + Edit dialog.
     panel = win._experiment_panel
@@ -194,7 +219,7 @@ def main() -> int:
     panel._set_experiment(dlg.experiment())  # what _on_edit does after exec()
     app.processEvents()
     assert panel.current_experiment().description == "smoke-edited"
-    print("[9] compact experiment header + edit dialog round-trip")
+    print("[10] compact experiment header + edit dialog round-trip")
 
     # Pipeline rail: Overview first, darfix row disabled, concat optional.
     from PySide6.QtCore import Qt as _Qt
@@ -216,7 +241,7 @@ def main() -> int:
     # Status glyphs survived the runs from steps [3]/[4].
     assert win._status_items["concat"].text().startswith("✓")
     assert win._status_items["strain"].text().startswith("✓")
-    print("[10] pipeline rail + overview page wired")
+    print("[11] pipeline rail + overview page wired")
 
     # Success banner from the earlier strain run; progress completed.
     assert sview._banner.isVisible() and sview._banner.text().startswith("✓")
@@ -244,7 +269,7 @@ def main() -> int:
     assert mview._banner.isVisible()
     assert "root_folder" in mview._banner.text()
     assert win._status_items["mosaicity"].text().startswith("✗")
-    print("[11] banner + pre-run validation + progress bar")
+    print("[12] banner + pre-run validation + progress bar")
 
     # Mode-aware pre-run validation: the inactive-mode folder is never checked.
     mview._form.set_values(
@@ -258,7 +283,7 @@ def main() -> int:
     mview._form.set_values({"mode": "batch", "root_folder": "/nonexistent/nowhere"})
     problem = mview._validate_inputs(mview._form.values())
     assert problem is not None and problem[0] == "root_folder"  # batch still checks root_folder
-    print("[12] mode-aware pre-run validation")
+    print("[13] mode-aware pre-run validation")
 
     # Export dialog: build a figure spec, render a preview, export 3 formats.
     import os as _os
@@ -289,7 +314,7 @@ def main() -> int:
     paths = dlg.export_to(out)
     app.processEvents()
     assert all(_os.path.exists(p) and _os.path.getsize(p) > 0 for p in paths)
-    print("[13] export dialog renders preview + writes png/pdf/svg")
+    print("[14] export dialog renders preview + writes png/pdf/svg")
 
     # [14] Export-dialog robustness: plot kind, filename sanitisation, build-raising spec.
     # 14a: kind="plot" spec — scale bar forced off, export still works.
@@ -329,7 +354,7 @@ def main() -> int:
     boom_dlg = ExportDialog([boom_spec], 0, PUBLICATION_STYLE)  # must not raise
     app.processEvents()
     assert boom_dlg._canvas.figure is not None  # error figure was installed
-    print("[14] plot-kind round-trip, filename sanitisation, build-raising spec")
+    print("[15] plot-kind round-trip, filename sanitisation, build-raising spec")
 
     print("\nGUI SMOKE PASSED")
     return 0
