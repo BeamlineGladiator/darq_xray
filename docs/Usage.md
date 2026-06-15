@@ -343,6 +343,87 @@ pixel-aligned with the strain/mosaicity layer images.
 
 ---
 
+## Publication export
+
+After a stage runs successfully, the **Output** tab gains two buttons at the bottom right:
+
+- **Export…** — single-figure export: opens a dialog with a live preview, a figure selector drop-down (if the stage produced multiple figures), per-figure style controls, and an **Export** button that writes into a folder you pick.
+- **Export all…** — batch export: exports every figure the stage produced into a single folder you pick via a folder-chooser dialog. Progress is shown per-figure in a banner; one bad figure never aborts the rest. The banner and a warning dialog report how many figures succeeded and what went wrong with any failures.
+
+Files are written **flat** into the folder you choose (e.g. `/tmp/my_exports/`). Each figure gets a sanitised filename stem (path-unsafe characters replaced with `_`) plus the format extension (`strain_map.png`, `strain_map.pdf`, etc.). There is no automatic sub-folder.
+
+### The "Publication style…" editor
+
+A **Publication style…** button lives in the **left column of the main window**, below the pipeline rail. It holds one **session-global** `PlotStyle` — seeded from `PUBLICATION_STYLE` at startup and shared by every export dialog opened from any stage during the session.
+
+Clicking it opens a scrollable style editor (the same control set as the per-figure export dialog). Changes persist for the rest of the session. Each **Export…** dialog starts from a private copy of the session style and lets you adjust it per-figure without changing the global.
+
+### Style controls
+
+Both the global "Publication style…" editor and the per-figure **Export…** dialog offer the same controls:
+
+**Scale bar**
+
+| Control | Meaning |
+|---|---|
+| Show scale bar | Draw a µm scale bar overlay |
+| Bar length | **Auto** (≈15 % of the image X extent, snapped to a 1–2–5–10 nice value) or a fixed µm value |
+| Bar thickness | Visual height in points (default 3 pt; use 4 pt for publication) |
+| Label scale | Multiplies the font size for the scale-bar label (relative to Font scale) |
+| Bar location | `lower right` / `lower left` / `upper right` / `upper left` |
+| Bar colour | Foreground colour of the bar and label |
+| Background box | Optionally draw a semi-transparent box behind the bar + label |
+| Box colour / alpha / margin | Control the background box appearance |
+
+> [!note] Scale bars on maps only
+> Scale bars are drawn **only on physical maps** (`kind="map"` figures: per-layer volume maps, strain maps, mosaicity maps, slice maps). Histograms, detrend diagnostics, and line-profile companion figures are `kind="plot"` — the scale-bar checkbox is ignored for them. Physical aspect ratio is always preserved on maps (`aspect="equal"`).
+
+**Text**
+
+| Control | Meaning |
+|---|---|
+| Font scale | Multiplies all axis labels, tick labels, and the title |
+| Show title | Uncheck to suppress the figure title |
+| Centre axis labels | Horizontally centre the x/y axis labels |
+
+**Colourbar**
+
+| Control | Meaning |
+|---|---|
+| Show colourbar | Draw a colourbar |
+| Colourbar label | Override the figure's own colourbar label (blank = use the stage's label) |
+| Colourbar fraction | Controls the colourbar width (matplotlib `fraction` parameter) |
+| Colourbar ticks | Number of evenly-spaced ticks including both endpoints; `0` = matplotlib auto |
+| Tick format | `auto` (matplotlib default) / `scientific` (e.g. `1.2×10⁻³`) / a digit count like `2` (two decimal places) |
+
+**Figure**
+
+| Control | Meaning |
+|---|---|
+| Figure width | `single` (3.5 in), `double` (7.0 in), or `auto` (keeps the stage's own figsize) |
+
+**Output**
+
+| Control | Meaning |
+|---|---|
+| Formats | PNG / PDF / SVG (any combination; all enabled → three files per figure) |
+| DPI | Output resolution (default 300) |
+
+### What figures each stage produces
+
+| Stage | Figures |
+|---|---|
+| `strain` | Per-layer strain map (`kind="map"`) + strain histogram (`kind="plot"`) + detrend diagnostic 3-panel (`kind="plot"`) |
+| `mosaicity` | Per-layer per-dataset map + histogram for each χ/μ CoM and FWHM dataset |
+| `rocking` | Per-layer maps for sum intensity and specific-frame intensity |
+| `visualize` | Per-layer maps for all aligned datasets |
+| `slices` | One map per plane per volume (`kind="map"`) |
+| `profiles` | One companion figure per parameter-mode job (`kind="plot"`) — reference image + per-field line traces |
+| `matched` | Per-layer matched rocking-frame maps |
+| `concat`, `paraview` | No exportable figures |
+
+---
+
 ## Interactive viewers
 
 > [!note] Loaded only when you ask

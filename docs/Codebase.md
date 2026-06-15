@@ -82,11 +82,11 @@ Three ideas recur everywhere:
 dfxm_pipeline/
 ├── dfxm/                  # Layer 1 — Qt-free core library
 │   ├── config/            #   typed config models + YAML presets
-│   ├── common/            #   shared primitives (sort, h5io, alignment, …)
+│   ├── common/            #   shared primitives (sort, h5io, alignment, plotting, figures, …)
 │   ├── stages/            #   the 9 analysis stages + registry
 │   └── runner.py          #   run a stage in a child process
 ├── gui/                   # Layer 2 — PySide6 desktop app
-│   └── widgets/           #   reusable Qt widgets
+│   └── widgets/           #   reusable Qt widgets (incl. export_dialog)
 ├── tests/                 # Layer 3 — pytest suite + fixtures
 ├── experiments/           # shipped experiment presets (YAML)
 ├── docs/                  # Usage.md (user) + Codebase.md (this file)
@@ -134,7 +134,9 @@ Load/save/discover experiment presets (YAML in `experiments/`).
 ### `dfxm/common` — shared primitives
 
 `common/__init__.py` is just a package marker. The rest are the de-duplicated
-building blocks the legacy scripts each re-implemented.
+building blocks the legacy scripts each re-implemented. New in the plot-export
+workstream: `plotting.py` gained the `PlotStyle` dataclass and publication
+primitives; `figures.py` was added as the stage-figure catalog.
 
 #### `sort.py`
 - `natural_sort_key(s)` — orders embedded numbers numerically (`layer__2` before `layer__10`).
@@ -181,19 +183,48 @@ Per-layer sample positions.
 
 #### `plotting.py`
 GUI-safe plotting helpers — **never** `pyplot`/`matplotlib.use`.
+
 - `symmetric_limits(data, percentile=None)` — colour limits symmetric about 0.
 - `physical_extent(shape, px, py, roi)` — imshow `extent` in µm.
 - `get_cmap(name)` — colormap lookup; maps ParaView `"fast"` → `coolwarm` fallback.
 - `new_figure(figsize)` — a white `Figure` (no pyplot).
-- `add_scale_bar(ax, length_um, …)` — a µm scale bar in axes coords.
+
+**Publication-export primitives** (new; all accept a `PlotStyle` argument):
+
+| Symbol | What it does |
+|---|---|
+| `PlotStyle` | Dataclass holding every style knob — scale bar (show / length / thickness / label-scale / location / colour / box show+colour+alpha+margin), text (font_scale / show_title / center_axis_labels), colourbar (show / label / fraction / ticks / tick_format), figure (figure_width) and output (formats / dpi). `None` in any builder means "use legacy look". |
+| `PUBLICATION_STYLE` | A ready-made `PlotStyle` tuned for publication: white scale bar with a box, font_scale=2.2, colourbar_ticks=5, scientific tick format, single-column width, PNG+PDF+SVG at 300 dpi. |
+| `figure_size(style, ext_x, ext_y)` | Returns `(w, h)` in inches from `style.figure_width` (`"single"`=3.5 in, `"double"`=7.0 in), preserving the physical aspect ratio plus ~1 in headroom; returns `None` for `"auto"`. |
+| `auto_scale_bar_length_um(ext_x)` | A "nice" bar length ≈15% of the X extent, snapped to the 1–2–5–10 series. |
+| `draw_scale_bar(ax, length_um, *, style)` | Draw a µm scale bar (Rectangle + label, optionally a `FancyBboxPatch` background box) on `ax` whose data coordinates are in µm. `length_um=None` calls `auto_scale_bar_length_um`. |
+| `apply_text_scale(ax, style)` | Scale axis-label/tick/title fonts by `style.font_scale`; apply `show_title` and `center_axis_labels`. |
+| `colorbar_tick_values(vmin, vmax, n)` | `n` evenly-spaced tick values from vmin..vmax (always includes both endpoints). |
+| `add_colorbar(fig, im, ax, label, style)` | Add a colourbar honouring `style.colorbar_fraction`, label, tick count, and number format (`"auto"` / `"scientific"` / a decimal count like `"2"`). |
+| `build_histogram(data, *, title, xlabel, style)` | Histogram of finite values in `data` (steelblue bars, mean/median lines). Returns a `Figure` or `None` when there are no finite values. Applies text scaling when `style` is not `None`. The caller calls `fig.savefig`. |
 
 #### `render.py`
 Shared **volume** renderers used by [[#visualize.py]] and [[#rocking.py]].
 - `cmap_nan_transparent(name)` — colormap with NaN → transparent.
-- `add_scale_bar(ax, ext_x, ext_y, …)` / `layer_figure(...)` — one equal-aspect layer figure.
+- `layer_figure(layer, vmin, vmax, cmap, ext_x, ext_y, title, cbar_label, *, style=None)` — one equal-aspect layer figure. `style=None` reproduces the legacy look (12×10 in, plain colourbar, no scale bar). When a `PlotStyle` is passed, figsize/colourbar/scale-bar/text-scaling are all honoured. Returns `(fig, ax, im)`.
 - `save_layer_pngs(...)` — one PNG per Z layer.
 - `save_layer_animation(...)` — layer flip-through movie; MP4 (ffmpeg) → GIF fallback.
 - `_pyvista_grid(data, spacing)` / `save_top_view(...)` — 3-D top-view render (**lazy** `pyvista` import; NaN voxels thresholded out).
+
+> [!note] `render.add_scale_bar` was removed
+> The old `render.add_scale_bar` function was deleted. Scale bars are now drawn by `plotting.draw_scale_bar` and are called from `render.layer_figure` (and from stage builders) when a `PlotStyle` with `scale_bar=True` is supplied.
+
+#### `figures.py` (new)
+Per-stage figure catalog: enumerate and rebuild a stage's saved figures at any `PlotStyle`. Qt-free.
+
+| Symbol | What it does |
+|---|---|
+| `FigureSpec` | Dataclass with `figure_id: str`, `title: str`, `kind: str` (`"map"` or `"plot"`), `filename: str` (export stem, no extension), `build: Callable[[PlotStyle \| None], Figure]`. The `build` callable re-reads the saved data from disk and returns a `Figure` at the requested style. |
+| `register(stage_name)` | Decorator: registers a `fn(result, params) -> list[FigureSpec]` catalog function for a stage. `concat` and `paraview` pre-register as empty catalogs. |
+| `figures_for(stage_name, result, params)` | Lazy-import all stage modules (via `_load_stage_catalogs()`) then call the registered catalog function. Returns `[]` if no catalog is registered. |
+| `volume_layer_specs(*, h5_path, dataset, id_prefix, title, cbar_label, cmap, sx, sy, vmin, vmax, z_um=None)` | Convenience factory: one `FigureSpec` of `kind="map"` per Z layer of a `(Z,Y,X)` HDF5 volume. Opens the file once (for the shape); each `build(style)` re-opens it to read exactly one layer (memory-light for large volumes). |
+
+The lazy load (`_load_stage_catalogs`) ensures `import dfxm.common.figures` is cheap and headless-safe — heavy deps (h5py, scipy) are only pulled in on the first `figures_for()` call.
 
 ### `dfxm/stages` — the nine analysis stages
 
@@ -221,14 +252,19 @@ ccmth-only) → stacked 3-D volume.
 - `LayerResult` / `StrainResult` — per-layer stats + the stacked path/shape.
 - `cot`, `_arctan_model`, `_fit_arctan_1d`, `detrend_arctan_2d` — the separable arctan **detrend** (run on the full map, **before** ROI).
 - `compute_strain(ccmth, ccmth_ref)` — single-array `cot(ccmth_ref)·Δccmth`.
-- `process_maps_file(...)` — one `maps.h5` → 2-D strain + diagnostic PNGs.
+- `build_strain_map(strain, px, py, roi, vlim, *, style=None)` — build and return a strain map `Figure` (RdBu_r, equal aspect). When `style` is `None` the legacy look is reproduced; otherwise colourbar, scale bar, and text scaling are applied via the shared helpers. The caller calls `fig.savefig`.
+- `build_strain_histogram(data, *, title, xlabel, style=None)` — thin wrapper around `plotting.build_histogram` with strain-specific label defaults. Returns a `Figure` or `None`.
+- `build_detrend_diag(original, detrended, surface, *, style=None)` — 3-panel detrend-diagnostic figure (original / arctan surface / detrended). `style` applies colourbar and text scaling per panel; no scale bar (it is a `kind="plot"` figure).
+- `process_maps_file(...)` — one `maps.h5` → 2-D strain + diagnostic PNGs (calls the builders above with `style=None`).
 - `save_stacked_volume(...)` — stack all layers into `stacked_strain_volumes.h5`.
+- `figures(result, params)` — `@register("strain")` catalog: three `FigureSpec`s per layer — `kind="map"` strain map, `kind="plot"` histogram, `kind="plot"` detrend diagnostic. The detrend `build` re-reads the source `maps.h5` to recompute the arctan surface.
 - `run` / `_main`.
 
 #### `mosaicity.py`
 Port of `stack_h5_darfix_volumes`. Stacks χ/μ Center-of-mass + FWHM maps.
 - `MosaicityResult` — stacked path + per-dataset shapes + layers.
 - `_read_dataset(h5f, path)` — a dataset or `None`.
+- `figures(result, params)` — `@register("mosaicity")` catalog: for each dataset key in `result.datasets`, one `kind="map"` `FigureSpec` per Z layer (via `volume_layer_specs`) plus one `kind="plot"` histogram `FigureSpec` per layer.
 - `run` (a folder is included if any of its four maps exist) / `_main` → `stacked_volumes.h5`.
 
 #### `rocking.py`
@@ -239,6 +275,7 @@ from raw rocking scans, anchored to the mosaicity reference.
 - `build_raw_volumes(...)` — stack scans (sorted by samz) into two 3-D volumes.
 - `save_aligned_raw_volumes(...)` — write `aligned_raw_rocking_volumes.h5` (the schema [[#slices.py]] reads).
 - `_render(...)` — per-volume PNGs/animation/top-view via [[#render.py]].
+- `figures(result, params)` — `@register("rocking")` catalog: one `kind="map"` `FigureSpec` per Z layer for each aligned volume (sum intensity, specific frame), via `volume_layer_specs`.
 - `run` (mosa reference + mosa∪strain samz union filter + alignment) / `_main`.
 
 #### `visualize.py`
@@ -248,6 +285,7 @@ Port of `visualize_aligned_volumes_v6`. Aligns the stacked volumes and renders.
 - `load_mosa_datasets` / `load_strain_volume`, `_align(...)` (reuses [[#`alignment.py`]]), `_process_dataset(...)`.
 - `run` → per-layer PNGs, animation, 3-D top-view.
 - **3-D viewer helpers** (used by the GUI): `mosa_field_names(path)`, `available_fields(params)`, `aligned_field(params, name)` → `(volume, spacing, cmap, clim)` aligned with the *same* pipeline as the PNGs.
+- `figures(result, params)` — `@register("visualize")` catalog: one `kind="map"` `FigureSpec` per Z layer per aligned dataset, via `volume_layer_specs`.
 
 #### `paraview.py`
 Port of `export_aligned_volumes_to_paraview_v6_pvti`. Writes partitioned PVTI.
@@ -260,7 +298,11 @@ Port of `extract_oblique_slices_v5`. Arbitrary planes through the aligned volume
 - `SlicesResult`; centring/range helpers mirror visualize.
 - Geometry: `build_basis(normal, up)` (orthonormal u/v/n), `slice_plane_offsets`, `sample_plane` (world→voxel via `map_coordinates`), `_world_box`/`_union_box`/`resolve_auto_extent` (`extent:"auto"` fits the data box; `default_du` ← `scale_x`).
 - `prepare_volume(...)` — load + (if `stacked`) align + style; `_estimate_box` for auto-extent; `_standard_volumes(...)` builds the volume list from the `include_*` toggles.
-- `render_slice_png` / `write_volume_group`; `run` validates each slice up front, writes `oblique_slices.h5` + a PNG per plane.
+- `build_slice_figure(prep, sl, slice2d, u_um, v_um, *, offset_um, style=None)` — build and return a slice `Figure` (equal-aspect, µm axes). When `style` is `None` the legacy appearance is reproduced; otherwise figsize/colourbar/scale-bar/text-scaling are honoured. Does NOT call `savefig`.
+- `save_slice_png(prep, sl, slice2d, u_um, v_um, out_png, *, offset_um, dpi=150)` — build a legacy-style slice figure and save it to `out_png` (used by `run` during the stage run).
+- `write_volume_group` — write one volume group to `oblique_slices.h5`.
+- `figures(result, params)` — `@register("slices")` catalog: one `kind="map"` `FigureSpec` per plane per slice-name sub-group per volume group in `oblique_slices.h5`.
+- `run` validates each slice up front, writes `oblique_slices.h5` + a PNG per plane.
 
 #### `profiles.py`
 Port of `line_profile_oblique_slices_v2` (headless modes). 1-D profiles across one
@@ -268,16 +310,21 @@ slice plane, every field at the same in-plane positions.
 - `ProfileJobResult` / `ProfilesResult`.
 - **Profiling core** (pure, unit-tested): `grid_pitch`, `line_geometry`, `sample_nan_aware` (NaN-aware bilinear), `profile_plane`.
 - HDF5 access: `volume_ids_with_slice`, `read_volume_attrs`, `read_axes`, `resolve_plane_index`, `check_geometry`.
-- Figures: `make_companion_figure` (image + per-field stack), `render_single`.
+- `build_companion_figure(ref, fields, geom, line_color, *, style=None)` — build and return a companion profile `Figure` (reference image + N trace panels). When `style` is `None` the legacy appearance is reproduced; when a `PlotStyle` is supplied, colourbar and text scaling are honoured. These are `kind="plot"` figures — no scale bar is drawn regardless of `style`. Does NOT call `savefig`.
+- `save_companion_figure(ref, fields, geom, line_color, out_png, dpi)` — build a legacy companion figure and save it to `out_png` (used by `run`).
+- `render_single` — single reference-plane overview PNG (for `preview` mode and per-field overviews).
+- `figures(result, params)` — `@register("profiles")` catalog: one `kind="plot"` `FigureSpec` per parameter-mode job (re-reads `oblique_slices.h5` and rebuilds via `build_companion_figure`).
 - Drivers: `_collect`, `_write_csvs`, `_save_overviews`; `run` supports `parameter` (CSV + figures) and `preview` modes. (The interactive click-pick is the GUI's [[#`line_picker.py`]].)
 
 #### `matched.py`
 Port of `plot_rocking_matched_layers_v3`. Grayscale rocking frames matched to
 strain layers.
-- `MatchedResult`.
+- `MatchedLayer` — per-layer match record: layer name, matched rocking name, samy shift, output PNG path, and shape.
+- `MatchedResult` — `output_dir`, `frame_index`, `skipped`, and `recorded: list[MatchedLayer]` (the list of all successfully matched layers).
 - `load_pco_ff_frame(...)` — one frame, median-background subtracted, negatives→NaN.
 - `match_nearest(...)` — nearest rocking scan per strain layer within a threshold.
 - `_apply_shift_single(...)` — place a frame on the padded canvas with the strain samy shift (skips frames whose shape differs).
+- `figures(result, params)` — `@register("matched")` catalog: one `kind="map"` `FigureSpec` per entry in `result.recorded`, reading the saved grayscale PNG and rendering it as a figure.
 - `run` / `_main`.
 
 ### `dfxm/runner.py` — the process worker
@@ -300,10 +347,10 @@ Runs a stage in a **child process** and streams messages back; UI-agnostic.
 | Module | What it does |
 |---|---|
 | `app.py` | Entry point `main()` (`python3 -m gui.app`). Sets `QT_API=pyside6`, then **defers** Qt imports so the spawn-reimported worker child stays Qt-free. |
-| `main_window.py` | `MainWindow`: left column is a **pipeline rail** — `ExperimentPanel` (compact header) then `OverviewPage` and each stage in pipeline order, each row carrying a status glyph (— ▶ ✓ ✗). Concat is marked **(optional)**; darfix appears as a greyed, non-clickable row after concat. The right side is a `QStackedWidget` holding `OverviewPage` plus one `StageView` per stage. Wires experiment changes into every view and updates a stage's ✓/✗ glyph on `runFinished`. |
+| `main_window.py` | `MainWindow`: left column is a **pipeline rail** — `ExperimentPanel` (compact header) then `OverviewPage` and each stage in pipeline order, each row carrying a status glyph (— ▶ ✓ ✗). Concat is marked **(optional)**; darfix appears as a greyed, non-clickable row after concat. The right side is a `QStackedWidget` holding `OverviewPage` plus one `StageView` per stage. Wires experiment changes into every view and updates a stage's ✓/✗ glyph on `runFinished`. A **"Publication style…" button** at the bottom of the left column below the rail opens the global style editor. `global_plot_style()` returns the session-wide `PlotStyle` (a mutable copy of `PUBLICATION_STYLE` held as `self._plot_style`); `_on_pub_style()` opens a `QDialog` containing a `StyleControls` that mutates it in place. |
 | `overview_page.py` | `OverviewPage`: a read-only landing page — a left-to-right row of clickable stage **chips** (label only, `→` between them, darfix as a dashed external step after concat) above a list of per-stage **rows**, each pairing a status glyph with the stage's one-sentence `StageSpec.description`. Emits `stageSelected(str)` when a chip is clicked; `set_status(stage, glyph)` updates the per-stage row glyphs to mirror the rail. |
 | `experiment_panel.py` | `ExperimentPanel`: compact header showing the active preset name, its one-line calibration summary, and the preset's notes (red, when present). A dropdown opens the preset list; **Edit…** opens `ExperimentDialog` — a modal with the full `ParamForm` over `EXPERIMENT_SCHEMA` plus a help panel, closed with **OK**/**Cancel** and offering **Save as…** to write a new preset YAML. Emits `experimentChanged(Experiment)`. |
-| `stage_view.py` | `StageView`: the generic per-stage panel — param form + **Run/Cancel + progress row** + a **status banner** above the tabs + Log/Results/Output tabs (and a **3D** tab for volume stages, a **Pick line…** button for profiles). Before launching, `_validate_inputs` checks each applicable `must_exist` path on disk (skipping the mode-gated folder the current mode doesn't use, so a stale `single`/`batch` value can't block the active mode) — a missing one blocks the run, focuses the offending field, and shows an error banner. Emits `runStarted` when the stage begins. Launches the stage via `StageRunner` and polls it on a `QTimer`. Module helpers `_summarize(stage_name, result)` (text summary) and `_representative_image(stage_name, result)` (preview picker) dispatch on the stage name via the `_SUMMARIZERS` / `_IMAGE_PICKERS` tables — one formatter per stage, no result-type sniffing. `_VOLUME_STAGES = (visualize, rocking)`. |
+| `stage_view.py` | `StageView`: the generic per-stage panel — param form + **Run/Cancel + progress row** + a **status banner** above the tabs + Log/Results/Output tabs (and a **3D** tab for volume stages, a **Pick line…** button for profiles). Before launching, `_validate_inputs` checks each applicable `must_exist` path on disk (skipping the mode-gated folder the current mode doesn't use, so a stale `single`/`batch` value can't block the active mode) — a missing one blocks the run, focuses the offending field, and shows an error banner. Emits `runStarted` when the stage begins. Launches the stage via `StageRunner` and polls it on a `QTimer`. Module helpers `_summarize(stage_name, result)` (text summary) and `_representative_image(stage_name, result)` (preview picker) dispatch on the stage name via the `_SUMMARIZERS` / `_IMAGE_PICKERS` tables — one formatter per stage, no result-type sniffing. `_VOLUME_STAGES = (visualize, rocking)`. **Export support:** after a run, the Output tab gains **Export…** and **Export all…** buttons. `_figures()` calls `figures_for(stage_name, result, params)` to get the stage's `FigureSpec` list. `export_all(out_dir) -> list[ExportResult]` iterates every spec, calls `save_spec(spec, out_dir, style)` with the session style from `self.window().global_plot_style()`, and returns a `list[ExportResult]` (one per spec, `ok=True/False`, `error=str|None`); a per-figure build failure is recorded and the batch continues. `ExportResult` is a `NamedTuple(figure_id, ok, error)`. |
 | `bindings.py` | The glue: `STAGE_ORDER` (nav order), `STAGE_SPECS` (name→`StageSpec`), and `experiment_overrides(stage, exp)` — how an `Experiment` pre-fills each stage *and* how an upstream output auto-fills the next stage's input (the auto-chaining). |
 | `viewers.py` | Lazy interactive-viewer glue: `volume_sources(stage, result, params)` → `{name: callable}` where each callable loads/aligns one volume **only when invoked**; `_rocking_source(...)`; `inject_line_into_jobs(jobs_json, …)` writes a picked line back into a profiles job (pure, unit-tested). |
 
@@ -318,6 +365,7 @@ Runs a stage in a **child process** and streams messages back; UI-agnostic.
 | `pv_canvas.py` | `PvCanvas`: an embedded `pyvistaqt` 3-D view created **lazily** (`ensure()` on first use; degrades to a label if there's no OpenGL). `show_volume(volume, spacing, cmap, clim)` volume-renders with NaN thresholded out. |
 | `volume3d.py` | `Volume3DPanel`: a volume dropdown + **Render 3-D** button over a (lazy) `PvCanvas`. `set_sources()` installs lazy callables — nothing loads until the button is clicked. |
 | `line_picker.py` | `LinePickerDialog`: scroll a slice's planes (◀/▶), click two endpoints, read back `(start_uv, end_uv, offset_um)`. Built on demand; reuses the [[#profiles.py]] readers. |
+| `export_dialog.py` | Publication export widgets and helpers. `sanitize_stem(name)` replaces path-unsafe characters with underscores. `save_spec(spec, out_dir, style)` builds a `FigureSpec` at the given style (scale bar force-disabled for `kind="plot"`), saves one file per `style.formats` into `out_dir`, and returns the list of written paths; per-format failures are skipped silently. `StyleControls(QWidget)` provides the full set of ~21 `PlotStyle` controls (grouped as Scale bar / Text / Colourbar / Figure / Output); mutates the bound `PlotStyle` in place and emits `changed` after each mutation. `sync_from_style()` pushes the current style back into all widgets (used after a reset). `ExportDialog(QDialog)` wraps a live `MplCanvas` preview + a figure-selector `QComboBox` + `StyleControls` + **Reset to global style** and **Export** buttons. The **Export** button calls `QFileDialog.getExistingDirectory` — the user picks a folder, and files are written flat into that folder. `export_to(out_dir)` calls `save_spec` for the current spec and returns the list of written paths. |
 
 ---
 
@@ -347,20 +395,20 @@ Runs a stage in a **child process** and streams messages back; UI-agnostic.
 
 ## Data & artifact flow
 
-What each stage reads and writes (file names are the defaults):
+What each stage reads and writes (file names are the defaults), and what its `figures()` catalog produces for export:
 
-| Stage | Reads | Writes |
-|---|---|---|
-| `concat` | raw BLISS `*.1` scans | `<folder>_concat.h5` (→ darfix) |
-| *(darfix, external)* | `*_concat.h5` | `maps.h5` |
-| `strain` | `maps.h5` | strain PNGs + `stacked_strain_volumes.h5` |
-| `mosaicity` | `maps.h5` | `stacked_volumes.h5` |
-| `rocking` | raw rocking scans (+ mosa/strain motors) | `aligned_raw_rocking_volumes.h5` + media |
-| `visualize` | `stacked_volumes.h5`, `stacked_strain_volumes.h5` | PNGs / MP4 / 3-D top-view |
-| `paraview` | the stacked volumes | `*_volume.pvti` + `*_pieces/` + `export_info.txt` |
-| `slices` | stacked volumes + aligned rocking volume | `oblique_slices.h5` + PNG per plane |
-| `profiles` | `oblique_slices.h5` | companion figures + CSVs + overviews |
-| `matched` | raw strain + rocking scans | grayscale `rocking_layers/*.png` |
+| Stage | Reads | Writes | `figures()` catalog |
+|---|---|---|---|
+| `concat` | raw BLISS `*.1` scans | `<folder>_concat.h5` (→ darfix) | *(none)* |
+| *(darfix, external)* | `*_concat.h5` | `maps.h5` | — |
+| `strain` | `maps.h5` | strain PNGs + `stacked_strain_volumes.h5` | map + histogram + detrend diagnostic per layer |
+| `mosaicity` | `maps.h5` | `stacked_volumes.h5` | map + histogram per layer per dataset (χ/μ CoM + FWHM) |
+| `rocking` | raw rocking scans (+ mosa/strain motors) | `aligned_raw_rocking_volumes.h5` + media | map per layer for sum + specific-frame volumes |
+| `visualize` | `stacked_volumes.h5`, `stacked_strain_volumes.h5` | PNGs / MP4 / 3-D top-view | map per layer per aligned dataset |
+| `paraview` | the stacked volumes | `*_volume.pvti` + `*_pieces/` + `export_info.txt` | *(none)* |
+| `slices` | stacked volumes + aligned rocking volume | `oblique_slices.h5` + PNG per plane | map per plane per volume group |
+| `profiles` | `oblique_slices.h5` | companion figures + CSVs + overviews | companion figure per parameter-mode job |
+| `matched` | raw strain + rocking scans | grayscale `rocking_layers/*.png` | map per matched layer |
 
 `bindings.experiment_overrides` encodes these hand-offs so each stage's inputs
 auto-fill from the experiment + the previous stage's outputs.
