@@ -20,6 +20,7 @@ from scipy.ndimage import shift as ndi_shift
 from ..common import alignment as A
 from ..common import render as Rnd
 from ..common.errors import StageUserError
+from ..common.figures import FigureSpec, register
 from ..common.raster import extract_motor_positions, find_h5_file
 from ..common.sort import find_matching_folders
 from ..config.models import Param, ParamType, StageSpec
@@ -212,6 +213,25 @@ STAGE = StageSpec(
 
 
 @dataclass
+class MatchedLayer:
+    """Per-layer recompute record — everything figures() needs to rebuild a shifted frame."""
+
+    raw_h5: str  # absolute path to the rocking scan .h5 file
+    pco_ff_path: str  # HDF5 dataset path inside raw_h5
+    frame_index: int  # 0-based frame extracted from the detector stack
+    shift_px: float  # samy X-shift applied (pixels)
+    pad_left: int  # left padding (pixels) from compute_pad_left
+    nx_new: int  # total canvas width after padding (pixels)
+    ext_x: float  # physical canvas width (µm)
+    ext_y: float  # physical canvas height (µm)
+    vmin: float  # colour-scale lower bound
+    vmax: float  # colour-scale upper bound
+    title: str  # axes title used in the saved PNG
+    colormap: str  # matplotlib colormap name
+    layer_index: int  # strain layer index i (used for figure_id / filename)
+
+
+@dataclass
 class MatchedResult:
     output_dir: str = ""
     layers_dir: str | None = None
@@ -224,6 +244,7 @@ class MatchedResult:
     max_match_dist_um: float = 0.0
     pngs: list[str] = field(default_factory=list)
     skipped: list[str] = field(default_factory=list)
+    recorded: list[MatchedLayer] = field(default_factory=list)
 
 
 # -----------------------------------------------------------------------------
@@ -414,9 +435,97 @@ def run(params: dict, progress: ProgressFn | None = None) -> MatchedResult:
         fig.savefig(png, dpi=150, facecolor="white", bbox_inches="tight")
         result.pngs.append(png)
         result.n_saved += 1
+        # NOTE: figures().build() in this module mirrors this exact recompute
+        # (load_pco_ff_frame → _apply_shift_single → layer_figure) to rebuild
+        # the figure at export time; keep the two in sync.
+        result.recorded.append(
+            MatchedLayer(
+                raw_h5=_rock_h5(raw_root, rock_names[m]),
+                pco_ff_path=p["pco_ff_path"],
+                frame_index=frame_index,
+                shift_px=float(shifts_px[i]),
+                pad_left=pad_left,
+                nx_new=nx_new,
+                ext_x=ext_x,
+                ext_y=ext_y,
+                vmin=float(vmin),
+                vmax=float(vmax),
+                title=title,
+                colormap=p["colormap"],
+                layer_index=i,
+            )
+        )
 
     progress(1.0, f"saved {result.n_saved}/{result.n_strain} matched layers -> {layers_dir}")
     return result
+
+
+@register("matched")
+def figures(result: MatchedResult, params: dict) -> list[FigureSpec]:
+    """Figure catalog for the matched stage — one map spec per saved layer.
+
+    Each spec's ``build(style)`` re-reads the raw rocking frame, re-applies the
+    samy X-shift, and calls ``render.layer_figure`` with the same arguments that
+    ``run()`` used, so the rebuilt figure matches the saved PNG exactly.
+
+    If the raw ``.h5`` file is missing at build time, ``FileNotFoundError`` is
+    raised (the GUI surfaces it with a clear message).
+    """
+    if not result.recorded:
+        return []
+
+    def _make_build(rec: MatchedLayer):
+        raw_h5 = rec.raw_h5
+        pco_ff_path = rec.pco_ff_path
+        frame_index = rec.frame_index
+        shift_px = rec.shift_px
+        pad_left = rec.pad_left
+        nx_new = rec.nx_new
+        ext_x = rec.ext_x
+        ext_y = rec.ext_y
+        vmin = rec.vmin
+        vmax = rec.vmax
+        title = rec.title
+        colormap = rec.colormap
+        layer_index = rec.layer_index
+
+        def build(style):
+            if not os.path.exists(raw_h5):
+                raise FileNotFoundError(
+                    f"Raw rocking file for layer {layer_index} not found: {raw_h5!r}"
+                )
+            img = load_pco_ff_frame(raw_h5, pco_ff_path, frame_index)
+            if img is None:
+                raise FileNotFoundError(
+                    f"Could not load detector data from {raw_h5!r} "
+                    f"(path={pco_ff_path!r}, frame={frame_index})"
+                )
+            shifted = _apply_shift_single(img, shift_px, pad_left, nx_new)
+            fig, _, _ = Rnd.layer_figure(
+                shifted,
+                vmin,
+                vmax,
+                colormap,
+                ext_x,
+                ext_y,
+                title,
+                "Intensity − background (a.u.)",
+                style=style,
+            )
+            return fig
+
+        return build
+
+    return [
+        FigureSpec(
+            figure_id=f"matched_layer_{rec.layer_index:04d}",
+            title=f"Matched layer {rec.layer_index}",
+            kind="map",
+            filename=f"matched_layer_{rec.layer_index:04d}",
+            build=_make_build(rec),
+        )
+        for rec in result.recorded
+    ]
 
 
 def _main(argv: list[str] | None = None) -> int:

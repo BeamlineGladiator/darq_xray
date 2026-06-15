@@ -8,6 +8,7 @@ import pytest
 from dfxm.common import figures, render
 from dfxm.common.figures import volume_layer_specs
 from dfxm.common.plotting import PlotStyle
+from dfxm.stages import matched as Matched
 from dfxm.stages import mosaicity as Mosaicity
 from dfxm.stages import rocking as Rocking
 from dfxm.stages import slices as Slices
@@ -766,3 +767,143 @@ def test_slices_catalog_mosa_com_centered_norm(tmp_path):
         f"Expected non-TwoSlopeNorm for strain, got {type(norm_strain).__name__}"
     )
     assert isinstance(norm_strain, Normalize)
+
+
+# ---------------------------------------------------------------------------
+# matched.figures() tests
+# ---------------------------------------------------------------------------
+
+_KNOWN_FRAME = np.random.default_rng(42).normal(size=(6, 8)).astype(np.float64)
+# Expected output of _apply_shift_single(_KNOWN_FRAME, shift_px=0, pad_left=1, nx_new=10):
+# 1 NaN column on the left, _KNOWN_FRAME in columns 1-8, 1 NaN column on the right.
+_KNOWN_SHIFTED = np.concatenate(
+    [np.full((6, 1), np.nan), _KNOWN_FRAME, np.full((6, 1), np.nan)], axis=1
+)
+
+
+def test_matched_figures_no_recorded_layers_returns_empty():
+    """Guard: empty recorded list → empty figure catalog."""
+    res = Matched.MatchedResult(recorded=[])
+    assert Matched.figures(res, {}) == []
+
+
+def test_matched_figures_one_layer_map_spec(monkeypatch, tmp_path):
+    """figures() with one MatchedLayer yields one map spec that builds with equal aspect."""
+    # Create a real (minimal) h5 file so the path check passes without FileNotFoundError
+    h5 = tmp_path / "rock__1.h5"
+    h5.write_bytes(b"")  # placeholder — load is monkeypatched
+
+    layer = Matched.MatchedLayer(
+        raw_h5=str(h5),
+        pco_ff_path="1.1/measurement/pco_ff",
+        frame_index=0,
+        shift_px=0.0,
+        pad_left=1,
+        nx_new=10,
+        ext_x=10 * 0.152,
+        ext_y=6 * 0.385,
+        vmin=0.0,
+        vmax=50.0,
+        title="Rocking Curve (frame 0, median-subtracted)\nZ = 0.00 µm (Layer 0/2)\nrock__1",
+        colormap="gray",
+        layer_index=0,
+    )
+
+    res = Matched.MatchedResult(recorded=[layer])
+
+    # Monkeypatch load_pco_ff_frame to return the known array
+    monkeypatch.setattr(Matched, "load_pco_ff_frame", lambda h5p, pco, fi: _KNOWN_FRAME.copy())
+
+    specs = Matched.figures(res, {})
+    assert len(specs) == 1
+    assert specs[0].kind == "map"
+    fig = specs[0].build(None)
+    assert fig.axes[0].get_aspect() == 1.0
+    # Pixel-fidelity: build() must reproduce the shifted frame exactly.
+    arr = np.asarray(fig.axes[0].images[0].get_array())
+    assert np.array_equal(arr, _KNOWN_SHIFTED, equal_nan=True)
+
+
+def test_matched_figures_missing_raw_raises_file_not_found(monkeypatch, tmp_path):
+    """build() must raise FileNotFoundError when the raw h5 file is gone."""
+    missing_path = str(tmp_path / "gone.h5")
+    layer = Matched.MatchedLayer(
+        raw_h5=missing_path,
+        pco_ff_path="1.1/measurement/pco_ff",
+        frame_index=0,
+        shift_px=0.0,
+        pad_left=0,
+        nx_new=8,
+        ext_x=8 * 0.152,
+        ext_y=6 * 0.385,
+        vmin=0.0,
+        vmax=50.0,
+        title="t",
+        colormap="gray",
+        layer_index=0,
+    )
+    res = Matched.MatchedResult(recorded=[layer])
+    specs = Matched.figures(res, {})
+    assert len(specs) == 1
+    with pytest.raises(FileNotFoundError):
+        specs[0].build(None)
+
+
+def test_matched_figures_distinct_ids_multi_layer(monkeypatch, tmp_path):
+    """Multiple recorded layers → distinct figure_id and filename per layer."""
+    h5 = tmp_path / "rock.h5"
+    h5.write_bytes(b"")
+
+    def _layer_obj(i):
+        return Matched.MatchedLayer(
+            raw_h5=str(h5),
+            pco_ff_path="1.1/measurement/pco_ff",
+            frame_index=0,
+            shift_px=float(i),
+            pad_left=0,
+            nx_new=8,
+            ext_x=8 * 0.152,
+            ext_y=6 * 0.385,
+            vmin=0.0,
+            vmax=50.0,
+            title=f"Layer {i}",
+            colormap="gray",
+            layer_index=i,
+        )
+
+    res = Matched.MatchedResult(recorded=[_layer_obj(i) for i in range(3)])
+    monkeypatch.setattr(Matched, "load_pco_ff_frame", lambda h5p, pco, fi: _KNOWN_FRAME.copy())
+
+    specs = Matched.figures(res, {})
+    assert len(specs) == 3
+    assert len({s.figure_id for s in specs}) == 3
+    assert len({s.filename for s in specs}) == 3
+
+
+def test_matched_figures_via_figures_for(monkeypatch, tmp_path):
+    """Both import directions work: matched.figures() and figures_for('matched')."""
+    h5 = tmp_path / "rock.h5"
+    h5.write_bytes(b"")
+
+    layer = Matched.MatchedLayer(
+        raw_h5=str(h5),
+        pco_ff_path="1.1/measurement/pco_ff",
+        frame_index=0,
+        shift_px=0.0,
+        pad_left=0,
+        nx_new=8,
+        ext_x=8 * 0.152,
+        ext_y=6 * 0.385,
+        vmin=0.0,
+        vmax=50.0,
+        title="t",
+        colormap="gray",
+        layer_index=0,
+    )
+    res = Matched.MatchedResult(recorded=[layer])
+    monkeypatch.setattr(Matched, "load_pco_ff_frame", lambda h5p, pco, fi: _KNOWN_FRAME.copy())
+
+    direct = Matched.figures(res, {})
+    via_catalog = figures.figures_for("matched", res, {})
+    assert len(direct) == 1
+    assert len(via_catalog) == 1
