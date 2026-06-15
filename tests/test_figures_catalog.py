@@ -10,6 +10,7 @@ from dfxm.common.figures import volume_layer_specs
 from dfxm.common.plotting import PlotStyle
 from dfxm.stages import matched as Matched
 from dfxm.stages import mosaicity as Mosaicity
+from dfxm.stages import profiles as Profiles
 from dfxm.stages import rocking as Rocking
 from dfxm.stages import slices as Slices
 from dfxm.stages import strain as Strain
@@ -1093,3 +1094,330 @@ def test_matched_figures_via_figures_for(monkeypatch, tmp_path):
     via_catalog = figures.figures_for("matched", res, {})
     assert len(direct) == 1
     assert len(via_catalog) == 1
+
+
+# ---------------------------------------------------------------------------
+# profiles.figures() tests
+# ---------------------------------------------------------------------------
+
+
+def _write_profiles_h5(path, *, slice_name="oblique_full"):
+    """Minimal oblique_slices.h5 mirroring what _collect() reads.
+
+    Two volume groups sharing one slice subgroup (slice_name).
+    Layout:
+      /{vid}/             — attrs: kind, cbar_label, cmap, title, vmin, vmax,
+                                   source_volume, dataset_path
+      /{vid}/{slice_name}/slices      (3, 8, 10) float32
+      /{vid}/{slice_name}/u_um        (10,)
+      /{vid}/{slice_name}/v_um        (8,)
+      /{vid}/{slice_name}/offsets_um  (3,)
+    """
+    rng = np.random.default_rng(77)
+    u = np.linspace(-10.0, 10.0, 10)
+    v = np.linspace(-8.0, 8.0, 8)
+    offsets = np.array([-1.0, 0.0, 1.0])
+    with h5py.File(path, "w") as f:
+        for vid, cmap in (("raw_sum", "gray"), ("strain", "RdBu_r")):
+            g = f.create_group(vid)
+            g.attrs["kind"] = vid
+            g.attrs["cbar_label"] = "value"
+            g.attrs["cmap"] = cmap
+            g.attrs["title"] = vid
+            g.attrs["vmin"] = -1.0
+            g.attrs["vmax"] = 1.0
+            g.attrs["source_volume"] = ""
+            g.attrs["dataset_path"] = vid
+            sg = g.create_group(slice_name)
+            slices_data = rng.random((3, 8, 10)).astype(np.float32)
+            sg.create_dataset("slices", data=slices_data)
+            sg.create_dataset("u_um", data=u)
+            sg.create_dataset("v_um", data=v)
+            sg.create_dataset("offsets_um", data=offsets)
+    return str(path)
+
+
+def _profiles_job_spec(slice_name="oblique_full"):
+    return {
+        "name": slice_name,
+        "offset_um": 0.0,
+        "start_uv": [-5.0, -3.0],
+        "end_uv": [5.0, 3.0],
+        "n_samples": 20,
+        "width_pixels": 1,
+        "fig_name": f"profile_{slice_name}",
+    }
+
+
+def _profiles_result(h5_path, slice_name="oblique_full"):
+    jr = Profiles.ProfileJobResult(
+        name=slice_name,
+        offset_used_um=0.0,
+        figure=h5_path.replace(".h5", ".png"),
+        fields=["raw_sum", "strain"],
+    )
+    return Profiles.ProfilesResult(output_dir="", mode="parameter", jobs=[jr])
+
+
+def test_profiles_figures_no_h5_path_returns_empty(tmp_path):
+    """Guard: consolidated_h5='' → empty list."""
+    res = _profiles_result(str(tmp_path / "oblique_slices.h5"))
+    assert Profiles.figures(res, {}) == []
+    assert Profiles.figures(res, {"consolidated_h5": ""}) == []
+
+
+def test_profiles_figures_no_jobs_with_fields_returns_empty(tmp_path):
+    """Guard: no parameter-mode jobs (no fields) → empty list."""
+    h5 = tmp_path / "oblique_slices.h5"
+    _write_profiles_h5(h5)
+    # preview-mode job has fields=[]
+    jr = Profiles.ProfileJobResult(name="oblique_full", offset_used_um=0.0, fields=[])
+    res = Profiles.ProfilesResult(output_dir="", mode="preview", jobs=[jr])
+    specs = Profiles.figures(res, {"consolidated_h5": str(h5)})
+    assert specs == []
+
+
+def test_profiles_catalog_one_spec_per_job(tmp_path):
+    """figures() returns one kind='plot' FigureSpec per parameter-mode job."""
+    h5 = tmp_path / "oblique_slices.h5"
+    _write_profiles_h5(h5)
+    import json
+
+    job = _profiles_job_spec()
+    res = _profiles_result(str(h5))
+    params = {
+        "consolidated_h5": str(h5),
+        "jobs_json": json.dumps([job]),
+    }
+    specs = Profiles.figures(res, params)
+    assert len(specs) == 1
+    assert specs[0].kind == "plot"
+
+
+def test_profiles_catalog_distinct_ids_multi_job(tmp_path):
+    """Two jobs → two specs with distinct figure_id and filename."""
+    import json
+
+    h5 = tmp_path / "oblique_slices.h5"
+    # Write two slice subgroups
+    rng = np.random.default_rng(88)
+    u = np.linspace(-10.0, 10.0, 10)
+    v = np.linspace(-8.0, 8.0, 8)
+    offsets = np.array([-1.0, 0.0, 1.0])
+    with h5py.File(h5, "w") as f:
+        for vid, cmap in (("raw_sum", "gray"), ("strain", "RdBu_r")):
+            g = f.create_group(vid)
+            g.attrs["kind"] = vid
+            g.attrs["cbar_label"] = "value"
+            g.attrs["cmap"] = cmap
+            g.attrs["title"] = vid
+            g.attrs["vmin"] = -1.0
+            g.attrs["vmax"] = 1.0
+            g.attrs["source_volume"] = ""
+            g.attrs["dataset_path"] = vid
+            for sname in ("slice_a", "slice_b"):
+                sg = g.create_group(sname)
+                sg.create_dataset("slices", data=rng.random((3, 8, 10)).astype(np.float32))
+                sg.create_dataset("u_um", data=u)
+                sg.create_dataset("v_um", data=v)
+                sg.create_dataset("offsets_um", data=offsets)
+
+    jr_a = Profiles.ProfileJobResult(name="slice_a", offset_used_um=0.0, fields=["raw_sum"])
+    jr_b = Profiles.ProfileJobResult(name="slice_b", offset_used_um=0.0, fields=["raw_sum"])
+    res = Profiles.ProfilesResult(output_dir="", mode="parameter", jobs=[jr_a, jr_b])
+    job_a = {**_profiles_job_spec("slice_a"), "fig_name": "fig_a"}
+    job_b = {**_profiles_job_spec("slice_b"), "fig_name": "fig_b"}
+    params = {
+        "consolidated_h5": str(h5),
+        "jobs_json": json.dumps([job_a, job_b]),
+    }
+    specs = Profiles.figures(res, params)
+    assert len(specs) == 2
+    assert len({s.figure_id for s in specs}) == 2
+    assert len({s.filename for s in specs}) == 2
+
+
+def test_profiles_catalog_build_returns_figure(tmp_path):
+    """spec.build(None) returns a matplotlib Figure (the companion profile figure)."""
+    import json
+
+    h5 = tmp_path / "oblique_slices.h5"
+    _write_profiles_h5(h5)
+    job = _profiles_job_spec()
+    res = _profiles_result(str(h5))
+    params = {
+        "consolidated_h5": str(h5),
+        "jobs_json": json.dumps([job]),
+    }
+    specs = Profiles.figures(res, params)
+    assert len(specs) == 1
+    from matplotlib.figure import Figure
+
+    fig = specs[0].build(None)
+    assert isinstance(fig, Figure)
+    # Image panel (ax_img) + N trace panels (one per field)
+    assert len(fig.axes) >= 2
+
+
+def test_profiles_catalog_build_missing_h5_raises(tmp_path):
+    """build() raises FileNotFoundError when consolidated_h5 is absent."""
+    import json
+
+    missing = str(tmp_path / "gone.h5")
+    job = _profiles_job_spec()
+    jr = Profiles.ProfileJobResult(
+        name="oblique_full", offset_used_um=0.0, fields=["raw_sum", "strain"]
+    )
+    res = Profiles.ProfilesResult(output_dir="", mode="parameter", jobs=[jr])
+    params = {
+        "consolidated_h5": missing,
+        "jobs_json": json.dumps([job]),
+    }
+    specs = Profiles.figures(res, params)
+    assert len(specs) == 1
+    with pytest.raises(FileNotFoundError):
+        specs[0].build(None)
+
+
+def test_profiles_figures_via_figures_for(tmp_path):
+    """Both import directions work: profiles.figures() and figures_for('profiles')."""
+    import json
+
+    h5 = tmp_path / "oblique_slices.h5"
+    _write_profiles_h5(h5)
+    job = _profiles_job_spec()
+    res = _profiles_result(str(h5))
+    params = {
+        "consolidated_h5": str(h5),
+        "jobs_json": json.dumps([job]),
+    }
+    direct = Profiles.figures(res, params)
+    via_catalog = figures.figures_for("profiles", res, params)
+    assert len(direct) == 1
+    assert len(via_catalog) == 1
+
+
+def test_profiles_build_companion_figure_returns_figure():
+    """build_companion_figure returns a Figure (unit test of the refactored builder)."""
+    rng = np.random.default_rng(0)
+    u = np.linspace(-10.0, 10.0, 20)
+    v = np.linspace(-8.0, 8.0, 16)
+    plane = rng.random((16, 20)).astype(np.float64)
+    attrs = {
+        "kind": "raw_sum",
+        "cbar_label": "value",
+        "cmap": "gray",
+        "title": "Raw sum",
+        "source_volume": "",
+        "dataset_path": "",
+        "vmin": 0.0,
+        "vmax": 1.0,
+    }
+    geom = Profiles.line_geometry(u, v, (-5.0, -3.0), (5.0, 3.0), 20, 1, Profiles.grid_pitch(u, v))
+    vm, vs, _ = Profiles.profile_plane(plane, geom)
+    fields = [{"vid": "raw_sum", "attrs": attrs, "value_mean": vm, "value_std": vs}]
+    ref = (plane, u, v, attrs, "raw_sum @ 0.000 µm")
+    from matplotlib.figure import Figure
+
+    fig = Profiles.build_companion_figure(ref, fields, geom, "cyan")
+    assert isinstance(fig, Figure)
+    # 1 image panel + 1 trace panel
+    assert len(fig.axes) >= 2
+
+
+def _companion_fixture():
+    """Return (ref, fields, geom) for a minimal 1-field companion figure."""
+    rng = np.random.default_rng(42)
+    u = np.linspace(-10.0, 10.0, 20)
+    v = np.linspace(-8.0, 8.0, 16)
+    plane = rng.random((16, 20)).astype(np.float64)
+    attrs = {
+        "kind": "raw_sum",
+        "cbar_label": "value",
+        "cmap": "gray",
+        "title": "Raw sum",
+        "source_volume": "",
+        "dataset_path": "",
+        "vmin": 0.0,
+        "vmax": 1.0,
+    }
+    geom = Profiles.line_geometry(u, v, (-5.0, -3.0), (5.0, 3.0), 20, 1, Profiles.grid_pitch(u, v))
+    vm, vs, _ = Profiles.profile_plane(plane, geom)
+    fields = [{"vid": "raw_sum", "attrs": attrs, "value_mean": vm, "value_std": vs}]
+    ref = (plane, u, v, attrs, "raw_sum @ 0.000 µm")
+    return ref, fields, geom
+
+
+def test_profiles_colorbar_font_not_double_scaled():
+    """FIX 1: styled colorbar fonts must be scaled once (10*fs), not twice (10*fs*fs).
+
+    build_companion_figure(style=PlotStyle(font_scale=2.0)) must produce a
+    colorbar whose label fontsize is 10*2.0 == 20, not 10*2.0*2.0 == 40.
+    """
+    from dfxm.common.plotting import PlotStyle
+
+    fs = 2.0
+    ref, fields, geom = _companion_fixture()
+    fig = Profiles.build_companion_figure(ref, fields, geom, "cyan", style=PlotStyle(font_scale=fs))
+
+    # matplotlib labels the colorbar axes '<colorbar>' internally.
+    colorbar_axes = [ax for ax in fig.axes if ax.get_label() == "<colorbar>"]
+    content_axes = [ax for ax in fig.axes if ax.get_label() != "<colorbar>"]
+
+    # There must be exactly one colorbar axes (style.colorbar=True by default).
+    assert len(colorbar_axes) == 1, f"expected 1 colorbar axes, got {len(colorbar_axes)}"
+    cb_ax = colorbar_axes[0]
+
+    # Colorbar label fontsize must be 10*fs (set once by add_colorbar), NOT 10*fs*fs.
+    expected_label_fs = 10 * fs
+    actual_label_fs = cb_ax.yaxis.label.get_fontsize()
+    assert actual_label_fs == pytest.approx(expected_label_fs, rel=0.05), (
+        f"colorbar label fontsize {actual_label_fs:.1f} != expected {expected_label_fs:.1f} "
+        f"(double-scaling would give {10 * fs * fs:.1f})"
+    )
+
+    # Colorbar tick fontsize must be 9*fs (set once by add_colorbar).
+    expected_tick_fs = 9 * fs
+    tick_labels = cb_ax.yaxis.get_ticklabels()
+    if tick_labels:
+        actual_tick_fs = tick_labels[0].get_fontsize()
+        assert actual_tick_fs == pytest.approx(expected_tick_fs, rel=0.05), (
+            f"colorbar tick fontsize {actual_tick_fs:.1f} != expected {expected_tick_fs:.1f}"
+        )
+
+    # Content axes (image + trace) must also be scaled exactly once.
+    assert len(content_axes) >= 2, "expected at least image + 1 trace axes"
+
+
+def test_profiles_build_missing_job_spec_raises_value_error(tmp_path):
+    """FIX 2: build() must raise ValueError (not FileNotFoundError) when job spec is absent.
+
+    The consolidated h5 exists; what's missing is the job spec entry in jobs_json
+    (params mismatch, not a missing file).
+    """
+    h5 = tmp_path / "oblique_slices.h5"
+    _write_profiles_h5(h5)
+    jr = Profiles.ProfileJobResult(
+        name="oblique_full", offset_used_um=0.0, fields=["raw_sum", "strain"]
+    )
+    res = Profiles.ProfilesResult(output_dir="", mode="parameter", jobs=[jr])
+    # Omit jobs_json entirely so job_spec_by_name is empty → _job is None.
+    params = {"consolidated_h5": str(h5)}
+    specs = Profiles.figures(res, params)
+    assert len(specs) == 1
+    with pytest.raises(ValueError, match="job spec for"):
+        specs[0].build(None)
+
+
+def test_profiles_colorbar_hidden_when_style_colorbar_false():
+    """FIX 3: styled path with colorbar=False must produce no colorbar axes."""
+    from dfxm.common.plotting import PlotStyle
+
+    ref, fields, geom = _companion_fixture()
+    fig = Profiles.build_companion_figure(
+        ref, fields, geom, "cyan", style=PlotStyle(colorbar=False)
+    )
+    colorbar_axes = [ax for ax in fig.axes if ax.get_label() == "<colorbar>"]
+    assert len(colorbar_axes) == 0, (
+        f"expected no colorbar axes with colorbar=False, got {len(colorbar_axes)}"
+    )

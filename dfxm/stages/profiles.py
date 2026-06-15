@@ -33,6 +33,8 @@ from scipy.ndimage import map_coordinates
 
 from ..common import render as Rnd
 from ..common.errors import StageUserError
+from ..common.figures import FigureSpec, register
+from ..common.plotting import PlotStyle, add_colorbar, apply_text_scale
 from ..config.models import Param, ParamType, StageSpec
 
 ProgressFn = Callable[[float, str], None]
@@ -428,7 +430,17 @@ def _draw_reference_image(ax, plane2d, u_um, v_um, attrs, line_color, geom=None,
     return im
 
 
-def make_companion_figure(ref, fields, geom, line_color, out_png, dpi):
+def build_companion_figure(
+    ref, fields, geom, line_color, *, style: PlotStyle | None = None
+) -> Figure:
+    """Build and return a companion profile figure. Does NOT call savefig.
+
+    When *style* is ``None`` the legacy appearance is reproduced exactly
+    (image panel + N trace panels, same fonts and colorbar as before).
+    When a :class:`~dfxm.common.plotting.PlotStyle` is supplied its font/
+    colorbar settings are honoured (these are ``kind="plot"`` figures — no
+    scale bar is drawn regardless of style).
+    """
     ref_plane, u_um, v_um, ref_attrs, ref_label = ref
     n = len(fields)
     fig = Figure(figsize=(9.0, 4.8 + 1.85 * n), layout="constrained", facecolor="white")
@@ -444,12 +456,19 @@ def make_companion_figure(ref, fields, geom, line_color, out_png, dpi):
         geom=geom,
         title=f"{ref_attrs['title']}\nreference: {ref_label}",
     )
-    fig.colorbar(im, ax=ax_img, fraction=0.046, pad=0.04).set_label(ref_attrs["cbar_label"])
+    if style is None:
+        # Legacy path: always draw a plain colorbar.
+        fig.colorbar(im, ax=ax_img, fraction=0.046, pad=0.04).set_label(ref_attrs["cbar_label"])
+    elif style.colorbar:
+        # Styled path: honour the colorbar flag — draw styled colorbar only when requested.
+        add_colorbar(fig, im, ax_img, ref_attrs["cbar_label"], style)
     distance = geom["distance"]
     first_ax = None
+    trace_axes = []
     for i, fld in enumerate(fields):
         ax = fig.add_subplot(gs[i + 1], sharex=first_ax)
         first_ax = first_ax or ax
+        trace_axes.append(ax)
         vm = fld["value_mean"]
         ax.plot(distance, vm, "-", lw=1.8, color="C0", zorder=3)
         if fld["value_std"] is not None:
@@ -464,7 +483,21 @@ def make_companion_figure(ref, fields, geom, line_color, out_png, dpi):
             ax.tick_params(labelbottom=False)
         else:
             ax.set_xlabel("distance along line (µm)", fontsize=12)
-    fig.savefig(out_png, dpi=dpi, facecolor="white", edgecolor="none")
+    if style is not None:
+        # Scale only the content axes — colorbar axes are excluded because
+        # add_colorbar() already scaled their fonts; hitting them again would
+        # produce double-scaled fonts (~font_scale²).
+        apply_text_scale(ax_img, style)
+        for ax in trace_axes:
+            apply_text_scale(ax, style)
+    return fig
+
+
+def save_companion_figure(ref, fields, geom, line_color, out_png, dpi):
+    """Build a legacy companion figure and save it to *out_png*."""
+    build_companion_figure(ref, fields, geom, line_color).savefig(
+        out_png, dpi=dpi, facecolor="white", edgecolor="none"
+    )
 
 
 def render_single(ref, geom, line_color, out_png, header, dpi):
@@ -652,7 +685,7 @@ def run(params: dict, progress: ProgressFn | None = None) -> ProfilesResult:
                 "+", "p"
             ).replace("-", "m")
             out_png = os.path.join(out_dir, f"{stem}.png")
-            make_companion_figure(ref, fields, geom, color, out_png, dpi)
+            save_companion_figure(ref, fields, geom, color, out_png, dpi)
             jr = ProfileJobResult(
                 name=name,
                 offset_used_um=off_used,
@@ -669,6 +702,88 @@ def run(params: dict, progress: ProgressFn | None = None) -> ProfilesResult:
 
     progress(1.0, f"{mode}: {len(result.jobs)} job(s) -> {out_dir}")
     return result
+
+
+@register("profiles")
+def figures(result: ProfilesResult, params: dict) -> list[FigureSpec]:
+    """One ``kind="plot"`` FigureSpec per parameter-mode job in the result.
+
+    Each spec's ``build(style)`` re-reads the profiling data from the
+    consolidated ``oblique_slices.h5`` (``params["consolidated_h5"]``) and
+    rebuilds that job's companion figure via :func:`build_companion_figure`.
+    Returns ``[]`` when there is no consolidated h5 or no parameter-mode jobs.
+    Raises :exc:`FileNotFoundError` at build time when the h5 is missing.
+    """
+    h5_path = params.get("consolidated_h5", "")
+    if not h5_path:
+        return []
+    # Only parameter-mode jobs produce companion figures (preview jobs have no
+    # fields list and their figure is a render_single overview, not a companion).
+    jobs_with_fields = [jr for jr in result.jobs if jr.fields]
+    if not jobs_with_fields:
+        return []
+
+    # Re-parse the original job specs so _collect knows start_uv / end_uv etc.
+    try:
+        job_specs: list[dict] = json.loads(params.get("jobs_json", "[]"))
+    except (json.JSONDecodeError, TypeError):
+        job_specs = []
+    # Build a name → job-spec lookup for the rebuild closure.
+    job_spec_by_name = {j["name"]: j for j in job_specs if "name" in j}
+
+    ref_pref = params.get("reference_volume_id") or ""
+    restrict_raw = params.get("volume_ids", "") or ""
+    restrict = [v.strip() for v in restrict_raw.split(",") if v.strip()] or None
+    line_override = params.get("line_color") or None
+
+    specs = []
+    for jr in jobs_with_fields:
+        name = jr.name
+        fig_name = job_spec_by_name.get(name, {}).get("fig_name") or f"profile_{name}"
+        job_spec = job_spec_by_name.get(name)
+
+        # KEEP IN SYNC with the parameter-mode render in run() above:
+        # _collect → auto_line_color → build_companion_figure (run() uses save_companion_figure).
+        def _build(
+            style,
+            *,
+            _h5=h5_path,
+            _job=job_spec,
+            _p=dict(params),
+            _ref=ref_pref,
+            _res=restrict,
+            _lo=line_override,
+            _name=name,
+        ):
+            if not _job:
+                raise ValueError(
+                    f"job spec for {_name!r} not found in jobs_json — "
+                    "re-run profiles with the current jobs_json to rebuild this figure"
+                )
+            if not _h5 or not os.path.exists(_h5):
+                raise FileNotFoundError(
+                    f"consolidated h5 not found at {_h5!r} — re-run the slices stage"
+                )
+            import h5py as _h5py
+
+            # _collect needs p["geom_tol_um"] and p["offset_tol_um"] — supply defaults
+            _p.setdefault("geom_tol_um", STAGE.defaults().get("geom_tol_um", 1e-4))
+            _p.setdefault("offset_tol_um", STAGE.defaults().get("offset_tol_um", 1e-3))
+            with _h5py.File(_h5, "r") as f:
+                ref, fields, geom, _ = _collect(f, _job, _p, _ref, _res)
+            color = auto_line_color(ref[3]["cmap"], _lo)
+            return build_companion_figure(ref, fields, geom, color, style=style)
+
+        specs.append(
+            FigureSpec(
+                figure_id=f"profiles_{name}",
+                title=f"Profile: {name}",
+                kind="plot",
+                filename=fig_name,
+                build=_build,
+            )
+        )
+    return specs
 
 
 def _main(argv: list[str] | None = None) -> int:
