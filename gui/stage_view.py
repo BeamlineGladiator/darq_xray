@@ -178,9 +178,20 @@ class StageView(QWidget):
         self._banner.setVisible(False)
 
     def _validate_inputs(self, params: dict) -> tuple[str, str] | None:
-        """First (param_name, message) whose must_exist path is set but absent."""
+        """First (param_name, message) whose must_exist path is set but absent.
+
+        Mode-gated folders are checked only in their active mode: ``single`` mode
+        uses ``input_folder`` and ``batch`` mode uses ``root_folder``, so a stale
+        pre-filled value for the inactive mode never blocks a run.
+        """
+        mode = params.get("mode")
+        skip: set[str] = set()
+        if mode == "single":
+            skip = {"root_folder"}
+        elif mode == "batch":
+            skip = {"input_folder"}
         for p in self._spec.params:
-            if not p.must_exist:
+            if not p.must_exist or p.name in skip:
                 continue
             value = params.get(p.name)
             if value and not os.path.exists(str(value)):

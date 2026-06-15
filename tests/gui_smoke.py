@@ -246,6 +246,20 @@ def main() -> int:
     assert win._status_items["mosaicity"].text().startswith("✗")
     print("[11] banner + pre-run validation + progress bar")
 
+    # Mode-aware pre-run validation: the inactive-mode folder is never checked.
+    mview._form.set_values(
+        {"mode": "single", "input_folder": "", "root_folder": "/nonexistent/nowhere"}
+    )
+    assert mview._validate_inputs(mview._form.values()) is None  # single ignores root_folder
+    mview._form.set_values(
+        {"mode": "batch", "input_folder": "/nonexistent/nowhere", "root_folder": ""}
+    )
+    assert mview._validate_inputs(mview._form.values()) is None  # batch ignores input_folder
+    mview._form.set_values({"mode": "batch", "root_folder": "/nonexistent/nowhere"})
+    problem = mview._validate_inputs(mview._form.values())
+    assert problem is not None and problem[0] == "root_folder"  # batch still checks root_folder
+    print("[12] mode-aware pre-run validation")
+
     print("\nGUI SMOKE PASSED")
     return 0
 
