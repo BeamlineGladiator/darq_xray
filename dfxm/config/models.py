@@ -171,45 +171,148 @@ class Experiment:
 # units, and which fields are calibration constants. The order here is the
 # display order. A test asserts these names stay in sync with the dataclass.
 EXPERIMENT_SCHEMA: tuple[Param, ...] = (
-    Param("name", ParamType.STR, "Preset name"),
-    Param("description", ParamType.STR, "Description"),
-    Param("notes", ParamType.STR, "Notes"),
-    Param("raw_root", ParamType.DIR, "Raw data root", help="RAW_DATA root (concat input)"),
+    Param(
+        "name",
+        ParamType.STR,
+        "Preset name",
+        help="Short name of the preset (used as the filename when saving).",
+    ),
+    Param(
+        "description",
+        ParamType.STR,
+        "Description",
+        help="One line describing the experiment/sample.",
+    ),
+    Param(
+        "notes",
+        ParamType.STR,
+        "Notes",
+        help=(
+            "Free-text caveats shown in red in the GUI — e.g. calibration warnings "
+            "for whoever loads this preset."
+        ),
+    ),
+    Param(
+        "raw_root",
+        ParamType.DIR,
+        "Raw data root",
+        help=(
+            "RAW_DATA root: the folder with the original beamline scan folders "
+            "(input to concat, rocking and matched)."
+        ),
+    ),
     Param(
         "processed_root",
         ParamType.DIR,
         "Processed data root",
-        help="PROCESSED_DATA root (darfix maps.h5 / strain input)",
+        help=(
+            "PROCESSED_DATA root: where darfix wrote maps.h5 per layer "
+            "(input to strain/mosaicity; the stacked volumes land here too)."
+        ),
     ),
     Param(
         "folder_pattern",
         ParamType.STR,
         "Folder pattern",
-        help="glob for concat/strain layer subfolders",
+        help="Glob for the concat/strain layer subfolders.",
     ),
     Param(
         "mosa_pattern",
         ParamType.STR,
         "Mosaicity pattern",
-        help="glob for mosaicity layer subfolders",
+        help="Glob for the mosaicity layer subfolders (often *_mosa__*).",
     ),
     Param(
         "rocking_pattern",
         ParamType.STR,
         "Rocking pattern",
-        help="glob for rocking layer subfolders",
+        help="Glob for the rocking scan subfolders (often *_rocking__*).",
     ),
-    Param("entry_suffix", ParamType.STR, "Entry suffix", help="BLISS entry filter, e.g. .1"),
-    Param("ccmth_ref_deg", ParamType.FLOAT, "ccmth reference", unit="deg", calibration=True),
-    Param("pixel_size_x_um", ParamType.FLOAT, "Pixel size X", unit="µm", calibration=True),
-    Param("pixel_size_y_um", ParamType.FLOAT, "Pixel size Y", unit="µm", calibration=True),
-    Param("maps_filename", ParamType.STR, "darfix maps filename"),
-    Param("positioners_path", ParamType.STR, "Positioners path"),
-    Param("detector_read_path", ParamType.STR, "Detector read path"),
-    Param("detector_write_path", ParamType.STR, "Detector write path"),
-    Param("samy_key", ParamType.STR, "samy key"),
-    Param("samz_key", ParamType.STR, "samz key"),
-    Param("ccmth_com_path", ParamType.STR, "ccmth COM path"),
+    Param(
+        "entry_suffix",
+        ParamType.STR,
+        "Entry suffix",
+        help=(
+            "BLISS entry filter for concat — only entries ending in this suffix "
+            "are merged (e.g. '.1')."
+        ),
+    ),
+    Param(
+        "ccmth_ref_deg",
+        ParamType.FLOAT,
+        "ccmth reference",
+        unit="deg",
+        calibration=True,
+        help=(
+            "Reference Bragg angle of the unstrained lattice, in degrees. "
+            "Strain is computed from deviations from this angle — a wrong value "
+            "silently shifts every strain map. From the beamline alignment."
+        ),
+    ),
+    Param(
+        "pixel_size_x_um",
+        ParamType.FLOAT,
+        "Pixel size X",
+        unit="µm",
+        calibration=True,
+        help=(
+            "Detector pixel size along X in µm, from the beamline optics calibration. "
+            "Sets the physical scale of every map."
+        ),
+    ),
+    Param(
+        "pixel_size_y_um",
+        ParamType.FLOAT,
+        "Pixel size Y",
+        unit="µm",
+        calibration=True,
+        help=(
+            "Detector pixel size along Y in µm, from the beamline optics calibration. "
+            "Sets the physical scale of every map."
+        ),
+    ),
+    Param(
+        "maps_filename",
+        ParamType.STR,
+        "darfix maps filename",
+        help="Filename darfix writes inside each layer folder (normally maps.h5).",
+    ),
+    Param(
+        "positioners_path",
+        ParamType.STR,
+        "Positioners path",
+        help="HDF5 path of the motor-position group inside each scan entry.",
+    ),
+    Param(
+        "detector_read_path",
+        ParamType.STR,
+        "Detector read path",
+        help="HDF5 path of the raw detector frames inside each scan entry.",
+    ),
+    Param(
+        "detector_write_path",
+        ParamType.STR,
+        "Detector write path",
+        help="HDF5 path where concat writes the merged detector data.",
+    ),
+    Param(
+        "samy_key",
+        ParamType.STR,
+        "samy key",
+        help="Name of the sample-Y translation motor under the positioners group.",
+    ),
+    Param(
+        "samz_key",
+        ParamType.STR,
+        "samz key",
+        help="Name of the sample-Z translation motor under the positioners group.",
+    ),
+    Param(
+        "ccmth_com_path",
+        ParamType.STR,
+        "ccmth COM path",
+        help="HDF5 path of the ccmth centre-of-mass dataset inside maps.h5.",
+    ),
 )
 
 #: Names of the physically-meaningful calibration fields (for prominent flagging).
