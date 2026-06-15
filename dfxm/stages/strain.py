@@ -26,10 +26,20 @@ from dataclasses import dataclass, field
 
 import h5py
 import numpy as np
+from matplotlib.figure import Figure
 from scipy.optimize import curve_fit
 
 from ..common.errors import StageUserError
-from ..common.plotting import new_figure, physical_extent, symmetric_limits
+from ..common.plotting import (
+    PlotStyle,
+    add_colorbar,
+    apply_text_scale,
+    draw_scale_bar,
+    figure_size,
+    new_figure,
+    physical_extent,
+    symmetric_limits,
+)
 from ..common.sort import find_matching_folders
 from ..config.models import Param, ParamType, StageSpec
 
@@ -328,10 +338,37 @@ def load_map(filepath: str, dataset_path: str) -> np.ndarray:
 # -----------------------------------------------------------------------------
 # Plotting (Figure/Agg API — no pyplot)
 # -----------------------------------------------------------------------------
-def _save_strain_map(strain, px, py, roi, vlim, path):
+def build_strain_map(
+    strain: np.ndarray,
+    px: float,
+    py: float,
+    roi: list | None,
+    vlim: tuple[float | None, float | None],
+    *,
+    style: PlotStyle | None = None,
+) -> Figure:
+    """Build and return a strain-map Figure.
+
+    When *style* is ``None`` the legacy look is reproduced exactly (RdBu_r,
+    fig.colorbar at fraction=0.046/pad=0.02, no scale bar). When a
+    :class:`~dfxm.common.plotting.PlotStyle` is supplied, colourbar and fonts
+    are routed through the shared helpers and a scale bar is drawn when
+    ``style.scale_bar`` is ``True``.
+
+    The caller is responsible for calling ``fig.savefig``.
+    """
     extent = physical_extent(strain.shape, px, py, roi)
     vmin, vmax = vlim if vlim != (None, None) else symmetric_limits(strain)
-    fig = new_figure((7, 7 * (strain.shape[0] * py) / (strain.shape[1] * px) + 1.5))
+
+    if style is not None:
+        ny, nx = strain.shape
+        fs = figure_size(style, nx * px, ny * py)
+        figsize = fs if fs is not None else (7, 7 * (ny * py) / (nx * px) + 1.5)
+    else:
+        ny, nx = strain.shape
+        figsize = (7, 7 * (ny * py) / (nx * px) + 1.5)
+
+    fig = new_figure(figsize)
     ax = fig.add_subplot(111)
     im = ax.imshow(
         strain,
@@ -343,17 +380,37 @@ def _save_strain_map(strain, px, py, roi, vlim, path):
         vmax=vmax,
         interpolation="nearest",
     )
-    fig.colorbar(im, ax=ax, pad=0.02, fraction=0.046).set_label("Strain (ε)")
     ax.set_xlabel("X (µm)")
     ax.set_ylabel("Y (µm)")
     ax.set_title("Strain map (cot method)")
-    fig.savefig(path, dpi=200, bbox_inches="tight", facecolor="white")
+
+    if style is None:
+        # legacy: plain fig.colorbar, no scale bar
+        fig.colorbar(im, ax=ax, pad=0.02, fraction=0.046).set_label("Strain (ε)")
+    else:
+        add_colorbar(fig, im, ax, "Strain (ε)", style)
+        apply_text_scale(ax, style)
+        if style.scale_bar:
+            draw_scale_bar(ax, style.scale_bar_length_um, style=style)
+
+    return fig
 
 
-def _save_histogram(data, path, title="Strain distribution", xlabel="Strain (ε)"):
+def build_strain_histogram(
+    data: np.ndarray,
+    *,
+    title: str = "Strain distribution",
+    xlabel: str = "Strain (ε)",
+    style: PlotStyle | None = None,
+) -> Figure | None:
+    """Build and return a strain-histogram Figure, or ``None`` when *data* has no finite values.
+
+    When *style* is ``None`` the legacy look is reproduced exactly. The caller
+    is responsible for calling ``fig.savefig``.
+    """
     valid = data[np.isfinite(data)].ravel()
     if valid.size == 0:
-        return
+        return None
     fig = new_figure((8, 5))
     ax = fig.add_subplot(111)
     ax.hist(valid, bins=200, color="steelblue", alpha=0.85)
@@ -365,10 +422,23 @@ def _save_histogram(data, path, title="Strain distribution", xlabel="Strain (ε)
     ax.set_ylabel("Pixel count")
     ax.set_title(title)
     ax.legend()
-    fig.savefig(path, dpi=150, bbox_inches="tight", facecolor="white")
+    if style is not None:
+        apply_text_scale(ax, style)
+    return fig
 
 
-def _save_detrend_diag(original, detrended, surface, path):
+def build_detrend_diag(
+    original: np.ndarray,
+    detrended: np.ndarray,
+    surface: np.ndarray,
+    *,
+    style: PlotStyle | None = None,
+) -> Figure:
+    """Build and return a 3-panel detrend-diagnostic Figure.
+
+    When *style* is ``None`` the legacy look is reproduced exactly. The caller
+    is responsible for calling ``fig.savefig``.
+    """
     fig = new_figure((20, 6))
     axes = fig.subplots(1, 3)
     for ax, title, d in zip(
@@ -382,8 +452,12 @@ def _save_detrend_diag(original, detrended, surface, path):
         vlo, vhi = np.percentile(valid, [1, 99])
         im = ax.imshow(d, origin="lower", cmap="RdBu_r", vmin=vlo, vmax=vhi, aspect="auto")
         ax.set_title(title)
-        fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-    fig.savefig(path, dpi=120, bbox_inches="tight", facecolor="white")
+        if style is not None:
+            add_colorbar(fig, im, ax, title, style)
+            apply_text_scale(ax, style)
+        else:
+            fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+    return fig
 
 
 # -----------------------------------------------------------------------------
@@ -418,13 +492,19 @@ def process_maps_file(
     if save_plots and out_dir:
         os.makedirs(out_dir, exist_ok=True)
         p = os.path.join(out_dir, f"{name}_strain.png")
-        _save_strain_map(strain, pixel_size_x_um, pixel_size_y_um, roi, vlim, p)
+        build_strain_map(strain, pixel_size_x_um, pixel_size_y_um, roi, vlim).savefig(
+            p, dpi=200, bbox_inches="tight", facecolor="white"
+        )
         plots.append(p)
         ph = os.path.join(out_dir, f"{name}_hist.png")
-        _save_histogram(strain, ph)
-        plots.append(ph)
+        hist_fig = build_strain_histogram(strain)
+        if hist_fig is not None:
+            hist_fig.savefig(ph, dpi=150, bbox_inches="tight", facecolor="white")
+            plots.append(ph)
         pd = os.path.join(out_dir, f"{name}_detrend_diag.png")
-        _save_detrend_diag(ccmth_original, ccmth_map, surface, pd)
+        build_detrend_diag(ccmth_original, ccmth_map, surface).savefig(
+            pd, dpi=120, bbox_inches="tight", facecolor="white"
+        )
         plots.append(pd)
 
     layer = LayerResult(

@@ -170,3 +170,47 @@ def test_parse_helpers():
         S._parse_roi("1,2,3")
     assert S._parse_float("") is None
     assert S._parse_float("0.5") == 0.5
+
+
+def test_build_strain_map_legacy_has_no_scale_bar():
+    fig = S.build_strain_map(np.random.rand(20, 30) * 1e-3, 0.1, 0.3, None, (None, None))
+    ax = fig.axes[0]
+    assert len(ax.patches) == 0  # today's strain map has no scale bar
+
+
+def test_build_strain_map_style_adds_scale_bar():
+    from dfxm.common.plotting import PlotStyle
+
+    fig = S.build_strain_map(
+        np.random.rand(20, 30) * 1e-3,
+        0.1,
+        0.3,
+        None,
+        (None, None),
+        style=PlotStyle(scale_bar=True),
+    )
+    assert len(fig.axes[0].patches) >= 1
+
+
+def test_build_strain_histogram_returns_none_on_empty_data():
+    assert S.build_strain_histogram(np.full((5, 5), np.nan)) is None
+
+
+def test_build_strain_histogram_styled_returns_figure():
+    from matplotlib.figure import Figure
+
+    from dfxm.common.plotting import PlotStyle
+
+    data = np.random.rand(10, 10) * 1e-3
+    fig = S.build_strain_histogram(data, style=PlotStyle())
+    assert isinstance(fig, Figure)
+
+
+def test_build_detrend_diag_styled_returns_figure():
+    from matplotlib.figure import Figure
+
+    from dfxm.common.plotting import PlotStyle
+
+    arr = np.random.rand(10, 15) * 0.002
+    fig = S.build_detrend_diag(arr, arr * 0.9, arr * 0.1, style=PlotStyle())
+    assert isinstance(fig, Figure)
