@@ -180,6 +180,22 @@ def main() -> int:
     assert "Bragg" in help_text and "calibration" in help_text.lower()
     print("[8] help panel idles on description and follows focus")
 
+    # Compact experiment header: summary line + notes + Edit dialog.
+    panel = win._experiment_panel
+    assert "7.144" in panel._summary.text()
+    assert panel._notes.isVisible()
+    dlg = panel._make_dialog()
+    dlg.show()
+    app.processEvents()
+    vals = dlg._form.values()
+    assert vals["ccmth_ref_deg"] == 7.144
+    dlg._form.set_values({"description": "smoke-edited"})
+    dlg.accept()
+    panel._set_experiment(dlg.experiment())  # what _on_edit does after exec()
+    app.processEvents()
+    assert panel.current_experiment().description == "smoke-edited"
+    print("[9] compact experiment header + edit dialog round-trip")
+
     print("\nGUI SMOKE PASSED")
     return 0
 
