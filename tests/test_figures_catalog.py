@@ -156,10 +156,127 @@ def test_strain_catalog_map_per_layer(tmp_path):
         ],
     )
     all_specs = Strain.figures(res, {"pixel_size_x_um": 0.1, "pixel_size_y_um": 0.3})
-    assert len(all_specs) == 2  # exactly 2 specs total, no unexpected non-map entries
-    specs = [s for s in all_specs if s.kind == "map"]
-    assert len(specs) == 2
-    assert specs[0].build(None).axes[0].get_aspect() == 1.0
+    # After Task 18: 3 specs per layer (map + histogram + detrend), 2 layers = 6 total
+    map_specs = [s for s in all_specs if s.kind == "map"]
+    assert len(map_specs) == 2
+    assert map_specs[0].build(None).axes[0].get_aspect() == 1.0
+
+
+def _make_strain_maps_h5(tmp_path, layer_name, ccmth_com_path):
+    """Write a minimal maps.h5 with the ccmth COM dataset for the detrend-diag test."""
+    rng = np.random.default_rng(17)
+    ccmth = rng.normal(loc=7.144, scale=0.001, size=(15, 25)).astype(np.float32)
+    # Nest the dataset under the full HDF5 path
+    maps_h5 = tmp_path / layer_name / "maps.h5"
+    maps_h5.parent.mkdir(parents=True, exist_ok=True)
+    with h5py.File(maps_h5, "w") as f:
+        # ccmth_com_path may be a nested HDF5 path like "/entry/ccmth/…"
+        # use require_group to create intermediate groups
+        parts = [p for p in ccmth_com_path.split("/") if p]
+        grp = f
+        for part in parts[:-1]:
+            grp = grp.require_group(part)
+        grp.create_dataset(parts[-1], data=ccmth)
+    return str(maps_h5)
+
+
+def test_strain_catalog_plot_specs_per_layer(tmp_path):
+    """figures() emits one histogram + one detrend-diag plot spec per layer."""
+    n_layers = 2
+    vol = np.random.default_rng(5).random((n_layers, 15, 25)) * 1e-3
+    h5 = tmp_path / "stacked.h5"
+    with h5py.File(h5, "w") as f:
+        f.create_dataset("strain", data=vol)
+
+    ccmth_com_path = "/entry/ccmth/Center of mass/Center of mass"
+    layer_names = ["L0", "L1"]
+
+    # Create a synthetic maps.h5 for each layer so the detrend build succeeds
+    for name in layer_names:
+        _make_strain_maps_h5(tmp_path, name, ccmth_com_path)
+
+    res = Strain.StrainResult(
+        stacked_path=str(h5),
+        volume_shape=vol.shape,
+        output_dir=str(tmp_path),
+        layers=[
+            Strain.LayerResult("L0", (15, 25), -1e-3, 1e-3, 0, 0),
+            Strain.LayerResult("L1", (15, 25), -1e-3, 1e-3, 0, 0),
+        ],
+    )
+    params = {
+        "pixel_size_x_um": 0.1,
+        "pixel_size_y_um": 0.3,
+        "mode": "batch",
+        "root_folder": str(tmp_path),
+        "maps_filename": "maps.h5",
+        "ccmth_com_path": ccmth_com_path,
+        "roi": "",
+    }
+    all_specs = Strain.figures(res, params)
+
+    plot_specs = [s for s in all_specs if s.kind == "plot"]
+    # 2 plot specs per layer (histogram + detrend) × 2 layers = 4
+    assert len(plot_specs) == 2 * n_layers
+
+    # Split into histogram and detrend specs
+    hist_specs = [s for s in plot_specs if "hist" in s.figure_id]
+    detrend_specs = [s for s in plot_specs if "detrend" in s.figure_id]
+    assert len(hist_specs) == n_layers
+    assert len(detrend_specs) == n_layers
+
+    # Total: 2 map + 4 plot = 6
+    assert len(all_specs) == 3 * n_layers
+
+    # All figure_ids and filenames are distinct
+    assert len({s.figure_id for s in all_specs}) == 3 * n_layers
+    assert len({s.filename for s in all_specs}) == 3 * n_layers
+
+    # Histogram build(None) returns a real Figure
+    hist_fig = hist_specs[0].build(None)
+    assert hist_fig is not None
+    assert len(hist_fig.axes) >= 1
+
+    # Detrend build(None) returns a real Figure (3 titled image panels;
+    # style=None adds 3 colorbar axes via fig.colorbar, total >= 3 axes)
+    detrend_fig = detrend_specs[0].build(None)
+    assert detrend_fig is not None
+    titled = [ax for ax in detrend_fig.axes if ax.get_title()]
+    assert len(titled) == 3
+
+    # Per-layer distinctness: the two histogram specs must render DIFFERENT figures
+    # (guards against late-binding regressions where both closures capture the same layer)
+    hist_specs = [s for s in all_specs if "hist" in s.figure_id]
+    t0 = hist_specs[0].build(None).axes[0].get_title()
+    t1 = hist_specs[1].build(None).axes[0].get_title()
+    assert t0 != t1, f"histogram titles should differ by layer name but both are {t0!r}"
+
+
+def test_strain_detrend_spec_missing_maps_raises_file_not_found(tmp_path):
+    """detrend build() raises FileNotFoundError when the source maps.h5 is absent."""
+    vol = np.random.default_rng(6).random((1, 10, 10)) * 1e-3
+    h5 = tmp_path / "stacked.h5"
+    with h5py.File(h5, "w") as f:
+        f.create_dataset("strain", data=vol)
+
+    res = Strain.StrainResult(
+        stacked_path=str(h5),
+        volume_shape=vol.shape,
+        output_dir=str(tmp_path),
+        layers=[Strain.LayerResult("missing_layer", (10, 10), -1e-3, 1e-3, 0, 0)],
+    )
+    params = {
+        "mode": "batch",
+        "root_folder": str(tmp_path),  # missing_layer subfolder does not exist
+        "maps_filename": "maps.h5",
+        "ccmth_com_path": "/entry/ccmth/Center of mass/Center of mass",
+        "roi": "",
+    }
+    specs = Strain.figures(res, params)
+    detrend_specs = [s for s in specs if s.kind == "plot" and "detrend" in s.figure_id]
+    assert len(detrend_specs) == 1
+    with pytest.raises(FileNotFoundError, match="source maps.h5 not found"):
+        detrend_specs[0].build(None)
 
 
 def test_mosaicity_figures_no_stacked_path_returns_empty():

@@ -464,9 +464,81 @@ def build_detrend_diag(
 # -----------------------------------------------------------------------------
 # Figure catalog
 # -----------------------------------------------------------------------------
+def _detrend_ccmth(
+    maps_path: str, ccmth_com_path: str, roi: list | None
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Load ccmth, detrend (arctan surface), then ROI-crop. Returns (original, detrended, surface).
+
+    Detrend BEFORE ROI (project invariant). Used by both process_maps_file (run) and
+    figures()._build_detrend (export rebuild) so the two can never drift.
+    """
+    ccmth_map = load_map(maps_path, ccmth_com_path)
+    ccmth_original = ccmth_map.copy()
+    ccmth_map, surface = detrend_arctan_2d(ccmth_map)
+    ccmth_map = apply_roi(ccmth_map, roi)
+    surface = apply_roi(surface, roi)
+    ccmth_original = apply_roi(ccmth_original, roi)
+    return ccmth_original, ccmth_map, surface
+
+
+def _derive_maps_path(layer_name: str, params: dict) -> str:
+    """Reconstruct the maps.h5 path for *layer_name* exactly as run() does.
+
+    In single mode: ``<input_folder>/<maps_filename>``.
+    In batch mode:  ``<root_folder>/<layer_name>/<maps_filename>``.
+    """
+    maps_filename = params.get("maps_filename", "maps.h5")
+    mode = params.get("mode", "batch")
+    if mode == "single":
+        folder = params.get("input_folder") or ""
+        return os.path.join(folder, maps_filename)
+    else:
+        root = (params.get("root_folder", "") or "").rstrip("/")
+        return os.path.join(root, layer_name, maps_filename)
+
+
+def _build_hist(stacked_path: str, layer_idx: int, layer_name: str, style) -> "Figure":
+    """Load one strain layer from the stacked volume and return a histogram Figure."""
+    with h5py.File(stacked_path, "r") as fh:
+        arr = fh["strain"][layer_idx]
+    fig = build_strain_histogram(
+        arr,
+        title=f"{layer_name} — Strain distribution",
+        xlabel="Strain (ε)",
+        style=style,
+    )
+    if fig is None:
+        raise ValueError(f"layer {layer_name!r} has no finite strain values to histogram")
+    return fig
+
+
+def _build_detrend(
+    layer_name: str,
+    maps_path: str,
+    ccmth_com_path: str,
+    roi_text: str,
+    style,
+) -> "Figure":
+    """Recompute the detrend diagnostic for *layer_name* from the source maps.h5.
+
+    Reproduces exactly the computation in ``process_maps_file()`` so the rebuilt
+    diagnostic matches the PNG saved during ``run()``.
+
+    Raises ``FileNotFoundError`` when *maps_path* is absent.
+    """
+    if not os.path.exists(maps_path):
+        raise FileNotFoundError(
+            f"source maps.h5 not found; detrend diagnostic needs the original input"
+            f" (looked for {maps_path!r})"
+        )
+    roi = _parse_roi(roi_text)
+    orig, detrended, surface = _detrend_ccmth(maps_path, ccmth_com_path, roi)
+    return build_detrend_diag(orig, detrended, surface, style=style)
+
+
 @register("strain")
 def figures(result: "StrainResult", params: dict) -> list[FigureSpec]:
-    """Return one ``map`` FigureSpec per layer from the stacked strain volume."""
+    """Return map + histogram + detrend-diagnostic FigureSpecs per layer."""
     if not result.stacked_path:
         return []
     px = float(
@@ -475,10 +547,12 @@ def figures(result: "StrainResult", params: dict) -> list[FigureSpec]:
     py = float(
         params.get("pixel_size_y_um", 0.385)
     )  # falls back to the calibrated spec default, not 1.0
+    ccmth_com_path = params.get("ccmth_com_path", "/entry/ccmth/Center of mass/Center of mass")
+    roi_text = str(params.get("roi", "") or "")
     specs = []
     for i, layer in enumerate(result.layers):
 
-        def build(style, i=i, lr=layer, path=result.stacked_path):
+        def build_map(style, i=i, lr=layer, path=result.stacked_path):
             with h5py.File(path, "r") as fh:
                 arr = fh["strain"][i]
             return build_strain_map(arr, px, py, None, (lr.vmin, lr.vmax), style=style)
@@ -492,9 +566,51 @@ def figures(result: "StrainResult", params: dict) -> list[FigureSpec]:
                 # path-unsafe chars (spaces/parens/etc.) at the savefig/export site (Task 16),
                 # not here — keep the human-readable name in title/filename.
                 filename=f"{layer.name}_strain",
-                build=build,
+                build=build_map,
             )
         )
+
+        # --- histogram (kind="plot") ---
+        def build_hist(
+            style,
+            _path=result.stacked_path,
+            _idx=i,
+            _name=layer.name,
+        ):
+            return _build_hist(_path, _idx, _name, style)
+
+        specs.append(
+            FigureSpec(
+                figure_id=f"strain_hist_{i:04d}",
+                title=f"Strain histogram — {layer.name}",
+                kind="plot",
+                filename=f"{layer.name}_strain_hist",
+                build=build_hist,
+            )
+        )
+
+        # --- detrend diagnostic (kind="plot") ---
+        _maps_path = _derive_maps_path(layer.name, params)
+
+        def build_detrend(
+            style,
+            _name=layer.name,
+            _mp=_maps_path,
+            _com=ccmth_com_path,
+            _roi=roi_text,
+        ):
+            return _build_detrend(_name, _mp, _com, _roi, style)
+
+        specs.append(
+            FigureSpec(
+                figure_id=f"strain_detrend_{i:04d}",
+                title=f"Detrend diagnostic — {layer.name}",
+                kind="plot",
+                filename=f"{layer.name}_strain_detrend",
+                build=build_detrend,
+            )
+        )
+
     return specs
 
 
@@ -515,14 +631,8 @@ def process_maps_file(
     save_plots: bool,
 ) -> tuple[np.ndarray, LayerResult]:
     """Compute the 2-D strain map for one maps.h5 and (optionally) save plots."""
-    ccmth_map = load_map(maps_path, ccmth_com_path)
-
     # detrend ccmth on the FULL map, THEN crop ROI (order matters)
-    ccmth_original = ccmth_map.copy()
-    ccmth_map, surface = detrend_arctan_2d(ccmth_map)
-    ccmth_map = apply_roi(ccmth_map, roi)
-    surface = apply_roi(surface, roi)
-    ccmth_original = apply_roi(ccmth_original, roi)
+    ccmth_original, ccmth_map, surface = _detrend_ccmth(maps_path, ccmth_com_path, roi)
 
     strain = compute_strain(ccmth_map, ccmth_ref_deg)
 
