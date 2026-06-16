@@ -249,7 +249,7 @@ BLISS file's `*.1` entries into one darfix-ready `entry_0000`.
 #### `strain.py`
 Port of `calc_axial_strain_v7_batch`. Per-pixel axial strain (cot method,
 ccmth-only) → stacked 3-D volume.
-- `LayerResult` / `StrainResult` — per-layer stats + the stacked path/shape.
+- `LayerResult` / `StrainResult` — per-layer stats + the stacked path/shape. `LayerResult.maps_path` records the source `maps.h5` this layer was computed from, so `figures()` can rebuild the detrend diagnostic for **nested** `folder_pattern`s (the layer name alone loses sub-folders).
 - `cot`, `_arctan_model`, `_fit_arctan_1d`, `detrend_arctan_2d` — the separable arctan **detrend** (run on the full map, **before** ROI).
 - `compute_strain(ccmth, ccmth_ref)` — single-array `cot(ccmth_ref)·Δccmth`.
 - `build_strain_map(strain, px, py, roi, vlim, *, style=None)` — build and return a strain map `Figure` (RdBu_r, equal aspect). When `style` is `None` the legacy look is reproduced; otherwise colourbar, scale bar, and text scaling are applied via the shared helpers. The caller calls `fig.savefig`.
@@ -257,14 +257,15 @@ ccmth-only) → stacked 3-D volume.
 - `build_detrend_diag(original, detrended, surface, *, style=None)` — 3-panel detrend-diagnostic figure (original / arctan surface / detrended). `style` applies colourbar and text scaling per panel; no scale bar (it is a `kind="plot"` figure).
 - `process_maps_file(...)` — one `maps.h5` → 2-D strain + diagnostic PNGs (calls the builders above with `style=None`).
 - `save_stacked_volume(...)` — stack all layers into `stacked_strain_volumes.h5`.
-- `figures(result, params)` — `@register("strain")` catalog: three `FigureSpec`s per layer — `kind="map"` strain map, `kind="plot"` histogram, `kind="plot"` detrend diagnostic. The detrend `build` re-reads the source `maps.h5` to recompute the arctan surface.
+- `figures(result, params)` — `@register("strain")` catalog: three `FigureSpec`s per layer — `kind="map"` strain map, `kind="plot"` histogram, `kind="plot"` detrend diagnostic. The map `build` rebuilds with the **same** `roi` and `vlim` `run()` used (so the export matches the saved PNG: symmetric zero-centred RdBu_r and the ROI axis offset, rather than raw per-layer min/max). The detrend `build` re-reads the source `maps.h5` (via `LayerResult.maps_path`) to recompute the arctan surface.
 - `run` / `_main`.
 
 #### `mosaicity.py`
 Port of `stack_h5_darfix_volumes`. Stacks χ/μ Center-of-mass + FWHM maps.
 - `MosaicityResult` — stacked path + per-dataset shapes + layers.
 - `_read_dataset(h5f, path)` — a dataset or `None`.
-- `figures(result, params)` — `@register("mosaicity")` catalog: for each dataset key in `result.datasets`, one `kind="map"` `FigureSpec` per Z layer (via `volume_layer_specs`) plus one `kind="plot"` histogram `FigureSpec` per layer.
+- `_streamed_clim(dataset)` — global `(nanmin, nanmax)` of a `(Z,Y,X)` volume read **one layer at a time** (never materialises the whole volume), so listing the catalog stays memory-light for large stacks.
+- `figures(result, params)` — `@register("mosaicity")` catalog: for each dataset key in `result.datasets`, one `kind="map"` `FigureSpec` per Z layer (via `volume_layer_specs`) plus one `kind="plot"` histogram `FigureSpec` per layer. `n_z`/`vmin`/`vmax` come from the dataset shape + `_streamed_clim` (no full-volume read).
 - `run` (a folder is included if any of its four maps exist) / `_main` → `stacked_volumes.h5`.
 
 #### `rocking.py`
@@ -285,7 +286,7 @@ Port of `visualize_aligned_volumes_v6`. Aligns the stacked volumes and renders.
 - `load_mosa_datasets` / `load_strain_volume`, `_align(...)` (reuses [[#`alignment.py`]]), `_process_dataset(...)`.
 - `run` → per-layer PNGs, animation, 3-D top-view.
 - **3-D viewer helpers** (used by the GUI): `mosa_field_names(path)`, `available_fields(params)`, `aligned_field(params, name)` → `(volume, spacing, cmap, clim)` aligned with the *same* pipeline as the PNGs.
-- `figures(result, params)` — `@register("visualize")` catalog: one `kind="map"` `FigureSpec` per Z layer per aligned dataset, via `volume_layer_specs`.
+- `figures(result, params)` — `@register("visualize")` catalog: one `kind="map"` `FigureSpec` per Z layer per aligned dataset. Each `build` re-runs the alignment for its dataset (lazy per-dataset cache) and, for **Center-of-mass** datasets, re-applies the same `_center_com_and_range` centring `run()` used — so the export renders the centred volume against the centred `vmin/vmax`, matching the saved PNG (and the 3-D viewer).
 
 #### `paraview.py`
 Port of `export_aligned_volumes_to_paraview_v6_pvti`. Writes partitioned PVTI.
@@ -301,7 +302,7 @@ Port of `extract_oblique_slices_v5`. Arbitrary planes through the aligned volume
 - `build_slice_figure(prep, sl, slice2d, u_um, v_um, *, offset_um, style=None)` — build and return a slice `Figure` (equal-aspect, µm axes). When `style` is `None` the legacy appearance is reproduced; otherwise figsize/colourbar/scale-bar/text-scaling are honoured. Does NOT call `savefig`.
 - `save_slice_png(prep, sl, slice2d, u_um, v_um, out_png, *, offset_um, dpi=150)` — build a legacy-style slice figure and save it to `out_png` (used by `run` during the stage run).
 - `write_volume_group` — write one volume group to `oblique_slices.h5`.
-- `figures(result, params)` — `@register("slices")` catalog: one `kind="map"` `FigureSpec` per plane per slice-name sub-group per volume group in `oblique_slices.h5`.
+- `figures(result, params)` — `@register("slices")` catalog: one `kind="map"` `FigureSpec` per plane per slice-name sub-group per volume group in `oblique_slices.h5`. Volume-group attrs are read defensively (`.get` with defaults), so one group from an older/partial run missing an attr is catalogued with fallbacks instead of aborting the whole listing.
 - `run` validates each slice up front, writes `oblique_slices.h5` + a PNG per plane.
 
 #### `profiles.py`
@@ -313,7 +314,7 @@ slice plane, every field at the same in-plane positions.
 - `build_companion_figure(ref, fields, geom, line_color, *, style=None)` — build and return a companion profile `Figure` (reference image + N trace panels). When `style` is `None` the legacy appearance is reproduced; when a `PlotStyle` is supplied, colourbar and text scaling are honoured. These are `kind="plot"` figures — no scale bar is drawn regardless of `style`. Does NOT call `savefig`.
 - `save_companion_figure(ref, fields, geom, line_color, out_png, dpi)` — build a legacy companion figure and save it to `out_png` (used by `run`).
 - `render_single` — single reference-plane overview PNG (for `preview` mode and per-field overviews).
-- `figures(result, params)` — `@register("profiles")` catalog: one `kind="plot"` `FigureSpec` per parameter-mode job (re-reads `oblique_slices.h5` and rebuilds via `build_companion_figure`).
+- `figures(result, params)` — `@register("profiles")` catalog: one `kind="plot"` `FigureSpec` per parameter-mode job (re-reads `oblique_slices.h5` and rebuilds via `build_companion_figure`). The export stem comes from each job's free-form `fig_name`; jobs that share a `fig_name` are disambiguated (`_2`, `_3`, …) so a batch export can't silently overwrite one figure with another.
 - Drivers: `_collect`, `_write_csvs`, `_save_overviews`; `run` supports `parameter` (CSV + figures) and `preview` modes. (The interactive click-pick is the GUI's [[#`line_picker.py`]].)
 
 #### `matched.py`
@@ -365,7 +366,7 @@ Runs a stage in a **child process** and streams messages back; UI-agnostic.
 | `pv_canvas.py` | `PvCanvas`: an embedded `pyvistaqt` 3-D view created **lazily** (`ensure()` on first use; degrades to a label if there's no OpenGL). `show_volume(volume, spacing, cmap, clim)` volume-renders with NaN thresholded out. |
 | `volume3d.py` | `Volume3DPanel`: a volume dropdown + **Render 3-D** button over a (lazy) `PvCanvas`. `set_sources()` installs lazy callables — nothing loads until the button is clicked. |
 | `line_picker.py` | `LinePickerDialog`: scroll a slice's planes (◀/▶), click two endpoints, read back `(start_uv, end_uv, offset_um)`. Built on demand; reuses the [[#profiles.py]] readers. |
-| `export_dialog.py` | Publication export widgets and helpers. `sanitize_stem(name)` replaces path-unsafe characters with underscores. `save_spec(spec, out_dir, style)` builds a `FigureSpec` at the given style (scale bar force-disabled for `kind="plot"`), saves one file per `style.formats` into `out_dir`, and returns the list of written paths; per-format failures are skipped silently. `StyleControls(QWidget)` provides the full set of ~21 `PlotStyle` controls (grouped as Scale bar / Text / Colourbar / Figure / Output); mutates the bound `PlotStyle` in place and emits `changed` after each mutation. `sync_from_style()` pushes the current style back into all widgets (used after a reset). `ExportDialog(QDialog)` wraps a live `MplCanvas` preview + a figure-selector `QComboBox` + `StyleControls` + **Reset to global style** and **Export** buttons. The **Export** button calls `QFileDialog.getExistingDirectory` — the user picks a folder, and files are written flat into that folder. `export_to(out_dir)` calls `save_spec` for the current spec and returns the list of written paths. |
+| `export_dialog.py` | Publication export widgets and helpers. `sanitize_stem(name)` replaces path-unsafe characters with underscores. `save_spec(spec, out_dir, style)` builds a `FigureSpec` at the given style (scale bar force-disabled for `kind="plot"`), saves one file per `style.formats` into `out_dir`, and returns the list of written paths. Each format is written **atomically** (to a `.part` temp file then `os.replace`, passing `format=` explicitly) so a failed format never leaves a truncated/corrupt file at the target; per-format failures are skipped and the built `Figure` is cleared afterwards. `ExportDialog._render` skips the rebuild when only export-only fields (`formats`/`dpi`) changed, so preview tweaks don't needlessly re-read the HDF5. `StyleControls(QWidget)` provides the full set of ~21 `PlotStyle` controls (grouped as Scale bar / Text / Colourbar / Figure / Output); mutates the bound `PlotStyle` in place and emits `changed` after each mutation. `sync_from_style()` pushes the current style back into all widgets (used after a reset). `ExportDialog(QDialog)` wraps a live `MplCanvas` preview + a figure-selector `QComboBox` + `StyleControls` + **Reset to global style** and **Export** buttons. The **Export** button calls `QFileDialog.getExistingDirectory` — the user picks a folder, and files are written flat into that folder. `export_to(out_dir)` calls `save_spec` for the current spec and returns the list of written paths. |
 
 ---
 

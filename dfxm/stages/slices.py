@@ -717,10 +717,11 @@ def build_slice_figure(
 ) -> Figure:
     """Build and return a slice figure. Does NOT call savefig.
 
-    When *style* is ``None`` the legacy appearance is reproduced (black auto
-    scale bar, 0.046 colourbar fraction, 12×10 in figsize). When a
-    :class:`~dfxm.common.plotting.PlotStyle` is supplied its figsize/colourbar/
-    fonts/scale-bar settings are honoured instead.
+    When *style* is ``None`` the default un-styled appearance is used (black auto
+    scale bar, 0.046 colourbar fraction, 12×10 in figsize) via the shared styled
+    primitives — close to, but not byte-identical with, the pre-export legacy
+    renderer. When a :class:`~dfxm.common.plotting.PlotStyle` is supplied its
+    figsize/colourbar/fonts/scale-bar settings are honoured instead.
     """
     st = style if style is not None else _LEGACY_STYLE
     use_legacy = style is None
@@ -968,13 +969,16 @@ def figures(result: SlicesResult, params: dict) -> list[FigureSpec]:
             # Reconstruct prep keys that build_slice_figure / _make_norm consume.
             # center_zero is not stored as an attr; derive it from "kind"
             # (center_zero mirrors prepare_volume via _CENTERED_KINDS).
+            # Read attrs defensively: a single volume group written by an older
+            # or partial run that is missing an attr must NOT abort cataloguing
+            # for every other (valid) volume. Fall back to harmless defaults.
             kind = str(vg.attrs.get("kind", ""))
             prep = {
-                "cmap_name": str(vg.attrs["cmap"]),
-                "title": str(vg.attrs["title"]),
-                "cbar_label": str(vg.attrs["cbar_label"]),
-                "vmin": float(vg.attrs["vmin"]),
-                "vmax": float(vg.attrs["vmax"]),
+                "cmap_name": str(vg.attrs.get("cmap", "magma")),
+                "title": str(vg.attrs.get("title", vid)),
+                "cbar_label": str(vg.attrs.get("cbar_label", "")),
+                "vmin": float(vg.attrs.get("vmin", 0.0)),
+                "vmax": float(vg.attrs.get("vmax", 1.0)),
                 "center_zero": kind in _CENTERED_KINDS,
             }
             for sname in vg.keys():

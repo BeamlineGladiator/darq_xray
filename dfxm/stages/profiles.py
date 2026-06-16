@@ -737,9 +737,18 @@ def figures(result: ProfilesResult, params: dict) -> list[FigureSpec]:
     line_override = params.get("line_color") or None
 
     specs = []
+    used_stems: dict[str, int] = {}
     for jr in jobs_with_fields:
         name = jr.name
         fig_name = job_spec_by_name.get(name, {}).get("fig_name") or f"profile_{name}"
+        # fig_name is free-form user text: two jobs can share it. Disambiguate
+        # the export stem so a shared fig_name does not silently overwrite a
+        # previously written figure (both would otherwise report ok).
+        if fig_name in used_stems:
+            used_stems[fig_name] += 1
+            fig_name = f"{fig_name}_{used_stems[fig_name]}"
+        else:
+            used_stems[fig_name] = 1
         job_spec = job_spec_by_name.get(name)
 
         # KEEP IN SYNC with the parameter-mode render in run() above:

@@ -36,7 +36,14 @@ def cmap_nan_transparent(name: str):
 
 
 def layer_figure(layer, vmin, vmax, cmap, ext_x, ext_y, title, cbar_label, *, style=None):
-    """Single equal-aspect layer figure (µm axes). ``style=None`` == legacy look."""
+    """Single equal-aspect layer figure (µm axes).
+
+    ``style=None`` renders with the default un-styled :class:`PlotStyle` (black
+    scale bar, 0.046 colourbar fraction). Note this still routes through the
+    shared styled primitives, so it is close to — but not byte-identical with —
+    the pre-export legacy renderer (scale-bar length/thickness and colourbar tick
+    font differ slightly); see ``draw_scale_bar``/``add_colorbar``.
+    """
     st = style if style is not None else PlotStyle(scale_bar_color="black", colorbar_fraction=0.046)
     figsize = (figure_size(st, ext_x, ext_y) or (12, 10)) if style is not None else (12, 10)
     fig = Figure(figsize=figsize, facecolor="white")

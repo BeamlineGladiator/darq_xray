@@ -246,6 +246,11 @@ class LayerResult:
     mean: float
     std: float
     plots: list[str] = field(default_factory=list)
+    # Absolute path to the source maps.h5 this layer was computed from. Stored at
+    # run() time so figures() can rebuild the detrend diagnostic without
+    # reconstructing the folder from the layer name (which loses nested
+    # folder_pattern components). Empty for results predating this field.
+    maps_path: str = ""
 
 
 @dataclass
@@ -362,13 +367,13 @@ def build_strain_map(
     extent = physical_extent(strain.shape, px, py, roi)
     vmin, vmax = vlim if vlim != (None, None) else symmetric_limits(strain)
 
-    if style is not None:
-        ny, nx = strain.shape
-        fs = figure_size(style, nx * px, ny * py)
-        figsize = fs if fs is not None else (7, 7 * (ny * py) / (nx * px) + 1.5)
-    else:
-        ny, nx = strain.shape
-        figsize = (7, 7 * (ny * py) / (nx * px) + 1.5)
+    ny, nx = strain.shape
+    legacy_figsize = (7, 7 * (ny * py) / (nx * px) + 1.5)
+    figsize = (
+        (figure_size(style, nx * px, ny * py) or legacy_figsize)
+        if style is not None
+        else legacy_figsize
+    )
 
     fig = new_figure(figsize)
     ax = fig.add_subplot(111)
@@ -528,21 +533,25 @@ def figures(result: "StrainResult", params: dict) -> list[FigureSpec]:
     """Return map + histogram + detrend-diagnostic FigureSpecs per layer."""
     if not result.stacked_path:
         return []
-    px = float(
-        params.get("pixel_size_x_um", 0.152)
-    )  # falls back to the calibrated spec default, not 1.0
-    py = float(
-        params.get("pixel_size_y_um", 0.385)
-    )  # falls back to the calibrated spec default, not 1.0
-    ccmth_com_path = params.get("ccmth_com_path", "/entry/ccmth/Center of mass/Center of mass")
-    roi_text = str(params.get("roi", "") or "")
+    # Merge spec defaults so blank params fall back to the calibrated beamline
+    # values (not 1.0), exactly as run() does.
+    p = {**STAGE.defaults(), **params}
+    px = float(p["pixel_size_x_um"])
+    py = float(p["pixel_size_y_um"])
+    ccmth_com_path = p["ccmth_com_path"]
+    roi_text = str(p["roi"] or "")
+    # The map must be rebuilt with the SAME roi + vlim run() used, so the export
+    # matches the saved PNG: a blank vlim means symmetric zero-centred limits
+    # (white = zero strain on RdBu_r), and the ROI sets the µm axis offset.
+    roi = _parse_roi(roi_text)
+    vlim = (_parse_float(p["vmin"]), _parse_float(p["vmax"]))
     specs = []
     for i, layer in enumerate(result.layers):
 
-        def build_map(style, i=i, lr=layer, path=result.stacked_path):
+        def build_map(style, i=i, path=result.stacked_path, _roi=roi, _vlim=vlim):
             with h5py.File(path, "r") as fh:
                 arr = fh["strain"][i]
-            return build_strain_map(arr, px, py, None, (lr.vmin, lr.vmax), style=style)
+            return build_strain_map(arr, px, py, _roi, _vlim, style=style)
 
         specs.append(
             FigureSpec(
@@ -577,7 +586,9 @@ def figures(result: "StrainResult", params: dict) -> list[FigureSpec]:
         )
 
         # --- detrend diagnostic (kind="plot") ---
-        _maps_path = _derive_maps_path(layer.name, params)
+        # Prefer the maps.h5 path stored at run() time (correct for nested
+        # folder patterns); fall back to reconstructing it for older results.
+        _maps_path = layer.maps_path or _derive_maps_path(layer.name, params)
 
         def build_detrend(
             style,
@@ -650,6 +661,7 @@ def process_maps_file(
         mean=float(np.nanmean(strain)),
         std=float(np.nanstd(strain)),
         plots=plots,
+        maps_path=maps_path,
     )
     return strain, layer
 

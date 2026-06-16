@@ -636,7 +636,6 @@ def figures(result: "VisualizeResult", params: dict) -> list[FigureSpec]:
     p = {**STAGE.defaults(), **params}
     sx = float(p["pixel_size_x_um"])
     sy = float(p["pixel_size_y_um"])
-    scale_x = sx
     samy_dir = int(p["samy_direction"])
     roi_x = _parse_pair(p["roi_x"])
     roi_y = _parse_pair(p["roi_y"])
@@ -663,7 +662,7 @@ def figures(result: "VisualizeResult", params: dict) -> list[FigureSpec]:
                 src=src_file,
                 pat=pattern,
                 _cache=cache,
-                _sx=scale_x,
+                _sx=sx,
                 _sd=samy_dir,
                 _rx=roi_x,
                 _ry=roi_y,
@@ -691,13 +690,15 @@ def figures(result: "VisualizeResult", params: dict) -> list[FigureSpec]:
                 name=ds_name,
                 pat=pattern,
                 _cache=cache,
-                _sx=scale_x,
+                _sx=sx,
                 _sd=samy_dir,
                 _rx=roi_x,
                 _ry=roi_y,
                 _rr=raw_root,
                 _sp=p["samy_path"],
                 _szp=p["samz_path"],
+                _cm=p["center_method"],
+                _rp=float(p["range_pct"]),
             ):
                 if "vol" not in _cache:
                     all_datasets = load_mosa_datasets(src)
@@ -705,9 +706,15 @@ def figures(result: "VisualizeResult", params: dict) -> list[FigureSpec]:
                         raise KeyError(f"mosaicity dataset {name!r} not found in {src!r}")
                     raw = all_datasets[name]
                     samy, samz = _read_motors(_rr, pat, _sp, _szp)
-                    _cache["vol"], _zp, _sz = _align(
+                    vol, _zp, _sz = _align(
                         raw, samy, samz, scale_x=_sx, samy_direction=_sd, roi_x=_rx, roi_y=_ry
                     )
+                    # CoM volumes are centred at run() time and ds.vmin/vmax were
+                    # derived from the CENTRED data — reproduce that here so the
+                    # export matches the saved PNG (and the 3-D viewer).
+                    if "Center_of_mass" in name:
+                        vol, _vn, _vx = _center_com_and_range(vol, _cm, _rp)
+                    _cache["vol"] = vol
                 return _cache["vol"]
 
         # Unique filename stem: sanitise the dataset name (spaces → _, slashes removed)

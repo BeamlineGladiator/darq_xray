@@ -189,8 +189,10 @@ def draw_scale_bar(ax, length_um: float | None = None, *, style: "PlotStyle") ->
     y0, y1 = ax.get_ylim()
     xr, yr = (x1 - x0), (y1 - y0)
     sl = length_um if length_um is not None else auto_scale_bar_length_um(abs(xr))
-    # Bar height in data coords.  Factor 0.004·thickness_pt gives ~0.012·|yr|
-    # at the default thickness_pt=3.0, keeping the legacy look unchanged.
+    # Bar height in data coords: 0.004·thickness_pt·|yr| (≈0.012·|yr| at the
+    # default thickness_pt=3.0). This is the styled renderer's own geometry; it
+    # is close to, but NOT byte-identical to, the pre-export legacy bar (which
+    # used 0.01·|yr| and 50/10/1 length rounding).
     bh = abs(yr) * 0.004 * style.scale_bar_thickness_pt
     pad_x, pad_y = 0.05 * abs(xr), 0.05 * abs(yr)
     bx = (x1 - pad_x - sl) if "right" in style.scale_bar_loc else (x0 + pad_x)
@@ -205,8 +207,10 @@ def draw_scale_bar(ax, length_um: float | None = None, *, style: "PlotStyle") ->
         # instead of the old label_size*0.02*|yr| mix that ballooned the box.
         label_allowance = 0.06 * abs(yr)
         box_h = bh * 2.5 + label_allowance
-        # Padding in data units: small fraction of extent, independent of point sizes.
-        pad_data = 0.015 * abs(yr)
+        # Padding in data units, scaled by the configurable box margin. The
+        # default margin (4.0) reproduces the original 0.015·|yr| padding, so the
+        # 'Box margin' control now visibly grows/shrinks the box (it was inert).
+        pad_data = 0.015 * abs(yr) * (style.scale_bar_box_margin_pt / 4.0)
         box = FancyBboxPatch(
             (bx, by),
             sl,

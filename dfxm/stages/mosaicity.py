@@ -209,6 +209,24 @@ _KEY_STEM: dict[str, str] = {
 }
 
 
+def _streamed_clim(dataset) -> tuple[float, float]:
+    """Global (nanmin, nanmax) of a (Z,Y,X) HDF5 volume, one layer at a time.
+
+    Memory-light: never materialises the whole volume (peak memory = one layer),
+    so merely listing the figure catalog stays cheap even for multi-GB stacks.
+    Falls back to (0, 1) for an all-NaN/empty volume.
+    """
+    vmin, vmax = np.inf, -np.inf
+    for z in range(dataset.shape[0]):
+        finite = dataset[z][np.isfinite(dataset[z])]
+        if finite.size:
+            vmin = min(vmin, float(finite.min()))
+            vmax = max(vmax, float(finite.max()))
+    if not np.isfinite(vmin):
+        return 0.0, 1.0
+    return vmin, vmax
+
+
 @register("mosaicity")
 def figures(result: "MosaicityResult", params: dict) -> list[FigureSpec]:
     """Return one ``map`` + one ``plot`` (histogram) FigureSpec per Z layer per dataset key."""
@@ -230,12 +248,13 @@ def figures(result: "MosaicityResult", params: dict) -> list[FigureSpec]:
         )
         stem = _KEY_STEM.get(key, key.lstrip("/").replace("/", "_").replace(" ", "_"))
 
-        # compute vmin/vmax and n_z from the volume (read once per key)
+        # vmin/vmax/n_z without loading the whole volume into memory: read the
+        # shape, then stream the clim one layer at a time (large stacks otherwise
+        # spike RAM merely to LIST the catalog).
         with h5py.File(result.stacked_path, "r") as fh:
-            vol = fh[key][:]
-        vmin = float(np.nanmin(vol))
-        vmax = float(np.nanmax(vol))
-        n_z = vol.shape[0]
+            dset = fh[key]
+            n_z = dset.shape[0]
+            vmin, vmax = _streamed_clim(dset)
 
         # map specs (one per layer)
         specs.extend(

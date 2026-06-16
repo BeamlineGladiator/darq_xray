@@ -350,7 +350,9 @@ After a stage runs successfully, the **Output** tab gains two buttons at the bot
 - **Export…** — single-figure export: opens a dialog with a live preview, a figure selector drop-down (if the stage produced multiple figures), per-figure style controls, and an **Export** button that writes into a folder you pick.
 - **Export all…** — batch export: exports every figure the stage produced into a single folder you pick via a folder-chooser dialog. Progress is shown per-figure in a banner; one bad figure never aborts the rest. The banner and a warning dialog report how many figures succeeded and what went wrong with any failures.
 
-Files are written **flat** into the folder you choose (e.g. `/tmp/my_exports/`). Each figure gets a sanitised filename stem (path-unsafe characters replaced with `_`) plus the format extension (`strain_map.png`, `strain_map.pdf`, etc.). There is no automatic sub-folder.
+Files are written **flat** into the folder you choose (e.g. `/tmp/my_exports/`). Each figure gets a sanitised filename stem (path-unsafe characters replaced with `_`) plus the format extension (`strain_map.png`, `strain_map.pdf`, etc.). There is no automatic sub-folder. Files are written **atomically** — a format that fails to save leaves no partial/corrupt file behind. For line profiles, two jobs that share a `fig_name` are disambiguated automatically so a batch export never silently overwrites one with another.
+
+Exported figures are **rebuilt from the saved data to match the figure the run produced** — same colour scale (strain maps stay symmetric and zero-centred; misorientation maps stay centred), the same ROI axis offset, and the same axes — only the publication styling differs.
 
 ### The "Publication style…" editor
 

@@ -513,6 +513,31 @@ def main() -> int:
         "batch-resilience proven (bad spec recorded, good specs still wrote)"
     )
 
+    # [19] save_spec writes atomically: a per-format failure leaves no partial
+    # (".part") or corrupt file at the target, the good formats still write, and
+    # the built Figure is cleared afterwards.
+    from dfxm.common.plotting import PlotStyle as _PS19
+    from gui.widgets.export_dialog import save_spec as _save_spec19
+
+    _built19 = {}
+
+    def _build19(style):
+        f = _Fig18()
+        f.add_subplot(111).imshow([[0, 1], [1, 0]])
+        _built19["fig"] = f
+        return f
+
+    spec19 = _FigureSpec("s19", "S19", "map", "weird name/with:chars", _build19)
+    out19 = _tempfile.mkdtemp()
+    written19 = _save_spec19(spec19, out19, _PS19(formats=("png", "zzz")))
+    files19 = _os.listdir(out19)
+    assert [_os.path.basename(w) for w in written19] == ["weird_name_with_chars.png"], written19
+    assert not any(f.endswith((".part", ".zzz")) for f in files19), (
+        f"atomic write left a partial/corrupt file: {files19}"
+    )
+    assert len(_built19["fig"].axes) == 0, "save_spec did not clear the Figure"
+    print("[19] save_spec: atomic write (no .part/corrupt on failure) + Figure cleared")
+
     print("\nGUI SMOKE PASSED")
     return 0
 

@@ -181,3 +181,61 @@ def test_build_histogram_respects_figure_width():
     assert round(build_histogram(data, title="t", xlabel="x").get_size_inches()[0]) == 8
     fig = build_histogram(data, title="t", xlabel="x", style=PlotStyle(figure_width="single"))
     assert abs(fig.get_size_inches()[0] - 3.5) < 1e-6
+
+
+def _box_patch_pad(margin_pt):
+    from matplotlib.patches import FancyBboxPatch
+
+    fig = Figure()
+    ax = fig.add_subplot(111)
+    ax.imshow(np.zeros((10, 20)), extent=[0, 20, 0, 10], origin="lower")
+    draw_scale_bar(
+        ax,
+        5.0,
+        style=PlotStyle(scale_bar_box=True, scale_bar_box_margin_pt=margin_pt),
+    )
+    box = next(p for p in ax.patches if isinstance(p, FancyBboxPatch))
+    return box.get_boxstyle().pad
+
+
+def test_box_margin_control_affects_box_padding():
+    # The 'Box margin' control must actually change the background-box padding
+    # (it was previously hardcoded and inert).
+    assert _box_patch_pad(12.0) > _box_patch_pad(2.0)
+
+
+def test_box_margin_default_preserves_padding():
+    # The default margin (4.0) must reproduce the original 0.015*|yr| padding so
+    # existing default-style boxes are unchanged.
+    assert np.isclose(_box_patch_pad(4.0), 0.015 * 10.0)
+
+
+def test_scale_bar_auto_length_is_1_2_5_10_series():
+    # Pin the styled renderer's actual auto-length behaviour (1-2-5-10), so it
+    # can't drift silently again.
+    assert auto_scale_bar_length_um(200.0) == 20.0  # 0.15*200=30 -> 20
+    assert auto_scale_bar_length_um(500.0) == 100.0  # 0.15*500=75 -> 100
+
+
+def test_scale_bar_thickness_pins_styled_geometry():
+    # Pin the styled bar thickness (0.004*thickness_pt*|yr|, =0.012*|yr| at the
+    # default 3.0 pt) so the kept-as-new geometry can't drift unnoticed.
+    from matplotlib.patches import Rectangle
+
+    fig = Figure()
+    ax = fig.add_subplot(111)
+    ax.imshow(np.zeros((10, 20)), extent=[0, 20, 0, 10], origin="lower")
+    draw_scale_bar(ax, 5.0, style=PlotStyle())
+    bar = next(p for p in ax.patches if isinstance(p, Rectangle))
+    assert np.isclose(bar.get_height(), 0.012 * 10.0)
+
+
+def test_add_colorbar_default_tick_fontsize_is_nine():
+    # Pin add_colorbar's default tick label size (9 pt) — a deliberate, tested
+    # value rather than the matplotlib default.
+    fig = Figure()
+    ax = fig.add_subplot(111)
+    im = ax.imshow(np.zeros((4, 4)))
+    cb = add_colorbar(fig, im, ax, "label", PlotStyle())
+    sizes = {round(t.get_fontsize(), 3) for t in cb.ax.get_yticklabels()}
+    assert sizes == {9.0}, sizes

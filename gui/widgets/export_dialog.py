@@ -420,16 +420,33 @@ def save_spec(spec, out_dir: str, style) -> list[str]:
     """
     eff_style = style if spec.kind == "map" else replace(style, scale_bar=False)
     fig = spec.build(eff_style)
-    stem = sanitize_stem(spec.filename)
-    written: list[str] = []
-    for fmt in style.formats:
-        path = os.path.join(out_dir, f"{stem}.{fmt}")
-        try:
-            fig.savefig(path, dpi=style.dpi, bbox_inches="tight", facecolor="white")
-            written.append(path)
-        except Exception:  # noqa: BLE001 — skip a failing format, keep the rest
-            continue
-    return written
+    try:
+        stem = sanitize_stem(spec.filename)
+        written: list[str] = []
+        for fmt in style.formats:
+            path = os.path.join(out_dir, f"{stem}.{fmt}")
+            # Write to a temp file then atomically rename, so a savefig that
+            # fails mid-write never leaves a truncated/corrupt file at the
+            # target path (the user would otherwise mistake it for a good export).
+            tmp = f"{path}.part"
+            try:
+                # Pass format explicitly: the ".part" temp suffix would otherwise
+                # make matplotlib infer an unknown format from the extension.
+                fig.savefig(tmp, format=fmt, dpi=style.dpi, bbox_inches="tight", facecolor="white")
+                os.replace(tmp, path)
+                written.append(path)
+            except Exception:  # noqa: BLE001 — skip a failing format, keep the rest
+                if os.path.exists(tmp):
+                    try:
+                        os.remove(tmp)
+                    except OSError:
+                        pass
+                continue
+        return written
+    finally:
+        # Release the (potentially large) image arrays promptly instead of
+        # waiting for GC — an "Export all" builds one Figure per layer.
+        fig.clear()
 
 
 class ExportDialog(QDialog):
@@ -453,6 +470,10 @@ class ExportDialog(QDialog):
         self._index = index
         self._style = replace(global_style)  # working copy
         self._global = global_style
+        # (index, preview-relevant style) last actually rendered — lets _render
+        # skip rebuilding (and re-reading the HDF5) when only export-only fields
+        # (formats/dpi) changed, which do not affect the preview.
+        self._last_render_key: object = None
 
         # Preview canvas
         self._canvas = MplCanvas()
@@ -521,6 +542,12 @@ class ExportDialog(QDialog):
     def _render(self) -> None:
         spec = self._spec()
         style = self._style if spec.kind == "map" else replace(self._style, scale_bar=False)
+        # Skip the rebuild (and its HDF5 read) when nothing preview-relevant
+        # changed: formats/dpi only affect export, not the displayed figure.
+        key = (self._index, replace(style, formats=(), dpi=0))
+        if key == self._last_render_key:
+            return
+        self._last_render_key = key
         try:
             fig = spec.build(style)
         except Exception as e:  # noqa: BLE001 — surface any build failure in the preview
