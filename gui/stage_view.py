@@ -83,6 +83,7 @@ class StageView(QWidget):
         # --- left: parameter form + run/cancel ---
         self._form = ParamForm(spec.params, self._initial_values())
         self._run_btn = QPushButton("Run")
+        self._run_btn.setProperty("role", "primary")
         self._cancel_btn = QPushButton("Cancel")
         self._cancel_btn.setEnabled(False)
         self._run_btn.clicked.connect(self._on_run)
@@ -195,14 +196,9 @@ class StageView(QWidget):
 
     # -- banner / validation ------------------------------------------------
     def _show_banner(self, html_text: str, *, error: bool) -> None:
-        style = (
-            "QLabel { background: #fdecea; border: 1px solid #f5c6cb; "
-            "border-radius: 4px; padding: 6px; }"
-            if error
-            else "QLabel { background: #e6f4ea; border: 1px solid #b7e1c0; "
-            "border-radius: 4px; padding: 6px; }"
-        )
-        self._banner.setStyleSheet(style)
+        self._banner.setProperty("role", "banner-error" if error else "banner-success")
+        self._banner.style().unpolish(self._banner)
+        self._banner.style().polish(self._banner)
         self._banner.setText(html_text)
         self._banner.setVisible(True)
 

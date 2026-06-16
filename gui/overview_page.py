@@ -20,12 +20,6 @@ from PySide6.QtWidgets import (
 
 from dfxm.config.models import StageSpec
 
-_CHIP_STYLE = (
-    "QPushButton { border: 1px solid #aab; border-radius: 10px; "
-    "padding: 3px 10px; background: #eef; }"
-)
-_EXTERNAL_STYLE = "border: 1px dashed #999; border-radius: 10px; padding: 3px 10px; color: #666;"
-
 
 class OverviewPage(QWidget):
     """Pipeline chips + per-stage description list + status recap."""
@@ -56,14 +50,14 @@ class OverviewPage(QWidget):
                 chips.addWidget(QLabel("→"))
             label = specs[name].label + (" (optional)" if name == "concat" else "")
             btn = QPushButton(label)
-            btn.setStyleSheet(_CHIP_STYLE)
+            btn.setProperty("role", "chip")
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
             btn.clicked.connect(lambda _=False, n=name: self.stageSelected.emit(n))
             chips.addWidget(btn)
             if name == "concat":
                 chips.addWidget(QLabel("→"))
                 ext = QLabel("darfix (external)")
-                ext.setStyleSheet(_EXTERNAL_STYLE)
+                ext.setProperty("role", "external")
                 ext.setToolTip(
                     "Run darfix outside this app: it turns the concatenated .h5 "
                     "into the maps.h5 files used by strain and mosaicity."

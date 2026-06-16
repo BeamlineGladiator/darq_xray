@@ -106,12 +106,12 @@ class ExperimentPanel(QWidget):
         top.addWidget(edit_btn)
 
         self._summary = QLabel("")
-        self._summary.setStyleSheet("color: #666;")
+        self._summary.setProperty("role", "muted")
         self._summary.setWordWrap(True)
 
         self._notes = QLabel("")
         self._notes.setWordWrap(True)
-        self._notes.setStyleSheet("color: #b00020; font-style: italic;")
+        self._notes.setProperty("role", "notes")
         self._notes.setVisible(False)
 
         layout = QVBoxLayout(self)
