@@ -62,11 +62,16 @@ def test_controller_emits_and_updates_without_app():
     assert seen and seen[-1] is theme.DARK
 
 
-def test_apply_theme_sets_fusion_palette_and_stylesheet():
+def test_apply_theme_sets_palette_and_stylesheet():
+    from PySide6.QtGui import QPalette
     from PySide6.QtWidgets import QApplication
 
     app = QApplication.instance() or QApplication([])
     pal = theme.apply_theme(app, "dark")
     assert pal is theme.DARK
-    assert app.styleSheet()  # non-empty
-    assert app.style().objectName().lower() == "fusion"
+    assert app.styleSheet()  # non-empty global QSS
+    assert theme.DARK.accent in app.styleSheet()
+    # The QPalette was applied (note: once a stylesheet is set, Qt wraps the base
+    # style in a QStyleSheetStyle proxy whose objectName() is '', so we verify the
+    # palette took effect rather than the style name).
+    assert app.palette().color(QPalette.ColorRole.Window).name() == theme.DARK.surface
