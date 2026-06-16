@@ -538,6 +538,34 @@ def main() -> int:
     assert len(_built19["fig"].axes) == 0, "save_spec did not clear the Figure"
     print("[19] save_spec: atomic write (no .part/corrupt on failure) + Figure cleared")
 
+    # [20] Theme: light by default, toggling restyles the app + embedded canvases.
+    from matplotlib.colors import to_hex
+
+    from gui import theme as _theme
+    from gui.widgets.mpl_canvas import MplCanvas as _MplCanvas
+
+    tc = _theme.ThemeController.instance()
+    tc.set_mode("light")
+    assert "#009682" in app.styleSheet()  # KIT green in light QSS
+    mc = _MplCanvas()
+    assert to_hex(mc.figure.get_facecolor()) == _theme.LIGHT.mpl_facecolor
+    # The left-column toggle flips to dark and restyles everything.
+    win._theme_btn.setChecked(True)
+    win._on_theme_toggle(True)
+    app.processEvents()
+    assert tc.mode == "dark"
+    assert _theme.DARK.accent in app.styleSheet()
+    assert to_hex(mc.figure.get_facecolor()) == _theme.DARK.mpl_facecolor  # canvas followed
+    assert win._theme_btn.text() == "☾ Dark"
+    # The muted concat rail row recoloured to the dark muted ink.
+    assert win._status_items["concat"].foreground().color().name() == _theme.DARK.ink_muted
+    win._theme_btn.setChecked(False)
+    win._on_theme_toggle(False)
+    app.processEvents()
+    assert tc.mode == "light"
+    mc.deleteLater()
+    print("[20] theme toggle restyles app QSS + matplotlib canvas + rail; persistence path OK")
+
     print("\nGUI SMOKE PASSED")
     return 0
 
