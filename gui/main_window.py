@@ -35,6 +35,7 @@ from .bindings import STAGE_ORDER, STAGE_SPECS
 from .experiment_panel import ExperimentPanel
 from .overview_page import OverviewPage
 from .stage_view import StageView
+from .theme import ThemeController
 
 _GLYPH_IDLE = "—"
 _GLYPH_RUNNING = "▶"
@@ -79,7 +80,7 @@ class MainWindow(QMainWindow):
         overview_item = QListWidgetItem("☰  Overview")
         self._nav.addItem(overview_item)
         self._row_target.append("__overview__")
-        muted = QBrush(QColor("#888888"))
+        muted = QBrush(QColor(ThemeController.instance().palette.ink_muted))
         for i, name in enumerate(STAGE_ORDER, start=1):
             label = STAGE_SPECS[name].label
             base = f"{i} {label}" + (" (optional)" if name == "concat" else "")
@@ -109,11 +110,21 @@ class MainWindow(QMainWindow):
         self._pub_style_btn = QPushButton("Publication style…")
         self._pub_style_btn.clicked.connect(self._on_pub_style)
 
+        # Light/dark theme toggle.
+        self._theme_btn = QPushButton()
+        self._theme_btn.setCheckable(True)
+        self._theme_btn.setChecked(ThemeController.instance().mode == "dark")
+        self._theme_btn.setToolTip("Switch between light and dark appearance")
+        self._theme_btn.clicked.connect(self._on_theme_toggle)
+        self._sync_theme_btn()
+        ThemeController.instance().themeChanged.connect(self._on_theme_changed)
+
         left = QWidget()
         left_layout = QVBoxLayout(left)
         left_layout.addWidget(self._experiment_panel)
         left_layout.addWidget(self._nav, 1)
         left_layout.addWidget(self._pub_style_btn)
+        left_layout.addWidget(self._theme_btn)
 
         splitter = QSplitter()
         splitter.addWidget(left)
@@ -158,6 +169,25 @@ class MainWindow(QMainWindow):
         layout.addWidget(btn_box)
 
         dlg.exec()
+
+    # -- theme --------------------------------------------------------------
+    def _sync_theme_btn(self) -> None:
+        dark = ThemeController.instance().mode == "dark"
+        self._theme_btn.setText("☾ Dark" if dark else "☀ Light")
+
+    def _on_theme_toggle(self, checked: bool) -> None:
+        from PySide6.QtCore import QSettings
+
+        mode = "dark" if checked else "light"
+        ThemeController.instance().set_mode(mode)
+        QSettings().setValue("theme", mode)
+
+    def _on_theme_changed(self, palette) -> None:
+        self._sync_theme_btn()
+        # QListWidgetItem foreground is not reachable by QSS — refresh it here.
+        item = self._status_items.get("concat")
+        if item is not None:
+            item.setForeground(QBrush(QColor(palette.ink_muted)))
 
     # -- navigation ---------------------------------------------------------
     def _on_row_changed(self, row: int) -> None:
