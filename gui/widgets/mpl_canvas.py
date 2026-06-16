@@ -15,6 +15,8 @@ from matplotlib.figure import Figure
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import QVBoxLayout, QWidget
 
+from ..theme import ThemeController
+
 
 class MplCanvas(QWidget):
     """A Figure + navigation toolbar in a Qt widget, with click picking."""
@@ -34,6 +36,22 @@ class MplCanvas(QWidget):
         layout.addWidget(self.canvas, 1)
 
         self.canvas.mpl_connect("button_press_event", self._on_click)
+        self.apply_theme(ThemeController.instance().palette)
+        ThemeController.instance().themeChanged.connect(self.apply_theme)
+
+    def apply_theme(self, palette) -> None:
+        """Restyle the *display* canvas (figure/axes chrome) — exports unaffected."""
+        fc = palette.mpl_facecolor
+        ink = palette.ink
+        self.figure.set_facecolor(fc)
+        self.ax.set_facecolor(fc)
+        self.ax.tick_params(colors=ink)
+        for spine in self.ax.spines.values():
+            spine.set_color(palette.border)
+        self.ax.xaxis.label.set_color(ink)
+        self.ax.yaxis.label.set_color(ink)
+        self.ax.title.set_color(ink)
+        self.canvas.draw_idle()
 
     def _on_click(self, event) -> None:
         if event.inaxes is self.ax and event.xdata is not None and event.ydata is not None:
@@ -42,13 +60,13 @@ class MplCanvas(QWidget):
     # -- convenience ------------------------------------------------------
     def clear(self) -> None:
         self.ax.clear()
-        self.canvas.draw_idle()
+        self.apply_theme(ThemeController.instance().palette)
 
     def show_image(self, data, **imshow_kw):
         """Replace the axes content with ``imshow(data)`` and redraw."""
         self.ax.clear()
         im = self.ax.imshow(data, **imshow_kw)
-        self.canvas.draw_idle()
+        self.apply_theme(ThemeController.instance().palette)
         return im
 
     def draw(self) -> None:

@@ -82,6 +82,11 @@ after concat because it runs outside the app. Above the rail, the experiment
 header shows the active preset and its calibration in one line; **Edit…**
 opens the full schema-driven editor (every field explained in its help panel).
 
+**Appearance.** A light/dark toggle (☀ Light / ☾ Dark) sits at the bottom of
+the left column, beside *Publication style…*. Your choice is remembered between
+sessions. Switching theme only affects the on-screen app and the embedded
+plot/3-D viewers — exported figures are always written on a white background.
+
 ### Experiment presets
 
 An **experiment** captures everything shared across stages: data roots, folder

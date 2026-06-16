@@ -12,6 +12,8 @@ from __future__ import annotations
 import numpy as np
 from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
 
+from ..theme import ThemeController
+
 
 class PvCanvas(QWidget):
     """A pyvistaqt ``QtInteractor`` built on demand, else a placeholder label."""
@@ -24,6 +26,7 @@ class PvCanvas(QWidget):
         self._placeholder: QLabel | None = None
         self._tried = False
         self._available = False
+        ThemeController.instance().themeChanged.connect(self.apply_theme)
 
     # -- lazy initialisation ---------------------------------------------
     def ensure(self) -> bool:
@@ -35,6 +38,7 @@ class PvCanvas(QWidget):
             from pyvistaqt import QtInteractor
 
             self._plotter = QtInteractor(self)
+            self._plotter.set_background(ThemeController.instance().palette.pv_background)
             self._layout.addWidget(self._plotter.interactor)
             self._available = True
         except Exception as exc:  # noqa: BLE001 - any import/GL failure -> label
@@ -51,6 +55,11 @@ class PvCanvas(QWidget):
     @property
     def plotter(self):
         return self._plotter
+
+    def apply_theme(self, palette) -> None:
+        """Recolour the 3-D background; no-op until the plotter exists."""
+        if self._plotter is not None:
+            self._plotter.set_background(palette.pv_background)
 
     def clear(self) -> None:
         if self._plotter is not None:

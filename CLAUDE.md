@@ -10,6 +10,13 @@ raw/darfix output to finished strain & mosaicity products. It was extracted from
 the `Scripts2` collection of standalone analysis scripts and reproduces them as a
 single 9-stage pipeline. (DFXM — never call it XRD / X-ray diffraction.)
 
+## Interaction preferences
+
+- **Confirmations as numbered choices.** When you need the user to confirm or
+  authorise something (proceed/abort, pick between approaches, approve a change),
+  ask via the `AskUserQuestion` tool with concrete options rather than a free-text
+  "should I proceed?" prompt, so the user can answer by choosing an option number.
+
 ## Architecture
 
 - **`dfxm/` — Qt-free core library** (importable, testable, and CLI-runnable

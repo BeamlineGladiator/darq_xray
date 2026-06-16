@@ -96,7 +96,7 @@ class ParamForm(QWidget):
                 form = group_forms.get(p.group)
                 if form is None:
                     header = QLabel(p.group)
-                    header.setStyleSheet("font-weight: bold; margin-top: 6px;")
+                    header.setProperty("role", "group-header")
                     adv_layout.addWidget(header)
                     form = QFormLayout()
                     adv_layout.addLayout(form)
@@ -162,7 +162,7 @@ class ParamForm(QWidget):
             text += "  ⚠ calibration"
         lbl = QLabel(text)
         if p.calibration:
-            lbl.setStyleSheet("color: #b00020; font-weight: bold;")
+            lbl.setProperty("role", "calib")
         if p.help:
             lbl.setToolTip(p.help)
         return lbl

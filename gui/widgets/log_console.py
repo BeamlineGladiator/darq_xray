@@ -55,4 +55,6 @@ class LogConsole(QWidget):
     # -- styling helpers --------------------------------------------------
     def set_status(self, text: str, *, error: bool = False) -> None:
         self._status.setText(text)
-        self._status.setStyleSheet("color: #b00020;" if error else "")
+        self._status.setProperty("role", "error" if error else "")
+        self._status.style().unpolish(self._status)
+        self._status.style().polish(self._status)
