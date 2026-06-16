@@ -16,11 +16,22 @@ def main(argv: list[str] | None = None) -> int:
     # Bind matplotlib's Qt backend to PySide6 (must precede backend import).
     os.environ.setdefault("QT_API", "pyside6")
 
+    from PySide6.QtCore import QSettings
     from PySide6.QtWidgets import QApplication
 
     from .main_window import MainWindow
+    from .theme import ThemeController
+
+    QApplication.setOrganizationName("dfxm")
+    QApplication.setApplicationName("pipeline")
 
     app = QApplication.instance() or QApplication(argv if argv is not None else sys.argv)
+
+    mode = QSettings().value("theme", "light")
+    if mode not in ("light", "dark"):
+        mode = "light"
+    ThemeController.instance().set_mode(mode)  # applies Fusion + palette + QSS
+
     window = MainWindow()
     window.show()
     return app.exec()
