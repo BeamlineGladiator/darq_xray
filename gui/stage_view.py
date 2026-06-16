@@ -458,6 +458,9 @@ class StageView(QWidget):
         # "Publication style…" carry through to every future export dialog.
         session_style = self.window().global_plot_style()
         dlg = ExportDialog(specs, 0, session_style, parent=self)
+        # Delete on close so its MplCanvas's themeChanged subscription doesn't
+        # accumulate across repeated Export… opens during a session.
+        dlg.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         dlg.exec()
 
     def _finish_failed(self, failure: Failed) -> None:
