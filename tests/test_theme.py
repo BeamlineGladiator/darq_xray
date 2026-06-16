@@ -62,6 +62,10 @@ def test_controller_emits_and_updates_without_app():
     assert seen and seen[-1] is theme.DARK
 
 
+def test_instance_returns_singleton():
+    assert theme.ThemeController.instance() is theme.ThemeController.instance()
+
+
 def test_apply_theme_sets_palette_and_stylesheet():
     from PySide6.QtGui import QPalette
     from PySide6.QtWidgets import QApplication

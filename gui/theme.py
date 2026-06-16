@@ -112,7 +112,7 @@ def build_qss(p: Palette) -> str:
         selection-background-color: {p.accent};
         selection-color: {p.accent_on};
     }}
-    QLineEdit:focus, QAbstractSpinBox:focus, QComboBox:focus, QPlainTextEdit:focus {{
+    QLineEdit:focus, QAbstractSpinBox:focus, QComboBox:focus, QPlainTextEdit:focus, QTextEdit:focus {{
         border: 1px solid {p.accent};
     }}
     QPushButton {{
@@ -170,6 +170,7 @@ def build_qss(p: Palette) -> str:
     QProgressBar::chunk {{ background: {p.accent}; border-radius: 6px; }}
     QLabel[role="muted"] {{ color: {p.ink_muted}; }}
     QLabel[role="error"] {{ color: {p.error}; }}
+    QLabel[role="warning"] {{ color: {p.warning}; }}
     QLabel[role="calib"] {{ color: {p.error}; font-weight: bold; }}
     QLabel[role="notes"] {{ color: {p.error}; font-style: italic; }}
     QLabel[role="group-header"] {{ font-weight: bold; color: {p.ink}; }}
@@ -236,6 +237,7 @@ def apply_theme(app: QApplication, mode: str) -> Palette:
 class ThemeController(QObject):
     """Process-wide theme state. Applies a mode and notifies embedded canvases."""
 
+    # Palette isn't a registered Qt metatype, so the signal carries it as object.
     themeChanged = Signal(object)  # emits the active Palette
 
     _instance: "ThemeController | None" = None
