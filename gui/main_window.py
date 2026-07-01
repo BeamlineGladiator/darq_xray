@@ -36,6 +36,7 @@ from .experiment_panel import ExperimentPanel
 from .overview_page import OverviewPage
 from .stage_view import StageView
 from .theme import ThemeController
+from .window_state import WindowState
 
 _GLYPH_IDLE = "—"
 _GLYPH_RUNNING = "▶"
@@ -50,6 +51,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("DFXM pipeline")
         self.resize(1100, 720)
+        self._window_state = WindowState()
 
         # Session-wide publication style — seeded from the module constant but
         # held as an independent copy so mutations never touch PUBLICATION_STYLE.
@@ -134,6 +136,12 @@ class MainWindow(QMainWindow):
         splitter.setSizes([380, 720])
         self.setCentralWidget(splitter)
 
+        self._main_splitter = splitter
+        for name in STAGE_ORDER:
+            self._window_state.register_stage_splitter(self._views[name].inner_splitter)
+
+        self._window_state.restore(self, self._main_splitter)
+
     # -- global plot style --------------------------------------------------
 
     def global_plot_style(self) -> PlotStyle:
@@ -205,6 +213,10 @@ class MainWindow(QMainWindow):
             return
         self._nav.setCurrentRow(self._row_target.index(name))
         self._stack.setCurrentWidget(view)
+
+    def closeEvent(self, event) -> None:  # Qt hook
+        self._window_state.save(self, self._main_splitter)
+        super().closeEvent(event)
 
     # -- slots ----------------------------------------------------------------
     def _on_experiment_changed(self, experiment: Experiment) -> None:

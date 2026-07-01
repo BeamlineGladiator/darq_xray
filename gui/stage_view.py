@@ -40,6 +40,7 @@ from .widgets.help_panel import HelpPanel
 from .widgets.log_console import LogConsole
 from .widgets.param_form import ParamForm
 from .widgets.volume3d import Volume3DPanel
+from .window_state import DEFAULT_STAGE_SIZES
 
 _POLL_MS = 50
 
@@ -111,6 +112,7 @@ class StageView(QWidget):
         self._help = HelpPanel()
         self._help.set_idle(spec.label, spec.description)
         self._form.focusedParamChanged.connect(self._help.show_param)
+        self._form.focusCleared.connect(self._help.show_idle)
 
         left = QWidget()
         left_layout = QVBoxLayout(left)
@@ -176,12 +178,17 @@ class StageView(QWidget):
         splitter = QSplitter()
         splitter.addWidget(left_scroll)
         splitter.addWidget(right)
-        splitter.setStretchFactor(0, 0)
+        splitter.setStretchFactor(0, 1)
         splitter.setStretchFactor(1, 1)
-        splitter.setSizes([360, 600])
+        splitter.setSizes(list(DEFAULT_STAGE_SIZES))
+        self.inner_splitter = splitter
 
         outer = QVBoxLayout(self)
         outer.addWidget(splitter)
+
+    def showEvent(self, event) -> None:  # Qt hook
+        super().showEvent(event)
+        self._help.show_idle()  # every stage opens on its description
 
     # -- experiment wiring ------------------------------------------------
     def _initial_values(self) -> dict:

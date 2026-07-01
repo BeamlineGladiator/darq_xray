@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QHBoxLayout,
     QLabel,
+    QMessageBox,
     QPushButton,
     QScrollArea,
     QVBoxLayout,
@@ -48,6 +49,7 @@ class ExperimentDialog(QDialog):
             "calibration constants and beamline HDF5 paths.",
         )
         self._form.focusedParamChanged.connect(help_panel.show_param)
+        self._form.focusCleared.connect(help_panel.show_idle)
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -60,6 +62,12 @@ class ExperimentDialog(QDialog):
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
         buttons.addButton(save_btn, QDialogButtonBox.ButtonRole.ActionRole)
+        compute_btn = QPushButton("Compute pixel size from scan…")
+        compute_btn.setToolTip(
+            "Read a raw (pre-darfix) scan .h5 and fill Pixel size X/Y from its motors"
+        )
+        compute_btn.clicked.connect(self._on_compute_pixel_size)
+        buttons.addButton(compute_btn, QDialogButtonBox.ButtonRole.ActionRole)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
 
@@ -77,6 +85,56 @@ class ExperimentDialog(QDialog):
         path, _ = QFileDialog.getSaveFileName(self, "Save preset", start, "YAML (*.yaml)")
         if path:
             presets.save_experiment(exp, path)
+
+    def _apply_pixel_size(self, path: str):
+        """Compute pixel sizes from *path* and write them into the form.
+
+        No dialogs — raises StageUserError on a user-fixable problem so the
+        caller can surface message/hint. Returns the PixelSizeResult.
+        """
+        from dfxm.common.pixel_size import compute_pixel_size
+
+        vals = self._form.values()
+        res = compute_pixel_size(
+            path,
+            positioners_path=vals.get("positioners_path") or "instrument/positioners",
+            entry_suffix=vals.get("entry_suffix") or ".1",
+        )
+        self._form.set_values(
+            {
+                "pixel_size_x_um": res.pixel_size_x_um,
+                "pixel_size_y_um": res.pixel_size_y_um,
+            }
+        )
+        return res
+
+    def _on_compute_pixel_size(self) -> None:
+        from dfxm.common.errors import StageUserError
+
+        vals = self._form.values()
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Pick a raw scan .h5", vals.get("raw_root") or "", "HDF5 (*.h5 *.hdf5)"
+        )
+        if not path:
+            return
+        try:
+            res = self._apply_pixel_size(path)
+        except StageUserError as exc:
+            QMessageBox.warning(self, "Compute pixel size", f"{exc}\n\n{exc.hint}")
+            return
+        except Exception as exc:  # noqa: BLE001 — unreadable/foreign file
+            QMessageBox.warning(self, "Compute pixel size", f"Could not read scan:\n{exc}")
+            return
+        QMessageBox.information(
+            self,
+            "Compute pixel size",
+            f"Objective {res.objective} (ffsel={res.ffsel:g})\n"
+            f"M = {res.magnification:.3f}\n"
+            f"2θ = {res.two_theta_deg:.3f}°\n"
+            f"condenser {'in' if res.condenser_in else 'out'}\n\n"
+            f"Pixel size X = {res.pixel_size_x_um:.4f} µm\n"
+            f"Pixel size Y = {res.pixel_size_y_um:.4f} µm",
+        )
 
 
 class ExperimentPanel(QWidget):
@@ -146,9 +204,12 @@ class ExperimentPanel(QWidget):
 
     def _on_edit(self) -> None:
         dlg = self._make_dialog()
-        if dlg.exec():
-            self._set_experiment(dlg.experiment())
-            self._reload_combo_keep_selection()
+        try:
+            if dlg.exec():
+                self._set_experiment(dlg.experiment())
+                self._reload_combo_keep_selection()
+        finally:
+            dlg.deleteLater()
 
     def _reload_combo_keep_selection(self) -> None:
         """Pick up presets Save-as may have written, without re-emitting."""

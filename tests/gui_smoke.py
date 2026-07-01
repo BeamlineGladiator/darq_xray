@@ -28,8 +28,23 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("QT_API", "pyside6")
 
+import tempfile as _tempfile_isolate  # noqa: E402
+
+from PySide6.QtCore import QSettings as _QSettingsIsolate  # noqa: E402
+from PySide6.QtWidgets import QApplication as _QAppIsolate  # noqa: E402
+
+_QAppIsolate.setOrganizationName("dfxm-smoke")
+_QAppIsolate.setApplicationName("pipeline-smoke")
+_QSettingsIsolate.setDefaultFormat(_QSettingsIsolate.Format.IniFormat)
+_QSettingsIsolate.setPath(
+    _QSettingsIsolate.Format.IniFormat,
+    _QSettingsIsolate.Scope.UserScope,
+    _tempfile_isolate.mkdtemp(),
+)
+
 import h5py  # noqa: E402
 import numpy as np  # noqa: E402
+import pytest  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 
@@ -196,14 +211,34 @@ def main() -> int:
     assert sform._adv_toggle.isChecked()
     print("[8] grouped forms: essentials/advanced split + value round-trip OK")
 
-    # Help panel follows focus and idles on the stage description.
+    # Help panel: idles on the stage description, follows focus, reverts on
+    # focus-clear, resets on stage switch; tooltips carry the same rich help.
     sview = win._views["strain"]
     assert "strain" in sview._help._label.text().lower()
     sview._form.focus_param("ccmth_ref_deg")
     app.processEvents()
     help_text = sview._help._label.text()
     assert "Bragg" in help_text and "calibration" in help_text.lower()
-    print("[9] help panel idles on description and follows focus")
+    # Focus leaving the fields reverts the panel to the stage description.
+    sview._form.focusCleared.emit()
+    app.processEvents()
+    assert sview._help._current is None
+    assert "strain" in sview._help._label.text().lower()
+    # Switching away and back resets the panel to the stage description.
+    sview._help.show_param(sview._spec.params[0])  # force it onto a field
+    assert sview._help._current is not None
+    win._stack.setCurrentWidget(win._overview)
+    app.processEvents()
+    win._stack.setCurrentWidget(sview)
+    app.processEvents()
+    assert sview._help._current is None  # showEvent reset it to idle
+    # Enriched hover tooltip on a calibration field.
+    tip = sview._form._editors["ccmth_ref_deg"].toolTip()
+    assert "Bragg" in tip and "calibration" in tip.lower()
+    # Restore the landing page for the later pipeline-rail/overview checks ([11]).
+    win._stack.setCurrentWidget(win._overview)
+    app.processEvents()
+    print("[9] help panel idles/follows/reverts/resets + enriched tooltips")
 
     # Compact experiment header: summary line + notes + Edit dialog.
     panel = win._experiment_panel
@@ -220,6 +255,33 @@ def main() -> int:
     app.processEvents()
     assert panel.current_experiment().description == "smoke-edited"
     print("[10] compact experiment header + edit dialog round-trip")
+
+    # [10b] Compute pixel size from a raw scan fills the two calibration fields.
+    import h5py as _h5py
+
+    _scan_dir = tempfile.mkdtemp()
+    _scan = os.path.join(_scan_dir, "mosa_scan.h5")
+    with _h5py.File(_scan, "w") as _f:
+        _pos = _f.create_group("1.1/instrument/positioners")
+        _pos.create_dataset("mainx", data=5000.0)
+        _pos.create_dataset("obx", data=273.0)
+        _pos.create_dataset("ffsel", data=-60.0)
+        _pos.create_dataset("ffz", data=2100.0)
+        _pos.create_dataset("lenssel", data=0.0)
+    pdlg = panel._make_dialog()
+    pdlg.show()
+    app.processEvents()
+    pres = pdlg._apply_pixel_size(_scan)  # no modal dialogs on this path
+    app.processEvents()
+    assert pres.objective == "2x" and pres.condenser_in is True
+    vals = pdlg._form.values()
+    # abs=1e-6: the pixel-size fields are QDoubleSpinBox(decimals=6), which
+    # rounds the stored value to 6 dp even on a programmatic setValue().
+    assert vals["pixel_size_x_um"] == pytest.approx(pres.pixel_size_x_um, abs=1e-6)
+    assert vals["pixel_size_y_um"] == pytest.approx(pres.pixel_size_y_um, abs=1e-6)
+    pdlg.reject()
+    app.processEvents()
+    print("[10b] compute-pixel-size button fills X/Y from a scan's motors")
 
     # Pipeline rail: Overview first, darfix row disabled, concat optional.
     from PySide6.QtCore import Qt as _Qt
@@ -287,7 +349,6 @@ def main() -> int:
 
     # Export dialog: build a figure spec, render a preview, export 3 formats.
     import os as _os
-    import tempfile
 
     import numpy as _np
     from matplotlib.figure import Figure as _Fig
@@ -565,6 +626,95 @@ def main() -> int:
     assert tc.mode == "light"
     mc.deleteLater()
     print("[20] theme toggle restyles app QSS + matplotlib canvas + rail; persistence path OK")
+
+    # [21] Stage splitters share one middle|right width via WindowState.
+    from PySide6.QtCore import QSettings as _QSettings
+    from PySide6.QtWidgets import QSplitter as _QSplitter
+    from PySide6.QtWidgets import QWidget as _QWidget
+
+    from gui.window_state import WindowState as _WindowState
+
+    _ws = _WindowState(_QSettings())
+    _a = _QSplitter()
+    _a.addWidget(_QWidget())
+    _a.addWidget(_QWidget())
+    _a.resize(1000, 200)
+    _a.show()
+    _b = _QSplitter()
+    _b.addWidget(_QWidget())
+    _b.addWidget(_QWidget())
+    _b.resize(1000, 200)
+    _b.show()
+    app.processEvents()
+    _ws.register_stage_splitter(_a)
+    _ws.register_stage_splitter(_b)
+    _a.setSizes([700, 300])
+    _a.splitterMoved.emit(700, 1)  # simulate a user drag
+    app.processEvents()
+    assert _b.sizes() == _a.sizes(), (_a.sizes(), _b.sizes())
+    # Real stage views expose an inner splitter registered with the window's
+    # WindowState: dragging one real splitter must persist through
+    # win._window_state (this assertion fails if MainWindow's registration loop
+    # is removed, because then nothing connects the real splitter's move to it).
+    assert win._views["strain"].inner_splitter is not None
+    win._stack.setCurrentWidget(win._views["mosaicity"])
+    app.processEvents()
+    real_src = win._views["mosaicity"].inner_splitter
+    real_src.setSizes([642, 358])
+    real_sizes = real_src.sizes()
+    real_src.splitterMoved.emit(642, 1)  # simulate a user drag on a real stage
+    app.processEvents()
+    assert win._window_state._saved_stage_sizes() == real_sizes, (
+        win._window_state._saved_stage_sizes(),
+        real_sizes,
+    )
+    _a.deleteLater()
+    _b.deleteLater()
+    app.processEvents()
+    print("[21] shared stage-splitter width via WindowState")
+
+    # [22] WindowState saves geometry and restores without raising.
+    from PySide6.QtCore import QSettings as _QSettings22
+    from PySide6.QtWidgets import QMainWindow as _QMainWindow22
+    from PySide6.QtWidgets import QSplitter as _QSplitter22
+    from PySide6.QtWidgets import QWidget as _QWidget22
+
+    from gui.window_state import WindowState as _WindowState22
+
+    _iso = _QSettings22()
+    _ws22 = _WindowState22(_iso)
+    _w1 = _QMainWindow22()
+    _w1.resize(900, 640)
+    _w1.show()
+    app.processEvents()
+    _ms1 = _QSplitter22()
+    _ms1.addWidget(_QWidget22())
+    _ms1.addWidget(_QWidget22())
+    _ws22.save(_w1, _ms1)
+    assert _iso.value("geometry") is not None
+    _w2 = _QMainWindow22()
+    _ms2 = _QSplitter22()
+    _ms2.addWidget(_QWidget22())
+    _ms2.addWidget(_QWidget22())
+    _ws22.restore(_w2, _ms2)  # must not raise
+    app.processEvents()
+    # MainWindow persists on close using the app-wide (isolated) settings.
+    # Prove the REAL MainWindow persists on close (not the standalone _ws22 above):
+    # clear the shared in-process key first, so only MainWindow.closeEvent can
+    # re-set it. This fails if MainWindow's closeEvent/save wiring is removed.
+    _probe = _QSettings22()
+    _probe.remove("geometry")
+    _probe.sync()
+    assert _probe.value("geometry") is None
+    win.resize(880, 610)
+    app.processEvents()
+    win.close()  # MainWindow.closeEvent -> self._window_state.save(...)
+    app.processEvents()
+    assert _QSettings22().value("geometry") is not None
+    _w1.deleteLater()
+    _w2.deleteLater()
+    app.processEvents()
+    print("[22] window geometry + splitter state persist/restore")
 
     print("\nGUI SMOKE PASSED")
     return 0

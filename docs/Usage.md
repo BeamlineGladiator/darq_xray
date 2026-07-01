@@ -87,6 +87,12 @@ the left column, beside *Publication style…*. Your choice is remembered betwee
 sessions. Switching theme only affects the on-screen app and the embedded
 plot/3-D viewers — exported figures are always written on a white background.
 
+The window remembers its size, position and maximized state between runs, along
+with the left-rail width and the shared middle/right column width — so the layout
+you set stays put next time you open the app. Drag the divider between the
+parameter form and the Log/Results/Output panel to rebalance them; the new width
+applies to every stage and is remembered.
+
 ### Experiment presets
 
 An **experiment** captures everything shared across stages: data roots, folder
@@ -97,6 +103,13 @@ paths. Define it once; every stage inherits it. Presets are YAML files in
 > [!tip]
 > Editing a calibration field updates only this session until you **Save as…**.
 > Keep one preset per sample/beamtime.
+
+The experiment editor has a **Compute pixel size from scan…** button: pick a raw
+(pre-darfix) scan `.h5` and it reads the far-field motors (`mainx`, `obx`,
+`ffsel`, `ffz`, `lenssel`) and fills **Pixel size X** and **Pixel size Y** for
+you, reporting the magnification, 2θ, the detected objective (2× / 10×) and
+whether the condenser was in. Any unrecognized `ffsel` leaves the fields
+untouched and explains what to set manually.
 
 ### Shared project state & auto-chaining
 
@@ -119,6 +132,11 @@ Every stage uses the same layout:
 | **Results** tab | A text summary of what was produced — including every skipped layer/input and the reason. |
 | **Output** tab | A representative image preview. |
 | **3D** tab | (visualize & rocking only) interactive volume viewer — see [[#Interactive viewers]]. |
+
+A help box under the form shows the current stage's description by default. Click
+a field and it shows that field's help; click away (or open another stage) and it
+returns to the stage description. The same per-field help is also available as a
+hover tooltip on each field and its label.
 
 ---
 
