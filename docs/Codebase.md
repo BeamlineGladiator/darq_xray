@@ -160,6 +160,18 @@ Stage-agnostic HDF5 I/O (used mostly by [[#concat.py]]).
 | `read_samy_samz(h5f, group, …)` | The `samy`/`samz` stages specifically. |
 | `MapsValidation` + `validate_maps_file(path, required)` | Bracket darfix: check a `maps.h5` has the required COM datasets *without raising* (returns a result object that is truthy when valid). |
 
+#### `pixel_size.py` (new)
+`compute_pixel_size(scan_h5, positioners_path="instrument/positioners",
+entry_suffix=".1") -> PixelSizeResult`. Reads the far-field geometry motors
+(`mainx`, `obx`, `ffsel`, `ffz`, `lenssel`) from the first matching entry of a
+raw (pre-darfix) scan and derives the effective detector pixel size:
+`M = mainx/obx − 1`, `E_x = base/M` (base 3.25 for 2× at `ffsel=−60`, 0.65 for
+10× at `ffsel=0`), `2θ = arctan(ffz/mainx)`, and `E_y = E_x/sin(2θ)` when the
+condenser is in (`lenssel=0`) else `E_y = E_x`. Raises `StageUserError` for a
+missing entry/motor, an unrecognized `ffsel`, or a non-physical magnification.
+`PixelSizeResult` carries both pixel sizes plus `magnification`,
+`two_theta_deg`, `objective`, `condenser_in`, and the raw motor values.
+
 #### `alignment.py`
 The **single source of truth** for putting volumes into the shared world frame.
 The fixed order is `abs(FWHM) → ROI → samy X-shift → uniform-Z interp → centre`.
