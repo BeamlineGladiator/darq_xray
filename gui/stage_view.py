@@ -111,6 +111,7 @@ class StageView(QWidget):
         self._help = HelpPanel()
         self._help.set_idle(spec.label, spec.description)
         self._form.focusedParamChanged.connect(self._help.show_param)
+        self._form.focusCleared.connect(self._help.show_idle)
 
         left = QWidget()
         left_layout = QVBoxLayout(left)
@@ -182,6 +183,10 @@ class StageView(QWidget):
 
         outer = QVBoxLayout(self)
         outer.addWidget(splitter)
+
+    def showEvent(self, event) -> None:  # Qt hook
+        super().showEvent(event)
+        self._help.show_idle()  # every stage opens on its description
 
     # -- experiment wiring ------------------------------------------------
     def _initial_values(self) -> dict:

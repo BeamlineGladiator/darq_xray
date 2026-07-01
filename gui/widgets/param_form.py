@@ -20,6 +20,7 @@ from typing import Any, Callable
 
 from PySide6.QtCore import QEvent, QObject, Qt, Signal
 from PySide6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QComboBox,
     QDoubleSpinBox,
@@ -38,6 +39,9 @@ from PySide6.QtWidgets import (
 
 from dfxm.config.models import Param, ParamType
 
+from ..theme import ThemeController
+from .help_panel import param_help_html
+
 _FLOAT_RANGE = (-1.0e12, 1.0e12)
 _INT_RANGE = (-(2**31) + 1, 2**31 - 1)
 
@@ -53,6 +57,7 @@ class ParamForm(QWidget):
 
     changed = Signal()
     focusedParamChanged = Signal(object)  # the focused Param
+    focusCleared = Signal()  # focus left every field in this form
 
     def __init__(
         self,
@@ -107,12 +112,18 @@ class ParamForm(QWidget):
             outer.addWidget(self._adv_toggle)
             outer.addWidget(self._adv_box)
 
+        app = QApplication.instance()
+        if app is not None:
+            app.focusChanged.connect(self._on_focus_changed)
+
     def _make_editor(self, p: Param, initial: dict[str, Any]) -> QWidget:
         editor = self._build_editor(p, initial.get(p.name, p.default))
         self._editors[p.name] = editor
+        tip = param_help_html(p, ThemeController.instance().palette.error)
         for w in (editor, *editor.findChildren(QWidget)):
             w.installEventFilter(self)
             self._param_for_widget[w] = p
+            w.setToolTip(tip)
         return editor
 
     def _on_adv_toggled(self, checked: bool) -> None:
@@ -126,6 +137,12 @@ class ParamForm(QWidget):
         if event.type() == QEvent.Type.FocusIn and obj in self._param_for_widget:
             self.focusedParamChanged.emit(self._param_for_widget[obj])
         return super().eventFilter(obj, event)
+
+    def _on_focus_changed(self, old: QObject, new: QObject) -> None:  # Qt slot
+        # Only react when focus leaves one of *our* fields for something that
+        # is not one of our fields -> revert the help panel to the stage text.
+        if old in self._param_for_widget and new not in self._param_for_widget:
+            self.focusCleared.emit()
 
     def focus_param(self, name: str) -> None:
         """Reveal (if advanced) and focus the editor for *name*."""
@@ -163,8 +180,7 @@ class ParamForm(QWidget):
         lbl = QLabel(text)
         if p.calibration:
             lbl.setProperty("role", "calib")
-        if p.help:
-            lbl.setToolTip(p.help)
+        lbl.setToolTip(param_help_html(p, ThemeController.instance().palette.error))
         return lbl
 
     # -- editors ----------------------------------------------------------
@@ -195,8 +211,6 @@ class ParamForm(QWidget):
         box.addItems(choices)
         if value is not None and str(value) in choices:
             box.setCurrentText(str(value))
-        if p.help:
-            box.setToolTip(p.help)
         self._register(
             p.name, box.currentText, lambda v: box.setCurrentText(str(v)), box.currentTextChanged
         )
@@ -205,8 +219,6 @@ class ParamForm(QWidget):
     def _bool_editor(self, p: Param, value: Any) -> QWidget:
         cb = QCheckBox()
         cb.setChecked(bool(value))
-        if p.help:
-            cb.setToolTip(p.help)
         self._register(p.name, cb.isChecked, lambda v: cb.setChecked(bool(v)), cb.toggled)
         return cb
 
@@ -215,8 +227,6 @@ class ParamForm(QWidget):
         sb.setRange(*_INT_RANGE)
         if value is not None:
             sb.setValue(int(value))
-        if p.help:
-            sb.setToolTip(p.help)
         self._register(p.name, sb.value, lambda v: sb.setValue(int(v)), sb.valueChanged)
         return sb
 
@@ -227,8 +237,6 @@ class ParamForm(QWidget):
         sb.setSingleStep(0.001)
         if value is not None:
             sb.setValue(float(value))
-        if p.help:
-            sb.setToolTip(p.help)
         self._register(p.name, sb.value, lambda v: sb.setValue(float(v)), sb.valueChanged)
         return sb
 
@@ -236,8 +244,6 @@ class ParamForm(QWidget):
         le = QLineEdit()
         if value is not None:
             le.setText(str(value))
-        if p.help:
-            le.setToolTip(p.help)
         self._register(p.name, le.text, lambda v: le.setText(str(v)), le.textChanged)
         return le
 
@@ -246,8 +252,6 @@ class ParamForm(QWidget):
         te.setMinimumHeight(120)
         if value is not None:
             te.setPlainText(str(value))
-        if p.help:
-            te.setToolTip(p.help)
         self._register(p.name, te.toPlainText, lambda v: te.setPlainText(str(v)), te.textChanged)
         return te
 
@@ -258,8 +262,6 @@ class ParamForm(QWidget):
         le = QLineEdit()
         if value is not None:
             le.setText(str(value))
-        if p.help:
-            le.setToolTip(p.help)
         browse = QPushButton("Browse…")
 
         def pick() -> None:

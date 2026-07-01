@@ -127,6 +127,11 @@ Every stage uses the same layout:
 | **Output** tab | A representative image preview. |
 | **3D** tab | (visualize & rocking only) interactive volume viewer — see [[#Interactive viewers]]. |
 
+A help box under the form shows the current stage's description by default. Click
+a field and it shows that field's help; click away (or open another stage) and it
+returns to the stage description. The same per-field help is also available as a
+hover tooltip on each field and its label.
+
 ---
 
 ## The pipeline at a glance

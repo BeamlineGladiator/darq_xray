@@ -197,14 +197,34 @@ def main() -> int:
     assert sform._adv_toggle.isChecked()
     print("[8] grouped forms: essentials/advanced split + value round-trip OK")
 
-    # Help panel follows focus and idles on the stage description.
+    # Help panel: idles on the stage description, follows focus, reverts on
+    # focus-clear, resets on stage switch; tooltips carry the same rich help.
     sview = win._views["strain"]
     assert "strain" in sview._help._label.text().lower()
     sview._form.focus_param("ccmth_ref_deg")
     app.processEvents()
     help_text = sview._help._label.text()
     assert "Bragg" in help_text and "calibration" in help_text.lower()
-    print("[9] help panel idles on description and follows focus")
+    # Focus leaving the fields reverts the panel to the stage description.
+    sview._form.focusCleared.emit()
+    app.processEvents()
+    assert sview._help._current is None
+    assert "strain" in sview._help._label.text().lower()
+    # Switching away and back resets the panel to the stage description.
+    sview._help.show_param(sview._spec.params[0])  # force it onto a field
+    assert sview._help._current is not None
+    win._stack.setCurrentWidget(win._overview)
+    app.processEvents()
+    win._stack.setCurrentWidget(sview)
+    app.processEvents()
+    assert sview._help._current is None  # showEvent reset it to idle
+    # Enriched hover tooltip on a calibration field.
+    tip = sview._form._editors["ccmth_ref_deg"].toolTip()
+    assert "Bragg" in tip and "calibration" in tip.lower()
+    # Restore the landing page for the later pipeline-rail/overview checks ([11]).
+    win._stack.setCurrentWidget(win._overview)
+    app.processEvents()
+    print("[9] help panel idles/follows/reverts/resets + enriched tooltips")
 
     # Compact experiment header: summary line + notes + Edit dialog.
     panel = win._experiment_panel

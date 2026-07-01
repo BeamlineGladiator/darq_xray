@@ -49,6 +49,7 @@ class ExperimentDialog(QDialog):
             "calibration constants and beamline HDF5 paths.",
         )
         self._form.focusedParamChanged.connect(help_panel.show_param)
+        self._form.focusCleared.connect(help_panel.show_idle)
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)

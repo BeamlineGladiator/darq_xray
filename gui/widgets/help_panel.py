@@ -17,6 +17,31 @@ from dfxm.config.models import Param
 from ..theme import ThemeController
 
 
+def param_help_html(p: Param, error_color: str | None = None) -> str:
+    """Rich-text help for *p*: label (+unit), calibration note, help text.
+
+    The calibration note is coloured with *error_color* when given (the help
+    panel), otherwise rendered plain (tooltips, which do not restyle on theme
+    change).
+    """
+    head = f"<b>{html.escape(p.label)}</b>"
+    if p.unit:
+        head += f" ({html.escape(p.unit)})"
+    parts = [head]
+    if p.calibration:
+        warn = (
+            "⚠ calibration — physically meaningful; confirm against the beamline "
+            "calibration for your experiment."
+        )
+        if error_color:
+            parts.append(f'<span style="color:{error_color};">{warn}</span>')
+        else:
+            parts.append(warn)
+    if p.help:
+        parts.append(html.escape(p.help))
+    return "<br>".join(parts)
+
+
 class HelpPanel(QFrame):
     """Styled read-only box explaining the focused parameter."""
 
@@ -38,13 +63,6 @@ class HelpPanel(QFrame):
         self._error_color = palette.error
         self._render()
 
-    def _cal_warning(self) -> str:
-        return (
-            f'<span style="color:{self._error_color};">⚠ calibration — physically '
-            "meaningful; confirm against the beamline calibration for your "
-            "experiment.</span>"
-        )
-
     def set_idle(self, title: str, description: str) -> None:
         """Set (and show) the text used when no field is focused."""
         self._idle_html = f"<b>{html.escape(title)}</b> — {html.escape(description)}"
@@ -63,13 +81,4 @@ class HelpPanel(QFrame):
         if self._current is None:
             self._label.setText(self._idle_html)
             return
-        p = self._current
-        head = f"<b>{html.escape(p.label)}</b>"
-        if p.unit:
-            head += f" ({html.escape(p.unit)})"
-        parts = [head]
-        if p.calibration:
-            parts.append(self._cal_warning())
-        if p.help:
-            parts.append(html.escape(p.help))
-        self._label.setText("<br>".join(parts))
+        self._label.setText(param_help_html(self._current, self._error_color))
