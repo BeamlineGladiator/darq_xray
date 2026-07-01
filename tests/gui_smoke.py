@@ -30,6 +30,7 @@ os.environ.setdefault("QT_API", "pyside6")
 
 import h5py  # noqa: E402
 import numpy as np  # noqa: E402
+import pytest  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 
@@ -221,6 +222,33 @@ def main() -> int:
     assert panel.current_experiment().description == "smoke-edited"
     print("[10] compact experiment header + edit dialog round-trip")
 
+    # [10b] Compute pixel size from a raw scan fills the two calibration fields.
+    import h5py as _h5py
+
+    _scan_dir = tempfile.mkdtemp()
+    _scan = os.path.join(_scan_dir, "mosa_scan.h5")
+    with _h5py.File(_scan, "w") as _f:
+        _pos = _f.create_group("1.1/instrument/positioners")
+        _pos.create_dataset("mainx", data=5000.0)
+        _pos.create_dataset("obx", data=273.0)
+        _pos.create_dataset("ffsel", data=-60.0)
+        _pos.create_dataset("ffz", data=2100.0)
+        _pos.create_dataset("lenssel", data=0.0)
+    pdlg = panel._make_dialog()
+    pdlg.show()
+    app.processEvents()
+    pres = pdlg._apply_pixel_size(_scan)  # no modal dialogs on this path
+    app.processEvents()
+    assert pres.objective == "2x" and pres.condenser_in is True
+    vals = pdlg._form.values()
+    # abs=1e-6: the pixel-size fields are QDoubleSpinBox(decimals=6), which
+    # rounds the stored value to 6 dp even on a programmatic setValue().
+    assert vals["pixel_size_x_um"] == pytest.approx(pres.pixel_size_x_um, abs=1e-6)
+    assert vals["pixel_size_y_um"] == pytest.approx(pres.pixel_size_y_um, abs=1e-6)
+    pdlg.reject()
+    app.processEvents()
+    print("[10b] compute-pixel-size button fills X/Y from a scan's motors")
+
     # Pipeline rail: Overview first, darfix row disabled, concat optional.
     from PySide6.QtCore import Qt as _Qt
 
@@ -287,7 +315,6 @@ def main() -> int:
 
     # Export dialog: build a figure spec, render a preview, export 3 formats.
     import os as _os
-    import tempfile
 
     import numpy as _np
     from matplotlib.figure import Figure as _Fig

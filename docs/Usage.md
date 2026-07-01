@@ -98,6 +98,13 @@ paths. Define it once; every stage inherits it. Presets are YAML files in
 > Editing a calibration field updates only this session until you **Save as…**.
 > Keep one preset per sample/beamtime.
 
+The experiment editor has a **Compute pixel size from scan…** button: pick a raw
+(pre-darfix) scan `.h5` and it reads the far-field motors (`mainx`, `obx`,
+`ffsel`, `ffz`, `lenssel`) and fills **Pixel size X** and **Pixel size Y** for
+you, reporting the magnification, 2θ, the detected objective (2× / 10×) and
+whether the condenser was in. Any unrecognized `ffsel` leaves the fields
+untouched and explains what to set manually.
+
 ### Shared project state & auto-chaining
 
 Each stage's form is pre-filled from the experiment, and **an upstream stage's
