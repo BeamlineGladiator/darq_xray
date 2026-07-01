@@ -613,6 +613,42 @@ def main() -> int:
     mc.deleteLater()
     print("[20] theme toggle restyles app QSS + matplotlib canvas + rail; persistence path OK")
 
+    # [21] Stage splitters share one middle|right width via WindowState.
+    from PySide6.QtCore import QSettings as _QSettings
+    from PySide6.QtWidgets import QSplitter as _QSplitter
+    from PySide6.QtWidgets import QWidget as _QWidget
+
+    from gui.window_state import WindowState as _WindowState
+
+    _ws = _WindowState(_QSettings())
+    _a = _QSplitter()
+    _a.addWidget(_QWidget())
+    _a.addWidget(_QWidget())
+    _a.resize(1000, 200)
+    _a.show()
+    _b = _QSplitter()
+    _b.addWidget(_QWidget())
+    _b.addWidget(_QWidget())
+    _b.resize(1000, 200)
+    _b.show()
+    app.processEvents()
+    _ws.register_stage_splitter(_a)
+    _ws.register_stage_splitter(_b)
+    _a.setSizes([700, 300])
+    _a.splitterMoved.emit(700, 1)  # simulate a user drag
+    app.processEvents()
+    assert _b.sizes() == _a.sizes(), (_a.sizes(), _b.sizes())
+    # Real stage views expose an inner splitter and share the same sizes.
+    assert win._views["strain"].inner_splitter is not None
+    assert (
+        win._views["strain"].inner_splitter.sizes()
+        == win._views["mosaicity"].inner_splitter.sizes()
+    )
+    _a.deleteLater()
+    _b.deleteLater()
+    app.processEvents()
+    print("[21] shared stage-splitter width via WindowState")
+
     print("\nGUI SMOKE PASSED")
     return 0
 

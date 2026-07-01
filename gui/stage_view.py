@@ -40,6 +40,7 @@ from .widgets.help_panel import HelpPanel
 from .widgets.log_console import LogConsole
 from .widgets.param_form import ParamForm
 from .widgets.volume3d import Volume3DPanel
+from .window_state import DEFAULT_STAGE_SIZES
 
 _POLL_MS = 50
 
@@ -177,9 +178,10 @@ class StageView(QWidget):
         splitter = QSplitter()
         splitter.addWidget(left_scroll)
         splitter.addWidget(right)
-        splitter.setStretchFactor(0, 0)
+        splitter.setStretchFactor(0, 1)
         splitter.setStretchFactor(1, 1)
-        splitter.setSizes([360, 600])
+        splitter.setSizes(list(DEFAULT_STAGE_SIZES))
+        self.inner_splitter = splitter
 
         outer = QVBoxLayout(self)
         outer.addWidget(splitter)
