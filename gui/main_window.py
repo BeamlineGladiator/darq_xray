@@ -140,6 +140,8 @@ class MainWindow(QMainWindow):
         for name in STAGE_ORDER:
             self._window_state.register_stage_splitter(self._views[name].inner_splitter)
 
+        self._window_state.restore(self, self._main_splitter)
+
     # -- global plot style --------------------------------------------------
 
     def global_plot_style(self) -> PlotStyle:
@@ -211,6 +213,10 @@ class MainWindow(QMainWindow):
             return
         self._nav.setCurrentRow(self._row_target.index(name))
         self._stack.setCurrentWidget(view)
+
+    def closeEvent(self, event) -> None:  # Qt hook
+        self._window_state.save(self, self._main_splitter)
+        super().closeEvent(event)
 
     # -- slots ----------------------------------------------------------------
     def _on_experiment_changed(self, experiment: Experiment) -> None:

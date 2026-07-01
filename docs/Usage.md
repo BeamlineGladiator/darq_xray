@@ -87,6 +87,12 @@ the left column, beside *Publication style…*. Your choice is remembered betwee
 sessions. Switching theme only affects the on-screen app and the embedded
 plot/3-D viewers — exported figures are always written on a white background.
 
+The window remembers its size, position and maximized state between runs, along
+with the left-rail width and the shared middle/right column width — so the layout
+you set stays put next time you open the app. Drag the divider between the
+parameter form and the Log/Results/Output panel to rebalance them; the new width
+applies to every stage and is remembered.
+
 ### Experiment presets
 
 An **experiment** captures everything shared across stages: data roots, folder

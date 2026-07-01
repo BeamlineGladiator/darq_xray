@@ -28,6 +28,20 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("QT_API", "pyside6")
 
+import tempfile as _tempfile_isolate  # noqa: E402
+
+from PySide6.QtCore import QSettings as _QSettingsIsolate  # noqa: E402
+from PySide6.QtWidgets import QApplication as _QAppIsolate  # noqa: E402
+
+_QAppIsolate.setOrganizationName("dfxm-smoke")
+_QAppIsolate.setApplicationName("pipeline-smoke")
+_QSettingsIsolate.setDefaultFormat(_QSettingsIsolate.Format.IniFormat)
+_QSettingsIsolate.setPath(
+    _QSettingsIsolate.Format.IniFormat,
+    _QSettingsIsolate.Scope.UserScope,
+    _tempfile_isolate.mkdtemp(),
+)
+
 import h5py  # noqa: E402
 import numpy as np  # noqa: E402
 import pytest  # noqa: E402
@@ -658,6 +672,40 @@ def main() -> int:
     _b.deleteLater()
     app.processEvents()
     print("[21] shared stage-splitter width via WindowState")
+
+    # [22] WindowState saves geometry and restores without raising.
+    from PySide6.QtCore import QSettings as _QSettings22
+    from PySide6.QtWidgets import QMainWindow as _QMainWindow22
+    from PySide6.QtWidgets import QSplitter as _QSplitter22
+    from PySide6.QtWidgets import QWidget as _QWidget22
+
+    from gui.window_state import WindowState as _WindowState22
+
+    _iso = _QSettings22()
+    _ws22 = _WindowState22(_iso)
+    _w1 = _QMainWindow22()
+    _w1.resize(900, 640)
+    _w1.show()
+    app.processEvents()
+    _ms1 = _QSplitter22()
+    _ms1.addWidget(_QWidget22())
+    _ms1.addWidget(_QWidget22())
+    _ws22.save(_w1, _ms1)
+    assert _iso.value("geometry") is not None
+    _w2 = _QMainWindow22()
+    _ms2 = _QSplitter22()
+    _ms2.addWidget(_QWidget22())
+    _ms2.addWidget(_QWidget22())
+    _ws22.restore(_w2, _ms2)  # must not raise
+    app.processEvents()
+    # MainWindow persists on close using the app-wide (isolated) settings.
+    win.close()
+    app.processEvents()
+    assert _QSettings22().value("geometry") is not None
+    _w1.deleteLater()
+    _w2.deleteLater()
+    app.processEvents()
+    print("[22] window geometry + splitter state persist/restore")
 
     print("\nGUI SMOKE PASSED")
     return 0
