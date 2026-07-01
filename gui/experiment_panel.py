@@ -204,9 +204,12 @@ class ExperimentPanel(QWidget):
 
     def _on_edit(self) -> None:
         dlg = self._make_dialog()
-        if dlg.exec():
-            self._set_experiment(dlg.experiment())
-            self._reload_combo_keep_selection()
+        try:
+            if dlg.exec():
+                self._set_experiment(dlg.experiment())
+                self._reload_combo_keep_selection()
+        finally:
+            dlg.deleteLater()
 
     def _reload_combo_keep_selection(self) -> None:
         """Pick up presets Save-as may have written, without re-emitting."""
