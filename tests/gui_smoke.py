@@ -638,11 +638,21 @@ def main() -> int:
     _a.splitterMoved.emit(700, 1)  # simulate a user drag
     app.processEvents()
     assert _b.sizes() == _a.sizes(), (_a.sizes(), _b.sizes())
-    # Real stage views expose an inner splitter and share the same sizes.
+    # Real stage views expose an inner splitter registered with the window's
+    # WindowState: dragging one real splitter must persist through
+    # win._window_state (this assertion fails if MainWindow's registration loop
+    # is removed, because then nothing connects the real splitter's move to it).
     assert win._views["strain"].inner_splitter is not None
-    assert (
-        win._views["strain"].inner_splitter.sizes()
-        == win._views["mosaicity"].inner_splitter.sizes()
+    win._stack.setCurrentWidget(win._views["mosaicity"])
+    app.processEvents()
+    real_src = win._views["mosaicity"].inner_splitter
+    real_src.setSizes([642, 358])
+    real_sizes = real_src.sizes()
+    real_src.splitterMoved.emit(642, 1)  # simulate a user drag on a real stage
+    app.processEvents()
+    assert win._window_state._saved_stage_sizes() == real_sizes, (
+        win._window_state._saved_stage_sizes(),
+        real_sizes,
     )
     _a.deleteLater()
     _b.deleteLater()
