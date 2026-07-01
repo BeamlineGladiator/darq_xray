@@ -699,7 +699,16 @@ def main() -> int:
     _ws22.restore(_w2, _ms2)  # must not raise
     app.processEvents()
     # MainWindow persists on close using the app-wide (isolated) settings.
-    win.close()
+    # Prove the REAL MainWindow persists on close (not the standalone _ws22 above):
+    # clear the shared in-process key first, so only MainWindow.closeEvent can
+    # re-set it. This fails if MainWindow's closeEvent/save wiring is removed.
+    _probe = _QSettings22()
+    _probe.remove("geometry")
+    _probe.sync()
+    assert _probe.value("geometry") is None
+    win.resize(880, 610)
+    app.processEvents()
+    win.close()  # MainWindow.closeEvent -> self._window_state.save(...)
     app.processEvents()
     assert _QSettings22().value("geometry") is not None
     _w1.deleteLater()
