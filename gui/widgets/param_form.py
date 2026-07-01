@@ -39,7 +39,6 @@ from PySide6.QtWidgets import (
 
 from dfxm.config.models import Param, ParamType
 
-from ..theme import ThemeController
 from .help_panel import param_help_html
 
 _FLOAT_RANGE = (-1.0e12, 1.0e12)
@@ -119,7 +118,7 @@ class ParamForm(QWidget):
     def _make_editor(self, p: Param, initial: dict[str, Any]) -> QWidget:
         editor = self._build_editor(p, initial.get(p.name, p.default))
         self._editors[p.name] = editor
-        tip = param_help_html(p, ThemeController.instance().palette.error)
+        tip = param_help_html(p)
         for w in (editor, *editor.findChildren(QWidget)):
             w.installEventFilter(self)
             self._param_for_widget[w] = p
@@ -180,7 +179,7 @@ class ParamForm(QWidget):
         lbl = QLabel(text)
         if p.calibration:
             lbl.setProperty("role", "calib")
-        lbl.setToolTip(param_help_html(p, ThemeController.instance().palette.error))
+        lbl.setToolTip(param_help_html(p))
         return lbl
 
     # -- editors ----------------------------------------------------------
