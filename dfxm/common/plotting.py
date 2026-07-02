@@ -296,6 +296,16 @@ def auto_scale_bar_length_um(ext_x: float) -> float:
     return nice * (10**exp)
 
 
+# Points of extra title clearance per unit of font_scale on constrained-layout
+# figures.  A colourbar's scientific-notation offset text (the "×10ⁿ" above its
+# ticks) sits just above the axes and grows with font_scale; constrained layout
+# does not account for that neighbouring artist when budgeting room for the title,
+# so the two can collide at large font_scale.  We compensate by expanding the
+# title's own pad proportionally — but only on constrained-layout figures.
+# Plain figures must keep matplotlib's default (6.0 pt) to avoid legacy-output drift.
+_TITLE_PAD_PER_FONT_SCALE = 12.0
+
+
 def apply_text_scale(ax, style: "PlotStyle") -> None:
     """Scale axis-label/tick fonts by ``style.font_scale`` and the title by the
     independent ``style.title_scale``; apply title/centre options."""
@@ -324,17 +334,19 @@ def apply_text_scale(ax, style: "PlotStyle") -> None:
     if not style.show_title:
         ax.set_title("")
     else:
-        # A colourbar's scientific-notation offset text (the "×10ⁿ" above its
-        # ticks) sits just above the axes, at a height that grows with
-        # ``font_scale``. matplotlib's constrained layout does not account
-        # for that neighbouring artist when it reserves room for the title,
-        # so at large font_scale the two can collide. Grow the title's own
-        # pad (the gap between it and the axes) proportionally to font_scale
-        # so there is always clearance, regardless of colourbar settings.
+        # Only grow the title pad on constrained-layout figures — that is where the
+        # ×10ⁿ offset-text clearance is needed.  Plain (no layout engine) figures
+        # must use pad=None so matplotlib's default (6.0 pt) is preserved; passing
+        # an explicit pad would silently drift legacy per-layer PNG output.
+        pad = (
+            _TITLE_PAD_PER_FONT_SCALE * fs
+            if ax.get_figure().get_layout_engine() is not None
+            else None
+        )
         ax.set_title(
             title.get_text(),
             fontsize=title.get_fontsize() * style.title_scale,
-            pad=12.0 * fs,
+            pad=pad,
         )
 
 

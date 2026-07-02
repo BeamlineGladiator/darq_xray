@@ -1,6 +1,7 @@
 from dataclasses import replace
 
 import numpy as np
+from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.figure import Figure
 
 from dfxm.common.plotting import (
@@ -14,6 +15,7 @@ from dfxm.common.plotting import (
     colorbar_tick_values,
     draw_scale_bar,
     figure_size,
+    styled_figure,
 )
 
 
@@ -373,3 +375,70 @@ def test_apply_round_clim_notes_and_gating():
     # asymmetric note shows both pairs
     _, _, note = apply_round_clim(0.0, 0.11, PlotStyle(round_clim=True))
     assert note == "colour limits rounded (0, 0.11) → (0, 0.15) (round_clim)"
+
+
+def _title_y0(fig, ax):
+    """Draw fig on Agg and return the title's bottom window-coord (y0)."""
+    canvas = FigureCanvasAgg(fig)
+    canvas.draw()
+    return ax.title.get_window_extent(canvas.get_renderer()).y0
+
+
+def test_apply_text_scale_does_not_change_title_pad_on_plain_figure():
+    """apply_text_scale must not alter the title pad on a non-constrained figure.
+
+    Before the fix, apply_text_scale unconditionally set pad=12.0*fs, doubling
+    matplotlib's default (6.0 pt) even on plain figures produced by layer_figure
+    with style=None — a silent legacy-output drift.
+    """
+    # Reference: untouched plain Figure with the same title (matplotlib default pad)
+    fig_ref = Figure(figsize=(6, 4))
+    ax_ref = fig_ref.add_subplot(111)
+    ax_ref.set_title("test title")
+    ref_y = _title_y0(fig_ref, ax_ref)
+
+    # Treated: plain Figure after apply_text_scale with a default PlotStyle
+    fig_treated = Figure(figsize=(6, 4))
+    ax_treated = fig_treated.add_subplot(111)
+    ax_treated.set_title("test title")
+    apply_text_scale(ax_treated, PlotStyle())  # font_scale=1.0, title_scale=1.0
+    treated_y = _title_y0(fig_treated, ax_treated)
+
+    assert treated_y == ref_y, (
+        f"apply_text_scale altered the title pad on a plain (non-constrained) figure "
+        f"(ref y0={ref_y:.3f}, treated y0={treated_y:.3f}) — legacy output drift"
+    )
+
+
+def test_apply_text_scale_increases_title_pad_on_constrained_figure():
+    """On a constrained-layout figure, apply_text_scale must increase the title pad.
+
+    The pad compensates for the ×10ⁿ colorbar-offset text that constrained layout
+    does not account for when reserving room for the title.  A colorbar with
+    scientific notation is needed here so the constrained-layout engine has actual
+    competing artists and the pad effect is visible in window coordinates.
+    """
+    style = PlotStyle(font_scale=2.2, colorbar_ticks=5, colorbar_tick_format="scientific")
+    data = np.linspace(-2e-3, 2e-3, 100).reshape(10, 10)
+
+    # Reference: constrained figure WITH colorbar but WITHOUT apply_text_scale
+    fig_ref = styled_figure((3.5, 3.0), styled=True)
+    ax_ref = fig_ref.add_subplot(111)
+    im_ref = ax_ref.imshow(data)
+    ax_ref.set_title("test title")
+    add_colorbar(fig_ref, im_ref, ax_ref, "label", style)
+    ref_y = _title_y0(fig_ref, ax_ref)
+
+    # Treated: same setup WITH apply_text_scale (pad should push title up)
+    fig_treated = styled_figure((3.5, 3.0), styled=True)
+    ax_treated = fig_treated.add_subplot(111)
+    im_treated = ax_treated.imshow(data)
+    ax_treated.set_title("test title")
+    add_colorbar(fig_treated, im_treated, ax_treated, "label", style)
+    apply_text_scale(ax_treated, style)
+    treated_y = _title_y0(fig_treated, ax_treated)
+
+    assert treated_y > ref_y, (
+        f"apply_text_scale should push the title up on a constrained-layout figure "
+        f"at large font_scale, but ref y0={ref_y:.3f} >= treated y0={treated_y:.3f}"
+    )
