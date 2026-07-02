@@ -299,7 +299,7 @@ Port of `stack_h5_darfix_volumes`. Stacks χ/μ Center-of-mass + FWHM maps.
 #### `rocking.py`
 Port of `build_aligned_raw_rocking_volumes_v3`. Aligned 3-D volumes straight
 from raw rocking scans, anchored to the mosaicity reference.
-- `RockingProducts` / `RockingResult` — per-volume render products + aligned path/shape/reference.
+- `RockingProducts` / `RockingResult` — per-volume render products + aligned path/shape/reference. `RockingProducts.notes` collects one entry per volume whose auto colour limits were rounded (when `round_clim` is set), surfaced in the run log and the Results summary.
 - `process_raw_scan(...)` — per-scan median **background subtraction** → integrated **sum** + one **specific frame**.
 - `build_raw_volumes(...)` — stack scans (sorted by samz) into two 3-D volumes.
 - `save_aligned_raw_volumes(...)` — write `aligned_raw_rocking_volumes.h5` (the schema [[#slices.py]] reads).
@@ -309,7 +309,7 @@ from raw rocking scans, anchored to the mosaicity reference.
 
 #### `visualize.py`
 Port of `visualize_aligned_volumes_v6`. Aligns the stacked volumes and renders.
-- `DatasetProducts` / `VisualizeResult`.
+- `DatasetProducts` / `VisualizeResult`. `DatasetProducts.notes` collects one entry per dataset whose auto colour limits were rounded (when `round_clim` is set — applies to each mosaicity dataset and to strain), surfaced in the run log and the Results summary.
 - Colour/centre helpers: `_symmetric_range`, `_midrange_clim`, `_center_com_and_range`, `_colorbar_range`, `_display_info` (title/label/**colormap group** per field: CoM → `mosa_com`, FWHM → `mosa_fwhm`, strain → `strain`, unknown → `None`).
 - `load_mosa_datasets` / `load_strain_volume`, `_align(...)` (reuses [[#`alignment.py`]]), `_process_dataset(..., style=None)` (threads the run's style into the layer PNGs/animation).
 - `run` → per-layer PNGs, animation, 3-D top-view; colormaps and figure styling come from the injected `plot_style` (via `style_from_params`/`resolve_cmap`).
