@@ -1421,3 +1421,40 @@ def test_profiles_colorbar_hidden_when_style_colorbar_false():
     assert len(colorbar_axes) == 0, (
         f"expected no colorbar axes with colorbar=False, got {len(colorbar_axes)}"
     )
+
+
+def test_volume_layer_specs_cmap_group_resolves_from_style(tmp_path):
+    import h5py
+    import numpy as np
+
+    from dfxm.common.figures import volume_layer_specs
+    from dfxm.common.plotting import PlotStyle
+
+    p = tmp_path / "v.h5"
+    with h5py.File(p, "w") as f:
+        f.create_dataset("vol", data=np.random.default_rng(0).random((2, 4, 5)))
+    common = dict(h5_path=str(p), dataset="vol", title="T", cbar_label="c",
+                  sx=1.0, sy=1.0, vmin=0.0, vmax=1.0)
+    specs = volume_layer_specs(id_prefix="t", cmap="magma", cmap_group="raw", **common)
+    fig = specs[0].build(PlotStyle(cmap_raw="viridis"))
+    assert fig.axes[0].images[0].cmap.name == "viridis"
+    # no group -> fixed cmap wins regardless of style
+    specs2 = volume_layer_specs(id_prefix="t2", cmap="bone", **common)
+    fig2 = specs2[0].build(PlotStyle(cmap_raw="viridis"))
+    assert fig2.axes[0].images[0].cmap.name == "bone"
+
+
+def test_save_layer_pngs_accepts_style(tmp_path):
+    import os
+
+    import numpy as np
+
+    from dfxm.common import render
+    from dfxm.common.plotting import PlotStyle
+
+    vol = np.zeros((1, 4, 5))
+    d = render.save_layer_pngs(
+        vol, [0.0], str(tmp_path), "x", 0, 1, "gray", "t", "c", 1.0, 1.0,
+        style=PlotStyle(font_scale=3.0),
+    )
+    assert os.path.exists(os.path.join(d, "layer_0000.png"))
