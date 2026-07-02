@@ -351,83 +351,63 @@ def apply_text_scale(ax, style: "PlotStyle") -> None:
 
 
 def draw_scale_bar(ax, length_um: float | None = None, *, style: "PlotStyle") -> None:
-    """Draw a µm scale bar (and optional background box) per *style*.
+    """Draw a µm scale bar (label centred over the bar, optional background box).
 
     *ax* must use data coordinates in microns. ``length_um=None`` auto-sizes.
+
+    Built on matplotlib's offsetbox machinery: the ``AnchoredOffsetbox`` frame
+    is laid out at draw time around the *rendered* label + bar, so the
+    background box hugs its content at any ``font_scale`` (exact even under
+    constrained layout, whose axes positions are only final at first draw),
+    and the ``VPacker`` centres label and bar on each other by construction.
     """
-    from matplotlib.patches import FancyBboxPatch, Rectangle
+    from matplotlib.font_manager import FontProperties
+    from matplotlib.offsetbox import AnchoredOffsetbox, AuxTransformBox, TextArea, VPacker
+    from matplotlib.patches import Rectangle
 
     x0, x1 = ax.get_xlim()
     y0, y1 = ax.get_ylim()
     xr, yr = (x1 - x0), (y1 - y0)
     sl = length_um if length_um is not None else auto_scale_bar_length_um(abs(xr))
     # Bar height in data coords: 0.004·thickness_pt·|yr| (≈0.012·|yr| at the
-    # default thickness_pt=3.0). This is the styled renderer's own geometry; it
-    # is close to, but NOT byte-identical to, the pre-export legacy bar (which
-    # used 0.01·|yr| and 50/10/1 length rounding).
+    # default thickness_pt=3.0) — unchanged from the previous hand-rolled
+    # geometry; close to, but NOT byte-identical to, the pre-export legacy bar
+    # (which used 0.01·|yr| and 50/10/1 length rounding).
     bh = abs(yr) * 0.004 * style.scale_bar_thickness_pt
-    pad_x, pad_y = 0.05 * abs(xr), 0.05 * abs(yr)
-    bx = (x1 - pad_x - sl) if "right" in style.scale_bar_loc else (x0 + pad_x)
-    by = (y1 - pad_y - bh) if "upper" in style.scale_bar_loc else (y0 + pad_y)
-    label = f"{sl:g} µm"
     label_size = 10.0 * style.font_scale * style.scale_bar_label_scale
 
+    bar = AuxTransformBox(ax.transData)  # width stays true to data µm
+    bar.add_artist(
+        Rectangle((0, 0), sl, bh, facecolor=style.scale_bar_color, edgecolor="none", linewidth=0)
+    )
+    label = TextArea(
+        f"{sl:g} µm",
+        textprops={"color": style.scale_bar_color, "fontsize": label_size, "fontweight": "bold"},
+    )
+    box = AnchoredOffsetbox(
+        loc=style.scale_bar_loc,
+        child=VPacker(children=[label, bar], align="center", pad=0, sep=0.25 * label_size),
+        # pad/borderpad are in font-size units of *prop*; pinning prop to the
+        # label size makes box_margin_pt mean real points.
+        prop=FontProperties(size=label_size),
+        pad=style.scale_bar_box_margin_pt / label_size,
+        borderpad=0.5,
+        frameon=style.scale_bar_box,
+    )
     if style.scale_bar_box:
-        # Box geometry entirely in data/µm coordinates so it snugly encloses
-        # the bar Rectangle (height bh) plus the label (va="bottom" at by+bh*2.5).
-        # A small data-coord allowance for the label text (~0.06·|yr|) is used
-        # instead of the old label_size*0.02*|yr| mix that ballooned the box.
-        label_allowance = 0.06 * abs(yr)
-        box_h = bh * 2.5 + label_allowance
-        # Padding in data units, scaled by the configurable box margin. The
-        # default margin (4.0) reproduces the original 0.015·|yr| padding, so the
-        # 'Box margin' control now visibly grows/shrinks the box (it was inert).
-        pad_data = 0.015 * abs(yr) * (style.scale_bar_box_margin_pt / 4.0)
-        box = FancyBboxPatch(
-            (bx, by),
-            sl,
-            box_h,
-            boxstyle=f"round,pad={pad_data}",
-            transform=ax.transData,
+        box.patch.set(
             facecolor=style.scale_bar_box_color,
             edgecolor="none",
             alpha=style.scale_bar_box_alpha,
-            zorder=4,
         )
-        ax.add_patch(box)
-
-    # Bar thickness is expressed once in data coords (bh), with no doubled
-    # point-based edge.  edgecolor="none" + linewidth=0 ensures the visible
-    # thickness is exactly bh.
-    ax.add_patch(
-        Rectangle(
-            (bx, by),
-            sl,
-            bh,
-            facecolor=style.scale_bar_color,
-            edgecolor="none",
-            linewidth=0,
-            zorder=5,
-        )
-    )
-    ax.text(
-        bx + sl / 2.0,
-        by + bh * 2.5,
-        label,
-        color=style.scale_bar_color,
-        fontsize=label_size,
-        fontweight="bold",
-        ha="center",
-        va="bottom",
-        zorder=6,
-        # Text defaults to clip_on=False (unlike patches, which clip to the
-        # axes automatically). At large font_scale the label can otherwise
-        # spill past the axes edge, which (a) looks wrong and (b) confuses
-        # matplotlib's constrained-layout solver into reserving unbounded
-        # margin for an artist it thinks is unclippable, collapsing the axes
-        # to zero size. Clip it like every other in-axes decoration.
-        clip_on=True,
-    )
+        # Rounded corners without extra growth: all padding comes from the
+        # offsetbox pad above; rounding_size is in mutation-scale (font) units.
+        box.patch.set_boxstyle("round", pad=0, rounding_size=0.4)
+    box.set_zorder(5)
+    # In-axes decoration: keep the constrained-layout solver from budgeting
+    # figure margin for it (the old code clipped the label for the same reason).
+    box.set_in_layout(False)
+    ax.add_artist(box)
 
 
 def colorbar_tick_values(vmin: float, vmax: float, n: int) -> list[float]:

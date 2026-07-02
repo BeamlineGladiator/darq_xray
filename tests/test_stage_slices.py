@@ -229,8 +229,10 @@ def test_build_slice_figure_returns_figure_with_equal_aspect():
         offset_um=None,
         style=PlotStyle(scale_bar=False),
     )
+    from matplotlib.offsetbox import AnchoredOffsetbox
+
     assert fig.axes[0].get_aspect() == 1.0
-    assert len(fig.axes[0].patches) == 0
+    assert not any(isinstance(a, AnchoredOffsetbox) for a in fig.axes[0].artists)
 
 
 def test_build_slice_figure_legacy_figsize_and_colorbar():
@@ -250,8 +252,10 @@ def test_build_slice_figure_legacy_figsize_and_colorbar():
     assert (round(w), round(h)) == (12, 10)
     # main axes + colourbar axes
     assert len(fig.axes) == 2
-    # legacy draws the (black) scale bar -> at least one patch
-    assert len(fig.axes[0].patches) >= 1
+    # legacy draws the (black) scale bar -> the AnchoredOffsetbox is present
+    from matplotlib.offsetbox import AnchoredOffsetbox
+
+    assert any(isinstance(a, AnchoredOffsetbox) for a in fig.axes[0].artists)
 
 
 def test_build_slice_figure_offset_annotation_in_title():

@@ -173,12 +173,16 @@ def test_parse_helpers():
 
 
 def test_build_strain_map_legacy_has_no_scale_bar():
+    from matplotlib.offsetbox import AnchoredOffsetbox
+
     fig = S.build_strain_map(np.random.rand(20, 30) * 1e-3, 0.1, 0.3, None, (None, None))
     ax = fig.axes[0]
-    assert len(ax.patches) == 0  # today's strain map has no scale bar
+    assert not any(isinstance(a, AnchoredOffsetbox) for a in ax.artists)
 
 
 def test_build_strain_map_style_adds_scale_bar():
+    from matplotlib.offsetbox import AnchoredOffsetbox
+
     from dfxm.common.plotting import PlotStyle
 
     fig = S.build_strain_map(
@@ -189,7 +193,7 @@ def test_build_strain_map_style_adds_scale_bar():
         (None, None),
         style=PlotStyle(scale_bar=True),
     )
-    assert len(fig.axes[0].patches) >= 1
+    assert any(isinstance(a, AnchoredOffsetbox) for a in fig.axes[0].artists)
 
 
 def test_build_strain_histogram_returns_none_on_empty_data():
