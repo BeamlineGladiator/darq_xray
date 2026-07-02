@@ -1433,8 +1433,9 @@ def test_volume_layer_specs_cmap_group_resolves_from_style(tmp_path):
     p = tmp_path / "v.h5"
     with h5py.File(p, "w") as f:
         f.create_dataset("vol", data=np.random.default_rng(0).random((2, 4, 5)))
-    common = dict(h5_path=str(p), dataset="vol", title="T", cbar_label="c",
-                  sx=1.0, sy=1.0, vmin=0.0, vmax=1.0)
+    common = dict(
+        h5_path=str(p), dataset="vol", title="T", cbar_label="c", sx=1.0, sy=1.0, vmin=0.0, vmax=1.0
+    )
     specs = volume_layer_specs(id_prefix="t", cmap="magma", cmap_group="raw", **common)
     fig = specs[0].build(PlotStyle(cmap_raw="viridis"))
     assert fig.axes[0].images[0].cmap.name == "viridis"
@@ -1454,7 +1455,40 @@ def test_save_layer_pngs_accepts_style(tmp_path):
 
     vol = np.zeros((1, 4, 5))
     d = render.save_layer_pngs(
-        vol, [0.0], str(tmp_path), "x", 0, 1, "gray", "t", "c", 1.0, 1.0,
+        vol,
+        [0.0],
+        str(tmp_path),
+        "x",
+        0,
+        1,
+        "gray",
+        "t",
+        "c",
+        1.0,
+        1.0,
         style=PlotStyle(font_scale=3.0),
     )
     assert os.path.exists(os.path.join(d, "layer_0000.png"))
+
+
+def test_mosaicity_map_specs_resolve_cmap_groups(tmp_path):
+    from dfxm.common.plotting import PlotStyle
+
+    vol = np.random.rand(1, 8, 12).astype(np.float32)
+    h5 = tmp_path / "stacked_volumes.h5"
+    with h5py.File(h5, "w") as f:
+        grp = f.require_group("chi")
+        grp.create_dataset("Center of mass", data=vol)
+        grp.create_dataset("FWHM", data=vol)
+    res = Mosaicity.MosaicityResult(
+        stacked_path=str(h5),
+        datasets={"/chi/Center of mass": vol.shape, "/chi/FWHM": vol.shape},
+        layers=["l0"],
+        skipped=[],
+    )
+    specs = Mosaicity.figures(res, {"pixel_size_x_um": 0.1, "pixel_size_y_um": 0.3})
+    com = next(s for s in specs if s.kind == "map" and s.filename.startswith("chi_com"))
+    fwhm = next(s for s in specs if s.kind == "map" and s.filename.startswith("chi_fwhm"))
+    assert com.build(None).axes[0].images[0].cmap.name == "fast"
+    assert fwhm.build(None).axes[0].images[0].cmap.name == "magma"
+    assert com.build(PlotStyle(cmap_mosa_com="plasma")).axes[0].images[0].cmap.name == "plasma"
