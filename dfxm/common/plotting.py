@@ -58,7 +58,8 @@ class PlotStyle:
     scale_bar_box_alpha: float = 0.45
     scale_bar_box_margin_pt: float = 4.0
     # text
-    font_scale: float = 1.0  # multiplies axis labels, ticks, title
+    font_scale: float = 1.0  # multiplies axis labels + ticks (NOT the title)
+    title_scale: float = 1.0  # multiplies the title alone (independent of font_scale)
     show_title: bool = True
     center_axis_labels: bool = True
     # colourbar
@@ -67,6 +68,7 @@ class PlotStyle:
     colorbar_fraction: float = 0.046  # matplotlib colorbar `fraction` (thickness)
     colorbar_ticks: int = 0  # 0 -> matplotlib default; >=2 -> N evenly spaced incl min/mid/max
     colorbar_tick_format: str = "auto"  # "auto" | "scientific" | a digit count like "2"
+    round_clim: bool = False  # round auto colour limits outward to nice values
     # figure
     figure_width: str | float = "auto"  # "single" | "double" | "auto" | width in inches
     # output
@@ -190,6 +192,57 @@ def symmetric_limits(data: np.ndarray, percentile: float | None = None) -> tuple
     return -m, m
 
 
+def round_limits_outward(vmin: float, vmax: float) -> tuple[float, float]:
+    """Round colour limits OUTWARD (vmin down, vmax up) to 'nice' values.
+
+    Each non-zero endpoint moves to the next multiple of half its
+    leading-digit unit (step = 0.5 * 10**floor(log10(|v|))): ±0.0778 → ±0.08,
+    0.11 → 0.15, 0.0432 → 0.045, 1.7e-4 → 2e-4. Results have at most two
+    significant digits (last digit 0 or 5), so evenly spaced colourbar ticks
+    land on round numbers. Symmetric input stays exactly symmetric; zero
+    endpoints, non-finite values and degenerate ranges (vmin >= vmax) are
+    returned unchanged.
+    """
+
+    def _out(v: float, up: bool) -> float:
+        if v == 0.0 or not math.isfinite(v):
+            return v
+        step = 0.5 * 10.0 ** math.floor(math.log10(abs(v)))
+        n = v / step
+        # epsilon guard so already-round values do not inflate by a whole step
+        n = math.ceil(n - 1e-9) if up else math.floor(n + 1e-9)
+        # strip binary float noise scale-relatively — by construction the
+        # product has at most 3 significant digits (n in [2, 20], step = 5·10^k)
+        return float(f"{n * step:.6g}")
+
+    if not (math.isfinite(vmin) and math.isfinite(vmax)) or vmin >= vmax:
+        return (vmin, vmax)
+    return (_out(vmin, up=False), _out(vmax, up=True))
+
+
+def apply_round_clim(
+    vmin: float, vmax: float, style: "PlotStyle | None"
+) -> tuple[float, float, str | None]:
+    """Round (vmin, vmax) outward when ``style.round_clim`` is set.
+
+    Returns ``(vmin, vmax, note)``. The note is a user-facing description of
+    what changed (``None`` when rounding is off, style is None, or the limits
+    were already round) — stages surface it in the run log / results.
+    """
+    if style is None or not style.round_clim:
+        return vmin, vmax, None
+    rlo, rhi = round_limits_outward(vmin, vmax)
+    if rlo == vmin and rhi == vmax:
+        return vmin, vmax, None
+    if math.isclose(-vmin, vmax, rel_tol=1e-9) and math.isclose(-rlo, rhi, rel_tol=1e-9):
+        note = f"colour limits rounded ±{vmax:.4g} → ±{rhi:.4g} (round_clim)"
+    else:
+        note = (
+            f"colour limits rounded ({vmin:.4g}, {vmax:.4g}) → ({rlo:.4g}, {rhi:.4g}) (round_clim)"
+        )
+    return rlo, rhi, note
+
+
 def physical_extent(
     shape: tuple[int, int],
     pixel_size_x: float,
@@ -217,6 +270,21 @@ def new_figure(figsize: tuple[float, float] = (7.0, 5.0)) -> Figure:
     return fig
 
 
+def styled_figure(figsize: tuple[float, float], *, styled: bool) -> Figure:
+    """A white-background Figure for the shared figure builders.
+
+    ``styled=True`` (a PlotStyle is in play) uses matplotlib's constrained
+    layout, which measures every text element at its final font size and
+    reserves space so title, axis labels, colorbar and offset text can never
+    overlap — the figure keeps its exact width and the axes shrink instead.
+    ``styled=False`` is the legacy path: plain fixed margins, byte-identical
+    with the pre-export renderers.
+    """
+    if styled:
+        return Figure(figsize=figsize, facecolor="white", layout="constrained")
+    return Figure(figsize=figsize, facecolor="white")
+
+
 def auto_scale_bar_length_um(ext_x: float) -> float:
     """A 'nice' bar length ~15% of the X extent (1-2-5-10 series)."""
     target = ext_x * 0.15
@@ -228,8 +296,19 @@ def auto_scale_bar_length_um(ext_x: float) -> float:
     return nice * (10**exp)
 
 
+# Points of extra title clearance per unit of font_scale on constrained-layout
+# figures.  A colourbar's scientific-notation offset text (the "×10ⁿ" above its
+# ticks) sits just above the axes and grows with font_scale; constrained layout
+# does not account for that neighbouring artist when budgeting room for the title,
+# so the two can collide at large font_scale.  We compensate by expanding the
+# title's own pad proportionally — but only on constrained-layout figures.
+# Plain figures must keep matplotlib's default (6.0 pt) to avoid legacy-output drift.
+_TITLE_PAD_PER_FONT_SCALE = 12.0
+
+
 def apply_text_scale(ax, style: "PlotStyle") -> None:
-    """Scale axis-label/tick/title fonts by ``style.font_scale``; apply title/centre options."""
+    """Scale axis-label/tick fonts by ``style.font_scale`` and the title by the
+    independent ``style.title_scale``; apply title/centre options."""
     fs = style.font_scale
     for label in (ax.xaxis.label, ax.yaxis.label):
         label.set_fontsize(label.get_fontsize() * fs)
@@ -255,7 +334,20 @@ def apply_text_scale(ax, style: "PlotStyle") -> None:
     if not style.show_title:
         ax.set_title("")
     else:
-        title.set_fontsize(title.get_fontsize() * fs)
+        # Only grow the title pad on constrained-layout figures — that is where the
+        # ×10ⁿ offset-text clearance is needed.  Plain (no layout engine) figures
+        # must use pad=None so matplotlib's default (6.0 pt) is preserved; passing
+        # an explicit pad would silently drift legacy per-layer PNG output.
+        pad = (
+            _TITLE_PAD_PER_FONT_SCALE * fs
+            if ax.get_figure().get_layout_engine() is not None
+            else None
+        )
+        ax.set_title(
+            title.get_text(),
+            fontsize=title.get_fontsize() * style.title_scale,
+            pad=pad,
+        )
 
 
 def draw_scale_bar(ax, length_um: float | None = None, *, style: "PlotStyle") -> None:
@@ -328,6 +420,13 @@ def draw_scale_bar(ax, length_um: float | None = None, *, style: "PlotStyle") ->
         ha="center",
         va="bottom",
         zorder=6,
+        # Text defaults to clip_on=False (unlike patches, which clip to the
+        # axes automatically). At large font_scale the label can otherwise
+        # spill past the axes edge, which (a) looks wrong and (b) confuses
+        # matplotlib's constrained-layout solver into reserving unbounded
+        # margin for an artist it thinks is unclippable, collapsing the axes
+        # to zero size. Clip it like every other in-axes decoration.
+        clip_on=True,
     )
 
 
@@ -377,7 +476,7 @@ def build_histogram(
         )
         if w not in (None, "auto"):
             figsize = (float(w), float(w) * 5.0 / 8.0)  # keep the histogram's ~8:5 aspect
-    fig = new_figure(figsize)
+    fig = styled_figure(figsize, styled=style is not None)
     ax = fig.add_subplot(111)
     ax.hist(valid, bins=200, color="steelblue", alpha=0.85)
     mean_val = float(valid.mean())

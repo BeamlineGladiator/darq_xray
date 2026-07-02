@@ -207,20 +207,23 @@ and is called once at [[#plotting.py]] import, so `"fast"` resolves everywhere
 GUI-safe plotting helpers — **never** `pyplot`/`matplotlib.use`.
 
 - `symmetric_limits(data, percentile=None)` — colour limits symmetric about 0.
+- `round_limits_outward(vmin, vmax)` — round colour limits outward (vmin down, vmax up) to "nice" 2-significant-digit values (step = 0.5 × 10^floor(log10|v|)), so evenly spaced colourbar ticks land on round numbers. Symmetric input stays exactly symmetric. Zero, non-finite, or degenerate inputs are returned unchanged.
+- `apply_round_clim(vmin, vmax, style)` → `(vmin, vmax, note | None)` — call `round_limits_outward` when `style.round_clim` is set. Returns a human-readable note string describing what changed (e.g. `"colour limits rounded ±0.0778 → ±0.08 (round_clim)"`) or `None` when rounding is off/not needed. Stages surface the note in the run log and results summary.
 - `physical_extent(shape, px, py, roi)` — imshow `extent` in µm.
 - `get_cmap(name)` — colormap lookup; ParaView's `"fast"` is a real registered colormap (see [[#cmaps.py]]), so no fallback is needed.
 - `new_figure(figsize)` — a white `Figure` (no pyplot).
+- `styled_figure(figsize, *, styled)` — the Figure constructor every shared builder uses. `styled=True` (a `PlotStyle` is in play) turns on matplotlib constrained layout, which measures every text element at its final font size and reserves space so title/axis-labels/colourbar/offset-text can never overlap — the figure keeps its exact requested size and the axes shrink instead. `styled=False` is the legacy path: a plain `Figure`, byte-identical with the pre-export renderers. `build_companion_figure` (profiles) is the one exception — it is constrained on both paths, so it always passes `styled=True`.
 
 **Publication-export primitives** (new; all accept a `PlotStyle` argument):
 
 | Symbol | What it does |
 |---|---|
-| `PlotStyle` | Dataclass holding every style knob — scale bar (show / length / thickness / label-scale / location / colour / box show+colour+alpha+margin), text (font_scale / show_title / center_axis_labels), colourbar (show / label / fraction / ticks / tick_format), figure (figure_width), output (formats / dpi) and **per-quantity colormaps** (`cmap_mosa_com="fast"`, `cmap_mosa_fwhm="magma"`, `cmap_strain="RdBu_r"`, `cmap_raw="gray"`, looked up via `cmap_for(group)`; groups in `CMAP_GROUPS`, curated dropdown list in `CMAP_CHOICES`). `None` in any builder means "use legacy look". |
+| `PlotStyle` | Dataclass holding every style knob — scale bar (show / length / thickness / label-scale / location / colour / box show+colour+alpha+margin), text (font_scale / `title_scale` / show_title / center_axis_labels), colourbar (show / label / fraction / ticks / tick_format / `round_clim`), figure (figure_width), output (formats / dpi) and **per-quantity colormaps** (`cmap_mosa_com="fast"`, `cmap_mosa_fwhm="magma"`, `cmap_strain="RdBu_r"`, `cmap_raw="gray"`, looked up via `cmap_for(group)`; groups in `CMAP_GROUPS`, curated dropdown list in `CMAP_CHOICES`). `None` in any builder means "use legacy look". `title_scale` multiplies the title font size independently of `font_scale`. `round_clim=True` routes auto-computed colour limits through `apply_round_clim` in the slices, strain, visualize, rocking, and matched stages (matched rounds only when both `vmin`/`vmax` params are blank). |
 | `PUBLICATION_STYLE` | A ready-made `PlotStyle` tuned for publication: white scale bar with a box, font_scale=2.2, colourbar_ticks=5, scientific tick format, single-column width, PNG+PDF+SVG at 300 dpi. |
 | `figure_size(style, ext_x, ext_y)` | Returns `(w, h)` in inches from `style.figure_width` (`"single"`=3.5 in, `"double"`=7.0 in), preserving the physical aspect ratio plus ~1 in headroom; returns `None` for `"auto"`. |
 | `auto_scale_bar_length_um(ext_x)` | A "nice" bar length ≈15% of the X extent, snapped to the 1–2–5–10 series. |
-| `draw_scale_bar(ax, length_um, *, style)` | Draw a µm scale bar (Rectangle + label, optionally a `FancyBboxPatch` background box) on `ax` whose data coordinates are in µm. `length_um=None` calls `auto_scale_bar_length_um`. |
-| `apply_text_scale(ax, style)` | Scale axis-label/tick/title fonts by `style.font_scale`; apply `show_title` and `center_axis_labels`. |
+| `draw_scale_bar(ax, length_um, *, style)` | Draw a µm scale bar (Rectangle + label, optionally a `FancyBboxPatch` background box) on `ax` whose data coordinates are in µm. `length_um=None` calls `auto_scale_bar_length_um`. The label text is `clip_on=True` so it never spills past the axes at large `font_scale` (unclipped text was also confusing constrained layout into collapsing the axes to zero size). |
+| `apply_text_scale(ax, style)` | Scale axis-label/tick fonts by `style.font_scale` and the title by the independent `style.title_scale`; apply `show_title` and `center_axis_labels`. Also grows the title's `pad` proportionally to `font_scale` — a colourbar's scientific-notation offset text sits just above the axes and constrained layout does not account for it when reserving room for the title, so without extra pad the two collide at large font scales. |
 | `colorbar_tick_values(vmin, vmax, n)` | `n` evenly-spaced tick values from vmin..vmax (always includes both endpoints). |
 | `add_colorbar(fig, im, ax, label, style)` | Add a colourbar honouring `style.colorbar_fraction`, label, tick count, and number format (`"auto"` / `"scientific"` / a decimal count like `"2"`). |
 | `build_histogram(data, *, title, xlabel, style)` | Histogram of finite values in `data` (steelblue bars, mean/median lines). Returns a `Figure` or `None` when there are no finite values. Applies text scaling when `style` is not `None`. The caller calls `fig.savefig`. |
@@ -277,7 +280,7 @@ ccmth-only) → stacked 3-D volume.
 - `LayerResult` / `StrainResult` — per-layer stats + the stacked path/shape. `LayerResult.maps_path` records the source `maps.h5` this layer was computed from, so `figures()` can rebuild the detrend diagnostic for **nested** `folder_pattern`s (the layer name alone loses sub-folders).
 - `cot`, `_arctan_model`, `_fit_arctan_1d`, `detrend_arctan_2d` — the separable arctan **detrend** (run on the full map, **before** ROI).
 - `compute_strain(ccmth, ccmth_ref)` — single-array `cot(ccmth_ref)·Δccmth`.
-- `build_strain_map(strain, px, py, roi, vlim, *, style=None)` — build and return a strain map `Figure` (cmap = `resolve_cmap(style, "strain")`, default RdBu_r; equal aspect). When `style` is `None` the legacy look is reproduced; otherwise colourbar, scale bar, and text scaling are applied via the shared helpers. The caller calls `fig.savefig`.
+- `build_strain_map(strain, px, py, roi, vlim, *, style=None)` — build and return a strain map `Figure` (cmap = `resolve_cmap(style, "strain")`, default RdBu_r; equal aspect). When `style` is `None` the legacy look is reproduced; otherwise colourbar, scale bar, and text scaling are applied via the shared helpers. When `vlim == (None, None)` the auto limits come from `symmetric_limits` and are then passed through `apply_round_clim(style)` — user-specified `vlim` is never rounded. The `apply_round_clim` note is discarded (strain has no `result.notes`; rounding is visible only on the colourbar). The caller calls `fig.savefig`.
 - `build_strain_histogram(data, *, title, xlabel, style=None)` — thin wrapper around `plotting.build_histogram` with strain-specific label defaults. Returns a `Figure` or `None`.
 - `build_detrend_diag(original, detrended, surface, *, style=None)` — 3-panel detrend-diagnostic figure (original / arctan surface / detrended). `style` applies the strain-group colormap, colourbar and text scaling per panel; no scale bar (it is a `kind="plot"` figure).
 - `process_maps_file(..., style=None)` — one `maps.h5` → 2-D strain + diagnostic PNGs (builders receive the run's `style`; `run` passes `style_from_params(p)`, so GUI runs render publication-styled).
@@ -296,7 +299,7 @@ Port of `stack_h5_darfix_volumes`. Stacks χ/μ Center-of-mass + FWHM maps.
 #### `rocking.py`
 Port of `build_aligned_raw_rocking_volumes_v3`. Aligned 3-D volumes straight
 from raw rocking scans, anchored to the mosaicity reference.
-- `RockingProducts` / `RockingResult` — per-volume render products + aligned path/shape/reference.
+- `RockingProducts` / `RockingResult` — per-volume render products + aligned path/shape/reference. `RockingProducts.notes` collects one entry per volume whose auto colour limits were rounded (when `round_clim` is set), surfaced in the run log and the Results summary.
 - `process_raw_scan(...)` — per-scan median **background subtraction** → integrated **sum** + one **specific frame**.
 - `build_raw_volumes(...)` — stack scans (sorted by samz) into two 3-D volumes.
 - `save_aligned_raw_volumes(...)` — write `aligned_raw_rocking_volumes.h5` (the schema [[#slices.py]] reads).
@@ -306,7 +309,7 @@ from raw rocking scans, anchored to the mosaicity reference.
 
 #### `visualize.py`
 Port of `visualize_aligned_volumes_v6`. Aligns the stacked volumes and renders.
-- `DatasetProducts` / `VisualizeResult`.
+- `DatasetProducts` / `VisualizeResult`. `DatasetProducts.notes` collects one entry per dataset whose auto colour limits were rounded (when `round_clim` is set — applies to each mosaicity dataset and to strain), surfaced in the run log and the Results summary.
 - Colour/centre helpers: `_symmetric_range`, `_midrange_clim`, `_center_com_and_range`, `_colorbar_range`, `_display_info` (title/label/**colormap group** per field: CoM → `mosa_com`, FWHM → `mosa_fwhm`, strain → `strain`, unknown → `None`).
 - `load_mosa_datasets` / `load_strain_volume`, `_align(...)` (reuses [[#`alignment.py`]]), `_process_dataset(..., style=None)` (threads the run's style into the layer PNGs/animation).
 - `run` → per-layer PNGs, animation, 3-D top-view; colormaps and figure styling come from the injected `plot_style` (via `style_from_params`/`resolve_cmap`).
@@ -321,14 +324,14 @@ Port of `export_aligned_volumes_to_paraview_v6_pvti`. Writes partitioned PVTI.
 
 #### `slices.py`
 Port of `extract_oblique_slices_v5`. Arbitrary planes through the aligned volumes.
-- `SlicesResult`; centring/range helpers mirror visualize.
+- `SlicesResult` — `output_dir`, `output_h5`, `volume_ids`, `slice_names`, `n_planes_total`, `pngs`, `skipped`, and `notes: list[str]`. `notes` collects one entry per volume whose auto colour limits were rounded (when `round_clim` is set), surfaced in the run log and the Results summary.
 - Geometry: `build_basis(normal, up)` (orthonormal u/v/n; u is the plot's horizontal axis, v its vertical. Default `up` is world **Y** — the detector-vertical axis (lab-frame X); falls back to Z when the normal is ≈ parallel to Y — so slice plots read like the per-layer renders: detector-X-like horizontal, detector-Y-like vertical), `slice_plane_offsets`, `sample_plane` (world→voxel via `map_coordinates`), `_world_box`/`_union_box`/`resolve_auto_extent` (`extent:"auto"` fits the data box; `default_du` ← `scale_x`).
-- `prepare_volume(..., style=None)` — load + (if `stacked`) align + style; the colormap comes from `resolve_cmap(style, _GROUP_BY_KIND[kind])` (kind → group: `raw_sum`/`raw_specific` → `raw`) and the **resolved** name is written to the volume group's `cmap` attr in `oblique_slices.h5`, so profiles and the line picker inherit it. `_estimate_box` for auto-extent; `_standard_volumes(...)` builds the volume list from the `include_*` toggles.
+- `prepare_volume(..., style=None)` — load + (if `stacked`) align + style; the colormap comes from `resolve_cmap(style, _GROUP_BY_KIND[kind])` (kind → group: `raw_sum`/`raw_specific` → `raw`) and the **resolved** name is written to the volume group's `cmap` attr in `oblique_slices.h5`, so profiles and the line picker inherit it. Auto colour limits pass through `apply_round_clim(style)` and the result dict carries `vmin`, `vmax` (possibly rounded), `vmin_raw`, `vmax_raw` (the unrounded originals), and `clim_note`. `_estimate_box` for auto-extent; `_standard_volumes(...)` builds the volume list from the `include_*` toggles.
 - `build_slice_figure(prep, sl, slice2d, u_um, v_um, *, offset_um, style=None)` — build and return a slice `Figure` (equal-aspect, µm axes). When `style` is `None` the legacy appearance is reproduced; otherwise figsize/colourbar/scale-bar/text-scaling are honoured. Does NOT call `savefig`.
 - `save_slice_png(prep, sl, slice2d, u_um, v_um, out_png, *, offset_um, dpi=150, style=None)` — build a slice figure (legacy look when `style` is None) and save it to `out_png` (used by `run`, which passes the injected style).
-- `write_volume_group` — write one volume group to `oblique_slices.h5`.
+- `write_volume_group` — write one volume group to `oblique_slices.h5`; when `clim_note` is set it also writes `vmin_raw` / `vmax_raw` attrs alongside the rounded `vmin` / `vmax`, so downstream tools (profiles, line picker) can show or log the original unrounded limits.
 - `figures(result, params)` — `@register("slices")` catalog: one `kind="map"` `FigureSpec` per plane per slice-name sub-group per volume group in `oblique_slices.h5`. Each `build(style)` re-resolves the colormap from the stored `kind` via `resolve_cmap` (falling back to the stored `cmap` attr for files without a known kind). Volume-group attrs are read defensively (`.get` with defaults), so one group from an older/partial run missing an attr is catalogued with fallbacks instead of aborting the whole listing.
-- `run` validates each slice up front, writes `oblique_slices.h5` + a PNG per plane.
+- `run` validates each slice up front, writes `oblique_slices.h5` + a PNG per plane; appends a human-readable rounding note to `result.notes` (and logs it via `progress`) for each volume whose colour limits were rounded.
 
 #### `profiles.py`
 Port of `line_profile_oblique_slices_v2` (headless modes). 1-D profiles across one
@@ -347,7 +350,7 @@ slice plane, every field at the same in-plane positions.
 Port of `plot_rocking_matched_layers_v3`. Grayscale rocking frames matched to
 strain layers.
 - `MatchedLayer` — per-layer match record: layer name, matched rocking name, samy shift, output PNG path, and shape.
-- `MatchedResult` — `output_dir`, `frame_index`, `skipped`, and `recorded: list[MatchedLayer]` (the list of all successfully matched layers).
+- `MatchedResult` — `output_dir`, `frame_index`, `vmin`, `vmax`, `vmin_raw`, `vmax_raw` (pre-rounding originals, `None` when rounding was not applied), `skipped`, and `recorded: list[MatchedLayer]` (the list of all successfully matched layers).
 - `load_pco_ff_frame(...)` — one frame, median-background subtracted, negatives→NaN.
 - `match_nearest(...)` — nearest rocking scan per strain layer within a threshold.
 - `_apply_shift_single(...)` — place a frame on the padded canvas with the strain samy shift (skips frames whose shape differs).

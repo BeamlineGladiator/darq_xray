@@ -29,7 +29,7 @@ import numpy as np
 from ..common import alignment as A
 from ..common import render as Rnd
 from ..common.figures import FigureSpec, register
-from ..common.plotting import resolve_cmap, style_from_params
+from ..common.plotting import apply_round_clim, resolve_cmap, style_from_params
 from ..common.raster import extract_motor_positions
 from ..common.sort import find_matching_folders
 from ..config.models import Param, ParamType, StageSpec
@@ -499,22 +499,15 @@ def run(params: dict, progress: ProgressFn | None = None) -> VisualizeResult:
                 )
             else:
                 vmin, vmax = _colorbar_range(data)
-            result.datasets.append(
-                _process_dataset(
-                    data,
-                    z_pos,
-                    scale_z,
-                    name,
-                    vmin,
-                    vmax,
-                    cmap,
-                    title,
-                    cbar,
-                    p,
-                    out_dir,
-                    style=style,
-                )
+            vmin, vmax, clim_note = apply_round_clim(vmin, vmax, style)
+            if clim_note:
+                progress(0.1 + 0.4 * i / max(1, len(datasets)), f"{name}: {clim_note}")
+            prod = _process_dataset(
+                data, z_pos, scale_z, name, vmin, vmax, cmap, title, cbar, p, out_dir, style=style
             )
+            if clim_note:
+                prod.notes.append(clim_note)
+            result.datasets.append(prod)
     elif mosa_file:
         result.skipped.append(f"mosaicity volume not found: {mosa_file}")
 
@@ -531,22 +524,26 @@ def run(params: dict, progress: ProgressFn | None = None) -> VisualizeResult:
                 vol, samy, samz, scale_x=scale_x, samy_direction=samy_dir, roi_x=roi_x, roi_y=roi_y
             )
             vmin, vmax = _symmetric_range(data)
-            result.datasets.append(
-                _process_dataset(
-                    data,
-                    z_pos,
-                    scale_z,
-                    "strain",
-                    vmin,
-                    vmax,
-                    cmap,
-                    title,
-                    cbar,
-                    p,
-                    out_dir,
-                    style=style,
-                )
+            vmin, vmax, clim_note = apply_round_clim(vmin, vmax, style)
+            if clim_note:
+                progress(0.6, f"strain: {clim_note}")
+            prod = _process_dataset(
+                data,
+                z_pos,
+                scale_z,
+                "strain",
+                vmin,
+                vmax,
+                cmap,
+                title,
+                cbar,
+                p,
+                out_dir,
+                style=style,
             )
+            if clim_note:
+                prod.notes.append(clim_note)
+            result.datasets.append(prod)
     elif strain_file:
         result.skipped.append(f"strain volume not found: {strain_file}")
 

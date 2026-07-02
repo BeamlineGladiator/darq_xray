@@ -436,7 +436,8 @@ form.
 
 | Control | Meaning |
 |---|---|
-| Font scale | Multiplies all axis labels, tick labels, and the title |
+| Font scale | Multiplies all axis labels and tick labels (not the title — use Title scale for that) |
+| Title scale | Multiplies the title font size **independently** of Font scale. Set it small (e.g. 0.3) when the title is only needed to identify the plot while composing figures elsewhere, without enlarging the axes text. |
 | Show title | Uncheck to suppress the figure title |
 | Centre axis labels | Horizontally centre the x/y axis labels |
 
@@ -448,9 +449,16 @@ form.
 | Colourbar label | Override the figure's own colourbar label (blank = use the stage's label) |
 | Colourbar fraction | Controls the colourbar width (matplotlib `fraction` parameter) |
 | Colourbar ticks | Number of evenly-spaced ticks including both endpoints; `0` = matplotlib auto |
-| Tick format | `auto` (matplotlib default) / `scientific` (e.g. `1.2×10⁻³`) / a digit count like `2` (two decimal places) |
+| Tick format | Dropdown with descriptive labels: **auto (matplotlib default)** lets matplotlib choose; **scientific (×10ⁿ offset)** forces offset notation (e.g. ticks `1, 2, 3` with a `×10⁻³` header above the colourbar); digit-count options (**0 decimals**, **1 decimal**, **2 decimals**, …) print plain decimal numbers without an offset. |
+| Round colour limits | When checked, auto-computed colour limits are rounded **outward** to the nearest "nice" value (2 significant digits, last digit 0 or 5), so evenly spaced colourbar ticks land on round numbers (e.g. ±0.0778 → ±0.08). Applies to: the **slices** stage (per volume; raw limits stored as `vmin_raw`/`vmax_raw` in `oblique_slices.h5`); the **strain map** (auto path only); the **visualize** stage (per mosaicity dataset and strain); the **rocking** stage (per rendered volume); and the **matched** stage (when both `vmin`/`vmax` are blank — a half-manual pair is never half-rounded; pre-round values stored in `MatchedResult.vmin_raw`/`vmax_raw`). User-specified limits are never rounded. Each rounded dataset is noted in the run log and the Results summary — except the **strain** stage, which discards the note (rounding is visible on the colourbar but strain has no per-run notes surface). |
+
+> [!tip] Why does my colourbar say ×10⁻²?
+> The **scientific** tick-format forces offset notation. Matplotlib places a `×10ⁿ` label just above the colourbar, and the ticks themselves show plain multipliers (e.g. −8, 0, 8 with a `×10⁻³` offset). If you prefer the full numbers on the ticks, switch Tick format to a digit-count option (e.g. **3 decimals**) or to **auto (matplotlib default)**.
 
 **Figure**
+
+> [!note] Constrained layout on styled figures
+> When the publication style is active, all figure builders use matplotlib's **constrained layout**: every text element (title, axis labels, colourbar, and the ×10ⁿ offset label) is measured at its final font size, and the axes shrink to make room for all of them. The figure keeps its exact requested width (single or double column) — titles, axis labels and colourbars are placed without overlapping each other (tick density at extreme Font scales can still crowd). The legacy plain-layout path (headless CLI runs) is close to — but not byte-identical with — the pre-export renderers.
 
 | Control | Meaning |
 |---|---|

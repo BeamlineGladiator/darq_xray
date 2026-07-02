@@ -42,11 +42,13 @@ from ..common.figures import FigureSpec, register
 from ..common.plotting import (
     PlotStyle,
     add_colorbar,
+    apply_round_clim,
     apply_text_scale,
     draw_scale_bar,
     figure_size,
     resolve_cmap,
     style_from_params,
+    styled_figure,
 )
 from ..common.raster import extract_motor_positions
 from ..common.sort import find_matching_folders
@@ -403,6 +405,7 @@ class SlicesResult:
     n_planes_total: int = 0
     pngs: list[str] = field(default_factory=list)
     skipped: list[str] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)
 
 
 # -----------------------------------------------------------------------------
@@ -690,6 +693,7 @@ def prepare_volume(cfg, p, scale_x, scale_y, samy_dir, style=None):
         ),
     }
     title, cbar_label, suffix = titles[kind]
+    vmin_f, vmax_f, clim_note = apply_round_clim(float(auto_vmin), float(auto_vmax), style)
     return {
         "data": np.ascontiguousarray(data, dtype=np.float64),
         "scale_x": float(sx),
@@ -698,8 +702,11 @@ def prepare_volume(cfg, p, scale_x, scale_y, samy_dir, style=None):
         "x_ref_shift_px": float(x_ref),
         "y_ref_shift_px": float(y_ref),
         "z_ref_shift_um": float(z_ref),
-        "vmin": float(auto_vmin),
-        "vmax": float(auto_vmax),
+        "vmin": vmin_f,
+        "vmax": vmax_f,
+        "vmin_raw": float(auto_vmin),
+        "vmax_raw": float(auto_vmax),
+        "clim_note": clim_note,
         "cmap_name": resolve_cmap(style, _GROUP_BY_KIND.get(kind)),
         "center_zero": kind in _CENTERED_KINDS,
         "title": title,
@@ -748,7 +755,7 @@ def build_slice_figure(
         ext_v = float(v_um[-1] - v_um[0])
         figsize = figure_size(st, ext_u, ext_v) or (12, 10)
 
-    fig = Figure(figsize=figsize, facecolor="white")
+    fig = styled_figure(figsize, styled=not use_legacy)
     ax = fig.add_subplot(111)
     extent = [float(u_um[0]), float(u_um[-1]), float(v_um[0]), float(v_um[-1])]
     im = ax.imshow(
@@ -790,6 +797,9 @@ def write_volume_group(fh, prep, slice_records):
     vg.attrs["cmap"] = prep["cmap_name"]
     vg.attrs["vmin"] = float(prep["vmin"])
     vg.attrs["vmax"] = float(prep["vmax"])
+    if prep.get("clim_note"):
+        vg.attrs["vmin_raw"] = float(prep["vmin_raw"])
+        vg.attrs["vmax_raw"] = float(prep["vmax_raw"])
     vg.attrs["title"] = prep["title"]
     vg.attrs["scale_x_um_per_px"] = prep["scale_x"]
     vg.attrs["scale_y_um_per_px"] = prep["scale_y"]
@@ -904,6 +914,10 @@ def run(params: dict, progress: ProgressFn | None = None) -> SlicesResult:
             except (KeyError, OSError, ValueError) as exc:
                 result.skipped.append(f"{cfg['dataset_path']}: {exc}")
                 continue
+            if prep["clim_note"]:
+                msg = f"{prep['volume_id']}: {prep['clim_note']}"
+                progress(0.1 + 0.85 * vi / len(volumes), msg)
+                result.notes.append(msg)
             records = []
             for sl in slices:
                 du = float(sl.get("du", prep["scale_x"]))

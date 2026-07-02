@@ -16,7 +16,6 @@ import os
 import matplotlib.colors as mcolors
 import numpy as np
 from matplotlib.animation import FFMpegWriter, FuncAnimation, PillowWriter
-from matplotlib.figure import Figure
 
 from .plotting import (
     PlotStyle,
@@ -25,6 +24,7 @@ from .plotting import (
     draw_scale_bar,
     figure_size,
     get_cmap,
+    styled_figure,
 )
 
 
@@ -46,7 +46,7 @@ def layer_figure(layer, vmin, vmax, cmap, ext_x, ext_y, title, cbar_label, *, st
     """
     st = style if style is not None else PlotStyle(scale_bar_color="black", colorbar_fraction=0.046)
     figsize = (figure_size(st, ext_x, ext_y) or (12, 10)) if style is not None else (12, 10)
-    fig = Figure(figsize=figsize, facecolor="white")
+    fig = styled_figure(figsize, styled=style is not None)
     ax = fig.add_subplot(111)
     im = ax.imshow(
         layer,

@@ -34,7 +34,13 @@ from scipy.ndimage import map_coordinates
 from ..common import render as Rnd
 from ..common.errors import StageUserError
 from ..common.figures import FigureSpec, register
-from ..common.plotting import PlotStyle, add_colorbar, apply_text_scale, style_from_params
+from ..common.plotting import (
+    PlotStyle,
+    add_colorbar,
+    apply_text_scale,
+    style_from_params,
+    styled_figure,
+)
 from ..config.models import Param, ParamType, StageSpec
 
 ProgressFn = Callable[[float, str], None]
@@ -443,7 +449,7 @@ def build_companion_figure(
     """
     ref_plane, u_um, v_um, ref_attrs, ref_label = ref
     n = len(fields)
-    fig = Figure(figsize=(9.0, 4.8 + 1.85 * n), layout="constrained", facecolor="white")
+    fig = styled_figure((9.0, 4.8 + 1.85 * n), styled=True)
     gs = fig.add_gridspec(nrows=n + 1, ncols=1, height_ratios=[3.0] + [1.0] * n)
     ax_img = fig.add_subplot(gs[0])
     im = _draw_reference_image(
@@ -502,7 +508,7 @@ def save_companion_figure(ref, fields, geom, line_color, out_png, dpi, style=Non
 
 def render_single(ref, geom, line_color, out_png, header, dpi, style=None):
     plane, u_um, v_um, attrs, label = ref
-    fig = Figure(figsize=(11, 9), facecolor="white")
+    fig = styled_figure((11, 9), styled=style is not None)
     ax = fig.add_subplot(111)
     im = _draw_reference_image(
         ax, plane, u_um, v_um, attrs, line_color, geom=geom, title=f"{header}\nreference: {label}"

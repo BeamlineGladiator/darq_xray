@@ -1,6 +1,7 @@
 from dataclasses import replace
 
 import numpy as np
+from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.figure import Figure
 
 from dfxm.common.plotting import (
@@ -14,6 +15,7 @@ from dfxm.common.plotting import (
     colorbar_tick_values,
     draw_scale_bar,
     figure_size,
+    styled_figure,
 )
 
 
@@ -284,3 +286,159 @@ def test_style_json_roundtrip_and_bad_blob():
     assert style_from_json(style_to_json(src)) == src
     assert style_from_json("{not json") is None
     assert style_from_json("[1,2]") is None
+
+
+def test_title_scale_is_independent_of_font_scale():
+    fig, ax = _ax()
+    ax.set_xlabel("X (µm)")
+    ax.set_title("χ Misorientation")
+    label_base = ax.xaxis.label.get_fontsize()
+    title_base = ax.title.get_fontsize()
+    apply_text_scale(ax, PlotStyle(font_scale=3.0, title_scale=0.5))
+    assert ax.xaxis.label.get_fontsize() == label_base * 3.0
+    assert ax.title.get_fontsize() == title_base * 0.5  # font_scale must NOT touch the title
+
+
+def test_title_scale_default_leaves_title_at_base_size():
+    fig, ax = _ax()
+    ax.set_title("t")
+    title_base = ax.title.get_fontsize()
+    apply_text_scale(ax, PlotStyle(font_scale=2.2))  # title_scale defaults to 1.0
+    assert ax.title.get_fontsize() == title_base
+
+
+def test_title_scale_survives_json_roundtrip():
+    from dfxm.common.plotting import style_from_json, style_to_json
+
+    s = PlotStyle(title_scale=0.4)
+    assert style_from_json(style_to_json(s)).title_scale == 0.4
+    # Old persisted blobs (no title_scale key) default to 1.0
+    assert style_from_json(style_to_json(PlotStyle())).title_scale == 1.0
+
+
+def test_round_limits_outward_symmetric_stays_symmetric():
+    from dfxm.common.plotting import round_limits_outward
+
+    lo, hi = round_limits_outward(-0.0778, 0.0778)
+    assert (lo, hi) == (-0.08, 0.08)
+
+
+def test_round_limits_outward_examples():
+    from dfxm.common.plotting import round_limits_outward
+
+    assert round_limits_outward(0.0, 0.11)[1] == 0.15
+    assert round_limits_outward(0.0, 0.0432)[1] == 0.045
+    assert abs(round_limits_outward(0.0, 1.7e-4)[1] - 2e-4) < 1e-12
+    # asymmetric: vmin floors, vmax ceils
+    lo, hi = round_limits_outward(-5.3, -1.2)
+    assert (lo, hi) == (-5.5, -1.0)
+
+
+def test_round_limits_outward_already_round_is_unchanged():
+    from dfxm.common.plotting import round_limits_outward
+
+    assert round_limits_outward(-0.08, 0.08) == (-0.08, 0.08)  # no float-epsilon inflation
+    assert round_limits_outward(0.0, 0.1) == (0.0, 0.1)
+
+
+def test_round_limits_outward_degenerate_and_zero():
+    import math
+
+    from dfxm.common.plotting import round_limits_outward
+
+    assert round_limits_outward(0.5, 0.5) == (0.5, 0.5)  # degenerate: unchanged
+    assert round_limits_outward(0.0, 0.0778) == (0.0, 0.08)  # zero endpoint stays 0
+    lo, hi = round_limits_outward(float("nan"), 1.0)  # non-finite: passthrough
+    assert math.isnan(lo) and hi == 1.0
+
+
+def test_round_limits_outward_preserves_tiny_symmetric_fallback():
+    from dfxm.common.plotting import round_limits_outward
+
+    # symmetric_limits() returns ±1e-12 for all-zero data; rounding must not
+    # collapse it to a degenerate (0.0, 0.0) range
+    assert round_limits_outward(-1e-12, 1e-12) == (-1e-12, 1e-12)
+
+
+def test_apply_round_clim_notes_and_gating():
+    from dfxm.common.plotting import apply_round_clim
+
+    # disabled (default style) and style=None: passthrough, no note
+    assert apply_round_clim(-0.0778, 0.0778, PlotStyle()) == (-0.0778, 0.0778, None)
+    assert apply_round_clim(-0.0778, 0.0778, None) == (-0.0778, 0.0778, None)
+    # enabled: rounded + symmetric note
+    lo, hi, note = apply_round_clim(-0.0778, 0.0778, PlotStyle(round_clim=True))
+    assert (lo, hi) == (-0.08, 0.08)
+    assert note == "colour limits rounded ±0.0778 → ±0.08 (round_clim)"
+    # enabled but already round: no note
+    assert apply_round_clim(-0.08, 0.08, PlotStyle(round_clim=True))[2] is None
+    # asymmetric note shows both pairs
+    _, _, note = apply_round_clim(0.0, 0.11, PlotStyle(round_clim=True))
+    assert note == "colour limits rounded (0, 0.11) → (0, 0.15) (round_clim)"
+
+
+def _title_y0(fig, ax):
+    """Draw fig on Agg and return the title's bottom window-coord (y0)."""
+    canvas = FigureCanvasAgg(fig)
+    canvas.draw()
+    return ax.title.get_window_extent(canvas.get_renderer()).y0
+
+
+def test_apply_text_scale_does_not_change_title_pad_on_plain_figure():
+    """apply_text_scale must not alter the title pad on a non-constrained figure.
+
+    Before the fix, apply_text_scale unconditionally set pad=12.0*fs, doubling
+    matplotlib's default (6.0 pt) even on plain figures produced by layer_figure
+    with style=None — a silent legacy-output drift.
+    """
+    # Reference: untouched plain Figure with the same title (matplotlib default pad)
+    fig_ref = Figure(figsize=(6, 4))
+    ax_ref = fig_ref.add_subplot(111)
+    ax_ref.set_title("test title")
+    ref_y = _title_y0(fig_ref, ax_ref)
+
+    # Treated: plain Figure after apply_text_scale with a default PlotStyle
+    fig_treated = Figure(figsize=(6, 4))
+    ax_treated = fig_treated.add_subplot(111)
+    ax_treated.set_title("test title")
+    apply_text_scale(ax_treated, PlotStyle())  # font_scale=1.0, title_scale=1.0
+    treated_y = _title_y0(fig_treated, ax_treated)
+
+    assert treated_y == ref_y, (
+        f"apply_text_scale altered the title pad on a plain (non-constrained) figure "
+        f"(ref y0={ref_y:.3f}, treated y0={treated_y:.3f}) — legacy output drift"
+    )
+
+
+def test_apply_text_scale_increases_title_pad_on_constrained_figure():
+    """On a constrained-layout figure, apply_text_scale must increase the title pad.
+
+    The pad compensates for the ×10ⁿ colorbar-offset text that constrained layout
+    does not account for when reserving room for the title.  A colorbar with
+    scientific notation is needed here so the constrained-layout engine has actual
+    competing artists and the pad effect is visible in window coordinates.
+    """
+    style = PlotStyle(font_scale=2.2, colorbar_ticks=5, colorbar_tick_format="scientific")
+    data = np.linspace(-2e-3, 2e-3, 100).reshape(10, 10)
+
+    # Reference: constrained figure WITH colorbar but WITHOUT apply_text_scale
+    fig_ref = styled_figure((3.5, 3.0), styled=True)
+    ax_ref = fig_ref.add_subplot(111)
+    im_ref = ax_ref.imshow(data)
+    ax_ref.set_title("test title")
+    add_colorbar(fig_ref, im_ref, ax_ref, "label", style)
+    ref_y = _title_y0(fig_ref, ax_ref)
+
+    # Treated: same setup WITH apply_text_scale (pad should push title up)
+    fig_treated = styled_figure((3.5, 3.0), styled=True)
+    ax_treated = fig_treated.add_subplot(111)
+    im_treated = ax_treated.imshow(data)
+    ax_treated.set_title("test title")
+    add_colorbar(fig_treated, im_treated, ax_treated, "label", style)
+    apply_text_scale(ax_treated, style)
+    treated_y = _title_y0(fig_treated, ax_treated)
+
+    assert treated_y > ref_y, (
+        f"apply_text_scale should push the title up on a constrained-layout figure "
+        f"at large font_scale, but ref y0={ref_y:.3f} >= treated y0={treated_y:.3f}"
+    )

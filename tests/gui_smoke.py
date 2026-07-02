@@ -439,6 +439,15 @@ def main() -> int:
     assert session_style.font_scale == new_val, session_style.font_scale
     assert len(changed_fired) > 0, "StyleControls.changed never fired"
 
+    sc._w_title_scale.setValue(0.4)
+    assert session_style.title_scale == 0.4, "Title scale widget did not mutate the style"
+    sc._w_round_clim.setChecked(True)
+    assert session_style.round_clim is True, "Round colour limits widget did not mutate the style"
+    sc._w_cbar_fmt.setCurrentIndex(2)  # "0 decimals (plain numbers)"
+    assert session_style.colorbar_tick_format == "0", (
+        "Tick-format combo must store the format value"
+    )
+
     # ExportDialog constructed from the session style starts with that style.
     def _mk2(style):
         from matplotlib.figure import Figure as _Fig2

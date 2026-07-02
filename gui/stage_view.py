@@ -606,6 +606,7 @@ def _summarize_slices(result) -> str:
             f"planes: {result.n_planes_total}   pngs: {len(result.pngs)}",
         ]
         lines += [f"  {vid}" for vid in result.volume_ids]
+    lines += [f"  {n}" for n in getattr(result, "notes", [])]
     lines += [f"skipped: {s}" for s in result.skipped]
     return "\n".join(lines)
 
@@ -630,12 +631,14 @@ def _summarize_matched(result) -> str:
             f"matched {result.n_matched}/{result.n_strain}",
         ]
     else:
+        clim = f"clim=({result.vmin:.4g}, {result.vmax:.4g})"
+        if getattr(result, "vmin_raw", None) is not None:
+            clim += f" (rounded from ({result.vmin_raw:.4g}, {result.vmax_raw:.4g}))"
         lines = [
             f"output: {result.layers_dir}",
             f"matched {result.n_matched}/{result.n_strain}, saved {result.n_saved} "
             f"(frame {result.frame_index})",
-            f"max match dist: {result.max_match_dist_um:.3f} µm   clim=({result.vmin:.4g}, "
-            f"{result.vmax:.4g})",
+            f"max match dist: {result.max_match_dist_um:.3f} µm   {clim}",
         ]
     lines += [f"skipped: {s}" for s in result.skipped]
     return "\n".join(lines)

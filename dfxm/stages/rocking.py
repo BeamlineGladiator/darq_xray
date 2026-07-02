@@ -33,7 +33,7 @@ from ..common import alignment as A
 from ..common import render as Rnd
 from ..common.errors import StageUserError
 from ..common.figures import FigureSpec, register, volume_layer_specs
-from ..common.plotting import resolve_cmap, style_from_params
+from ..common.plotting import apply_round_clim, resolve_cmap, style_from_params
 from ..common.raster import extract_motor_positions, find_h5_file
 from ..common.sort import find_matching_folders
 from ..config.models import Param, ParamType, StageSpec
@@ -545,9 +545,12 @@ def _render(
 ):
     sx, sy = float(p["pixel_size_x_um"]), float(p["pixel_size_y_um"])
     vmin, vmax = _colorbar_range(vol, float(p["cbar_pct_lo"]), float(p["cbar_pct_hi"]))
+    vmin, vmax, clim_note = apply_round_clim(vmin, vmax, style)
     ds_dir = os.path.join(out_dir, name)
     os.makedirs(ds_dir, exist_ok=True)
     prod = RockingProducts(name=name, vmin=vmin, vmax=vmax)
+    if clim_note:
+        prod.notes.append(clim_note)
     if p["save_layers"]:
         prod.layers_dir = Rnd.save_layer_pngs(
             vol, z_um, ds_dir, name, vmin, vmax, cmap, title, cbar, sx, sy, style=style

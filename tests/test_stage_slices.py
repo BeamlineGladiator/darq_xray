@@ -317,3 +317,54 @@ def test_figures_re_resolve_cmap_by_kind(tmp_path):
     fig = spec.build(PlotStyle(cmap_mosa_com="plasma"))
     assert fig.axes[0].images[0].cmap.name == "plasma"
     assert spec.build(None).axes[0].images[0].cmap.name == "fast"
+
+
+def test_run_round_clim_rounds_notes_and_h5_attrs(tmp_path):
+    proc, raw = _setup(tmp_path)
+    out = tmp_path / "sl"
+    slices_json = (
+        '[{"name":"mid","normal":[0,0,1],"origin":[0.5,0.5,1.5],'
+        '"half_u":0.4,"half_v":0.4,"du":0.2,"dv":0.2,"sweep_step_um":null}]'
+    )
+    params = {
+        "mosa_volume_file": str(proc / "stacked_volumes.h5"),
+        "strain_volume_file": str(proc / "stacked_strain_volumes.h5"),
+        "raw_root": str(raw),
+        "mosa_pattern": "mosa__*",
+        "strain_pattern": "strain__*",
+        "slices_json": slices_json,
+        "output_dir": str(out),
+        "plot_style": {"round_clim": True},
+    }
+    res = S.run(params)
+    assert res.notes and all("rounded" in n for n in res.notes)
+    with h5py.File(res.output_h5, "r") as f:
+        for note in res.notes:
+            vid = note.split(":")[0]
+            vg = f[vid]
+            assert "vmin_raw" in vg.attrs and "vmax_raw" in vg.attrs
+            # final limits enclose the raw ones (outward rounding never clips)
+            assert vg.attrs["vmin"] <= vg.attrs["vmin_raw"]
+            assert vg.attrs["vmax"] >= vg.attrs["vmax_raw"]
+
+
+def test_run_without_round_clim_has_no_notes_or_raw_attrs(tmp_path):
+    proc, raw = _setup(tmp_path)
+    out = tmp_path / "sl"
+    slices_json = (
+        '[{"name":"mid","normal":[0,0,1],"origin":[0.5,0.5,1.5],'
+        '"half_u":0.4,"half_v":0.4,"du":0.2,"dv":0.2,"sweep_step_um":null}]'
+    )
+    res = S.run(
+        {
+            "mosa_volume_file": str(proc / "stacked_volumes.h5"),
+            "raw_root": str(raw),
+            "mosa_pattern": "mosa__*",
+            "slices_json": slices_json,
+            "output_dir": str(out),
+        }
+    )
+    assert res.notes == []
+    with h5py.File(res.output_h5, "r") as f:
+        for vid in res.volume_ids:
+            assert "vmin_raw" not in f[vid].attrs

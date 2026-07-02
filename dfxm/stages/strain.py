@@ -34,14 +34,15 @@ from ..common.figures import FigureSpec, register
 from ..common.plotting import (
     PlotStyle,
     add_colorbar,
+    apply_round_clim,
     apply_text_scale,
     build_histogram,
     draw_scale_bar,
     figure_size,
-    new_figure,
     physical_extent,
     resolve_cmap,
     style_from_params,
+    styled_figure,
     symmetric_limits,
 )
 from ..common.sort import find_matching_folders
@@ -367,7 +368,11 @@ def build_strain_map(
     The caller is responsible for calling ``fig.savefig``.
     """
     extent = physical_extent(strain.shape, px, py, roi)
-    vmin, vmax = vlim if vlim != (None, None) else symmetric_limits(strain)
+    if vlim != (None, None):
+        vmin, vmax = vlim  # user-specified limits are never rounded
+    else:
+        vmin, vmax = symmetric_limits(strain)
+        vmin, vmax, _ = apply_round_clim(vmin, vmax, style)
 
     ny, nx = strain.shape
     legacy_figsize = (7, 7 * (ny * py) / (nx * px) + 1.5)
@@ -377,7 +382,7 @@ def build_strain_map(
         else legacy_figsize
     )
 
-    fig = new_figure(figsize)
+    fig = styled_figure(figsize, styled=style is not None)
     ax = fig.add_subplot(111)
     im = ax.imshow(
         strain,
@@ -434,7 +439,7 @@ def build_detrend_diag(
     When *style* is ``None`` the legacy look is reproduced exactly. The caller
     is responsible for calling ``fig.savefig``.
     """
-    fig = new_figure((20, 6))
+    fig = styled_figure((20, 6), styled=style is not None)
     axes = fig.subplots(1, 3)
     for ax, title, d in zip(
         axes,
