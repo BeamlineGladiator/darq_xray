@@ -68,6 +68,7 @@ class PlotStyle:
     colorbar_fraction: float = 0.046  # matplotlib colorbar `fraction` (thickness)
     colorbar_ticks: int = 0  # 0 -> matplotlib default; >=2 -> N evenly spaced incl min/mid/max
     colorbar_tick_format: str = "auto"  # "auto" | "scientific" | a digit count like "2"
+    round_clim: bool = False  # round auto colour limits outward to nice values
     # figure
     figure_width: str | float = "auto"  # "single" | "double" | "auto" | width in inches
     # output
@@ -189,6 +190,56 @@ def symmetric_limits(data: np.ndarray, percentile: float | None = None) -> tuple
     if m == 0:
         m = 1e-12
     return -m, m
+
+
+def round_limits_outward(vmin: float, vmax: float) -> tuple[float, float]:
+    """Round colour limits OUTWARD (vmin down, vmax up) to 'nice' values.
+
+    Each non-zero endpoint moves to the next multiple of half its
+    leading-digit unit (step = 0.5 * 10**floor(log10(|v|))): ±0.0778 → ±0.08,
+    0.11 → 0.15, 0.0432 → 0.045, 1.7e-4 → 2e-4. Results have at most two
+    significant digits (last digit 0 or 5), so evenly spaced colourbar ticks
+    land on round numbers. Symmetric input stays exactly symmetric; zero
+    endpoints, non-finite values and degenerate ranges (vmin >= vmax) are
+    returned unchanged.
+    """
+
+    def _out(v: float, up: bool) -> float:
+        if v == 0.0 or not math.isfinite(v):
+            return v
+        step = 0.5 * 10.0 ** math.floor(math.log10(abs(v)))
+        n = v / step
+        # epsilon guard so already-round values do not inflate by a whole step
+        n = math.ceil(n - 1e-9) if up else math.floor(n + 1e-9)
+        # Round to eliminate floating-point artifacts (e.g., 0.15000000000000002 -> 0.15)
+        return round(n * step, 10)
+
+    if not (math.isfinite(vmin) and math.isfinite(vmax)) or vmin >= vmax:
+        return (vmin, vmax)
+    return (_out(vmin, up=False), _out(vmax, up=True))
+
+
+def apply_round_clim(
+    vmin: float, vmax: float, style: "PlotStyle | None"
+) -> tuple[float, float, str | None]:
+    """Round (vmin, vmax) outward when ``style.round_clim`` is set.
+
+    Returns ``(vmin, vmax, note)``. The note is a user-facing description of
+    what changed (``None`` when rounding is off, style is None, or the limits
+    were already round) — stages surface it in the run log / results.
+    """
+    if style is None or not style.round_clim:
+        return vmin, vmax, None
+    rlo, rhi = round_limits_outward(vmin, vmax)
+    if rlo == vmin and rhi == vmax:
+        return vmin, vmax, None
+    if math.isclose(-vmin, vmax, rel_tol=1e-9) and math.isclose(-rlo, rhi, rel_tol=1e-9):
+        note = f"colour limits rounded ±{vmax:.4g} → ±{rhi:.4g} (round_clim)"
+    else:
+        note = (
+            f"colour limits rounded ({vmin:.4g}, {vmax:.4g}) → ({rlo:.4g}, {rhi:.4g}) (round_clim)"
+        )
+    return rlo, rhi, note
 
 
 def physical_extent(

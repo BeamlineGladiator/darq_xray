@@ -312,3 +312,56 @@ def test_title_scale_survives_json_roundtrip():
     assert style_from_json(style_to_json(s)).title_scale == 0.4
     # Old persisted blobs (no title_scale key) default to 1.0
     assert style_from_json(style_to_json(PlotStyle())).title_scale == 1.0
+
+
+def test_round_limits_outward_symmetric_stays_symmetric():
+    from dfxm.common.plotting import round_limits_outward
+
+    lo, hi = round_limits_outward(-0.0778, 0.0778)
+    assert (lo, hi) == (-0.08, 0.08)
+
+
+def test_round_limits_outward_examples():
+    from dfxm.common.plotting import round_limits_outward
+
+    assert round_limits_outward(0.0, 0.11)[1] == 0.15
+    assert round_limits_outward(0.0, 0.0432)[1] == 0.045
+    assert abs(round_limits_outward(0.0, 1.7e-4)[1] - 2e-4) < 1e-12
+    # asymmetric: vmin floors, vmax ceils
+    lo, hi = round_limits_outward(-5.3, -1.2)
+    assert (lo, hi) == (-5.5, -1.0)
+
+
+def test_round_limits_outward_already_round_is_unchanged():
+    from dfxm.common.plotting import round_limits_outward
+
+    assert round_limits_outward(-0.08, 0.08) == (-0.08, 0.08)  # no float-epsilon inflation
+    assert round_limits_outward(0.0, 0.1) == (0.0, 0.1)
+
+
+def test_round_limits_outward_degenerate_and_zero():
+    import math
+
+    from dfxm.common.plotting import round_limits_outward
+
+    assert round_limits_outward(0.5, 0.5) == (0.5, 0.5)  # degenerate: unchanged
+    assert round_limits_outward(0.0, 0.0778) == (0.0, 0.08)  # zero endpoint stays 0
+    lo, hi = round_limits_outward(float("nan"), 1.0)  # non-finite: passthrough
+    assert math.isnan(lo) and hi == 1.0
+
+
+def test_apply_round_clim_notes_and_gating():
+    from dfxm.common.plotting import apply_round_clim
+
+    # disabled (default style) and style=None: passthrough, no note
+    assert apply_round_clim(-0.0778, 0.0778, PlotStyle()) == (-0.0778, 0.0778, None)
+    assert apply_round_clim(-0.0778, 0.0778, None) == (-0.0778, 0.0778, None)
+    # enabled: rounded + symmetric note
+    lo, hi, note = apply_round_clim(-0.0778, 0.0778, PlotStyle(round_clim=True))
+    assert (lo, hi) == (-0.08, 0.08)
+    assert note == "colour limits rounded ±0.0778 → ±0.08 (round_clim)"
+    # enabled but already round: no note
+    assert apply_round_clim(-0.08, 0.08, PlotStyle(round_clim=True))[2] is None
+    # asymmetric note shows both pairs
+    _, _, note = apply_round_clim(0.0, 0.11, PlotStyle(round_clim=True))
+    assert note == "colour limits rounded (0, 0.11) → (0, 0.15) (round_clim)"
