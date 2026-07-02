@@ -191,13 +191,14 @@ class MosaicityResult:
 
 # Per-key display metadata (cmap, colorbar label, title prefix).
 # Keys match the "/{group}/{ds_name}" form stored in MosaicityResult.datasets.
-# Conventions mirror visualize._display_info: all mosaicity maps use "magma";
-# CoM = misorientation, FWHM = peak broadening.
-_KEY_DISPLAY: dict[str, tuple[str, str, str]] = {
-    "/chi/Center of mass": ("magma", "Misorientation (°)", "χ Misorientation"),
-    "/chi/FWHM": ("magma", "Peak broadening (°)", "χ Peak Broadening"),
-    "/mu/Center of mass": ("magma", "Misorientation (°)", "μ Misorientation"),
-    "/mu/FWHM": ("magma", "Peak broadening (°)", "μ Peak Broadening"),
+# Conventions mirror visualize._display_info. The first element is the
+# PlotStyle colormap GROUP (resolved at build time); unknown keys fall back
+# to the fixed "magma". CoM = misorientation, FWHM = peak broadening.
+_KEY_DISPLAY: dict[str, tuple[str | None, str, str]] = {
+    "/chi/Center of mass": ("mosa_com", "Misorientation (°)", "χ Misorientation"),
+    "/chi/FWHM": ("mosa_fwhm", "Peak broadening (°)", "χ Peak Broadening"),
+    "/mu/Center of mass": ("mosa_com", "Misorientation (°)", "μ Misorientation"),
+    "/mu/FWHM": ("mosa_fwhm", "Peak broadening (°)", "μ Peak Broadening"),
 }
 
 # Safe filename stem per key (no spaces/slashes).
@@ -242,9 +243,9 @@ def figures(result: "MosaicityResult", params: dict) -> list[FigureSpec]:
     specs: list[FigureSpec] = []
     for key in result.datasets:
         # The key is already the in-file HDF5 path (e.g. "/chi/Center of mass").
-        cmap, cbar_label, title = _KEY_DISPLAY.get(
+        group, cbar_label, title = _KEY_DISPLAY.get(
             key,
-            ("magma", "(°)", key.lstrip("/").replace("/", " ")),
+            (None, "(°)", key.lstrip("/").replace("/", " ")),
         )
         stem = _KEY_STEM.get(key, key.lstrip("/").replace("/", "_").replace(" ", "_"))
 
@@ -264,7 +265,8 @@ def figures(result: "MosaicityResult", params: dict) -> list[FigureSpec]:
                 id_prefix=stem,
                 title=title,
                 cbar_label=cbar_label,
-                cmap=cmap,
+                cmap="magma",
+                cmap_group=group,
                 sx=px,
                 sy=py,
                 vmin=vmin,

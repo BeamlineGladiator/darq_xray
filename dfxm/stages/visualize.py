@@ -29,6 +29,7 @@ import numpy as np
 from ..common import alignment as A
 from ..common import render as Rnd
 from ..common.figures import FigureSpec, register
+from ..common.plotting import resolve_cmap, style_from_params
 from ..common.raster import extract_motor_positions
 from ..common.sort import find_matching_folders
 from ..config.models import Param, ParamType, StageSpec
@@ -342,8 +343,9 @@ def _colorbar_range(data):
 
 
 def _display_info(dataset_name, is_strain=False):
+    """(title, cbar_label, cmap_group) for a dataset; group None = not a std quantity."""
     if is_strain:
-        return ("Strain (cot method)", "Strain (ε)", "RdBu_r")
+        return ("Strain (cot method)", "Strain (ε)", "strain")
     axis = (
         "χ"
         if dataset_name.startswith("chi_")
@@ -352,10 +354,10 @@ def _display_info(dataset_name, is_strain=False):
         else dataset_name
     )
     if "Center_of_mass" in dataset_name:
-        return (f"{axis} Misorientation", "Misorientation (°)", "magma")
+        return (f"{axis} Misorientation", "Misorientation (°)", "mosa_com")
     if "FWHM" in dataset_name:
-        return (f"{axis} Peak Broadening", "Peak broadening (°)", "magma")
-    return (dataset_name.replace("_", " "), "(°)", "magma")
+        return (f"{axis} Peak Broadening", "Peak broadening (°)", "mosa_fwhm")
+    return (dataset_name.replace("_", " "), "(°)", None)
 
 
 # -----------------------------------------------------------------------------
@@ -414,7 +416,9 @@ def _align(volume, samy, samz, *, scale_x, samy_direction, roi_x, roi_y):
     return data, z_pos, scale_z
 
 
-def _process_dataset(data, z_pos, scale_z, name, vmin, vmax, cmap, title, cbar, p, out_dir):
+def _process_dataset(
+    data, z_pos, scale_z, name, vmin, vmax, cmap, title, cbar, p, out_dir, style=None
+):
     ds_dir = os.path.join(out_dir, name)
     os.makedirs(ds_dir, exist_ok=True)
     sx, sy = float(p["pixel_size_x_um"]), float(p["pixel_size_y_um"])
@@ -422,7 +426,7 @@ def _process_dataset(data, z_pos, scale_z, name, vmin, vmax, cmap, title, cbar, 
 
     if p["save_layers"]:
         prod.layers_dir = Rnd.save_layer_pngs(
-            data, z_pos, ds_dir, name, vmin, vmax, cmap, title, cbar, sx, sy
+            data, z_pos, ds_dir, name, vmin, vmax, cmap, title, cbar, sx, sy, style=style
         )
     if p["save_animation"]:
         prod.animation = Rnd.save_layer_animation(
@@ -438,6 +442,7 @@ def _process_dataset(data, z_pos, scale_z, name, vmin, vmax, cmap, title, cbar, 
             p["output_format"],
             sx,
             sy,
+            style=style,
         )
     if p["save_topview"]:
         try:
@@ -463,6 +468,7 @@ def _process_dataset(data, z_pos, scale_z, name, vmin, vmax, cmap, title, cbar, 
 def run(params: dict, progress: ProgressFn | None = None) -> VisualizeResult:
     progress = progress or _noop
     p = {**STAGE.defaults(), **params}
+    style = style_from_params(p)
     scale_x = float(p["pixel_size_x_um"])
     samy_dir = int(p["samy_direction"])
     roi_x, roi_y = _parse_pair(p["roi_x"]), _parse_pair(p["roi_y"])
@@ -482,7 +488,8 @@ def run(params: dict, progress: ProgressFn | None = None) -> VisualizeResult:
         samy, samz = _read_motors(raw_root, p["mosa_pattern"], p["samy_path"], p["samz_path"])
         for i, (name, raw) in enumerate(datasets.items()):
             progress(0.1 + 0.4 * i / max(1, len(datasets)), f"mosaicity: {name}")
-            title, cbar, cmap = _display_info(name)
+            title, cbar, group = _display_info(name)
+            cmap = resolve_cmap(style, group)
             data, z_pos, scale_z = _align(
                 raw, samy, samz, scale_x=scale_x, samy_direction=samy_dir, roi_x=roi_x, roi_y=roi_y
             )
@@ -494,7 +501,18 @@ def run(params: dict, progress: ProgressFn | None = None) -> VisualizeResult:
                 vmin, vmax = _colorbar_range(data)
             result.datasets.append(
                 _process_dataset(
-                    data, z_pos, scale_z, name, vmin, vmax, cmap, title, cbar, p, out_dir
+                    data,
+                    z_pos,
+                    scale_z,
+                    name,
+                    vmin,
+                    vmax,
+                    cmap,
+                    title,
+                    cbar,
+                    p,
+                    out_dir,
+                    style=style,
                 )
             )
     elif mosa_file:
@@ -507,14 +525,26 @@ def run(params: dict, progress: ProgressFn | None = None) -> VisualizeResult:
         vol = load_strain_volume(strain_file)
         if vol is not None:
             samy, samz = _read_motors(raw_root, p["strain_pattern"], p["samy_path"], p["samz_path"])
-            title, cbar, cmap = _display_info("strain", is_strain=True)
+            title, cbar, group = _display_info("strain", is_strain=True)
+            cmap = resolve_cmap(style, group)
             data, z_pos, scale_z = _align(
                 vol, samy, samz, scale_x=scale_x, samy_direction=samy_dir, roi_x=roi_x, roi_y=roi_y
             )
             vmin, vmax = _symmetric_range(data)
             result.datasets.append(
                 _process_dataset(
-                    data, z_pos, scale_z, "strain", vmin, vmax, cmap, title, cbar, p, out_dir
+                    data,
+                    z_pos,
+                    scale_z,
+                    "strain",
+                    vmin,
+                    vmax,
+                    cmap,
+                    title,
+                    cbar,
+                    p,
+                    out_dir,
+                    style=style,
                 )
             )
     elif strain_file:
@@ -570,7 +600,7 @@ def aligned_field(params: dict, name: str):
             vol, samy, samz, scale_x=scale_x, samy_direction=samy_dir, roi_x=roi_x, roi_y=roi_y
         )
         vmin, vmax = _symmetric_range(data)
-        cmap = "RdBu_r"
+        cmap = resolve_cmap(None, "strain")
     else:
         datasets = load_mosa_datasets(p["mosa_volume_file"])
         if name not in datasets:
@@ -591,23 +621,35 @@ def aligned_field(params: dict, name: str):
             )
         else:
             vmin, vmax = _colorbar_range(data)
-        _, _, cmap = _display_info(name)
+        _, _, group = _display_info(name)
+        cmap = resolve_cmap(None, group)
     return data, (scale_x, scale_y, scale_z), cmap, (float(vmin), float(vmax))
 
 
-def _make_build(loader, z, vn, vx, cm, ex, ey, t, cb):
+def _make_build(loader, z, vn, vx, cmap_group, ex, ey, t, cb):
     """Factory: returns a build(style) closure for one layer of an aligned volume.
 
     ``loader`` is a zero-arg callable that returns the full aligned 3-D volume
     (cached per dataset by the caller).  ``z`` is captured by value via the
-    default-arg trick so late-binding is not an issue.
+    default-arg trick so late-binding is not an issue. The colormap is resolved
+    from *style* at build time via the dataset's quantity group.
     """
 
-    def build(style, _loader=loader, _z=z, _vn=vn, _vx=vx, _cm=cm, _ex=ex, _ey=ey, _t=t, _cb=cb):
+    def build(
+        style, _loader=loader, _z=z, _vn=vn, _vx=vx, _grp=cmap_group, _ex=ex, _ey=ey, _t=t, _cb=cb
+    ):
         vol = _loader()
         layer = vol[_z]
         fig, _ax, _im = Rnd.layer_figure(
-            layer, _vn, _vx, _cm, _ex, _ey, f"{_t} (layer {_z})", _cb, style=style
+            layer,
+            _vn,
+            _vx,
+            resolve_cmap(style, _grp),
+            _ex,
+            _ey,
+            f"{_t} (layer {_z})",
+            _cb,
+            style=style,
         )
         return fig
 
@@ -645,7 +687,7 @@ def figures(result: "VisualizeResult", params: dict) -> list[FigureSpec]:
 
     for ds in result.datasets:
         is_strain = ds.name == "strain"
-        title, cbar_label, cmap = _display_info(ds.name, is_strain=is_strain)
+        title, cbar_label, group = _display_info(ds.name, is_strain=is_strain)
         n_z = ds.shape[0]
         ext_x = ds.shape[2] * sx
         ext_y = ds.shape[1] * sy
@@ -729,7 +771,7 @@ def figures(result: "VisualizeResult", params: dict) -> list[FigureSpec]:
                     kind="map",
                     filename=f"{stem}_layer_{z:04d}",
                     build=_make_build(
-                        _aligned_vol, z, vmin_ds, vmax_ds, cmap, ext_x, ext_y, title, cbar_label
+                        _aligned_vol, z, vmin_ds, vmax_ds, group, ext_x, ext_y, title, cbar_label
                     ),
                 )
             )

@@ -122,3 +122,29 @@ def test_run_requires_mosa_reference(tmp_path):
     _write_motor_folder(str(raw), "rock__1", 0.0, 0.0, frames=_rng_frames(1))
     with pytest.raises(ValueError, match="mosa"):
         RK.run({"raw_root": str(raw), "rocking_pattern": "rock__*", "mosa_pattern": "mosa__*"})
+
+
+def test_figures_use_raw_group(tmp_path):
+    """Rocking figure specs resolve their cmap from the style's raw group."""
+    from dfxm.common.plotting import PlotStyle
+
+    raw = _setup(tmp_path)
+    out = tmp_path / "rock_out"
+    params = {
+        "raw_root": str(raw),
+        "rocking_pattern": "rock__*",
+        "mosa_pattern": "mosa__*",
+        "strain_pattern": "strain__*",
+        "pixel_size_x_um": 0.152,
+        "pixel_size_y_um": 0.385,
+        "output_dir": str(out),
+        "save_layers": False,
+        "save_animation": False,
+        "save_topview": False,
+    }
+    res = RK.run(params)
+    specs = RK.figures(res, params)
+    fig = specs[0].build(PlotStyle(cmap_raw="viridis"))
+    assert fig.axes[0].images[0].cmap.name == "viridis"
+    fig = specs[0].build(None)  # default raw group -> gray (was magma)
+    assert fig.axes[0].images[0].cmap.name == "gray"

@@ -95,6 +95,7 @@ def volume_layer_specs(
     title: str,
     cbar_label: str,
     cmap: str,
+    cmap_group: str | None = None,
     sx: float,
     sy: float,
     vmin: float,
@@ -122,13 +123,15 @@ def volume_layer_specs(
 
     def make(z):
         def build(style):
+            from .plotting import resolve_cmap
+
             layer = _load_layer(h5_path, dataset, z)
             zlabel = f"\nZ = {z_um[z]:.2f} µm" if z_um is not None else ""
             fig, _, _ = render.layer_figure(
                 layer,
                 vmin,
                 vmax,
-                cmap,
+                resolve_cmap(style, cmap_group, fallback=cmap),
                 ext_x,
                 ext_y,
                 f"{title}{zlabel} (layer {z})",

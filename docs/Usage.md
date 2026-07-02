@@ -272,8 +272,9 @@ Align the stacked mosaicity/strain volumes and render them.
 | `output_format` | `mp4` / `gif` / `both` |
 
 > [!note]
-> Mosaicity uses the `magma` colourmap; strain uses diverging `RdBu_r` pinned at
-> ε = 0.
+> Colourmaps follow the publication-style **Colormaps** dropdowns (misorientation
+> defaults to ParaView's `fast`, FWHM to `magma`, strain to diverging `RdBu_r`
+> pinned at ε = 0).
 
 ### 6. ParaView export (`paraview`)
 
@@ -386,13 +387,34 @@ Exported figures are **rebuilt from the saved data to match the figure the run p
 
 ### The "Publication style…" editor
 
-A **Publication style…** button lives in the **left column of the main window**, below the pipeline rail. It holds one **session-global** `PlotStyle` — seeded from `PUBLICATION_STYLE` at startup and shared by every export dialog opened from any stage during the session.
+A **Publication style…** button lives in the **left column of the main window**, below the pipeline rail. It holds one **session-global** `PlotStyle` — restored from your previous session (saved automatically via QSettings when you close the dialog or the app), else seeded from `PUBLICATION_STYLE` — and shared by every export dialog opened from any stage.
 
-Clicking it opens a scrollable style editor (the same control set as the per-figure export dialog). Changes persist for the rest of the session. Each **Export…** dialog starts from a private copy of the session style and lets you adjust it per-figure without changing the global.
+Clicking it opens a scrollable style editor (the same control set as the per-figure export dialog). Each **Export…** dialog starts from a private copy of the session style and lets you adjust it per-figure without changing the global.
+
+> [!important] Runs use the current style
+> Every stage **run** renders its own PNGs/animations (layer maps, slice PNGs,
+> profile companions, strain diagnostics, matched layers) with the publication
+> style **as it is at the moment you press Run**. Edit the style, re-run, and
+> the new look is guaranteed to apply. Headless CLI runs (without the GUI) keep
+> the plain legacy look.
 
 ### Style controls
 
 Both the global "Publication style…" editor and the per-figure **Export…** dialog offer the same controls:
+
+**Colormaps** — one dropdown per quantity group; applies to every stage that
+plots that quantity (runs, previews, exports and the 3-D viewers alike):
+
+| Group | Applies to | Default |
+|---|---|---|
+| Mosa misorientation | χ/μ centre-of-mass maps & slices | `fast` (ParaView's default map, registered with matplotlib) |
+| Mosa FWHM | χ/μ peak-broadening maps & slices | `magma` |
+| Strain | strain maps, detrend diagnostics, strain slices | `RdBu_r` |
+| Raw intensity | rocking volumes, raw slices | `gray` |
+
+The choices persist across sessions together with the rest of the style. The
+matched stage keeps its own per-stage `colormap` dropdown in its parameter
+form.
 
 **Scale bar**
 

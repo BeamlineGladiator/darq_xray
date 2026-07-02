@@ -9,13 +9,35 @@ explicit :class:`~matplotlib.figure.Figure` API instead and save via
 
 from __future__ import annotations
 
+import json
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 
 import matplotlib
 import numpy as np
 from matplotlib.figure import Figure
 from matplotlib.ticker import FuncFormatter, ScalarFormatter
+
+from .cmaps import register as _register_fast_cmap
+
+_register_fast_cmap()
+
+# Colormap quantity groups + the curated dropdown list (shared by the GUI).
+CMAP_GROUPS: tuple[str, ...] = ("mosa_com", "mosa_fwhm", "strain", "raw")
+CMAP_CHOICES: tuple[str, ...] = (
+    "fast",
+    "magma",
+    "viridis",
+    "plasma",
+    "inferno",
+    "cividis",
+    "gray",
+    "bone",
+    "RdBu_r",
+    "coolwarm",
+    "seismic",
+    "turbo",
+)
 
 
 @dataclass
@@ -50,6 +72,17 @@ class PlotStyle:
     # output
     formats: tuple[str, ...] = ("png",)
     dpi: int = 300
+    # per-quantity colormaps (see CMAP_GROUPS)
+    cmap_mosa_com: str = "fast"
+    cmap_mosa_fwhm: str = "magma"
+    cmap_strain: str = "RdBu_r"
+    cmap_raw: str = "gray"
+
+    def cmap_for(self, group: str) -> str:
+        """Colormap name for a quantity group (KeyError on unknown group)."""
+        if group not in CMAP_GROUPS:
+            raise KeyError(f"unknown colormap group {group!r}")
+        return getattr(self, f"cmap_{group}")
 
 
 PUBLICATION_STYLE = PlotStyle(
@@ -66,6 +99,59 @@ PUBLICATION_STYLE = PlotStyle(
     formats=("png", "pdf", "svg"),
     dpi=300,
 )
+
+
+def resolve_cmap(style: PlotStyle | None, group: str | None, fallback: str = "magma") -> str:
+    """Colormap for *group* from *style* (or the PlotStyle defaults when None).
+
+    ``group=None`` means "not one of the four quantity groups" and returns
+    *fallback* unchanged.
+    """
+    if group is None:
+        return fallback
+    return (style if style is not None else PlotStyle()).cmap_for(group)
+
+
+def _style_from_dict(data: dict) -> PlotStyle:
+    names = {f.name for f in fields(PlotStyle)}
+    kwargs = {k: v for k, v in dict(data).items() if k in names}
+    if isinstance(kwargs.get("formats"), list):
+        kwargs["formats"] = tuple(kwargs["formats"])
+    return PlotStyle(**kwargs)
+
+
+def style_from_params(params: dict) -> PlotStyle | None:
+    """Rebuild the GUI-injected style from the reserved ``plot_style`` params key.
+
+    Returns ``None`` when the key is absent/empty (headless CLI ⇒ legacy look).
+    Unknown keys are dropped and missing keys defaulted so an older or newer
+    GUI snapshot never crashes a stage.
+    """
+    raw = params.get("plot_style")
+    if not raw:
+        return None
+    return _style_from_dict(raw)
+
+
+def style_to_json(style: PlotStyle) -> str:
+    """Serialize a style for QSettings persistence."""
+    from dataclasses import asdict
+
+    return json.dumps(asdict(style))
+
+
+def style_from_json(text: str) -> PlotStyle | None:
+    """Inverse of :func:`style_to_json`; ``None`` on any parse/shape failure."""
+    try:
+        data = json.loads(text)
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    try:
+        return _style_from_dict(data)
+    except (TypeError, ValueError):
+        return None
 
 
 def figure_size(style: PlotStyle, ext_x: float, ext_y: float) -> tuple[float, float] | None:
@@ -118,16 +204,10 @@ def physical_extent(
 
 
 def get_cmap(name: str):
-    """Look up a colormap by name.
-
-    Supports the ParaView ``"fast"`` map by falling back to ``coolwarm`` when
-    it is not registered with matplotlib.
-    """
+    """Look up a colormap by name (ParaView's ``"fast"`` is registered at import)."""
     registry = matplotlib.colormaps
     if name in registry:
         return registry[name]
-    if name == "fast" and "coolwarm" in registry:
-        return registry["coolwarm"]
     raise KeyError(f"unknown colormap {name!r}")
 
 

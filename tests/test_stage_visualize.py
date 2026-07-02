@@ -136,5 +136,33 @@ def test_parse_pair_and_display_info():
     assert V._parse_pair("3, 7") == (3, 7)
     with pytest.raises(ValueError):
         V._parse_pair("1,2,3")
-    assert V._display_info("strain", is_strain=True)[2] == "RdBu_r"
-    assert V._display_info("chi_Center_of_mass")[2] == "magma"
+    # third element is the colormap GROUP (resolved via PlotStyle), not a cmap name
+    assert V._display_info("strain", is_strain=True)[2] == "strain"
+    assert V._display_info("chi_Center_of_mass")[2] == "mosa_com"
+    assert V._display_info("mu_FWHM")[2] == "mosa_fwhm"
+    assert V._display_info("something_else")[2] is None
+
+
+def test_figures_resolve_cmap_from_style(tmp_path):
+    """Visualize FigureSpecs resolve their colormap from the style at build time."""
+    from dfxm.common.plotting import PlotStyle
+
+    proc, raw = _setup(tmp_path)
+    out = tmp_path / "viz"
+    params = {
+        "mosa_volume_file": str(proc / "stacked_volumes.h5"),
+        "strain_volume_file": str(proc / "stacked_strain_volumes.h5"),
+        "raw_root": str(raw),
+        "mosa_pattern": "mosa__*",
+        "strain_pattern": "strain__*",
+        "output_dir": str(out),
+        "save_layers": False,
+        "save_animation": False,
+        "save_topview": False,
+    }
+    res = V.run(params)
+    specs = V.figures(res, params)
+    com_spec = next(s for s in specs if "Center_of_mass" in s.figure_id)
+    fig = com_spec.build(PlotStyle(cmap_mosa_com="viridis"))
+    assert fig.axes[0].images[0].cmap.name == "viridis"
+    assert com_spec.build(None).axes[0].images[0].cmap.name == "fast"

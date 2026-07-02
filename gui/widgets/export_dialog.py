@@ -25,13 +25,14 @@ from PySide6.QtWidgets import (
 )
 
 from dfxm.common.figures import FigureSpec
-from dfxm.common.plotting import PlotStyle
+from dfxm.common.plotting import CMAP_CHOICES, PlotStyle
 
 from .mpl_canvas import MplCanvas
 
 # Module-level constants for option lists — shared by StyleControls so the
 # two places can never drift apart.
 _COLORS = ["black", "white", "red", "green", "blue", "yellow", "grey"]
+_CMAPS = list(CMAP_CHOICES)
 _WIDTHS = ["auto", "single", "double"]
 _TICK_FMTS = ["auto", "scientific", "0", "1", "2", "3"]
 _LOCS = ["lower right", "lower left", "upper right", "upper left"]
@@ -70,6 +71,14 @@ class StyleControls(QWidget):
         for w in self._all_widgets():
             w.blockSignals(True)
 
+        for combo, field_name in (
+            (self._w_cmap_mosa_com, "cmap_mosa_com"),
+            (self._w_cmap_mosa_fwhm, "cmap_mosa_fwhm"),
+            (self._w_cmap_strain, "cmap_strain"),
+            (self._w_cmap_raw, "cmap_raw"),
+        ):
+            val = getattr(s, field_name)
+            combo.setCurrentText(val if val in _CMAPS else _CMAPS[0])
         self._w_scale_bar.setChecked(s.scale_bar)
         self._w_bar_auto.setChecked(s.scale_bar_length_um is None)
         self._w_bar_len.setValue(
@@ -122,6 +131,10 @@ class StyleControls(QWidget):
     def _all_widgets(self) -> list[QWidget]:
         """Return a flat list of all leaf widgets (for blockSignals)."""
         return [
+            self._w_cmap_mosa_com,
+            self._w_cmap_mosa_fwhm,
+            self._w_cmap_strain,
+            self._w_cmap_raw,
             self._w_scale_bar,
             self._w_bar_auto,
             self._w_bar_len,
@@ -157,6 +170,25 @@ class StyleControls(QWidget):
         form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
 
         s = self._style  # alias (widgets capture self, so mutations always go to self._style)
+
+        # --- Colormaps section (one dropdown per quantity group) ---
+        form.addRow(QLabel("<b>Colormaps</b>"))
+        cmap_rows = (
+            ("_w_cmap_mosa_com", "cmap_mosa_com", "Mosa misorientation"),
+            ("_w_cmap_mosa_fwhm", "cmap_mosa_fwhm", "Mosa FWHM"),
+            ("_w_cmap_strain", "cmap_strain", "Strain"),
+            ("_w_cmap_raw", "cmap_raw", "Raw intensity"),
+        )
+        for attr, field_name, label in cmap_rows:
+            combo = QComboBox()
+            combo.addItems(_CMAPS)
+            current = getattr(s, field_name)
+            combo.setCurrentText(current if current in _CMAPS else _CMAPS[0])
+            combo.currentTextChanged.connect(
+                lambda v, f=field_name: (setattr(self._style, f, v), self._emit())
+            )
+            setattr(self, attr, combo)
+            form.addRow(label, combo)
 
         # --- Scale bar section ---
         form.addRow(QLabel("<b>Scale bar</b>"))

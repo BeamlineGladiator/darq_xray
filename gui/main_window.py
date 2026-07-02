@@ -53,9 +53,10 @@ class MainWindow(QMainWindow):
         self.resize(1100, 720)
         self._window_state = WindowState()
 
-        # Session-wide publication style — seeded from the module constant but
-        # held as an independent copy so mutations never touch PUBLICATION_STYLE.
-        self._plot_style: PlotStyle = replace(PUBLICATION_STYLE)
+        # Session-wide publication style — restored from QSettings when a
+        # previous session saved one, else seeded from the module constant
+        # (held as an independent copy so mutations never touch PUBLICATION_STYLE).
+        self._plot_style: PlotStyle = self._load_plot_style()
 
         self._experiment_panel = ExperimentPanel()
         experiment = self._experiment_panel.current_experiment()
@@ -153,6 +154,23 @@ class MainWindow(QMainWindow):
         """
         return self._plot_style
 
+    @staticmethod
+    def _load_plot_style() -> PlotStyle:
+        from PySide6.QtCore import QSettings
+
+        from dfxm.common.plotting import style_from_json
+
+        raw = QSettings().value("plot_style", "")
+        loaded = style_from_json(raw) if raw else None
+        return loaded if loaded is not None else replace(PUBLICATION_STYLE)
+
+    def _save_plot_style(self) -> None:
+        from PySide6.QtCore import QSettings
+
+        from dfxm.common.plotting import style_to_json
+
+        QSettings().setValue("plot_style", style_to_json(self._plot_style))
+
     def _on_pub_style(self) -> None:
         """Open the global publication-style editor."""
         from .widgets.export_dialog import StyleControls
@@ -177,6 +195,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(btn_box)
 
         dlg.exec()
+        self._save_plot_style()
 
     # -- theme --------------------------------------------------------------
     def _sync_theme_btn(self) -> None:
@@ -216,6 +235,7 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event) -> None:  # Qt hook
         self._window_state.save(self, self._main_splitter)
+        self._save_plot_style()
         super().closeEvent(event)
 
     # -- slots ----------------------------------------------------------------

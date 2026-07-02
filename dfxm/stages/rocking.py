@@ -33,6 +33,7 @@ from ..common import alignment as A
 from ..common import render as Rnd
 from ..common.errors import StageUserError
 from ..common.figures import FigureSpec, register, volume_layer_specs
+from ..common.plotting import resolve_cmap, style_from_params
 from ..common.raster import extract_motor_positions, find_h5_file
 from ..common.sort import find_matching_folders
 from ..config.models import Param, ParamType, StageSpec
@@ -539,7 +540,9 @@ def _motors(raw_root: str, pattern: str, samy_path: str, samz_path: str):
     return extract_motor_positions(folders, samy_path, samz_path)
 
 
-def _render(result: RockingResult, vol, z_um, scale_z, name, p, out_dir, cmap, title, cbar):
+def _render(
+    result: RockingResult, vol, z_um, scale_z, name, p, out_dir, cmap, title, cbar, style=None
+):
     sx, sy = float(p["pixel_size_x_um"]), float(p["pixel_size_y_um"])
     vmin, vmax = _colorbar_range(vol, float(p["cbar_pct_lo"]), float(p["cbar_pct_hi"]))
     ds_dir = os.path.join(out_dir, name)
@@ -547,7 +550,7 @@ def _render(result: RockingResult, vol, z_um, scale_z, name, p, out_dir, cmap, t
     prod = RockingProducts(name=name, vmin=vmin, vmax=vmax)
     if p["save_layers"]:
         prod.layers_dir = Rnd.save_layer_pngs(
-            vol, z_um, ds_dir, name, vmin, vmax, cmap, title, cbar, sx, sy
+            vol, z_um, ds_dir, name, vmin, vmax, cmap, title, cbar, sx, sy, style=style
         )
     if p["save_animation"]:
         prod.animation = Rnd.save_layer_animation(
@@ -563,6 +566,7 @@ def _render(result: RockingResult, vol, z_um, scale_z, name, p, out_dir, cmap, t
             p["output_format"],
             sx,
             sy,
+            style=style,
         )
     if p["save_topview"]:
         try:
@@ -717,6 +721,8 @@ def run(params: dict, progress: ProgressFn | None = None) -> RockingResult:
     # 7. render
     progress(0.8, "rendering volumes")
     sum_tag = "(a.u., normalized)" if p["normalize_sum"] else "(a.u.)"
+    style = style_from_params(p)
+    raw_cmap = resolve_cmap(style, "raw")
     _render(
         result,
         sum_aligned,
@@ -725,9 +731,10 @@ def run(params: dict, progress: ProgressFn | None = None) -> RockingResult:
         "raw_sum_intensity",
         p,
         out_dir,
-        "magma",
+        raw_cmap,
         "Background-subtracted Sum Intensity",
         f"Sum intensity {sum_tag}",
+        style=style,
     )
     _render(
         result,
@@ -737,9 +744,10 @@ def run(params: dict, progress: ProgressFn | None = None) -> RockingResult:
         f"raw_specific_frame_{spec_idx:03d}",
         p,
         out_dir,
-        "magma",
+        raw_cmap,
         f"Background-subtracted Frame {spec_idx}",
         "Intensity (a.u.)",
+        style=style,
     )
 
     progress(1.0, f"aligned {result.n_layers_used} rocking layers -> {out_dir}")
@@ -825,7 +833,8 @@ def figures(result: RockingResult, params: dict) -> list[FigureSpec]:
                 id_prefix=id_prefix,
                 title=title,
                 cbar_label=cbar_label,
-                cmap="magma",
+                cmap="gray",
+                cmap_group="raw",
                 sx=sx,
                 sy=sy,
                 vmin=prod.vmin,

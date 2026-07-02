@@ -246,6 +246,14 @@ class StageView(QWidget):
             return
         self._hide_banner()
         self._last_params = dict(params)
+        run_params = dict(params)
+        window = self.window()
+        if hasattr(window, "global_plot_style"):
+            from dataclasses import asdict
+
+            # Snapshot the CURRENT session publication style so every new run
+            # renders with whatever the style dialog says right now.
+            run_params["plot_style"] = asdict(window.global_plot_style())
         target = STAGE_TARGETS[self._stage_name]
         self._log.clear()
         self._results.clear()
@@ -256,7 +264,7 @@ class StageView(QWidget):
         self._export_all_btn.setEnabled(False)
         self._set_running(True)
         self.runStarted.emit(self._stage_name)
-        self._runner = StageRunner(target, params, start_method="spawn")
+        self._runner = StageRunner(target, run_params, start_method="spawn")
         self._runner.start()
         self._timer.start()
 

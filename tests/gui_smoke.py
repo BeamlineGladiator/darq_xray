@@ -716,6 +716,64 @@ def main() -> int:
     app.processEvents()
     print("[22] window geometry + splitter state persist/restore")
 
+    # [23] publication-style controls expose the four colormap dropdowns and
+    # mutate the session style in place.
+    from gui.widgets.export_dialog import StyleControls
+
+    style = win.global_plot_style()
+    assert style.cmap_mosa_com == "fast"  # new default
+    controls = StyleControls(style)
+    assert controls._w_cmap_mosa_com.currentText() == style.cmap_mosa_com
+    assert controls._w_cmap_raw.currentText() == style.cmap_raw
+    controls._w_cmap_strain.setCurrentText("seismic")
+    app.processEvents()
+    assert style.cmap_strain == "seismic"
+    controls.deleteLater()
+    app.processEvents()
+    print("[23] StyleControls colormap dropdowns mutate the session style")
+
+    # [24] _on_run injects the live publication style into the worker params.
+    import gui.stage_view as _SV
+
+    captured: dict = {}
+    _real_runner = _SV.StageRunner
+
+    class _RecordingRunner(_real_runner):  # type: ignore[misc,valid-type]
+        def __init__(self, target, params, **kw):
+            captured.update(params)
+            super().__init__(target, params, **kw)
+
+    # NB: `view` was shadowed by the forms loop above — re-fetch concat's view.
+    cview = win._views["concat"]
+    cdone: list[tuple[str, bool]] = []
+    cview.runFinished.connect(lambda name, ok: cdone.append((name, ok)))
+    _SV.StageRunner = _RecordingRunner
+    try:
+        cview._on_run()  # concat form still holds the valid single-folder params
+        t0 = time.time()
+        while not cdone and time.time() - t0 < 60:
+            app.processEvents()
+            time.sleep(0.02)
+    finally:
+        _SV.StageRunner = _real_runner
+    assert cdone == [("concat", True)], cdone
+    assert captured.get("plot_style", {}).get("cmap_strain") == "seismic", captured.get(
+        "plot_style"
+    )
+    assert captured["plot_style"]["cmap_mosa_com"] == "fast"
+    print("[24] runs receive the live publication style (plot_style params key)")
+
+    # [25] the style (incl. colormaps) round-trips through QSettings on save.
+    from PySide6.QtCore import QSettings as _QSettings25
+
+    from dfxm.common.plotting import style_from_json as _style_from_json
+
+    win._save_plot_style()
+    restored = _style_from_json(_QSettings25().value("plot_style", ""))
+    assert restored is not None and restored.cmap_strain == "seismic"
+    assert restored.font_scale == style.font_scale
+    print("[25] publication style round-trips through QSettings")
+
     print("\nGUI SMOKE PASSED")
     return 0
 
