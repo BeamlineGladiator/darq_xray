@@ -40,6 +40,8 @@ from ..common.plotting import (
     figure_size,
     new_figure,
     physical_extent,
+    resolve_cmap,
+    style_from_params,
     symmetric_limits,
 )
 from ..common.sort import find_matching_folders
@@ -382,7 +384,7 @@ def build_strain_map(
         origin="lower",
         extent=extent,
         aspect="equal",
-        cmap="RdBu_r",
+        cmap=resolve_cmap(style, "strain"),
         vmin=vmin,
         vmax=vmax,
         interpolation="nearest",
@@ -443,7 +445,9 @@ def build_detrend_diag(
         if valid.size == 0:
             continue
         vlo, vhi = np.percentile(valid, [1, 99])
-        im = ax.imshow(d, origin="lower", cmap="RdBu_r", vmin=vlo, vmax=vhi, aspect="auto")
+        im = ax.imshow(
+            d, origin="lower", cmap=resolve_cmap(style, "strain"), vmin=vlo, vmax=vhi, aspect="auto"
+        )
         ax.set_title(title)
         if style is not None:
             add_colorbar(fig, im, ax, title, style)
@@ -627,6 +631,7 @@ def process_maps_file(
     vlim: tuple[float | None, float | None],
     out_dir: str | None,
     save_plots: bool,
+    style: PlotStyle | None = None,
 ) -> tuple[np.ndarray, LayerResult]:
     """Compute the 2-D strain map for one maps.h5 and (optionally) save plots."""
     # detrend ccmth on the FULL map, THEN crop ROI (order matters)
@@ -638,17 +643,17 @@ def process_maps_file(
     if save_plots and out_dir:
         os.makedirs(out_dir, exist_ok=True)
         p = os.path.join(out_dir, f"{name}_strain.png")
-        build_strain_map(strain, pixel_size_x_um, pixel_size_y_um, roi, vlim).savefig(
+        build_strain_map(strain, pixel_size_x_um, pixel_size_y_um, roi, vlim, style=style).savefig(
             p, dpi=200, bbox_inches="tight", facecolor="white"
         )
         plots.append(p)
         ph = os.path.join(out_dir, f"{name}_hist.png")
-        hist_fig = build_strain_histogram(strain)
+        hist_fig = build_strain_histogram(strain, style=style)
         if hist_fig is not None:
             hist_fig.savefig(ph, dpi=150, bbox_inches="tight", facecolor="white")
             plots.append(ph)
         pd = os.path.join(out_dir, f"{name}_detrend_diag.png")
-        build_detrend_diag(ccmth_original, ccmth_map, surface).savefig(
+        build_detrend_diag(ccmth_original, ccmth_map, surface, style=style).savefig(
             pd, dpi=120, bbox_inches="tight", facecolor="white"
         )
         plots.append(pd)
@@ -706,6 +711,7 @@ def _parse_float(text) -> float | None:
 def run(params: dict, progress: ProgressFn | None = None) -> StrainResult:
     progress = progress or _noop
     p = {**STAGE.defaults(), **params}
+    style = style_from_params(p)
     roi = _parse_roi(p["roi"])
     vlim = (_parse_float(p["vmin"]), _parse_float(p["vmax"]))
     maps_filename = p["maps_filename"]
@@ -767,6 +773,7 @@ def run(params: dict, progress: ProgressFn | None = None) -> StrainResult:
                 vlim=vlim,
                 out_dir=out_dir,
                 save_plots=bool(p["save_plots"]),
+                style=style,
             )
         except (KeyError, OSError, ValueError) as exc:
             result.skipped.append(f"{name}: {exc}")

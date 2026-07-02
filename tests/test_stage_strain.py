@@ -214,3 +214,18 @@ def test_build_detrend_diag_styled_returns_figure():
     arr = np.random.rand(10, 15) * 0.002
     fig = S.build_detrend_diag(arr, arr * 0.9, arr * 0.1, style=PlotStyle())
     assert isinstance(fig, Figure)
+
+
+def test_strain_map_cmap_follows_style():
+    import numpy as np
+
+    from dfxm.common.plotting import PlotStyle
+    from dfxm.stages.strain import build_strain_map
+
+    strain = np.random.default_rng(0).standard_normal((6, 8)) * 1e-4
+    fig = build_strain_map(strain, 0.152, 0.385, None, (None, None))
+    assert fig.axes[0].images[0].cmap.name == "RdBu_r"  # legacy default preserved
+    fig = build_strain_map(
+        strain, 0.152, 0.385, None, (None, None), style=PlotStyle(cmap_strain="seismic")
+    )
+    assert fig.axes[0].images[0].cmap.name == "seismic"
