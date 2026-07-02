@@ -449,7 +449,7 @@ form.
 | Colourbar fraction | Controls the colourbar width (matplotlib `fraction` parameter) |
 | Colourbar ticks | Number of evenly-spaced ticks including both endpoints; `0` = matplotlib auto |
 | Tick format | `auto` (matplotlib default) / `scientific` (e.g. `1.2×10⁻³`) / a digit count like `2` (two decimal places) |
-| Round colour limits | When checked, auto-computed colour limits are rounded **outward** to the nearest "nice" value (2 significant digits, last digit 0 or 5), so evenly spaced colourbar ticks land on round numbers (e.g. ±0.0778 → ±0.08). Applies to the slices stage (per volume; the raw limits are stored in `oblique_slices.h5` as `vmin_raw`/`vmax_raw`) and the strain map (auto path only; user-specified limits are never rounded). Each rounded volume is noted in the run log and the Results summary. |
+| Round colour limits | When checked, auto-computed colour limits are rounded **outward** to the nearest "nice" value (2 significant digits, last digit 0 or 5), so evenly spaced colourbar ticks land on round numbers (e.g. ±0.0778 → ±0.08). Applies to: the **slices** stage (per volume; raw limits stored as `vmin_raw`/`vmax_raw` in `oblique_slices.h5`); the **strain map** (auto path only); the **visualize** stage (per mosaicity dataset and strain); the **rocking** stage (per rendered volume); and the **matched** stage (when both `vmin`/`vmax` are blank — a half-manual pair is never half-rounded; pre-round values stored in `MatchedResult.vmin_raw`/`vmax_raw`). User-specified limits are never rounded. Each rounded dataset is noted in the run log and the Results summary. |
 
 **Figure**
 

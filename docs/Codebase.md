@@ -218,7 +218,7 @@ GUI-safe plotting helpers — **never** `pyplot`/`matplotlib.use`.
 
 | Symbol | What it does |
 |---|---|
-| `PlotStyle` | Dataclass holding every style knob — scale bar (show / length / thickness / label-scale / location / colour / box show+colour+alpha+margin), text (font_scale / `title_scale` / show_title / center_axis_labels), colourbar (show / label / fraction / ticks / tick_format / `round_clim`), figure (figure_width), output (formats / dpi) and **per-quantity colormaps** (`cmap_mosa_com="fast"`, `cmap_mosa_fwhm="magma"`, `cmap_strain="RdBu_r"`, `cmap_raw="gray"`, looked up via `cmap_for(group)`; groups in `CMAP_GROUPS`, curated dropdown list in `CMAP_CHOICES`). `None` in any builder means "use legacy look". `title_scale` multiplies the title font size independently of `font_scale`. `round_clim=True` routes auto-computed colour limits through `apply_round_clim` in the slices and strain stages. |
+| `PlotStyle` | Dataclass holding every style knob — scale bar (show / length / thickness / label-scale / location / colour / box show+colour+alpha+margin), text (font_scale / `title_scale` / show_title / center_axis_labels), colourbar (show / label / fraction / ticks / tick_format / `round_clim`), figure (figure_width), output (formats / dpi) and **per-quantity colormaps** (`cmap_mosa_com="fast"`, `cmap_mosa_fwhm="magma"`, `cmap_strain="RdBu_r"`, `cmap_raw="gray"`, looked up via `cmap_for(group)`; groups in `CMAP_GROUPS`, curated dropdown list in `CMAP_CHOICES`). `None` in any builder means "use legacy look". `title_scale` multiplies the title font size independently of `font_scale`. `round_clim=True` routes auto-computed colour limits through `apply_round_clim` in the slices, strain, visualize, rocking, and matched stages (matched rounds only when both `vmin`/`vmax` params are blank). |
 | `PUBLICATION_STYLE` | A ready-made `PlotStyle` tuned for publication: white scale bar with a box, font_scale=2.2, colourbar_ticks=5, scientific tick format, single-column width, PNG+PDF+SVG at 300 dpi. |
 | `figure_size(style, ext_x, ext_y)` | Returns `(w, h)` in inches from `style.figure_width` (`"single"`=3.5 in, `"double"`=7.0 in), preserving the physical aspect ratio plus ~1 in headroom; returns `None` for `"auto"`. |
 | `auto_scale_bar_length_um(ext_x)` | A "nice" bar length ≈15% of the X extent, snapped to the 1–2–5–10 series. |
@@ -350,7 +350,7 @@ slice plane, every field at the same in-plane positions.
 Port of `plot_rocking_matched_layers_v3`. Grayscale rocking frames matched to
 strain layers.
 - `MatchedLayer` — per-layer match record: layer name, matched rocking name, samy shift, output PNG path, and shape.
-- `MatchedResult` — `output_dir`, `frame_index`, `skipped`, and `recorded: list[MatchedLayer]` (the list of all successfully matched layers).
+- `MatchedResult` — `output_dir`, `frame_index`, `vmin`, `vmax`, `vmin_raw`, `vmax_raw` (pre-rounding originals, `None` when rounding was not applied), `skipped`, and `recorded: list[MatchedLayer]` (the list of all successfully matched layers).
 - `load_pco_ff_frame(...)` — one frame, median-background subtracted, negatives→NaN.
 - `match_nearest(...)` — nearest rocking scan per strain layer within a threshold.
 - `_apply_shift_single(...)` — place a frame on the padded canvas with the strain samy shift (skips frames whose shape differs).

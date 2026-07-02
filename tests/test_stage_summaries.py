@@ -169,6 +169,31 @@ def test_summarize_slices_shows_clim_notes():
     assert "rounded ±0.0778 → ±0.08" in text
 
 
+def test_summarize_matched_shows_rounded_clim():
+    result = MatchedResult(
+        layers_dir="/out/rocking_layers",
+        n_strain=5,
+        n_matched=5,
+        n_saved=5,
+        frame_index=42,
+        max_match_dist_um=0.5,
+        vmin=0.0,
+        vmax=1500.0,
+        vmin_raw=3.2,
+        vmax_raw=1487.0,
+    )
+    text = _summarize("matched", result)
+    assert "clim=(0, 1500)" in text
+    assert "rounded from (3.2, 1487)" in text
+
+
+def test_summarize_matched_without_rounding_has_no_rounded_text():
+    result = MatchedResult(
+        layers_dir="/out/rocking_layers", n_strain=3, n_matched=2, n_saved=2, vmin=0.0, vmax=1.0
+    )
+    assert "rounded from" not in _summarize("matched", result)
+
+
 # -----------------------------------------------------------------------------
 # _summarize: dispatch
 # -----------------------------------------------------------------------------

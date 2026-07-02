@@ -21,7 +21,7 @@ from ..common import alignment as A
 from ..common import render as Rnd
 from ..common.errors import StageUserError
 from ..common.figures import FigureSpec, register
-from ..common.plotting import CMAP_CHOICES, style_from_params
+from ..common.plotting import CMAP_CHOICES, apply_round_clim, style_from_params
 from ..common.raster import extract_motor_positions, find_h5_file
 from ..common.sort import find_matching_folders
 from ..config.models import Param, ParamType, StageSpec
@@ -243,6 +243,8 @@ class MatchedResult:
     frame_index: int = 0
     vmin: float = 0.0
     vmax: float = 0.0
+    vmin_raw: float | None = None
+    vmax_raw: float | None = None
     max_match_dist_um: float = 0.0
     pngs: list[str] = field(default_factory=list)
     skipped: list[str] = field(default_factory=list)
@@ -401,6 +403,14 @@ def run(params: dict, progress: ProgressFn | None = None) -> MatchedResult:
         else:
             vmin, vmax = (0.0 if vmin is None else vmin), (1.0 if vmax is None else vmax)
     result.vmin, result.vmax = float(vmin), float(vmax)
+    vmin_user, vmax_user = _parse_float(p["vmin"]), _parse_float(p["vmax"])
+    if vmin_user is None and vmax_user is None:
+        rlo, rhi, clim_note = apply_round_clim(result.vmin, result.vmax, style)
+        if clim_note:
+            result.vmin_raw, result.vmax_raw = result.vmin, result.vmax
+            result.vmin, result.vmax = rlo, rhi
+            vmin, vmax = rlo, rhi  # the loop below renders with vmin/vmax
+            progress(0.2, clim_note)
 
     layers_dir = os.path.join(out_dir, "rocking_layers")
     os.makedirs(layers_dir, exist_ok=True)
