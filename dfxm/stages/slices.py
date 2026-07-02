@@ -39,7 +39,15 @@ from ..common import alignment as A
 from ..common import render as Rnd
 from ..common.errors import StageUserError
 from ..common.figures import FigureSpec, register
-from ..common.plotting import PlotStyle, add_colorbar, apply_text_scale, draw_scale_bar, figure_size
+from ..common.plotting import (
+    PlotStyle,
+    add_colorbar,
+    apply_text_scale,
+    draw_scale_bar,
+    figure_size,
+    resolve_cmap,
+    style_from_params,
+)
 from ..common.raster import extract_motor_positions
 from ..common.sort import find_matching_folders
 from ..config.models import Param, ParamType, StageSpec
@@ -71,29 +79,16 @@ _DEFAULT_SLICES = json.dumps(
     indent=2,
 )
 
-# Standard sliceable volumes: (toggle param, source, file param, dataset, kind, cmap)
+# Standard sliceable volumes: (toggle param, source, file param, dataset, kind).
+# The colormap is resolved per kind via _GROUP_BY_KIND + the active PlotStyle.
 _STD_VOLUMES = (
-    (
-        "include_mosa_com_chi",
-        "stacked",
-        "mosa_volume_file",
-        "chi/Center of mass",
-        "mosa_com",
-        "fast",
-    ),
-    ("include_mosa_fwhm_chi", "stacked", "mosa_volume_file", "chi/FWHM", "mosa_fwhm", "magma"),
-    ("include_mosa_com_mu", "stacked", "mosa_volume_file", "mu/Center of mass", "mosa_com", "fast"),
-    ("include_mosa_fwhm_mu", "stacked", "mosa_volume_file", "mu/FWHM", "mosa_fwhm", "magma"),
-    ("include_strain", "stacked", "strain_volume_file", "strain", "strain", "RdBu_r"),
-    ("include_raw_sum", "aligned", "aligned_rocking_file", "sum_intensity", "raw_sum", "gray"),
-    (
-        "include_raw_specific",
-        "aligned",
-        "aligned_rocking_file",
-        "specific_frame",
-        "raw_specific",
-        "gray",
-    ),
+    ("include_mosa_com_chi", "stacked", "mosa_volume_file", "chi/Center of mass", "mosa_com"),
+    ("include_mosa_fwhm_chi", "stacked", "mosa_volume_file", "chi/FWHM", "mosa_fwhm"),
+    ("include_mosa_com_mu", "stacked", "mosa_volume_file", "mu/Center of mass", "mosa_com"),
+    ("include_mosa_fwhm_mu", "stacked", "mosa_volume_file", "mu/FWHM", "mosa_fwhm"),
+    ("include_strain", "stacked", "strain_volume_file", "strain", "strain"),
+    ("include_raw_sum", "aligned", "aligned_rocking_file", "sum_intensity", "raw_sum"),
+    ("include_raw_specific", "aligned", "aligned_rocking_file", "specific_frame", "raw_specific"),
 )
 
 
@@ -630,8 +625,17 @@ def _motors(cfg, p):
 # Volume kinds whose colour norm is centered on zero (symmetric TwoSlopeNorm).
 _CENTERED_KINDS: frozenset[str] = frozenset({"mosa_com"})
 
+# PlotStyle colormap group per volume kind.
+_GROUP_BY_KIND: dict[str, str] = {
+    "mosa_com": "mosa_com",
+    "mosa_fwhm": "mosa_fwhm",
+    "strain": "strain",
+    "raw_sum": "raw",
+    "raw_specific": "raw",
+}
 
-def prepare_volume(cfg, p, scale_x, scale_y, samy_dir):
+
+def prepare_volume(cfg, p, scale_x, scale_y, samy_dir, style=None):
     """Load and (if stacked) align one volume, resolving render style per kind."""
     kind, source = cfg["kind"], cfg["source"]
     extra = {}
@@ -696,7 +700,7 @@ def prepare_volume(cfg, p, scale_x, scale_y, samy_dir):
         "z_ref_shift_um": float(z_ref),
         "vmin": float(auto_vmin),
         "vmax": float(auto_vmax),
-        "cmap_name": cfg.get("cmap") or "magma",
+        "cmap_name": resolve_cmap(style, _GROUP_BY_KIND.get(kind)),
         "center_zero": kind in _CENTERED_KINDS,
         "title": title,
         "cbar_label": cbar_label,
@@ -770,9 +774,9 @@ def build_slice_figure(
     return fig
 
 
-def save_slice_png(prep, sl, slice2d, u_um, v_um, out_png, *, offset_um, dpi=150):
-    """Build a legacy-style slice figure and save it to *out_png*."""
-    build_slice_figure(prep, sl, slice2d, u_um, v_um, offset_um=offset_um).savefig(
+def save_slice_png(prep, sl, slice2d, u_um, v_um, out_png, *, offset_um, dpi=150, style=None):
+    """Build a slice figure (legacy look when *style* is None) and save it."""
+    build_slice_figure(prep, sl, slice2d, u_um, v_um, offset_um=offset_um, style=style).savefig(
         out_png, dpi=dpi, facecolor="white", bbox_inches="tight"
     )
 
@@ -816,7 +820,7 @@ def _standard_volumes(p, roi_x, roi_y):
         "aligned_rocking_file": (p["aligned_rocking_file"], "", ""),
     }
     out = []
-    for toggle, source, file_param, dataset, kind, cmap in _STD_VOLUMES:
+    for toggle, source, file_param, dataset, kind in _STD_VOLUMES:
         if not bool(p.get(toggle)):
             continue
         path, raw_root, pattern = file_keys[file_param]
@@ -827,7 +831,6 @@ def _standard_volumes(p, roi_x, roi_y):
             "dataset_path": dataset,
             "kind": kind,
             "source": source,
-            "cmap": cmap,
         }
         if source == "stacked":
             cfg.update(raw_root=raw_root, raw_pattern=pattern, roi_x=roi_x, roi_y=roi_y)
@@ -838,6 +841,7 @@ def _standard_volumes(p, roi_x, roi_y):
 def run(params: dict, progress: ProgressFn | None = None) -> SlicesResult:
     progress = progress or _noop
     p = {**STAGE.defaults(), **params}
+    style = style_from_params(p)
     if p["center_method"].lower() not in ("mean", "median", "midrange"):
         raise ValueError(f"center_method must be mean/median/midrange (got {p['center_method']!r})")
     scale_x, scale_y = float(p["pixel_size_x_um"]), float(p["pixel_size_y_um"])
@@ -896,7 +900,7 @@ def run(params: dict, progress: ProgressFn | None = None) -> SlicesResult:
         for vi, cfg in enumerate(volumes):
             progress(0.1 + 0.85 * vi / len(volumes), f"slicing {cfg['kind']} {cfg['dataset_path']}")
             try:
-                prep = prepare_volume(cfg, p, scale_x, scale_y, samy_dir)
+                prep = prepare_volume(cfg, p, scale_x, scale_y, samy_dir, style=style)
             except (KeyError, OSError, ValueError) as exc:
                 result.skipped.append(f"{cfg['dataset_path']}: {exc}")
                 continue
@@ -923,13 +927,17 @@ def run(params: dict, progress: ProgressFn | None = None) -> SlicesResult:
                     if save_png:
                         if len(offsets) == 1:
                             png = os.path.join(out_dir, f"{sl['name']}__{prep['volume_id']}.png")
-                            save_slice_png(prep, sl, s2d, u_um, v_um, png, offset_um=None)
+                            save_slice_png(
+                                prep, sl, s2d, u_um, v_um, png, offset_um=None, style=style
+                            )
                         else:
                             png = os.path.join(
                                 out_dir,
                                 f"{sl['name']}__{prep['volume_id']}__p{pi:03d}_{off:+08.2f}um.png",
                             )
-                            save_slice_png(prep, sl, s2d, u_um, v_um, png, offset_um=off)
+                            save_slice_png(
+                                prep, sl, s2d, u_um, v_um, png, offset_um=off, style=style
+                            )
                         result.pngs.append(png)
                 stack = np.stack(planes, axis=0)
                 result.n_planes_total += stack.shape[0]
@@ -996,7 +1004,11 @@ def figures(result: SlicesResult, params: dict) -> list[FigureSpec]:
                 n_planes = vg[sname]["slices"].shape[0]
                 for k in range(n_planes):
 
-                    def build(style, vid=vid, sname=sname, k=k, prep=dict(prep)):
+                    def build(style, vid=vid, sname=sname, k=k, prep=dict(prep), kind=kind):
+                        prep = dict(prep)
+                        prep["cmap_name"] = resolve_cmap(
+                            style, _GROUP_BY_KIND.get(kind), fallback=prep["cmap_name"]
+                        )
                         with h5py.File(result.output_h5, "r") as g:
                             sg = g[vid][sname]
                             s2d = sg["slices"][k]

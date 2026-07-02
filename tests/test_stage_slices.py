@@ -268,3 +268,52 @@ def test_build_slice_figure_offset_annotation_in_title():
     )
     title = fig.axes[0].get_title()
     assert "3.50" in title  # the offset annotation appears as "+3.50" in the title
+
+
+def _minimal_params(proc, raw, out):
+    return {
+        "mosa_volume_file": str(proc / "stacked_volumes.h5"),
+        "strain_volume_file": str(proc / "stacked_strain_volumes.h5"),
+        "aligned_rocking_file": str(proc / "aligned_raw_rocking_volumes.h5"),
+        "raw_root": str(raw),
+        "mosa_pattern": "mosa__*",
+        "strain_pattern": "strain__*",
+        "slices_json": (
+            '[{"name":"mid","normal":[0,0,1],"origin":[0.5,0.5,1.5],'
+            '"half_u":0.4,"half_v":0.4,"du":0.2,"dv":0.2,"sweep_step_um":null}]'
+        ),
+        "output_dir": str(out),
+        "save_png": False,
+    }
+
+
+def test_run_resolves_cmaps_from_injected_style(tmp_path):
+    proc, raw = _setup(tmp_path)
+    params = _minimal_params(proc, raw, tmp_path / "sl_styled")
+    params["plot_style"] = {"cmap_mosa_com": "viridis", "cmap_raw": "bone", "font_scale": 1.0}
+    res = S.run(params)
+    with h5py.File(res.output_h5, "r") as f:
+        assert f["mosa_com_chi"].attrs["cmap"] == "viridis"
+        assert f["raw_sum"].attrs["cmap"] == "bone"
+        assert f["strain"].attrs["cmap"] == "RdBu_r"  # default from PlotStyle
+
+
+def test_run_without_style_uses_group_defaults(tmp_path):
+    proc, raw = _setup(tmp_path)
+    res = S.run(_minimal_params(proc, raw, tmp_path / "sl_default"))
+    with h5py.File(res.output_h5, "r") as f:
+        assert f["mosa_com_chi"].attrs["cmap"] == "fast"  # real fast, no coolwarm fallback
+        assert f["raw_sum"].attrs["cmap"] == "gray"
+        assert f["mosa_fwhm_chi"].attrs["cmap"] == "magma"
+
+
+def test_figures_re_resolve_cmap_by_kind(tmp_path):
+    from dfxm.common.plotting import PlotStyle
+
+    proc, raw = _setup(tmp_path)
+    res = S.run(_minimal_params(proc, raw, tmp_path / "sl_figs"))
+    specs = S.figures(res, {})
+    spec = next(s for s in specs if "mosa_com_chi" in s.figure_id)
+    fig = spec.build(PlotStyle(cmap_mosa_com="plasma"))
+    assert fig.axes[0].images[0].cmap.name == "plasma"
+    assert spec.build(None).axes[0].images[0].cmap.name == "fast"
