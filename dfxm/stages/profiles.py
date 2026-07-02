@@ -34,7 +34,7 @@ from scipy.ndimage import map_coordinates
 from ..common import render as Rnd
 from ..common.errors import StageUserError
 from ..common.figures import FigureSpec, register
-from ..common.plotting import PlotStyle, add_colorbar, apply_text_scale
+from ..common.plotting import PlotStyle, add_colorbar, apply_text_scale, style_from_params
 from ..config.models import Param, ParamType, StageSpec
 
 ProgressFn = Callable[[float, str], None]
@@ -493,21 +493,26 @@ def build_companion_figure(
     return fig
 
 
-def save_companion_figure(ref, fields, geom, line_color, out_png, dpi):
-    """Build a legacy companion figure and save it to *out_png*."""
-    build_companion_figure(ref, fields, geom, line_color).savefig(
+def save_companion_figure(ref, fields, geom, line_color, out_png, dpi, style=None):
+    """Build a companion figure (legacy look when *style* is None) and save it."""
+    build_companion_figure(ref, fields, geom, line_color, style=style).savefig(
         out_png, dpi=dpi, facecolor="white", edgecolor="none"
     )
 
 
-def render_single(ref, geom, line_color, out_png, header, dpi):
+def render_single(ref, geom, line_color, out_png, header, dpi, style=None):
     plane, u_um, v_um, attrs, label = ref
     fig = Figure(figsize=(11, 9), facecolor="white")
     ax = fig.add_subplot(111)
     im = _draw_reference_image(
         ax, plane, u_um, v_um, attrs, line_color, geom=geom, title=f"{header}\nreference: {label}"
     )
-    fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04).set_label(attrs["cbar_label"])
+    if style is None:
+        fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04).set_label(attrs["cbar_label"])
+    else:
+        if style.colorbar:
+            add_colorbar(fig, im, ax, attrs["cbar_label"], style)
+        apply_text_scale(ax, style)
     fig.savefig(out_png, dpi=dpi, facecolor="white", edgecolor="none", bbox_inches="tight")
 
 
@@ -587,7 +592,7 @@ def _write_csvs(out_dir, stem, distance, fields):
     return paths
 
 
-def _save_overviews(out_dir, stem, ref, fields, geom, off_used, line_override, dpi):
+def _save_overviews(out_dir, stem, ref, fields, geom, off_used, line_override, dpi, style=None):
     u_um, v_um = ref[1], ref[2]
     paths = []
     for fld in fields:
@@ -600,7 +605,7 @@ def _save_overviews(out_dir, stem, ref, fields, geom, off_used, line_override, d
             f"{fld['vid']}  @ offset {off_used:+.3f} µm",
         )
         color = auto_line_color(fld["attrs"]["cmap"], line_override)
-        render_single(ov_ref, geom, color, ov_png, fld["attrs"]["title"], dpi)
+        render_single(ov_ref, geom, color, ov_png, fld["attrs"]["title"], dpi, style=style)
         paths.append(ov_png)
     return paths
 
@@ -620,6 +625,7 @@ def run(params: dict, progress: ProgressFn | None = None) -> ProfilesResult:
                 "which this stage profiles."
             ),
         )
+    style = style_from_params(p)
     mode = p["mode"].lower()
     if mode not in ("parameter", "preview"):
         raise ValueError(f"mode must be parameter/preview (got {p['mode']!r})")
@@ -668,7 +674,7 @@ def run(params: dict, progress: ProgressFn | None = None) -> ProfilesResult:
                 stem = (job.get("fig_name") or f"preview_{name}") + "__PREVIEW"
                 out_png = os.path.join(out_dir, f"{stem}.png")
                 header = f"PREVIEW :: slice {name!r} offset {off_used:+.3f} µm"
-                render_single(ref, geom, color, out_png, header, dpi)
+                render_single(ref, geom, color, out_png, header, dpi, style=style)
                 result.jobs.append(
                     ProfileJobResult(name=name, offset_used_um=off_used, figure=out_png)
                 )
@@ -685,7 +691,7 @@ def run(params: dict, progress: ProgressFn | None = None) -> ProfilesResult:
                 "+", "p"
             ).replace("-", "m")
             out_png = os.path.join(out_dir, f"{stem}.png")
-            save_companion_figure(ref, fields, geom, color, out_png, dpi)
+            save_companion_figure(ref, fields, geom, color, out_png, dpi, style=style)
             jr = ProfileJobResult(
                 name=name,
                 offset_used_um=off_used,
@@ -696,7 +702,7 @@ def run(params: dict, progress: ProgressFn | None = None) -> ProfilesResult:
                 jr.csvs = _write_csvs(out_dir, stem, geom["distance"], fields)
             if bool(p["save_overview"]):
                 jr.overviews = _save_overviews(
-                    out_dir, stem, ref, fields, geom, off_used, line_override, dpi
+                    out_dir, stem, ref, fields, geom, off_used, line_override, dpi, style=style
                 )
             result.jobs.append(jr)
 

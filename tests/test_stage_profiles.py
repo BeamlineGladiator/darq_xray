@@ -118,3 +118,36 @@ def test_run_preview(tmp_path):
         }
     )
     assert len(res.jobs) == 1 and os.path.exists(res.jobs[0].figure)
+
+
+def test_run_with_injected_style_produces_figures(tmp_path):
+    """A run carrying the GUI plot_style snapshot renders through the styled path."""
+    h5 = tmp_path / "oblique_slices.h5"
+    _write_consolidated(str(h5))
+    out = tmp_path / "prof_styled"
+    jobs = (
+        '[{"name":"oblique_full","offset_um":0.0,"start_uv":[-5,-3],"end_uv":[5,3],'
+        '"n_samples":40,"width_pixels":1,"fig_name":"prof0"}]'
+    )
+    res = PR.run(
+        {
+            "consolidated_h5": str(h5),
+            "mode": "parameter",
+            "jobs_json": jobs,
+            "output_dir": str(out),
+            "save_overview": True,
+            "plot_style": {"font_scale": 2.0, "colorbar": True},
+        }
+    )
+    assert len(res.jobs) == 1 and os.path.exists(res.jobs[0].figure)
+
+
+def test_render_single_accepts_style(tmp_path):
+    from dfxm.common.plotting import PlotStyle
+
+    plane = np.linspace(0, 1, 12).reshape(3, 4)
+    attrs = {"cmap": "gray", "cbar_label": "c", "title": "t", "vmin": 0.0, "vmax": 1.0}
+    ref = (plane, np.arange(4.0), np.arange(3.0), attrs, "lbl")
+    out = str(tmp_path / "single.png")
+    PR.render_single(ref, None, "cyan", out, "hdr", 100, style=PlotStyle(font_scale=2.0))
+    assert os.path.exists(out)
