@@ -24,6 +24,24 @@ def test_build_basis_orthonormal_right_handed():
     np.testing.assert_allclose(np.cross(u, v), n, atol=1e-9)  # right-handed
 
 
+def test_build_basis_matches_layer_plot_orientation():
+    """Plots must read like the per-layer renders: X-like horizontal, Y-like vertical.
+
+    u_hat is the plot's horizontal axis and v_hat its vertical axis, so for a
+    z-normal plane (u, v) must be exactly (X, Y), and for a plane tilted in the
+    X-Z plane the vertical axis must stay world-Y with the horizontal axis the
+    +X-ish in-plane direction — not the 90°-rotated (Y-horizontal) layout.
+    """
+    u, v, _ = S.build_basis((0, 0, 1))
+    np.testing.assert_allclose(u, [1, 0, 0], atol=1e-12)
+    np.testing.assert_allclose(v, [0, 1, 0], atol=1e-12)
+
+    u, v, _ = S.build_basis((0.647648, 0, 0.761939))  # default oblique_full normal
+    np.testing.assert_allclose(v, [0, 1, 0], atol=1e-9)  # vertical axis = world Y
+    assert u[0] > 0.5  # horizontal axis points +X-ish
+    assert abs(u[1]) < 1e-9
+
+
 def test_slice_plane_offsets():
     np.testing.assert_allclose(S.slice_plane_offsets({"sweep_step_um": None}), [0.0])
     off = S.slice_plane_offsets({"sweep_step_um": 2.0, "sweep_start_um": 0.0, "sweep_stop_um": 6.0})

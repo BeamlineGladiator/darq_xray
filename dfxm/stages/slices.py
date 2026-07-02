@@ -15,6 +15,11 @@ The set of volumes to slice is the standard pipeline output (toggled on/off);
 the planes themselves are given as JSON (``slices_json``) — natural since
 oblique normals/origins are typically copied from ParaView. ``extent="auto"``
 fits a plane (and its sweep) to the common data bounding box across all volumes.
+
+One deliberate deviation from the legacy script: the default plane ``up`` is
+world Y — the detector-vertical axis (lab-frame X) — not Z, so slice plots are
+oriented like the per-layer renders (detector-X-like horizontal, detector-Y
+vertical) — see :func:`build_basis`.
 """
 
 from __future__ import annotations
@@ -457,16 +462,22 @@ def _parse_pair(text):
 # Geometry + sampling (faithful port)
 # -----------------------------------------------------------------------------
 def build_basis(normal, up=None):
-    """Orthonormal (u_hat, v_hat, n_hat) for the plane; vectors are (X, Y, Z)."""
+    """Orthonormal (u_hat, v_hat, n_hat) for the plane; vectors are (X, Y, Z).
+
+    u_hat is the plot's horizontal axis and v_hat its vertical axis. The default
+    up is world Y — the detector-vertical axis (lab-frame X) — so slices read
+    like the per-layer renders (detector-X-like horizontal, detector-Y
+    vertical); pass an explicit ``up`` per slice to override.
+    """
     n = np.asarray(normal, dtype=np.float64)
     nn = np.linalg.norm(n)
     if nn < 1e-12:
         raise ValueError("normal vector has zero length")
     n_hat = n / nn
     if up is None:
-        up_vec = np.array([0.0, 0.0, 1.0])
+        up_vec = np.array([0.0, 1.0, 0.0])
         if abs(np.dot(n_hat, up_vec)) > 0.99:
-            up_vec = np.array([0.0, 1.0, 0.0])
+            up_vec = np.array([0.0, 0.0, 1.0])
     else:
         up_vec = np.asarray(up, dtype=np.float64)
     v = up_vec - np.dot(up_vec, n_hat) * n_hat

@@ -309,7 +309,7 @@ Port of `export_aligned_volumes_to_paraview_v6_pvti`. Writes partitioned PVTI.
 #### `slices.py`
 Port of `extract_oblique_slices_v5`. Arbitrary planes through the aligned volumes.
 - `SlicesResult`; centring/range helpers mirror visualize.
-- Geometry: `build_basis(normal, up)` (orthonormal u/v/n), `slice_plane_offsets`, `sample_plane` (world→voxel via `map_coordinates`), `_world_box`/`_union_box`/`resolve_auto_extent` (`extent:"auto"` fits the data box; `default_du` ← `scale_x`).
+- Geometry: `build_basis(normal, up)` (orthonormal u/v/n; u is the plot's horizontal axis, v its vertical. Default `up` is world **Y** — the detector-vertical axis (lab-frame X); falls back to Z when the normal is ≈ parallel to Y — so slice plots read like the per-layer renders: detector-X-like horizontal, detector-Y-like vertical), `slice_plane_offsets`, `sample_plane` (world→voxel via `map_coordinates`), `_world_box`/`_union_box`/`resolve_auto_extent` (`extent:"auto"` fits the data box; `default_du` ← `scale_x`).
 - `prepare_volume(...)` — load + (if `stacked`) align + style; `_estimate_box` for auto-extent; `_standard_volumes(...)` builds the volume list from the `include_*` toggles.
 - `build_slice_figure(prep, sl, slice2d, u_um, v_um, *, offset_um, style=None)` — build and return a slice `Figure` (equal-aspect, µm axes). When `style` is `None` the legacy appearance is reproduced; otherwise figsize/colourbar/scale-bar/text-scaling are honoured. Does NOT call `savefig`.
 - `save_slice_png(prep, sl, slice2d, u_um, v_um, out_png, *, offset_um, dpi=150)` — build a legacy-style slice figure and save it to `out_png` (used by `run` during the stage run).

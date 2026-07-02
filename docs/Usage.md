@@ -327,6 +327,13 @@ through the aligned volumes — all in one world frame so the slices co-register
 > only need `normal`. Otherwise give `half_u`, `half_v` (µm) and optional
 > `du`/`dv` (in-plane step).
 
+> [!note] Plot orientation
+> Slice plots follow the same convention as the per-layer renders: the vertical
+> plot axis (`v`) is the detector-vertical Y-like in-plane direction (world Y,
+> i.e. lab-frame X) and the horizontal axis (`u`) the detector-X-like one (for a
+> z-normal plane, u/v are exactly X/Y). Add an `"up": [x,y,z]` entry to a slice
+> spec to override the vertical direction.
+
 ### 8. Line profiles (`profiles`)
 
 Profile a straight line (or a band of parallel lines) across one slice plane —
