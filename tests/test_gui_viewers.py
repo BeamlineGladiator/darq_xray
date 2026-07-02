@@ -105,7 +105,7 @@ def test_volume_sources_rocking_reads_attrs(tmp_path):
     sources = viewers.volume_sources("rocking", result, {})
     assert set(sources) == {"sum_intensity", "specific_frame"}
     vol, spacing, cmap, clim = sources["sum_intensity"]()
-    assert spacing == (0.152, 0.385, 1.5) and cmap == "magma"
+    assert spacing == (0.152, 0.385, 1.5) and cmap == "gray"
     assert clim is not None and clim[0] < clim[1]
 
 

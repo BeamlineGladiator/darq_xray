@@ -34,7 +34,9 @@ def _rocking_source(aligned_path: str, dataset: str) -> VolumeSource:
             if valid.size
             else None
         )
-        return vol, (sx, sy, sz), "magma", clim
+        from dfxm.common.plotting import resolve_cmap
+
+        return vol, (sx, sy, sz), resolve_cmap(None, "raw"), clim
 
     return _load
 
