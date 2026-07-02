@@ -87,10 +87,13 @@ the canvas.
 - New pure helper in `dfxm/common/plotting.py`:
 
 ```python
-def round_limits_outward(vmin: float, vmax: float, sig: int = 2) -> tuple[float, float]:
-    """Round limits OUTWARD (floor vmin, ceil vmax) to `sig` significant
-    figures. Symmetric input stays exactly symmetric; endpoints equal to 0
-    stay 0; degenerate ranges (vmin == vmax) are returned unchanged."""
+def round_limits_outward(vmin: float, vmax: float) -> tuple[float, float]:
+    """Round limits OUTWARD (vmin down, vmax up) to the next multiple of half
+    the leading-digit unit (step = 0.5 * 10**floor(log10(|v|))), e.g.
+    ±0.0778 → ±0.08, 0.11 → 0.15, 0.0432 → 0.045, 1.7e-4 → 2e-4. Results have
+    at most two significant digits and end in 0 or 5. Symmetric input stays
+    exactly symmetric; endpoints equal to 0, non-finite values and degenerate
+    ranges (vmin >= vmax) are returned unchanged."""
 ```
 
 - Applied only to **auto-computed** limits in stages that produce styled map
@@ -106,7 +109,7 @@ def round_limits_outward(vmin: float, vmax: float, sig: int = 2) -> tuple[float,
     `gui/stage_view.py` reading the raw values from the results dict.
   - **HDF5 attrs**: stages that store `vmin`/`vmax` (slices `write_volume_group`)
     additionally store `vmin_raw`/`vmax_raw` when rounding changed them.
-- GUI: checkbox "Round colour limits (outward, 2 s.f.)" in the export dialog's
+- GUI: checkbox "Round colour limits (outward, to nice values)" in the export dialog's
   colorbar group.
 
 ### 4. Tick-format wording
@@ -132,8 +135,9 @@ the unchanged stored values.
   `scientific` format; draw on an Agg canvas and assert the title, colorbar and
   axes tick/label bounding boxes are pairwise non-overlapping.
 - `round_limits_outward` unit tests: symmetric stays symmetric
-  (±0.0778 → ±0.08), asymmetric floors/ceils outward, zero endpoints, degenerate
-  vmin == vmax, negative-only ranges, sig-figure count.
+  (±0.0778 → ±0.08), asymmetric floors/ceils outward, already-round values
+  unchanged (no float-epsilon inflation), zero endpoints, degenerate
+  vmin == vmax, negative-only ranges.
 - Title independence: `apply_text_scale` with `font_scale=3, title_scale=0.5`
   gives title `12 × 0.5` pt while labels scale by 3.
 - Summary formatting shows the `(rounded from …)` text when raw ≠ final.
