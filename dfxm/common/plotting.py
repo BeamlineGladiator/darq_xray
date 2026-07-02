@@ -270,6 +270,21 @@ def new_figure(figsize: tuple[float, float] = (7.0, 5.0)) -> Figure:
     return fig
 
 
+def styled_figure(figsize: tuple[float, float], *, styled: bool) -> Figure:
+    """A white-background Figure for the shared figure builders.
+
+    ``styled=True`` (a PlotStyle is in play) uses matplotlib's constrained
+    layout, which measures every text element at its final font size and
+    reserves space so title, axis labels, colorbar and offset text can never
+    overlap — the figure keeps its exact width and the axes shrink instead.
+    ``styled=False`` is the legacy path: plain fixed margins, byte-identical
+    with the pre-export renderers.
+    """
+    if styled:
+        return Figure(figsize=figsize, facecolor="white", layout="constrained")
+    return Figure(figsize=figsize, facecolor="white")
+
+
 def auto_scale_bar_length_um(ext_x: float) -> float:
     """A 'nice' bar length ~15% of the X extent (1-2-5-10 series)."""
     target = ext_x * 0.15
@@ -309,7 +324,18 @@ def apply_text_scale(ax, style: "PlotStyle") -> None:
     if not style.show_title:
         ax.set_title("")
     else:
-        title.set_fontsize(title.get_fontsize() * style.title_scale)
+        # A colourbar's scientific-notation offset text (the "×10ⁿ" above its
+        # ticks) sits just above the axes, at a height that grows with
+        # ``font_scale``. matplotlib's constrained layout does not account
+        # for that neighbouring artist when it reserves room for the title,
+        # so at large font_scale the two can collide. Grow the title's own
+        # pad (the gap between it and the axes) proportionally to font_scale
+        # so there is always clearance, regardless of colourbar settings.
+        ax.set_title(
+            title.get_text(),
+            fontsize=title.get_fontsize() * style.title_scale,
+            pad=12.0 * fs,
+        )
 
 
 def draw_scale_bar(ax, length_um: float | None = None, *, style: "PlotStyle") -> None:
@@ -382,6 +408,13 @@ def draw_scale_bar(ax, length_um: float | None = None, *, style: "PlotStyle") ->
         ha="center",
         va="bottom",
         zorder=6,
+        # Text defaults to clip_on=False (unlike patches, which clip to the
+        # axes automatically). At large font_scale the label can otherwise
+        # spill past the axes edge, which (a) looks wrong and (b) confuses
+        # matplotlib's constrained-layout solver into reserving unbounded
+        # margin for an artist it thinks is unclippable, collapsing the axes
+        # to zero size. Clip it like every other in-axes decoration.
+        clip_on=True,
     )
 
 
@@ -431,7 +464,7 @@ def build_histogram(
         )
         if w not in (None, "auto"):
             figsize = (float(w), float(w) * 5.0 / 8.0)  # keep the histogram's ~8:5 aspect
-    fig = new_figure(figsize)
+    fig = styled_figure(figsize, styled=style is not None)
     ax = fig.add_subplot(111)
     ax.hist(valid, bins=200, color="steelblue", alpha=0.85)
     mean_val = float(valid.mean())

@@ -47,6 +47,7 @@ from ..common.plotting import (
     figure_size,
     resolve_cmap,
     style_from_params,
+    styled_figure,
 )
 from ..common.raster import extract_motor_positions
 from ..common.sort import find_matching_folders
@@ -748,7 +749,7 @@ def build_slice_figure(
         ext_v = float(v_um[-1] - v_um[0])
         figsize = figure_size(st, ext_u, ext_v) or (12, 10)
 
-    fig = Figure(figsize=figsize, facecolor="white")
+    fig = styled_figure(figsize, styled=not use_legacy)
     ax = fig.add_subplot(111)
     extent = [float(u_um[0]), float(u_um[-1]), float(v_um[0]), float(v_um[-1])]
     im = ax.imshow(

@@ -38,10 +38,10 @@ from ..common.plotting import (
     build_histogram,
     draw_scale_bar,
     figure_size,
-    new_figure,
     physical_extent,
     resolve_cmap,
     style_from_params,
+    styled_figure,
     symmetric_limits,
 )
 from ..common.sort import find_matching_folders
@@ -377,7 +377,7 @@ def build_strain_map(
         else legacy_figsize
     )
 
-    fig = new_figure(figsize)
+    fig = styled_figure(figsize, styled=style is not None)
     ax = fig.add_subplot(111)
     im = ax.imshow(
         strain,
@@ -434,7 +434,7 @@ def build_detrend_diag(
     When *style* is ``None`` the legacy look is reproduced exactly. The caller
     is responsible for calling ``fig.savefig``.
     """
-    fig = new_figure((20, 6))
+    fig = styled_figure((20, 6), styled=style is not None)
     axes = fig.subplots(1, 3)
     for ax, title, d in zip(
         axes,

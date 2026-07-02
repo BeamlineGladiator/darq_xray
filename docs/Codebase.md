@@ -210,6 +210,7 @@ GUI-safe plotting helpers — **never** `pyplot`/`matplotlib.use`.
 - `physical_extent(shape, px, py, roi)` — imshow `extent` in µm.
 - `get_cmap(name)` — colormap lookup; ParaView's `"fast"` is a real registered colormap (see [[#cmaps.py]]), so no fallback is needed.
 - `new_figure(figsize)` — a white `Figure` (no pyplot).
+- `styled_figure(figsize, *, styled)` — the Figure constructor every shared builder uses. `styled=True` (a `PlotStyle` is in play) turns on matplotlib constrained layout, which measures every text element at its final font size and reserves space so title/axis-labels/colourbar/offset-text can never overlap — the figure keeps its exact requested size and the axes shrink instead. `styled=False` is the legacy path: a plain `Figure`, byte-identical with the pre-export renderers. `build_companion_figure` (profiles) is the one exception — it is constrained on both paths, so it always passes `styled=True`.
 
 **Publication-export primitives** (new; all accept a `PlotStyle` argument):
 
@@ -219,8 +220,8 @@ GUI-safe plotting helpers — **never** `pyplot`/`matplotlib.use`.
 | `PUBLICATION_STYLE` | A ready-made `PlotStyle` tuned for publication: white scale bar with a box, font_scale=2.2, colourbar_ticks=5, scientific tick format, single-column width, PNG+PDF+SVG at 300 dpi. |
 | `figure_size(style, ext_x, ext_y)` | Returns `(w, h)` in inches from `style.figure_width` (`"single"`=3.5 in, `"double"`=7.0 in), preserving the physical aspect ratio plus ~1 in headroom; returns `None` for `"auto"`. |
 | `auto_scale_bar_length_um(ext_x)` | A "nice" bar length ≈15% of the X extent, snapped to the 1–2–5–10 series. |
-| `draw_scale_bar(ax, length_um, *, style)` | Draw a µm scale bar (Rectangle + label, optionally a `FancyBboxPatch` background box) on `ax` whose data coordinates are in µm. `length_um=None` calls `auto_scale_bar_length_um`. |
-| `apply_text_scale(ax, style)` | Scale axis-label/tick/title fonts by `style.font_scale`; apply `show_title` and `center_axis_labels`. |
+| `draw_scale_bar(ax, length_um, *, style)` | Draw a µm scale bar (Rectangle + label, optionally a `FancyBboxPatch` background box) on `ax` whose data coordinates are in µm. `length_um=None` calls `auto_scale_bar_length_um`. The label text is `clip_on=True` so it never spills past the axes at large `font_scale` (unclipped text was also confusing constrained layout into collapsing the axes to zero size). |
+| `apply_text_scale(ax, style)` | Scale axis-label/tick fonts by `style.font_scale` and the title by the independent `style.title_scale`; apply `show_title` and `center_axis_labels`. Also grows the title's `pad` proportionally to `font_scale` — a colourbar's scientific-notation offset text sits just above the axes and constrained layout does not account for it when reserving room for the title, so without extra pad the two collide at large font scales. |
 | `colorbar_tick_values(vmin, vmax, n)` | `n` evenly-spaced tick values from vmin..vmax (always includes both endpoints). |
 | `add_colorbar(fig, im, ax, label, style)` | Add a colourbar honouring `style.colorbar_fraction`, label, tick count, and number format (`"auto"` / `"scientific"` / a decimal count like `"2"`). |
 | `build_histogram(data, *, title, xlabel, style)` | Histogram of finite values in `data` (steelblue bars, mean/median lines). Returns a `Figure` or `None` when there are no finite values. Applies text scaling when `style` is not `None`. The caller calls `fig.savefig`. |
