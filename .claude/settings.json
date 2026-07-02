@@ -1,12 +1,24 @@
 {
   "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -c \"import sys,json,re; d=json.load(sys.stdin); c=d.get('tool_input',{}).get('command',''); CMDPOS=r'(?m)(?:^|[;&|]\\s*|\\$\\(\\s*)'; m=(re.search(CMDPOS+r'sed\\s+-n\\b[^\\n]*p\\b',c) and 'Use the Read tool (offset/limit) instead of sed -n — sed views have errored in this harness.') or (re.search(CMDPOS+r'pkill\\s+-f\\b',c) and 'pkill -f matches this shell itself (past self-kills, exit 144). Use pgrep -f + filter out \\$\\$ or track PIDs.'); print(json.dumps({'hookSpecificOutput':{'hookEventName':'PreToolUse','permissionDecision':'deny','permissionDecisionReason':m}}) if m else '')\" 2>/dev/null || true",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
     "PostToolUse": [
       {
         "matcher": "Write|Edit",
         "hooks": [
           {
             "type": "command",
-            "command": "python3 -c \"import sys,json,subprocess; d=json.load(sys.stdin); f=d.get('tool_input',{}).get('file_path','') or d.get('tool_response',{}).get('filePath',''); f.endswith('.py') and subprocess.run(['/home/albert/.local/bin/ruff','format',f])\" 2>/dev/null || true",
+            "command": "python3 .claude/hooks/ruff_format_notify.py || true",
             "timeout": 30,
             "statusMessage": "Formatting Python file..."
           },

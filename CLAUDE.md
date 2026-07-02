@@ -17,6 +17,25 @@ single 9-stage pipeline. (DFXM — never call it XRD / X-ray diffraction.)
   ask via the `AskUserQuestion` tool with concrete options rather than a free-text
   "should I proceed?" prompt, so the user can answer by choosing an option number.
 
+## Autonomous execution kickoff
+
+- **Subagent model tier:** dispatch mid-tier implementer/reviewer subagents as the
+  custom `sonnet-4-6` agent type, never Sonnet 5; reserve fable for final
+  whole-branch reviews.
+- **Kickoff confirmation:** before starting any autonomous multi-task run
+  (subagent-driven-development, executing-plans), confirm via AskUserQuestion:
+  (1) the stop point — a named task/phase boundary or "run to completion",
+  (2) anything about subagent tiering that isn't already settled above, and
+  (3) execution mode — full SDD (per-task implementer + dual reviewers) vs
+  inline execution with a single end review; recommend inline when the plan is
+  <= ~4 small tasks in one subsystem.
+- **Bare "resume":** on a bare resume request, first state the resume point and
+  the next action, then wait for confirmation before dispatching any agent —
+  the no-check-in rule applies *after* scope is confirmed, not to scoping itself.
+- **SDD commit hygiene:** when cleaning a subagent's commit, never strip `docs/`
+  changes that accompany `dfxm/stages/` or `gui/` changes — the same-change docs
+  contract outranks code-only commit aesthetics.
+
 ## Architecture
 
 - **`dfxm/` — Qt-free core library** (importable, testable, and CLI-runnable
@@ -85,6 +104,42 @@ Dependencies: `numpy h5py scipy matplotlib PySide6 pyvista pyvistaqt vtk`
 - **User-facing errors carry hints.** Input-validation failures raise
   `StageUserError(message, hint)`; the GUI banner shows both. Don't convert
   the skip-based reporting (empty results list reasons) into exceptions.
+- **Read before first Edit.** Any file not created this session — especially
+  `memory/MEMORY.md` and `.superpowers/sdd/progress.md` — must be Read once
+  before its first Edit.
+- **Never reconstruct `old_string` from memory or sibling files.** Known hazards
+  here: `hint=` strings in `dfxm/stages/*.py` contain em-dashes and sit at 12
+  *or* 16 spaces depending on nesting; markdown prose reflows. Read (or grep the
+  exact bytes of) every target site first — batch one Read covering all sites
+  before a multi-file edit sweep.
+- **Read big docs once.** Read plan/spec files (`docs/superpowers/plans/*`) in
+  full at most once per session; for later per-task slices use `Read` with
+  `offset`/`limit` on the task's section, or quote from context. Same for stage
+  modules during review→fix spans: re-read only the target function region.
+- **Bash hygiene:** for equality checks use `cmp -s A B && echo IDENTICAL || echo DIFFERS`
+  (never `diff` inside an `&&` chain — it exits 1 on difference). Never
+  `pkill -f <pattern>` with a pattern matching your own command line; collect PIDs
+  first (`pgrep -f <pattern> | grep -v $$`). The GUI smoke test is
+  `tests/gui_smoke.py` (no `test_` prefix; it is not a pytest file).
+- `stage_view.py` and all Qt code live under `gui/`, never `dfxm/` — grep for a
+  filename before Read if unsure which tree it's in.
+- **This repo has no git remote** — skip pull/push/PR in any branch flow.
+- `~/.claude/projects/.../memory/` is not git-tracked; writing the file is the save.
+- Custom agent-type files (`~/.claude/agents/*.md`) load at **session start**
+  only — don't test-dispatch a just-written type; tell the user it needs a restart.
+- Subagent resume via SendMessage works in this harness — prefer SendMessage to
+  resume a reviewer for re-review (preserves context, avoids re-priming) and an
+  implementer for small fixes; dispatch a fresh fix agent only when the original
+  agent has exited or the fix needs a clean context. (Fact dated 2026-07;
+  date-stamp harness facts so stale ones get retired.)
+- If a dispatched subagent runs well past the typical duration for its task class
+  (e.g. a read-only review outlasting an implementation), check on it instead of
+  waiting indefinitely; before re-dispatching, verify the worktree/git state is
+  untouched.
+- Verify downloads complete (exit status + size/tail) before parsing; prefer
+  WebFetch for remote JSON — never pipe curl straight into `json.load`.
+- Match review effort to change size: full xhigh sweeps for feature branches;
+  medium/high scoped to changed files for follow-up commits.
 
 ## Documentation (keep it in sync)
 
