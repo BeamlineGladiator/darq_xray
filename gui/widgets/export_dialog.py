@@ -35,6 +35,14 @@ _COLORS = ["black", "white", "red", "green", "blue", "yellow", "grey"]
 _CMAPS = list(CMAP_CHOICES)
 _WIDTHS = ["auto", "single", "double"]
 _TICK_FMTS = ["auto", "scientific", "0", "1", "2", "3"]
+_TICK_FMT_LABELS = {
+    "auto": "auto (matplotlib default)",
+    "scientific": "scientific (×10ⁿ offset)",
+    "0": "0 decimals (plain numbers)",
+    "1": "1 decimal (plain numbers)",
+    "2": "2 decimals (plain numbers)",
+    "3": "3 decimals (plain numbers)",
+}
 _LOCS = ["lower right", "lower left", "upper right", "upper left"]
 
 
@@ -98,15 +106,16 @@ class StyleControls(QWidget):
         self._w_box_alpha.setValue(s.scale_bar_box_alpha)
         self._w_box_margin.setValue(s.scale_bar_box_margin_pt)
         self._w_font_scale.setValue(s.font_scale)
+        self._w_title_scale.setValue(s.title_scale)
         self._w_show_title.setChecked(s.show_title)
         self._w_center_labels.setChecked(s.center_axis_labels)
         self._w_colorbar.setChecked(s.colorbar)
         self._w_cbar_label.setText(s.colorbar_label or "")
         self._w_cbar_frac.setValue(s.colorbar_fraction)
         self._w_cbar_ticks.setValue(s.colorbar_ticks)
-        self._w_cbar_fmt.setCurrentText(
-            s.colorbar_tick_format if s.colorbar_tick_format in _TICK_FMTS else "auto"
-        )
+        cur_fmt = s.colorbar_tick_format if s.colorbar_tick_format in _TICK_FMTS else "auto"
+        self._w_cbar_fmt.setCurrentIndex(_TICK_FMTS.index(cur_fmt))
+        self._w_round_clim.setChecked(s.round_clim)
         self._w_fig_width.setCurrentText(
             s.figure_width
             if isinstance(s.figure_width, str) and s.figure_width in _WIDTHS
@@ -147,6 +156,7 @@ class StyleControls(QWidget):
             self._w_box_alpha,
             self._w_box_margin,
             self._w_font_scale,
+            self._w_title_scale,
             self._w_show_title,
             self._w_center_labels,
             self._w_colorbar,
@@ -154,6 +164,7 @@ class StyleControls(QWidget):
             self._w_cbar_frac,
             self._w_cbar_ticks,
             self._w_cbar_fmt,
+            self._w_round_clim,
             self._w_fig_width,
             self._w_fmt_png,
             self._w_fmt_pdf,
@@ -318,6 +329,20 @@ class StyleControls(QWidget):
         )
         form.addRow("Show title", self._w_show_title)
 
+        self._w_title_scale = QDoubleSpinBox()
+        self._w_title_scale.setRange(0.1, 5.0)
+        self._w_title_scale.setDecimals(2)
+        self._w_title_scale.setSingleStep(0.1)
+        self._w_title_scale.setValue(s.title_scale)
+        self._w_title_scale.setToolTip(
+            "Size of the title alone, independent of Font scale — set small if the "
+            "title is only there to identify the plot."
+        )
+        self._w_title_scale.valueChanged.connect(
+            lambda v: (setattr(self._style, "title_scale", v), self._emit())
+        )
+        form.addRow("Title scale", self._w_title_scale)
+
         self._w_center_labels = QCheckBox()
         self._w_center_labels.setChecked(s.center_axis_labels)
         self._w_center_labels.toggled.connect(
@@ -366,14 +391,29 @@ class StyleControls(QWidget):
         form.addRow("Colourbar ticks", self._w_cbar_ticks)
 
         self._w_cbar_fmt = QComboBox()
-        self._w_cbar_fmt.addItems(_TICK_FMTS)
-        self._w_cbar_fmt.setCurrentText(
-            s.colorbar_tick_format if s.colorbar_tick_format in _TICK_FMTS else "auto"
-        )
-        self._w_cbar_fmt.currentTextChanged.connect(
-            lambda v: (setattr(self._style, "colorbar_tick_format", v), self._emit())
+        for fmt in _TICK_FMTS:
+            self._w_cbar_fmt.addItem(_TICK_FMT_LABELS[fmt], fmt)
+        cur_fmt = s.colorbar_tick_format if s.colorbar_tick_format in _TICK_FMTS else "auto"
+        self._w_cbar_fmt.setCurrentIndex(_TICK_FMTS.index(cur_fmt))
+        self._w_cbar_fmt.currentIndexChanged.connect(
+            lambda _i: (
+                setattr(self._style, "colorbar_tick_format", self._w_cbar_fmt.currentData()),
+                self._emit(),
+            )
         )
         form.addRow("Tick format", self._w_cbar_fmt)
+
+        self._w_round_clim = QCheckBox()
+        self._w_round_clim.setChecked(s.round_clim)
+        self._w_round_clim.setToolTip(
+            "Round the automatic colour limits outward to nice values (e.g. ±0.0778 → "
+            "±0.08) so evenly spaced ticks are round numbers. The run log and Results "
+            "tab state exactly what was rounded."
+        )
+        self._w_round_clim.toggled.connect(
+            lambda v: (setattr(self._style, "round_clim", v), self._emit())
+        )
+        form.addRow("Round colour limits", self._w_round_clim)
 
         # --- Figure section ---
         form.addRow(QLabel("<b>Figure</b>"))
