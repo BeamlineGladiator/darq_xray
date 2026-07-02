@@ -112,3 +112,14 @@ def test_run_skips_mismatched_frame_shape(tmp_path):
 def test_run_requires_raw_root():
     with pytest.raises(ValueError, match="raw_root"):
         M.run({"raw_root": ""})
+
+
+def test_colormap_param_is_enum_dropdown():
+    from dfxm.common.plotting import CMAP_CHOICES
+    from dfxm.config.models import ParamType
+    from dfxm.stages.matched import STAGE
+
+    p = next(q for q in STAGE.params if q.name == "colormap")
+    assert p.type is ParamType.ENUM
+    assert tuple(p.choices) == CMAP_CHOICES
+    assert p.default == "gray"

@@ -21,6 +21,7 @@ from ..common import alignment as A
 from ..common import render as Rnd
 from ..common.errors import StageUserError
 from ..common.figures import FigureSpec, register
+from ..common.plotting import CMAP_CHOICES, style_from_params
 from ..common.raster import extract_motor_positions, find_h5_file
 from ..common.sort import find_matching_folders
 from ..config.models import Param, ParamType, StageSpec
@@ -159,12 +160,13 @@ STAGE = StageSpec(
         ),
         Param(
             "colormap",
-            ParamType.STR,
+            ParamType.ENUM,
             "Colormap",
             default="gray",
+            choices=CMAP_CHOICES,
             advanced=True,
             group="Appearance",
-            help="Matplotlib colormap for the saved PNGs (default gray).",
+            help="Colormap for the saved PNGs (default gray).",
         ),
         Param(
             "vmin",
@@ -311,6 +313,7 @@ def _rock_h5(raw_root, name):
 def run(params: dict, progress: ProgressFn | None = None) -> MatchedResult:
     progress = progress or _noop
     p = {**STAGE.defaults(), **params}
+    style = style_from_params(p)
     raw_root = (p["raw_root"] or "").rstrip("/")
     if not raw_root:
         raise StageUserError(
@@ -430,6 +433,7 @@ def run(params: dict, progress: ProgressFn | None = None) -> MatchedResult:
             ext_y,
             title,
             "Intensity − background (a.u.)",
+            style=style,
         )
         png = os.path.join(layers_dir, f"layer_{i:04d}.png")
         fig.savefig(png, dpi=150, facecolor="white", bbox_inches="tight")
