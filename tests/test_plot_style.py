@@ -350,6 +350,14 @@ def test_round_limits_outward_degenerate_and_zero():
     assert math.isnan(lo) and hi == 1.0
 
 
+def test_round_limits_outward_preserves_tiny_symmetric_fallback():
+    from dfxm.common.plotting import round_limits_outward
+
+    # symmetric_limits() returns ±1e-12 for all-zero data; rounding must not
+    # collapse it to a degenerate (0.0, 0.0) range
+    assert round_limits_outward(-1e-12, 1e-12) == (-1e-12, 1e-12)
+
+
 def test_apply_round_clim_notes_and_gating():
     from dfxm.common.plotting import apply_round_clim
 

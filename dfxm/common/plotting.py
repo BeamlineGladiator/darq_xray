@@ -211,8 +211,9 @@ def round_limits_outward(vmin: float, vmax: float) -> tuple[float, float]:
         n = v / step
         # epsilon guard so already-round values do not inflate by a whole step
         n = math.ceil(n - 1e-9) if up else math.floor(n + 1e-9)
-        # Round to eliminate floating-point artifacts (e.g., 0.15000000000000002 -> 0.15)
-        return round(n * step, 10)
+        # strip binary float noise scale-relatively — by construction the
+        # product has at most 3 significant digits (n in [2, 20], step = 5·10^k)
+        return float(f"{n * step:.6g}")
 
     if not (math.isfinite(vmin) and math.isfinite(vmax)) or vmin >= vmax:
         return (vmin, vmax)
