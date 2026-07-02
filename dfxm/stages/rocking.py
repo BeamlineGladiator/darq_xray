@@ -540,7 +540,9 @@ def _motors(raw_root: str, pattern: str, samy_path: str, samz_path: str):
     return extract_motor_positions(folders, samy_path, samz_path)
 
 
-def _render(result: RockingResult, vol, z_um, scale_z, name, p, out_dir, cmap, title, cbar, style=None):
+def _render(
+    result: RockingResult, vol, z_um, scale_z, name, p, out_dir, cmap, title, cbar, style=None
+):
     sx, sy = float(p["pixel_size_x_um"]), float(p["pixel_size_y_um"])
     vmin, vmax = _colorbar_range(vol, float(p["cbar_pct_lo"]), float(p["cbar_pct_hi"]))
     ds_dir = os.path.join(out_dir, name)
