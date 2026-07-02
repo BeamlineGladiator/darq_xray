@@ -239,3 +239,48 @@ def test_add_colorbar_default_tick_fontsize_is_nine():
     cb = add_colorbar(fig, im, ax, "label", PlotStyle())
     sizes = {round(t.get_fontsize(), 3) for t in cb.ax.get_yticklabels()}
     assert sizes == {9.0}, sizes
+
+
+def test_cmap_groups_defaults_and_lookup():
+    import pytest
+
+    from dfxm.common.plotting import CMAP_CHOICES, CMAP_GROUPS, resolve_cmap
+
+    s = PlotStyle()
+    assert s.cmap_for("mosa_com") == "fast"
+    assert s.cmap_for("mosa_fwhm") == "magma"
+    assert s.cmap_for("strain") == "RdBu_r"
+    assert s.cmap_for("raw") == "gray"
+    assert CMAP_GROUPS == ("mosa_com", "mosa_fwhm", "strain", "raw")
+    for g in CMAP_GROUPS:
+        assert s.cmap_for(g) in CMAP_CHOICES
+    with pytest.raises(KeyError):
+        s.cmap_for("nope")
+    # resolve_cmap: None style -> defaults; None group -> fallback
+    assert resolve_cmap(None, "raw") == "gray"
+    assert resolve_cmap(replace(s, cmap_raw="viridis"), "raw") == "viridis"
+    assert resolve_cmap(None, None, fallback="bone") == "bone"
+
+
+def test_style_from_params_roundtrip_and_tolerance():
+    from dataclasses import asdict
+
+    from dfxm.common.plotting import style_from_params
+
+    src = replace(PUBLICATION_STYLE, cmap_strain="seismic", font_scale=3.0)
+    p = {"plot_style": asdict(src)}
+    got = style_from_params(p)
+    assert got == src
+    assert style_from_params({}) is None
+    # unknown keys dropped, missing keys defaulted, formats list -> tuple
+    got = style_from_params({"plot_style": {"font_scale": 2.0, "formats": ["png"], "bogus": 1}})
+    assert got.font_scale == 2.0 and got.formats == ("png",) and got.cmap_mosa_com == "fast"
+
+
+def test_style_json_roundtrip_and_bad_blob():
+    from dfxm.common.plotting import style_from_json, style_to_json
+
+    src = replace(PUBLICATION_STYLE, cmap_raw="turbo")
+    assert style_from_json(style_to_json(src)) == src
+    assert style_from_json("{not json") is None
+    assert style_from_json("[1,2]") is None
