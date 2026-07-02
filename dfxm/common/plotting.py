@@ -58,7 +58,8 @@ class PlotStyle:
     scale_bar_box_alpha: float = 0.45
     scale_bar_box_margin_pt: float = 4.0
     # text
-    font_scale: float = 1.0  # multiplies axis labels, ticks, title
+    font_scale: float = 1.0  # multiplies axis labels + ticks (NOT the title)
+    title_scale: float = 1.0  # multiplies the title alone (independent of font_scale)
     show_title: bool = True
     center_axis_labels: bool = True
     # colourbar
@@ -229,7 +230,8 @@ def auto_scale_bar_length_um(ext_x: float) -> float:
 
 
 def apply_text_scale(ax, style: "PlotStyle") -> None:
-    """Scale axis-label/tick/title fonts by ``style.font_scale``; apply title/centre options."""
+    """Scale axis-label/tick fonts by ``style.font_scale`` and the title by the
+    independent ``style.title_scale``; apply title/centre options."""
     fs = style.font_scale
     for label in (ax.xaxis.label, ax.yaxis.label):
         label.set_fontsize(label.get_fontsize() * fs)
@@ -255,7 +257,7 @@ def apply_text_scale(ax, style: "PlotStyle") -> None:
     if not style.show_title:
         ax.set_title("")
     else:
-        title.set_fontsize(title.get_fontsize() * fs)
+        title.set_fontsize(title.get_fontsize() * style.title_scale)
 
 
 def draw_scale_bar(ax, length_um: float | None = None, *, style: "PlotStyle") -> None:

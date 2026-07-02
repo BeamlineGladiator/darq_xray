@@ -284,3 +284,31 @@ def test_style_json_roundtrip_and_bad_blob():
     assert style_from_json(style_to_json(src)) == src
     assert style_from_json("{not json") is None
     assert style_from_json("[1,2]") is None
+
+
+def test_title_scale_is_independent_of_font_scale():
+    fig, ax = _ax()
+    ax.set_xlabel("X (µm)")
+    ax.set_title("χ Misorientation")
+    label_base = ax.xaxis.label.get_fontsize()
+    title_base = ax.title.get_fontsize()
+    apply_text_scale(ax, PlotStyle(font_scale=3.0, title_scale=0.5))
+    assert ax.xaxis.label.get_fontsize() == label_base * 3.0
+    assert ax.title.get_fontsize() == title_base * 0.5  # font_scale must NOT touch the title
+
+
+def test_title_scale_default_leaves_title_at_base_size():
+    fig, ax = _ax()
+    ax.set_title("t")
+    title_base = ax.title.get_fontsize()
+    apply_text_scale(ax, PlotStyle(font_scale=2.2))  # title_scale defaults to 1.0
+    assert ax.title.get_fontsize() == title_base
+
+
+def test_title_scale_survives_json_roundtrip():
+    from dfxm.common.plotting import style_from_json, style_to_json
+
+    s = PlotStyle(title_scale=0.4)
+    assert style_from_json(style_to_json(s)).title_scale == 0.4
+    # Old persisted blobs (no title_scale key) default to 1.0
+    assert style_from_json(style_to_json(PlotStyle())).title_scale == 1.0
