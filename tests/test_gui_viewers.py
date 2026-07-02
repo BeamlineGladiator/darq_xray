@@ -69,7 +69,7 @@ def test_available_fields_and_aligned_field(tmp_path):
     vol, spacing, cmap, clim = V.aligned_field(p, "chi_Center_of_mass")
     assert vol.ndim == 3 and vol.shape[2] >= NX  # X canvas expanded by samy shift
     assert spacing[0] == pytest.approx(0.152) and spacing[2] > 0
-    assert cmap == "magma" and clim[0] == pytest.approx(-clim[1])  # midrange -> symmetric
+    assert cmap == "fast" and clim[0] == pytest.approx(-clim[1])  # midrange -> symmetric
 
     sv, _sp, scmap, _sc = V.aligned_field(p, "strain")
     assert scmap == "RdBu_r" and sv.ndim == 3
