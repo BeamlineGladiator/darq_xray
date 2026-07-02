@@ -17,6 +17,10 @@ import numpy as np
 from matplotlib.figure import Figure
 from matplotlib.ticker import FuncFormatter, ScalarFormatter
 
+from .cmaps import register as _register_fast_cmap
+
+_register_fast_cmap()
+
 
 @dataclass
 class PlotStyle:
@@ -118,16 +122,10 @@ def physical_extent(
 
 
 def get_cmap(name: str):
-    """Look up a colormap by name.
-
-    Supports the ParaView ``"fast"`` map by falling back to ``coolwarm`` when
-    it is not registered with matplotlib.
-    """
+    """Look up a colormap by name (ParaView's ``"fast"`` is registered at import)."""
     registry = matplotlib.colormaps
     if name in registry:
         return registry[name]
-    if name == "fast" and "coolwarm" in registry:
-        return registry["coolwarm"]
     raise KeyError(f"unknown colormap {name!r}")
 
 
