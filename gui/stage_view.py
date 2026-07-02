@@ -606,6 +606,7 @@ def _summarize_slices(result) -> str:
             f"planes: {result.n_planes_total}   pngs: {len(result.pngs)}",
         ]
         lines += [f"  {vid}" for vid in result.volume_ids]
+    lines += [f"  {n}" for n in getattr(result, "notes", [])]
     lines += [f"skipped: {s}" for s in result.skipped]
     return "\n".join(lines)
 

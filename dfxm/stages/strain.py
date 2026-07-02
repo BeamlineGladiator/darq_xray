@@ -34,6 +34,7 @@ from ..common.figures import FigureSpec, register
 from ..common.plotting import (
     PlotStyle,
     add_colorbar,
+    apply_round_clim,
     apply_text_scale,
     build_histogram,
     draw_scale_bar,
@@ -367,7 +368,11 @@ def build_strain_map(
     The caller is responsible for calling ``fig.savefig``.
     """
     extent = physical_extent(strain.shape, px, py, roi)
-    vmin, vmax = vlim if vlim != (None, None) else symmetric_limits(strain)
+    if vlim != (None, None):
+        vmin, vmax = vlim  # user-specified limits are never rounded
+    else:
+        vmin, vmax = symmetric_limits(strain)
+        vmin, vmax, _ = apply_round_clim(vmin, vmax, style)
 
     ny, nx = strain.shape
     legacy_figsize = (7, 7 * (ny * py) / (nx * px) + 1.5)

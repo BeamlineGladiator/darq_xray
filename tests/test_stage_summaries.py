@@ -157,6 +157,18 @@ def test_summarize_slices_empty_reports_no_volumes():
     assert "output: None" not in text
 
 
+def test_summarize_slices_shows_clim_notes():
+    result = SlicesResult(
+        output_h5="slices.h5",
+        volume_ids=["mosa_com_chi"],
+        slice_names=["oblique_full"],
+        n_planes_total=3,
+        notes=["mosa_com_chi: colour limits rounded ±0.0778 → ±0.08 (round_clim)"],
+    )
+    text = _summarize("slices", result)
+    assert "rounded ±0.0778 → ±0.08" in text
+
+
 # -----------------------------------------------------------------------------
 # _summarize: dispatch
 # -----------------------------------------------------------------------------
