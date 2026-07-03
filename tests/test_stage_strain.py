@@ -13,6 +13,7 @@ from pathlib import Path
 import h5py
 import numpy as np
 import pytest
+from matplotlib.offsetbox import AnchoredOffsetbox
 
 from dfxm.stages import strain as S
 
@@ -173,16 +174,12 @@ def test_parse_helpers():
 
 
 def test_build_strain_map_legacy_has_no_scale_bar():
-    from matplotlib.offsetbox import AnchoredOffsetbox
-
     fig = S.build_strain_map(np.random.rand(20, 30) * 1e-3, 0.1, 0.3, None, (None, None))
     ax = fig.axes[0]
     assert not any(isinstance(a, AnchoredOffsetbox) for a in ax.artists)
 
 
 def test_build_strain_map_style_adds_scale_bar():
-    from matplotlib.offsetbox import AnchoredOffsetbox
-
     from dfxm.common.plotting import PlotStyle
 
     fig = S.build_strain_map(

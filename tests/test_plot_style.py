@@ -3,6 +3,7 @@ from dataclasses import replace
 import numpy as np
 from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.figure import Figure
+from matplotlib.offsetbox import AnchoredOffsetbox
 
 from dfxm.common.plotting import (
     PUBLICATION_STYLE,
@@ -73,8 +74,6 @@ def _drawn_renderer(fig):
 
 
 def _scale_bar_artist(ax):
-    from matplotlib.offsetbox import AnchoredOffsetbox
-
     return next(a for a in ax.artists if isinstance(a, AnchoredOffsetbox))
 
 
@@ -249,7 +248,54 @@ def test_box_margin_is_real_points():
     ax = fig.add_subplot(111)
     ax.imshow(np.zeros((10, 20)), extent=[0, 20, 0, 10], origin="lower")
     draw_scale_bar(ax, 5.0, style=PlotStyle(scale_bar_box=True, scale_bar_box_margin_pt=4.0))
-    assert np.isclose(_scale_bar_artist(ax).pad, 0.4)
+    abox = _scale_bar_artist(ax)
+    assert np.isclose(abox.pad, 0.4)
+    assert np.isclose(abox.borderpad, 1.5)  # fixed corner inset, in font units
+
+
+def test_box_margin_ignored_when_box_disabled():
+    # With the background box off there is no frame to pad — the Box-margin
+    # control must not inset the bar by an invisible phantom frame.
+    def bar_x1(margin_pt):
+        fig, ax = _ax()
+        draw_scale_bar(
+            ax,
+            5.0,
+            style=PlotStyle(scale_bar_box=False, scale_bar_box_margin_pt=margin_pt),
+        )
+        renderer = _drawn_renderer(fig)
+        from matplotlib.patches import Rectangle
+
+        kids = _offsetbox_children(_scale_bar_artist(ax))
+        bar = next(p for p in kids if isinstance(p, Rectangle))
+        return bar.get_window_extent(renderer).x1
+
+    assert np.isclose(bar_x1(4.0), bar_x1(20.0))
+
+
+def test_draw_scale_bar_tolerates_nonstandard_loc_and_zero_font_scale():
+    # Old code parsed loc by substring and used label_size only as a fontsize;
+    # hand-written/stale persisted styles must keep rendering, not crash.
+    fig, ax = _ax()
+    draw_scale_bar(ax, 5.0, style=PlotStyle(scale_bar_loc="bottom right"))  # no ValueError
+    fig2, ax2 = _ax()
+    draw_scale_bar(ax2, 5.0, style=PlotStyle(font_scale=0.0))  # no ZeroDivisionError
+    assert _scale_bar_artist(ax) is not None and _scale_bar_artist(ax2) is not None
+
+
+def test_scale_bar_artists_are_clipped_to_axes():
+    # AnchoredOffsetbox ignores its own clip settings, so every packed artist
+    # (and the frame patch) must be clipped individually — at extreme font
+    # scales the assembly truncates at the axes edge instead of overdrawing
+    # tick labels (the old code clipped its label for the same reason).
+    fig, ax = _ax()
+    draw_scale_bar(ax, 5.0, style=PlotStyle(scale_bar_box=True))
+    abox = _scale_bar_artist(ax)
+    assert abox.patch.get_clip_on()
+    # skip the AnchoredOffsetbox container itself — matplotlib ignores its own
+    # clip flag (which is exactly why every packed artist is clipped instead)
+    for a in _offsetbox_children(abox.get_child()):
+        assert a.get_clip_on(), f"{type(a).__name__} is not clipped"
 
 
 def test_scale_bar_auto_length_is_1_2_5_10_series():

@@ -374,8 +374,31 @@ def draw_scale_bar(ax, length_um: float | None = None, *, style: "PlotStyle") ->
     # geometry; close to, but NOT byte-identical to, the pre-export legacy bar
     # (which used 0.01·|yr| and 50/10/1 length rounding).
     bh = abs(yr) * 0.004 * style.scale_bar_thickness_pt
-    label_size = 10.0 * style.font_scale * style.scale_bar_label_scale
+    # Floor guards the pad division below (and FontProperties) against
+    # font_scale/label_scale = 0 from hand-written or stale persisted styles.
+    label_size = max(10.0 * style.font_scale * style.scale_bar_label_scale, 0.1)
+    # AnchoredOffsetbox rejects non-canonical loc strings with ValueError; keep
+    # the old substring tolerance for hand-written styles ("bottom right" -> a
+    # sensible corner) instead of crashing the stage.
+    loc = style.scale_bar_loc
+    if loc not in {
+        "upper right",
+        "upper left",
+        "lower left",
+        "lower right",
+        "right",
+        "center left",
+        "center right",
+        "lower center",
+        "upper center",
+        "center",
+    }:
+        loc = f"{'upper' if 'upper' in loc else 'lower'} {'right' if 'right' in loc else 'left'}"
 
+    # Deliberately NOT mpl_toolkits' AnchoredSizeBar (which assembles the same
+    # offsetbox tree): it draws the bar Rectangle with a point-based edge — the
+    # doubled-thickness look the pinned no-edge geometry forbids — and we need
+    # direct access to the frame patch for colour/alpha/rounding anyway.
     bar = AuxTransformBox(ax.transData)  # width stays true to data µm
     bar.add_artist(
         Rectangle((0, 0), sl, bh, facecolor=style.scale_bar_color, edgecolor="none", linewidth=0)
@@ -385,13 +408,14 @@ def draw_scale_bar(ax, length_um: float | None = None, *, style: "PlotStyle") ->
         textprops={"color": style.scale_bar_color, "fontsize": label_size, "fontweight": "bold"},
     )
     box = AnchoredOffsetbox(
-        loc=style.scale_bar_loc,
+        loc=loc,
         child=VPacker(children=[label, bar], align="center", pad=0, sep=0.25 * label_size),
         # pad/borderpad are in font-size units of *prop*; pinning prop to the
-        # label size makes box_margin_pt mean real points.
+        # label size makes box_margin_pt mean real points. No box -> no pad,
+        # so the Box-margin control cannot inset the bar by a phantom frame.
         prop=FontProperties(size=label_size),
-        pad=style.scale_bar_box_margin_pt / label_size,
-        borderpad=0.5,
+        pad=(style.scale_bar_box_margin_pt / label_size) if style.scale_bar_box else 0.0,
+        borderpad=1.5,
         frameon=style.scale_bar_box,
     )
     if style.scale_bar_box:
@@ -403,11 +427,23 @@ def draw_scale_bar(ax, length_um: float | None = None, *, style: "PlotStyle") ->
         # Rounded corners without extra growth: all padding comes from the
         # offsetbox pad above; rounding_size is in mutation-scale (font) units.
         box.patch.set_boxstyle("round", pad=0, rounding_size=0.4)
-    box.set_zorder(5)
     # In-axes decoration: keep the constrained-layout solver from budgeting
     # figure margin for it (the old code clipped the label for the same reason).
     box.set_in_layout(False)
     ax.add_artist(box)
+    # AnchoredOffsetbox ignores its own clip settings, so clip the frame patch
+    # and every packed artist to the axes instead: at extreme font scales the
+    # assembly must truncate at the axes edge — like the old clipped label —
+    # not overdraw tick labels or run past the figure border.
+    to_clip, stack = [box.patch], [box.get_child()]
+    while stack:
+        a = stack.pop()
+        to_clip.append(a)
+        if hasattr(a, "get_children"):
+            stack.extend(a.get_children())
+    for a in to_clip:
+        a.set_clip_on(True)
+        a.set_clip_box(ax.bbox)
 
 
 def colorbar_tick_values(vmin: float, vmax: float, n: int) -> list[float]:
