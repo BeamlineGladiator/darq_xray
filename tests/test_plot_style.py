@@ -3,6 +3,7 @@ from dataclasses import replace
 import numpy as np
 from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.figure import Figure
+from matplotlib.offsetbox import AnchoredOffsetbox
 
 from dfxm.common.plotting import (
     PUBLICATION_STYLE,
@@ -66,27 +67,56 @@ def test_auto_length_small_extent_is_nice():
     assert auto_scale_bar_length_um(40.0) == 5  # target 6.0 -> 5
 
 
-def test_draw_scale_bar_adds_patch_and_text():
+def _drawn_renderer(fig):
+    canvas = FigureCanvasAgg(fig)
+    canvas.draw()
+    return canvas.get_renderer()
+
+
+def _scale_bar_artist(ax):
+    return next(a for a in ax.artists if isinstance(a, AnchoredOffsetbox))
+
+
+def _offsetbox_children(artist):
+    """Flatten every artist nested under an offsetbox tree (Texts, Rectangles, ...)."""
+    out, stack = [], [artist]
+    while stack:
+        a = stack.pop()
+        out.append(a)
+        if hasattr(a, "get_children"):
+            stack.extend(a.get_children())
+    return out
+
+
+def test_draw_scale_bar_adds_anchored_box_with_label_and_bar():
+    from matplotlib.patches import Rectangle
+    from matplotlib.text import Text
+
     fig, ax = _ax()
-    n_before = len(ax.patches)
     draw_scale_bar(ax, length_um=10.0, style=PlotStyle(scale_bar_color="white"))
-    assert len(ax.patches) == n_before + 1  # the bar
-    assert any("µm" in t.get_text() for t in ax.texts)
+    abox = _scale_bar_artist(ax)  # raises StopIteration if missing
+    kids = _offsetbox_children(abox)
+    assert any(isinstance(t, Text) and "µm" in t.get_text() for t in kids)
+    bar = next(p for p in kids if isinstance(p, Rectangle))
+    ec = bar.get_edgecolor()  # (R, G, B, A) — no doubled point-based edge
+    assert ec[3] == 0 or bar.get_linewidth() == 0
+    assert len(ax.patches) == 0  # nothing leaks into ax.patches any more
 
 
-def test_draw_scale_bar_box_adds_a_second_patch():
+def test_draw_scale_bar_box_toggles_frame():
     fig, ax = _ax()
     draw_scale_bar(ax, length_um=10.0, style=PlotStyle(scale_bar_box=True))
-    # one patch for the bar, one for the background box
-    assert len(ax.patches) == 2
+    assert _scale_bar_artist(ax).patch.get_visible()
+
+    fig2, ax2 = _ax()
+    draw_scale_bar(ax2, length_um=10.0, style=PlotStyle(scale_bar_box=False))
+    assert not _scale_bar_artist(ax2).patch.get_visible()
 
 
-def test_draw_scale_bar_box_geometry_is_sane():
-    """Box must be a snug corner element, not half the figure (the deferred bug)."""
-    from matplotlib.patches import FancyBboxPatch, Rectangle
+def test_scale_bar_box_hugs_label_at_large_font_scale():
+    from matplotlib.text import Text
 
-    ext_y = 30.0
-    fig, ax = _ax(ext_x=50.0, ext_y=ext_y)
+    fig, ax = _ax(ext_x=50.0, ext_y=30.0)
     style = PlotStyle(
         scale_bar_box=True,
         font_scale=2.2,
@@ -94,31 +124,37 @@ def test_draw_scale_bar_box_geometry_is_sane():
         scale_bar_thickness_pt=4.0,
     )
     draw_scale_bar(ax, length_um=10.0, style=style)
-
-    boxes = [p for p in ax.patches if isinstance(p, FancyBboxPatch)]
-    rects = [p for p in ax.patches if isinstance(p, Rectangle)]
-    assert len(boxes) == 1, "expected exactly one background FancyBboxPatch"
-    assert len(rects) == 1, "expected exactly one bar Rectangle"
-
-    box = boxes[0]
-    rect = rects[0]
-
-    # Box height must be a snug fraction of the y-extent (bug produced ~14.9, i.e. ~50%).
-    assert box.get_height() > 0, "box height must be positive"
-    assert box.get_height() < 0.25 * ext_y, (
-        f"box height {box.get_height():.2f} is too large (>25% of {ext_y} µm) — "
-        "geometry bug still present"
+    renderer = _drawn_renderer(fig)
+    abox = _scale_bar_artist(ax)
+    frame_bb = abox.patch.get_window_extent(renderer)
+    label = next(
+        t for t in _offsetbox_children(abox) if isinstance(t, Text) and "µm" in t.get_text()
     )
+    text_bb = label.get_window_extent(renderer)
+    # The reported bug: at large font scale the label spilled out of the box.
+    assert frame_bb.contains(text_bb.x0, text_bb.y0), "label bottom-left outside box"
+    assert frame_bb.contains(text_bb.x1, text_bb.y1), "label top-right outside box"
+    # Snug corner element, not half the figure.
+    ax_bb = ax.get_window_extent(renderer)
+    assert frame_bb.height < 0.35 * ax_bb.height
 
-    # Box must be wide enough to cover the scale bar.
-    assert box.get_width() >= 10.0, "box width should cover the bar length"
 
-    # Bar rectangle must have no doubled point-based edge.
-    # edgecolor is returned as an RGBA tuple; alpha=0 or "none" both mean invisible.
-    ec = rect.get_edgecolor()  # (R, G, B, A)
-    assert ec[3] == 0 or rect.get_linewidth() == 0, (
-        "bar Rectangle should have no visible edge (edgecolor='none' or linewidth=0)"
-    )
+def test_scale_bar_label_and_bar_are_centred():
+    from matplotlib.patches import Rectangle
+    from matplotlib.text import Text
+
+    fig, ax = _ax()
+    # Short bar + big font -> label wider than the bar; the two must share a centre.
+    draw_scale_bar(ax, length_um=2.0, style=PlotStyle(scale_bar_box=True, font_scale=2.2))
+    renderer = _drawn_renderer(fig)
+    kids = _offsetbox_children(_scale_bar_artist(ax))
+    label = next(t for t in kids if isinstance(t, Text) and "µm" in t.get_text())
+    bar = next(p for p in kids if isinstance(p, Rectangle))
+    text_bb = label.get_window_extent(renderer)
+    bar_bb = bar.get_window_extent(renderer)
+    text_cx = (text_bb.x0 + text_bb.x1) / 2
+    bar_cx = (bar_bb.x0 + bar_bb.x1) / 2
+    assert abs(text_cx - bar_cx) < 2.0  # px
 
 
 def test_apply_text_scale_grows_label_fonts():
@@ -185,9 +221,7 @@ def test_build_histogram_respects_figure_width():
     assert abs(fig.get_size_inches()[0] - 3.5) < 1e-6
 
 
-def _box_patch_pad(margin_pt):
-    from matplotlib.patches import FancyBboxPatch
-
+def _box_frame_width(margin_pt):
     fig = Figure()
     ax = fig.add_subplot(111)
     ax.imshow(np.zeros((10, 20)), extent=[0, 20, 0, 10], origin="lower")
@@ -196,20 +230,72 @@ def _box_patch_pad(margin_pt):
         5.0,
         style=PlotStyle(scale_bar_box=True, scale_bar_box_margin_pt=margin_pt),
     )
-    box = next(p for p in ax.patches if isinstance(p, FancyBboxPatch))
-    return box.get_boxstyle().pad
+    renderer = _drawn_renderer(fig)
+    return _scale_bar_artist(ax).patch.get_window_extent(renderer).width
 
 
 def test_box_margin_control_affects_box_padding():
     # The 'Box margin' control must actually change the background-box padding
     # (it was previously hardcoded and inert).
-    assert _box_patch_pad(12.0) > _box_patch_pad(2.0)
+    assert _box_frame_width(12.0) > _box_frame_width(2.0)
 
 
-def test_box_margin_default_preserves_padding():
-    # The default margin (4.0) must reproduce the original 0.015*|yr| padding so
-    # existing default-style boxes are unchanged.
-    assert np.isclose(_box_patch_pad(4.0), 0.015 * 10.0)
+def test_box_margin_is_real_points():
+    # Box margin semantics: real points. The AnchoredOffsetbox pad is expressed
+    # in units of the label font size (10 pt at default style), so margin_pt=4.0
+    # must land as pad=0.4 font units — pinned so the point semantics can't drift.
+    fig = Figure()
+    ax = fig.add_subplot(111)
+    ax.imshow(np.zeros((10, 20)), extent=[0, 20, 0, 10], origin="lower")
+    draw_scale_bar(ax, 5.0, style=PlotStyle(scale_bar_box=True, scale_bar_box_margin_pt=4.0))
+    abox = _scale_bar_artist(ax)
+    assert np.isclose(abox.pad, 0.4)
+    assert np.isclose(abox.borderpad, 1.5)  # fixed corner inset, in font units
+
+
+def test_box_margin_ignored_when_box_disabled():
+    # With the background box off there is no frame to pad — the Box-margin
+    # control must not inset the bar by an invisible phantom frame.
+    def bar_x1(margin_pt):
+        fig, ax = _ax()
+        draw_scale_bar(
+            ax,
+            5.0,
+            style=PlotStyle(scale_bar_box=False, scale_bar_box_margin_pt=margin_pt),
+        )
+        renderer = _drawn_renderer(fig)
+        from matplotlib.patches import Rectangle
+
+        kids = _offsetbox_children(_scale_bar_artist(ax))
+        bar = next(p for p in kids if isinstance(p, Rectangle))
+        return bar.get_window_extent(renderer).x1
+
+    assert np.isclose(bar_x1(4.0), bar_x1(20.0))
+
+
+def test_draw_scale_bar_tolerates_nonstandard_loc_and_zero_font_scale():
+    # Old code parsed loc by substring and used label_size only as a fontsize;
+    # hand-written/stale persisted styles must keep rendering, not crash.
+    fig, ax = _ax()
+    draw_scale_bar(ax, 5.0, style=PlotStyle(scale_bar_loc="bottom right"))  # no ValueError
+    fig2, ax2 = _ax()
+    draw_scale_bar(ax2, 5.0, style=PlotStyle(font_scale=0.0))  # no ZeroDivisionError
+    assert _scale_bar_artist(ax) is not None and _scale_bar_artist(ax2) is not None
+
+
+def test_scale_bar_artists_are_clipped_to_axes():
+    # AnchoredOffsetbox ignores its own clip settings, so every packed artist
+    # (and the frame patch) must be clipped individually — at extreme font
+    # scales the assembly truncates at the axes edge instead of overdrawing
+    # tick labels (the old code clipped its label for the same reason).
+    fig, ax = _ax()
+    draw_scale_bar(ax, 5.0, style=PlotStyle(scale_bar_box=True))
+    abox = _scale_bar_artist(ax)
+    assert abox.patch.get_clip_on()
+    # skip the AnchoredOffsetbox container itself — matplotlib ignores its own
+    # clip flag (which is exactly why every packed artist is clipped instead)
+    for a in _offsetbox_children(abox.get_child()):
+        assert a.get_clip_on(), f"{type(a).__name__} is not clipped"
 
 
 def test_scale_bar_auto_length_is_1_2_5_10_series():
@@ -221,14 +307,17 @@ def test_scale_bar_auto_length_is_1_2_5_10_series():
 
 def test_scale_bar_thickness_pins_styled_geometry():
     # Pin the styled bar thickness (0.004*thickness_pt*|yr|, =0.012*|yr| at the
-    # default 3.0 pt) so the kept-as-new geometry can't drift unnoticed.
+    # default 3.0 pt) so the kept-as-new geometry can't drift unnoticed. The bar
+    # Rectangle lives in an AuxTransformBox(transData), so its height is still
+    # expressed in data (µm) coordinates.
     from matplotlib.patches import Rectangle
 
     fig = Figure()
     ax = fig.add_subplot(111)
     ax.imshow(np.zeros((10, 20)), extent=[0, 20, 0, 10], origin="lower")
     draw_scale_bar(ax, 5.0, style=PlotStyle())
-    bar = next(p for p in ax.patches if isinstance(p, Rectangle))
+    kids = _offsetbox_children(_scale_bar_artist(ax))
+    bar = next(p for p in kids if isinstance(p, Rectangle))
     assert np.isclose(bar.get_height(), 0.012 * 10.0)
 
 

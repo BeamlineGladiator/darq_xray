@@ -7,6 +7,7 @@ import os
 import h5py
 import numpy as np
 import pytest
+from matplotlib.offsetbox import AnchoredOffsetbox
 
 from dfxm.common.plotting import PlotStyle
 from dfxm.stages import slices as S
@@ -230,7 +231,7 @@ def test_build_slice_figure_returns_figure_with_equal_aspect():
         style=PlotStyle(scale_bar=False),
     )
     assert fig.axes[0].get_aspect() == 1.0
-    assert len(fig.axes[0].patches) == 0
+    assert not any(isinstance(a, AnchoredOffsetbox) for a in fig.axes[0].artists)
 
 
 def test_build_slice_figure_legacy_figsize_and_colorbar():
@@ -250,8 +251,8 @@ def test_build_slice_figure_legacy_figsize_and_colorbar():
     assert (round(w), round(h)) == (12, 10)
     # main axes + colourbar axes
     assert len(fig.axes) == 2
-    # legacy draws the (black) scale bar -> at least one patch
-    assert len(fig.axes[0].patches) >= 1
+    # legacy draws the (black) scale bar -> the AnchoredOffsetbox is present
+    assert any(isinstance(a, AnchoredOffsetbox) for a in fig.axes[0].artists)
 
 
 def test_build_slice_figure_offset_annotation_in_title():

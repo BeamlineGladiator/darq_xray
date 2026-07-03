@@ -426,8 +426,8 @@ form.
 | Label scale | Multiplies the font size for the scale-bar label (relative to Font scale) |
 | Bar location | `lower right` / `lower left` / `upper right` / `upper left` |
 | Bar colour | Foreground colour of the bar and label |
-| Background box | Optionally draw a semi-transparent box behind the bar + label |
-| Box colour / alpha / margin | Control the background box appearance |
+| Background box | Optionally draw a semi-transparent box behind the bar + label. The box sizes itself to the rendered label and bar at any font scale, with the label centred over the bar |
+| Box colour / alpha / margin | Control the background box appearance; margin is the padding inside the box, in points |
 
 > [!note] Scale bars on maps only
 > Scale bars are drawn **only on physical maps** (`kind="map"` figures: per-layer volume maps, strain maps, mosaicity maps, slice maps). Histograms, detrend diagnostics, and line-profile companion figures are `kind="plot"` — the scale-bar checkbox is ignored for them. Physical aspect ratio is always preserved on maps (`aspect="equal"`).
