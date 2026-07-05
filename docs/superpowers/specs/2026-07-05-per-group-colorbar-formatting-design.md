@@ -117,9 +117,11 @@ Branch on `fmt = style.tickfmt_for(group)`:
      themselves).
 
 - **`arb`** — arbitrary units: `cb.set_ticks([])` (drops all numeric ticks,
-  overriding the global `colorbar_ticks` count for this group) and set the
-  colourbar label to `"<base label> (arb. units)"`. If the user set an explicit
-  `colorbar_label` override, that override is used verbatim (no suffix appended).
+  overriding the global `colorbar_ticks` count for this group) and append
+  " (arb. units)" to the colourbar label. The suffix is skipped when the label
+  already mentions arbitrariness (`"a.u."` / `"arb"`, case-insensitive) — the
+  raw labels from slices/rocking/profiles already read `"… (a.u.)"` — or when the
+  user set an explicit `colorbar_label` override (used verbatim).
 
 `_tick_formatter` is extended so `"arb"` is recognised (returns a sentinel or is
 handled directly in `add_colorbar`); its existing `auto`/digit/negative-guard
