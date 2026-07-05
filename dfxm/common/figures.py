@@ -137,6 +137,7 @@ def volume_layer_specs(
                 f"{title}{zlabel} (layer {z})",
                 cbar_label,
                 style=style,
+                group=cmap_group,
             )
             return fig
 

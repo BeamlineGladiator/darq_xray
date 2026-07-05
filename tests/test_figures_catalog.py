@@ -1425,6 +1425,30 @@ def test_profiles_colorbar_hidden_when_style_colorbar_false():
     )
 
 
+def test_layer_figure_threads_group_to_arbitrary_units():
+    import numpy as np
+
+    from dfxm.common.plotting import PlotStyle
+    from dfxm.common.render import layer_figure
+
+    style = PlotStyle(tickfmt_raw="arb")
+    fig, ax, im = layer_figure(
+        np.arange(100).reshape(10, 10).astype(float),
+        0.0,
+        99.0,
+        "gray",
+        50.0,
+        30.0,
+        "Raw",
+        "Intensity",
+        style=style,
+        group="raw",
+    )
+    cbar_ax = fig.axes[1]
+    assert list(cbar_ax.get_yticks()) == []  # raw+arb -> no numeric ticks
+    assert cbar_ax.get_ylabel() == "Intensity (arb. units)"
+
+
 def test_volume_layer_specs_cmap_group_resolves_from_style(tmp_path):
     import h5py
     import numpy as np

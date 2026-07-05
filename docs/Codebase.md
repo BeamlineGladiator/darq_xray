@@ -234,7 +234,7 @@ GUI-safe plotting helpers — **never** `pyplot`/`matplotlib.use`.
 #### `render.py`
 Shared **volume** renderers used by [[#visualize.py]] and [[#rocking.py]].
 - `cmap_nan_transparent(name)` — colormap with NaN → transparent.
-- `layer_figure(layer, vmin, vmax, cmap, ext_x, ext_y, title, cbar_label, *, style=None)` — one equal-aspect layer figure. `style=None` reproduces the legacy look (12×10 in, plain colourbar, no scale bar). When a `PlotStyle` is passed, figsize/colourbar/scale-bar/text-scaling are all honoured. Returns `(fig, ax, im)`.
+- `layer_figure(layer, vmin, vmax, cmap, ext_x, ext_y, title, cbar_label, *, style=None, group=None)` — one equal-aspect layer figure. `style=None` reproduces the legacy look (12×10 in, plain colourbar, no scale bar). When a `PlotStyle` is passed, figsize/colourbar/scale-bar/text-scaling are honoured; `group` (a `CMAP_GROUPS` name) selects the per-group colourbar tick format. Returns `(fig, ax, im)`.
 - `save_layer_pngs(..., *, style=None)` — one PNG per Z layer (styled when a `PlotStyle` is passed).
 - `save_layer_animation(..., *, style=None)` — layer flip-through movie; MP4 (ffmpeg) → GIF fallback.
 - `_pyvista_grid(data, spacing)` / `save_top_view(...)` — 3-D top-view render (**lazy** `pyvista` import; NaN voxels thresholded out).

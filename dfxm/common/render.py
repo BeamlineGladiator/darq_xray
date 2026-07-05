@@ -35,7 +35,9 @@ def cmap_nan_transparent(name: str):
     return cmap
 
 
-def layer_figure(layer, vmin, vmax, cmap, ext_x, ext_y, title, cbar_label, *, style=None):
+def layer_figure(
+    layer, vmin, vmax, cmap, ext_x, ext_y, title, cbar_label, *, style=None, group=None
+):
     """Single equal-aspect layer figure (µm axes).
 
     ``style=None`` renders with the default un-styled :class:`PlotStyle` (black
@@ -60,7 +62,7 @@ def layer_figure(layer, vmin, vmax, cmap, ext_x, ext_y, title, cbar_label, *, st
     ax.set_ylabel("Y (µm)")
     ax.set_title(title)
     if st.colorbar:
-        add_colorbar(fig, im, ax, cbar_label, st)
+        add_colorbar(fig, im, ax, cbar_label, st, group=group)
     if st.scale_bar:
         draw_scale_bar(ax, st.scale_bar_length_um, style=st)
     apply_text_scale(ax, st)
