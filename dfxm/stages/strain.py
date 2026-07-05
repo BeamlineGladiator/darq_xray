@@ -402,7 +402,7 @@ def build_strain_map(
         # legacy: plain fig.colorbar, no scale bar
         fig.colorbar(im, ax=ax, pad=0.02, fraction=0.046).set_label("Strain (ε)")
     else:
-        add_colorbar(fig, im, ax, "Strain (ε)", style)
+        add_colorbar(fig, im, ax, "Strain (ε)", style, group="strain")
         apply_text_scale(ax, style)
         if style.scale_bar:
             draw_scale_bar(ax, style.scale_bar_length_um, style=style)
@@ -455,7 +455,7 @@ def build_detrend_diag(
         )
         ax.set_title(title)
         if style is not None:
-            add_colorbar(fig, im, ax, title, style)
+            add_colorbar(fig, im, ax, title, style, group="strain")
             apply_text_scale(ax, style)
         else:
             fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)

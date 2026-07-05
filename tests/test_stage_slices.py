@@ -349,6 +349,31 @@ def test_run_round_clim_rounds_notes_and_h5_attrs(tmp_path):
             assert vg.attrs["vmax"] >= vg.attrs["vmax_raw"]
 
 
+def test_build_slice_figure_raw_arbitrary_units_drops_ticks():
+    import numpy as np
+
+    from dfxm.common.plotting import PlotStyle
+    from dfxm.stages.slices import build_slice_figure
+
+    u = np.linspace(0.0, 40.0, 40)
+    v = np.linspace(0.0, 30.0, 30)
+    data = np.arange(30 * 40, dtype=float).reshape(30, 40)
+    prep = {
+        "cmap_name": "gray",
+        "vmin": 0.0,
+        "vmax": float(data.max()),
+        "center_zero": False,
+        "title": "Sum intensity",
+        "cbar_label": "Sum intensity (a.u.)",
+        "group": "raw",
+    }
+    style = PlotStyle(tickfmt_raw="arb")
+    fig = build_slice_figure(prep, {"name": "s"}, data, u, v, offset_um=None, style=style)
+    cbar_ax = fig.axes[1]
+    assert list(cbar_ax.get_yticks()) == []
+    assert cbar_ax.get_ylabel() == "Sum intensity (a.u.)"  # already a.u. -> unchanged
+
+
 def test_run_without_round_clim_has_no_notes_or_raw_attrs(tmp_path):
     proc, raw = _setup(tmp_path)
     out = tmp_path / "sl"

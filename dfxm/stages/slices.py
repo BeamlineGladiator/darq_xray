@@ -40,6 +40,7 @@ from ..common import render as Rnd
 from ..common.errors import StageUserError
 from ..common.figures import FigureSpec, register
 from ..common.plotting import (
+    GROUP_BY_KIND,
     PlotStyle,
     add_colorbar,
     apply_round_clim,
@@ -628,15 +629,6 @@ def _motors(cfg, p):
 # Volume kinds whose colour norm is centered on zero (symmetric TwoSlopeNorm).
 _CENTERED_KINDS: frozenset[str] = frozenset({"mosa_com"})
 
-# PlotStyle colormap group per volume kind.
-_GROUP_BY_KIND: dict[str, str] = {
-    "mosa_com": "mosa_com",
-    "mosa_fwhm": "mosa_fwhm",
-    "strain": "strain",
-    "raw_sum": "raw",
-    "raw_specific": "raw",
-}
-
 
 def prepare_volume(cfg, p, scale_x, scale_y, samy_dir, style=None):
     """Load and (if stacked) align one volume, resolving render style per kind."""
@@ -707,7 +699,8 @@ def prepare_volume(cfg, p, scale_x, scale_y, samy_dir, style=None):
         "vmin_raw": float(auto_vmin),
         "vmax_raw": float(auto_vmax),
         "clim_note": clim_note,
-        "cmap_name": resolve_cmap(style, _GROUP_BY_KIND.get(kind)),
+        "cmap_name": resolve_cmap(style, GROUP_BY_KIND.get(kind)),
+        "group": GROUP_BY_KIND.get(kind),
         "center_zero": kind in _CENTERED_KINDS,
         "title": title,
         "cbar_label": cbar_label,
@@ -772,7 +765,7 @@ def build_slice_figure(
     ax.set_title(f"{prep['title']}\nslice: {sub}")
 
     if st.colorbar:
-        add_colorbar(fig, im, ax, prep["cbar_label"], st)
+        add_colorbar(fig, im, ax, prep["cbar_label"], st, group=prep.get("group"))
     if st.scale_bar:
         draw_scale_bar(ax, st.scale_bar_length_um, style=st)
     if not use_legacy:
@@ -1021,8 +1014,9 @@ def figures(result: SlicesResult, params: dict) -> list[FigureSpec]:
                     def build(style, vid=vid, sname=sname, k=k, prep=dict(prep), kind=kind):
                         prep = dict(prep)
                         prep["cmap_name"] = resolve_cmap(
-                            style, _GROUP_BY_KIND.get(kind), fallback=prep["cmap_name"]
+                            style, GROUP_BY_KIND.get(kind), fallback=prep["cmap_name"]
                         )
+                        prep["group"] = GROUP_BY_KIND.get(kind)
                         with h5py.File(result.output_h5, "r") as g:
                             sg = g[vid][sname]
                             s2d = sg["slices"][k]

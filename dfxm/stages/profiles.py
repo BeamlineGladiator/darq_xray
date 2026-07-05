@@ -35,6 +35,7 @@ from ..common import render as Rnd
 from ..common.errors import StageUserError
 from ..common.figures import FigureSpec, register
 from ..common.plotting import (
+    GROUP_BY_KIND,
     PlotStyle,
     add_colorbar,
     apply_text_scale,
@@ -467,7 +468,14 @@ def build_companion_figure(
         fig.colorbar(im, ax=ax_img, fraction=0.046, pad=0.04).set_label(ref_attrs["cbar_label"])
     elif style.colorbar:
         # Styled path: honour the colorbar flag — draw styled colorbar only when requested.
-        add_colorbar(fig, im, ax_img, ref_attrs["cbar_label"], style)
+        add_colorbar(
+            fig,
+            im,
+            ax_img,
+            ref_attrs["cbar_label"],
+            style,
+            group=GROUP_BY_KIND.get(ref_attrs.get("kind")),
+        )
     distance = geom["distance"]
     first_ax = None
     trace_axes = []
@@ -517,7 +525,9 @@ def render_single(ref, geom, line_color, out_png, header, dpi, style=None):
         fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04).set_label(attrs["cbar_label"])
     else:
         if style.colorbar:
-            add_colorbar(fig, im, ax, attrs["cbar_label"], style)
+            add_colorbar(
+                fig, im, ax, attrs["cbar_label"], style, group=GROUP_BY_KIND.get(attrs.get("kind"))
+            )
         apply_text_scale(ax, style)
     fig.savefig(out_png, dpi=dpi, facecolor="white", edgecolor="none", bbox_inches="tight")
 
