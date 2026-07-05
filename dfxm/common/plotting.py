@@ -16,7 +16,7 @@ from dataclasses import dataclass, fields
 import matplotlib
 import numpy as np
 from matplotlib.figure import Figure
-from matplotlib.ticker import FuncFormatter, ScalarFormatter
+from matplotlib.ticker import FuncFormatter
 
 from .cmaps import register as _register_fast_cmap
 
@@ -500,17 +500,18 @@ def colorbar_tick_values(vmin: float, vmax: float, n: int) -> list[float]:
 
 
 def _tick_formatter(fmt: str):
-    if fmt == "scientific":
-        f = ScalarFormatter(useMathText=True)
-        f.set_powerlimits((0, 0))
-        return f
-    if fmt != "auto":
-        try:
-            d = int(fmt)
-            if d >= 0:
-                return FuncFormatter(lambda v, _pos: f"{v:.{d}f}")
-        except ValueError:
-            pass
+    """Formatter for plain/digit formats. ``"auto"``, ``"scientific"`` and ``"arb"``
+    return ``None`` here — scientific/arb are handled directly in ``add_colorbar``
+    because they need the colour limits / axis, and ``auto`` means matplotlib default.
+    """
+    if fmt in ("auto", "scientific", "arb"):
+        return None
+    try:
+        d = int(fmt)
+        if d >= 0:
+            return FuncFormatter(lambda v, _pos: f"{v:.{d}f}")
+    except ValueError:
+        pass
     return None  # matplotlib default
 
 
@@ -562,15 +563,68 @@ def build_histogram(
     return fig
 
 
-def add_colorbar(fig, im, ax, label: str, style: "PlotStyle"):
-    """Add a colourbar honouring thickness, label, tick count and number format."""
+def _apply_scientific(cb, im, style, group) -> None:
+    """Render scientific notation on *cb* with a custom, styleable exponent label.
+
+    Computes one common order of magnitude from the colour limits, formats the
+    ticks as mantissas, hides matplotlib's built-in (un-styleable, top-only)
+    offset text, and draws our own ``×10ⁿ`` label at the group's chosen
+    top/bottom position and size. Deterministic and redraw-safe (a static Text
+    artist), unlike the built-in offset whose position matplotlib re-derives on
+    every draw.
+    """
+    vmin, vmax = im.norm.vmin, im.norm.vmax
+    maxabs = max(abs(vmin), abs(vmax)) if (vmin is not None and vmax is not None) else 0.0
+    oom = int(math.floor(math.log10(maxabs))) if maxabs > 0 and math.isfinite(maxabs) else 0
+
+    if oom == 0:
+        cb.ax.yaxis.set_major_formatter(FuncFormatter(lambda v, _pos: f"{v:g}"))
+    else:
+        scale = 10.0**oom
+        cb.ax.yaxis.set_major_formatter(FuncFormatter(lambda v, _pos, s=scale: f"{v / s:.2f}"))
+
+    # Silence matplotlib's built-in offset text; we draw our own below.
+    cb.ax.yaxis.get_offset_text().set_visible(False)
+    if oom == 0:
+        return  # mantissas are the values themselves — no exponent label needed
+
+    size = max(9 * style.font_scale * style.offset_scale_for(group), 0.1)
+    exp = r"$\times\mathdefault{10^{%d}}$" % oom
+    if style.offset_pos_for(group) == "bottom":
+        cb.ax.text(0.5, -0.02, exp, transform=cb.ax.transAxes, ha="center", va="top", fontsize=size)
+    else:  # top
+        cb.ax.text(
+            0.5, 1.02, exp, transform=cb.ax.transAxes, ha="center", va="bottom", fontsize=size
+        )
+
+
+def add_colorbar(fig, im, ax, label: str, style: "PlotStyle", *, group: str | None = None):
+    """Add a colourbar honouring thickness, label, tick count and per-group number format.
+
+    *group* (one of :data:`CMAP_GROUPS`, or ``None`` for the neutral default)
+    selects the tick format via ``style.tickfmt_for(group)``:
+    ``"auto"``/digit as before; ``"scientific"`` renders a custom, styleable
+    ``×10ⁿ`` exponent (see :func:`_apply_scientific`); ``"arb"`` drops all
+    numeric ticks and marks the label "arbitrary units".
+    """
     cb = fig.colorbar(im, ax=ax, fraction=style.colorbar_fraction, pad=0.04)
     text = style.colorbar_label if style.colorbar_label is not None else label
+    fmt = style.tickfmt_for(group)
+
+    if fmt == "arb":
+        cb.set_ticks([])  # no numeric scale for arbitrary units
+        if style.colorbar_label is None and not ("a.u." in text.lower() or "arb" in text.lower()):
+            text = f"{text} (arb. units)"
+    else:
+        if style.colorbar_ticks and style.colorbar_ticks >= 2:
+            cb.set_ticks(colorbar_tick_values(im.norm.vmin, im.norm.vmax, style.colorbar_ticks))
+        if fmt == "scientific":
+            _apply_scientific(cb, im, style, group)
+        else:
+            f = _tick_formatter(fmt)
+            if f is not None:
+                cb.ax.yaxis.set_major_formatter(f)
+
     cb.set_label(text, fontsize=10 * style.font_scale)
-    if style.colorbar_ticks and style.colorbar_ticks >= 2:
-        cb.set_ticks(colorbar_tick_values(im.norm.vmin, im.norm.vmax, style.colorbar_ticks))
-    fmt = _tick_formatter(style.colorbar_tick_format)
-    if fmt is not None:
-        cb.ax.yaxis.set_major_formatter(fmt)
     cb.ax.tick_params(labelsize=9 * style.font_scale)
     return cb

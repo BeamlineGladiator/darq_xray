@@ -199,7 +199,12 @@ def test_add_colorbar_sets_label_and_tick_count():
         origin="lower",
     )
     cb = add_colorbar(
-        fig, im, ax, "Strain (ε)", PlotStyle(colorbar_ticks=5, colorbar_tick_format="scientific")
+        fig,
+        im,
+        ax,
+        "Strain (ε)",
+        PlotStyle(colorbar_ticks=5, tickfmt_strain="scientific"),
+        group="strain",
     )
     assert cb.ax.get_ylabel() == "Strain (ε)"
     assert len(cb.get_ticks()) == 5
@@ -507,7 +512,7 @@ def test_apply_text_scale_increases_title_pad_on_constrained_figure():
     scientific notation is needed here so the constrained-layout engine has actual
     competing artists and the pad effect is visible in window coordinates.
     """
-    style = PlotStyle(font_scale=2.2, colorbar_ticks=5, colorbar_tick_format="scientific")
+    style = PlotStyle(font_scale=2.2, colorbar_ticks=5, tickfmt_strain="scientific")
     data = np.linspace(-2e-3, 2e-3, 100).reshape(10, 10)
 
     # Reference: constrained figure WITH colorbar but WITHOUT apply_text_scale
@@ -515,7 +520,7 @@ def test_apply_text_scale_increases_title_pad_on_constrained_figure():
     ax_ref = fig_ref.add_subplot(111)
     im_ref = ax_ref.imshow(data)
     ax_ref.set_title("test title")
-    add_colorbar(fig_ref, im_ref, ax_ref, "label", style)
+    add_colorbar(fig_ref, im_ref, ax_ref, "label", style, group="strain")
     ref_y = _title_y0(fig_ref, ax_ref)
 
     # Treated: same setup WITH apply_text_scale (pad should push title up)
@@ -523,7 +528,7 @@ def test_apply_text_scale_increases_title_pad_on_constrained_figure():
     ax_treated = fig_treated.add_subplot(111)
     im_treated = ax_treated.imshow(data)
     ax_treated.set_title("test title")
-    add_colorbar(fig_treated, im_treated, ax_treated, "label", style)
+    add_colorbar(fig_treated, im_treated, ax_treated, "label", style, group="strain")
     apply_text_scale(ax_treated, style)
     treated_y = _title_y0(fig_treated, ax_treated)
 
@@ -560,3 +565,57 @@ def test_per_group_tickfmt_defaults_and_lookup():
     assert GROUP_BY_KIND["raw_sum"] == "raw"
     assert GROUP_BY_KIND["raw_specific"] == "raw"
     assert GROUP_BY_KIND["strain"] == "strain"
+
+
+def test_tick_formatter_scientific_and_arb_are_deferred():
+    # scientific + arb are handled inside add_colorbar, not by _tick_formatter
+    assert _tick_formatter("scientific") is None
+    assert _tick_formatter("arb") is None
+    # digit + auto behaviour unchanged
+    assert _tick_formatter("2") is not None
+    assert _tick_formatter("auto") is None
+
+
+def test_add_colorbar_arbitrary_units_drops_ticks_and_marks_label():
+    fig, ax = _ax()
+    im = ax.imshow(np.arange(100).reshape(10, 10), extent=[0, 50, 0, 30], origin="lower")
+    style = PlotStyle(tickfmt_raw="arb")
+    cb = add_colorbar(fig, im, ax, "Intensity", style, group="raw")
+    assert list(cb.get_ticks()) == []  # no numeric ticks
+    assert cb.ax.get_ylabel() == "Intensity (arb. units)"
+
+
+def test_add_colorbar_arbitrary_units_does_not_double_up_existing_au():
+    fig, ax = _ax()
+    im = ax.imshow(np.arange(100).reshape(10, 10), extent=[0, 50, 0, 30], origin="lower")
+    style = PlotStyle(tickfmt_raw="arb")
+    cb = add_colorbar(fig, im, ax, "Sum intensity (a.u.)", style, group="raw")
+    assert cb.ax.get_ylabel() == "Sum intensity (a.u.)"  # already mentions a.u. -> no suffix
+
+
+def test_add_colorbar_scientific_hides_builtin_offset_and_draws_custom():
+    from matplotlib.text import Text
+
+    fig, ax = _ax()
+    im = ax.imshow(
+        np.linspace(-2e-3, 2e-3, 100).reshape(10, 10), extent=[0, 50, 0, 30], origin="lower"
+    )
+    style = PlotStyle(
+        tickfmt_strain="scientific",
+        offset_pos_strain="bottom",
+        offset_scale_strain=2.0,
+        font_scale=1.0,
+    )
+    cb = add_colorbar(fig, im, ax, "Strain (ε)", style, group="strain")
+    # matplotlib's built-in offset text is hidden
+    assert cb.ax.yaxis.get_offset_text().get_visible() is False
+    # exactly one custom exponent label exists, sized by font_scale*offset_scale
+    exps = [
+        t
+        for t in cb.ax.texts
+        if isinstance(t, Text) and "10" in t.get_text() and "times" in t.get_text()
+    ]
+    assert len(exps) == 1
+    assert abs(exps[0].get_fontsize() - 9 * 1.0 * 2.0) < 1e-6
+    # placed below the axes (va="top", y < 0)
+    assert exps[0].get_position()[1] < 0.0
