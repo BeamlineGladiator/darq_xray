@@ -541,7 +541,18 @@ def _motors(raw_root: str, pattern: str, samy_path: str, samz_path: str):
 
 
 def _render(
-    result: RockingResult, vol, z_um, scale_z, name, p, out_dir, cmap, title, cbar, style=None
+    result: RockingResult,
+    vol,
+    z_um,
+    scale_z,
+    name,
+    p,
+    out_dir,
+    cmap,
+    title,
+    cbar,
+    style=None,
+    group=None,
 ):
     sx, sy = float(p["pixel_size_x_um"]), float(p["pixel_size_y_um"])
     vmin, vmax = _colorbar_range(vol, float(p["cbar_pct_lo"]), float(p["cbar_pct_hi"]))
@@ -553,7 +564,7 @@ def _render(
         prod.notes.append(clim_note)
     if p["save_layers"]:
         prod.layers_dir = Rnd.save_layer_pngs(
-            vol, z_um, ds_dir, name, vmin, vmax, cmap, title, cbar, sx, sy, style=style
+            vol, z_um, ds_dir, name, vmin, vmax, cmap, title, cbar, sx, sy, style=style, group=group
         )
     if p["save_animation"]:
         prod.animation = Rnd.save_layer_animation(
@@ -570,6 +581,7 @@ def _render(
             sx,
             sy,
             style=style,
+            group=group,
         )
     if p["save_topview"]:
         try:
@@ -738,6 +750,7 @@ def run(params: dict, progress: ProgressFn | None = None) -> RockingResult:
         "Background-subtracted Sum Intensity",
         f"Sum intensity {sum_tag}",
         style=style,
+        group="raw",
     )
     _render(
         result,
@@ -751,6 +764,7 @@ def run(params: dict, progress: ProgressFn | None = None) -> RockingResult:
         f"Background-subtracted Frame {spec_idx}",
         "Intensity (a.u.)",
         style=style,
+        group="raw",
     )
 
     progress(1.0, f"aligned {result.n_layers_used} rocking layers -> {out_dir}")

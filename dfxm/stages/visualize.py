@@ -417,7 +417,7 @@ def _align(volume, samy, samz, *, scale_x, samy_direction, roi_x, roi_y):
 
 
 def _process_dataset(
-    data, z_pos, scale_z, name, vmin, vmax, cmap, title, cbar, p, out_dir, style=None
+    data, z_pos, scale_z, name, vmin, vmax, cmap, title, cbar, p, out_dir, style=None, group=None
 ):
     ds_dir = os.path.join(out_dir, name)
     os.makedirs(ds_dir, exist_ok=True)
@@ -426,7 +426,19 @@ def _process_dataset(
 
     if p["save_layers"]:
         prod.layers_dir = Rnd.save_layer_pngs(
-            data, z_pos, ds_dir, name, vmin, vmax, cmap, title, cbar, sx, sy, style=style
+            data,
+            z_pos,
+            ds_dir,
+            name,
+            vmin,
+            vmax,
+            cmap,
+            title,
+            cbar,
+            sx,
+            sy,
+            style=style,
+            group=group,
         )
     if p["save_animation"]:
         prod.animation = Rnd.save_layer_animation(
@@ -443,6 +455,7 @@ def _process_dataset(
             sx,
             sy,
             style=style,
+            group=group,
         )
     if p["save_topview"]:
         try:
@@ -503,7 +516,19 @@ def run(params: dict, progress: ProgressFn | None = None) -> VisualizeResult:
             if clim_note:
                 progress(0.1 + 0.4 * i / max(1, len(datasets)), f"{name}: {clim_note}")
             prod = _process_dataset(
-                data, z_pos, scale_z, name, vmin, vmax, cmap, title, cbar, p, out_dir, style=style
+                data,
+                z_pos,
+                scale_z,
+                name,
+                vmin,
+                vmax,
+                cmap,
+                title,
+                cbar,
+                p,
+                out_dir,
+                style=style,
+                group=group,
             )
             if clim_note:
                 prod.notes.append(clim_note)
@@ -540,6 +565,7 @@ def run(params: dict, progress: ProgressFn | None = None) -> VisualizeResult:
                 p,
                 out_dir,
                 style=style,
+                group=group,
             )
             if clim_note:
                 prod.notes.append(clim_note)

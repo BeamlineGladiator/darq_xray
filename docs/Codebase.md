@@ -228,6 +228,7 @@ GUI-safe plotting helpers — **never** `pyplot`/`matplotlib.use`.
 | `add_colorbar(fig, im, ax, label, style, *, group=None)` | Add a colourbar honouring `style.colorbar_fraction`, label, tick count, and the per-group number format `style.tickfmt_for(group)`. `group` is one of `CMAP_GROUPS` (or `None` = neutral). Formats: `"auto"`/digit as before; `"scientific"` draws a custom, styleable `×10ⁿ` exponent label at the group's `offset_pos_*` (top/bottom) and `offset_scale_*` size, hiding matplotlib's built-in top offset; `"arb"` drops all ticks and appends " (arb. units)" to the label (unless it already says a.u./arb, or a manual `colorbar_label` override is set). |
 | `build_histogram(data, *, title, xlabel, style)` | Histogram of finite values in `data` (steelblue bars, mean/median lines). Returns a `Figure` or `None` when there are no finite values. Applies text scaling when `style` is not `None`. The caller calls `fig.savefig`. |
 | `resolve_cmap(style, group, fallback="magma")` | Colormap name for a quantity group from *style* (PlotStyle defaults when `style=None`); `group=None` returns *fallback* unchanged. Every stage builder resolves its colormap through this at build/run time. |
+| `GROUP_BY_KIND: dict[str, str]` | Maps a volume "kind" (as stored in HDF5 attrs: `mosa_com`, `mosa_fwhm`, `strain`, `raw_sum`, `raw_specific`) to its quantity group; shared by slices and profiles. |
 | `style_from_params(params)` | Rebuild the GUI-injected style from the reserved `plot_style` params key (`None` when absent → legacy/headless look). Unknown keys dropped, missing keys defaulted, `formats` list→tuple. |
 | `style_to_json(style)` / `style_from_json(text)` | JSON (de)serialisation used for QSettings persistence; `style_from_json` returns `None` on any parse/shape failure. |
 
@@ -235,8 +236,8 @@ GUI-safe plotting helpers — **never** `pyplot`/`matplotlib.use`.
 Shared **volume** renderers used by [[#visualize.py]] and [[#rocking.py]].
 - `cmap_nan_transparent(name)` — colormap with NaN → transparent.
 - `layer_figure(layer, vmin, vmax, cmap, ext_x, ext_y, title, cbar_label, *, style=None, group=None)` — one equal-aspect layer figure. `style=None` reproduces the legacy look (12×10 in, plain colourbar, no scale bar). When a `PlotStyle` is passed, figsize/colourbar/scale-bar/text-scaling are honoured; `group` (a `CMAP_GROUPS` name) selects the per-group colourbar tick format. Returns `(fig, ax, im)`.
-- `save_layer_pngs(..., *, style=None)` — one PNG per Z layer (styled when a `PlotStyle` is passed).
-- `save_layer_animation(..., *, style=None)` — layer flip-through movie; MP4 (ffmpeg) → GIF fallback.
+- `save_layer_pngs(..., *, style=None, group=None)` — one PNG per Z layer (styled when a `PlotStyle` is passed); `group` (a `CMAP_GROUPS` name) forwarded to `layer_figure` for per-group colourbar tick format.
+- `save_layer_animation(..., *, style=None, group=None)` — layer flip-through movie; MP4 (ffmpeg) → GIF fallback; `group` forwarded to `layer_figure`.
 - `_pyvista_grid(data, spacing)` / `save_top_view(...)` — 3-D top-view render (**lazy** `pyvista` import; NaN voxels thresholded out).
 
 > [!note] `render.add_scale_bar` was removed

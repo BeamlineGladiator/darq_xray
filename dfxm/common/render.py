@@ -70,7 +70,7 @@ def layer_figure(
 
 
 def save_layer_pngs(
-    volume, z_um, out_dir, name, vmin, vmax, cmap, title, cbar, sx, sy, *, style=None
+    volume, z_um, out_dir, name, vmin, vmax, cmap, title, cbar, sx, sy, *, style=None, group=None
 ):
     """Write one PNG per Z layer into ``<out_dir>/<name>_layers/``; return the dir."""
     layers_dir = os.path.join(out_dir, f"{name}_layers")
@@ -80,7 +80,7 @@ def save_layer_pngs(
     for z in range(z_size):
         full_title = f"{title}\nZ = {z_um[z]:.2f} µm (Layer {z}/{z_size - 1})"
         fig, _, _ = layer_figure(
-            volume[z], vmin, vmax, cmap, ext_x, ext_y, full_title, cbar, style=style
+            volume[z], vmin, vmax, cmap, ext_x, ext_y, full_title, cbar, style=style, group=group
         )
         fig.savefig(
             os.path.join(layers_dir, f"layer_{z:04d}.png"),
@@ -92,12 +92,28 @@ def save_layer_pngs(
 
 
 def save_layer_animation(
-    volume, z_um, base_path, name, vmin, vmax, cmap, title, cbar, fmt, sx, sy, *, style=None
+    volume,
+    z_um,
+    base_path,
+    name,
+    vmin,
+    vmax,
+    cmap,
+    title,
+    cbar,
+    fmt,
+    sx,
+    sy,
+    *,
+    style=None,
+    group=None,
 ):
     """Layer-by-layer flip-through movie. MP4 (ffmpeg) with GIF fallback."""
     ext_x, ext_y = volume.shape[2] * sx, volume.shape[1] * sy
     z_size = volume.shape[0]
-    fig, ax, im = layer_figure(volume[0], vmin, vmax, cmap, ext_x, ext_y, title, cbar, style=style)
+    fig, ax, im = layer_figure(
+        volume[0], vmin, vmax, cmap, ext_x, ext_y, title, cbar, style=style, group=group
+    )
     title_obj = ax.set_title(f"{title}\nZ = {z_um[0]:.2f} µm (Layer 0/{z_size - 1})")
 
     def update(frame):

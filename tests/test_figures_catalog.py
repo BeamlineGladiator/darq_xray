@@ -1518,3 +1518,36 @@ def test_mosaicity_map_specs_resolve_cmap_groups(tmp_path):
     assert com.build(None).axes[0].images[0].cmap.name == "fast"
     assert fwhm.build(None).axes[0].images[0].cmap.name == "magma"
     assert com.build(PlotStyle(cmap_mosa_com="plasma")).axes[0].images[0].cmap.name == "plasma"
+
+
+def test_save_layer_pngs_forwards_group(tmp_path, monkeypatch):
+    import numpy as np
+
+    from dfxm.common import render as R
+    from dfxm.common.plotting import PlotStyle
+
+    captured = {}
+    real = R.layer_figure
+
+    def spy(*a, **k):
+        captured["group"] = k.get("group")
+        return real(*a, **k)
+
+    monkeypatch.setattr(R, "layer_figure", spy)
+    vol = np.arange(2 * 4 * 5, dtype=float).reshape(2, 4, 5)
+    R.save_layer_pngs(
+        vol,
+        [0.0, 1.0],
+        str(tmp_path),
+        "raw_sum_intensity",
+        0.0,
+        float(vol.max()),
+        "gray",
+        "Raw",
+        "Intensity (a.u.)",
+        1.0,
+        1.0,
+        style=PlotStyle(tickfmt_raw="arb"),
+        group="raw",
+    )
+    assert captured["group"] == "raw"

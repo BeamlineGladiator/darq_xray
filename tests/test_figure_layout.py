@@ -12,6 +12,8 @@ _BIG = PlotStyle(
     figure_width="single",
     colorbar_ticks=5,
     tickfmt_mosa_com="scientific",
+    # bottom placement is the shipped publication default; top+scientific at this
+    # font scale has a known ~2px title graze, so we pin the default the regression guards.
     offset_pos_mosa_com="bottom",
     scale_bar=True,
     scale_bar_box=True,

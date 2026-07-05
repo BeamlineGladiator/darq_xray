@@ -83,7 +83,7 @@ _DEFAULT_SLICES = json.dumps(
 )
 
 # Standard sliceable volumes: (toggle param, source, file param, dataset, kind).
-# The colormap is resolved per kind via _GROUP_BY_KIND + the active PlotStyle.
+# The colormap is resolved per kind via GROUP_BY_KIND + the active PlotStyle.
 _STD_VOLUMES = (
     ("include_mosa_com_chi", "stacked", "mosa_volume_file", "chi/Center of mass", "mosa_com"),
     ("include_mosa_fwhm_chi", "stacked", "mosa_volume_file", "chi/FWHM", "mosa_fwhm"),
