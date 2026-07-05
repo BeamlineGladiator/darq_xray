@@ -11,7 +11,8 @@ _BIG = PlotStyle(
     font_scale=2.2,
     figure_width="single",
     colorbar_ticks=5,
-    colorbar_tick_format="scientific",
+    tickfmt_mosa_com="scientific",
+    offset_pos_mosa_com="bottom",
     scale_bar=True,
     scale_bar_box=True,
     scale_bar_color="white",
@@ -29,6 +30,7 @@ def _slice_fixture():
         "center_zero": True,
         "title": "χ Misorientation",
         "cbar_label": "Misorientation (°)",
+        "group": "mosa_com",
     }
     return prep, {"name": "oblique_full"}, data, u, v
 

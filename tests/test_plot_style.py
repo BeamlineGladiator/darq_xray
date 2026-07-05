@@ -593,6 +593,33 @@ def test_add_colorbar_arbitrary_units_does_not_double_up_existing_au():
     assert cb.ax.get_ylabel() == "Sum intensity (a.u.)"  # already mentions a.u. -> no suffix
 
 
+def test_style_from_dict_migrates_old_snapshot_to_tuned_defaults():
+    from dfxm.common.plotting import _style_from_dict
+
+    # An old GUI snapshot: no per-group tickfmt_* keys at all.
+    old = {"font_scale": 2.2, "colorbar_ticks": 5}
+    s = _style_from_dict(old)
+    assert s.tickfmt_for("strain") == "scientific"
+    assert s.tickfmt_for("raw") == "arb"
+    assert s.tickfmt_for("mosa_com") == "auto"
+    assert s.offset_pos_for("strain") == "bottom"
+
+    # A current snapshot carrying the keys is left exactly as-is (no migration).
+    new = {"tickfmt_strain": "auto", "tickfmt_raw": "auto", "font_scale": 1.0}
+    s2 = _style_from_dict(new)
+    assert s2.tickfmt_for("strain") == "auto"
+    assert s2.tickfmt_for("raw") == "auto"
+
+
+def test_publication_style_is_tuned_per_group():
+    from dfxm.common.plotting import PUBLICATION_STYLE
+
+    assert PUBLICATION_STYLE.tickfmt_for("strain") == "scientific"
+    assert PUBLICATION_STYLE.tickfmt_for("raw") == "arb"
+    assert PUBLICATION_STYLE.tickfmt_for("mosa_com") == "auto"
+    assert PUBLICATION_STYLE.offset_pos_for("strain") == "bottom"
+
+
 def test_add_colorbar_scientific_hides_builtin_offset_and_draws_custom():
     from matplotlib.text import Text
 

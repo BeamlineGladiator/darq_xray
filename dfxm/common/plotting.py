@@ -77,7 +77,6 @@ class PlotStyle:
     colorbar_label: str | None = None  # None -> the figure's own label
     colorbar_fraction: float = 0.046  # matplotlib colorbar `fraction` (thickness)
     colorbar_ticks: int = 0  # 0 -> matplotlib default; >=2 -> N evenly spaced incl min/mid/max
-    colorbar_tick_format: str = "auto"  # DEPRECATED (removed once GUI migrates); see tickfmt_*
     # per-group colourbar number format: "auto" | "scientific" | "arb" | a digit count like "2"
     tickfmt_mosa_com: str = "auto"
     tickfmt_mosa_fwhm: str = "auto"
@@ -144,7 +143,14 @@ PUBLICATION_STYLE = PlotStyle(
     font_scale=2.2,
     colorbar_fraction=0.07,
     colorbar_ticks=5,
-    colorbar_tick_format="scientific",
+    tickfmt_mosa_com="auto",
+    tickfmt_mosa_fwhm="auto",
+    tickfmt_strain="scientific",
+    tickfmt_raw="arb",
+    offset_pos_mosa_com="bottom",
+    offset_pos_mosa_fwhm="bottom",
+    offset_pos_strain="bottom",
+    offset_pos_raw="bottom",
     figure_width="single",
     formats=("png", "pdf", "svg"),
     dpi=300,
@@ -167,6 +173,16 @@ def _style_from_dict(data: dict) -> PlotStyle:
     kwargs = {k: v for k, v in dict(data).items() if k in names}
     if isinstance(kwargs.get("formats"), list):
         kwargs["formats"] = tuple(kwargs["formats"])
+    # Migration: a snapshot predating per-group tick formats has none of the
+    # tickfmt_* keys. Give it the tuned profile (same as PUBLICATION_STYLE) so
+    # old persisted/injected styles gain the sensible defaults. Reached only from
+    # the serialized/GUI path — never the bare-PlotStyle style=None code path.
+    _tickfmt_keys = ("tickfmt_mosa_com", "tickfmt_mosa_fwhm", "tickfmt_strain", "tickfmt_raw")
+    if not any(k in data for k in _tickfmt_keys):
+        kwargs.setdefault("tickfmt_strain", "scientific")
+        kwargs.setdefault("tickfmt_raw", "arb")
+        for grp in CMAP_GROUPS:
+            kwargs.setdefault(f"offset_pos_{grp}", "bottom")
     return PlotStyle(**kwargs)
 
 
