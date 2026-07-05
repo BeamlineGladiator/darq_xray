@@ -166,3 +166,25 @@ def test_figures_resolve_cmap_from_style(tmp_path):
     fig = com_spec.build(PlotStyle(cmap_mosa_com="viridis"))
     assert fig.axes[0].images[0].cmap.name == "viridis"
     assert com_spec.build(None).axes[0].images[0].cmap.name == "fast"
+
+
+def test_visualize_make_build_threads_group(monkeypatch):
+    import numpy as np
+
+    from dfxm.common import render as R
+    from dfxm.common.plotting import PlotStyle
+    from dfxm.stages import visualize as V
+
+    captured = {}
+    real = R.layer_figure
+
+    def spy(*a, **k):
+        captured["group"] = k.get("group")
+        return real(*a, **k)
+
+    monkeypatch.setattr(R, "layer_figure", spy)
+    build = V._make_build(
+        lambda: np.zeros((1, 4, 5)), 0, 0.0, 1.0, "strain", 5.0, 4.0, "title", "cbar"
+    )
+    build(PlotStyle())
+    assert captured["group"] == "strain"

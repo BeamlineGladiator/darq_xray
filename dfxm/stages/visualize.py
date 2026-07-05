@@ -673,6 +673,7 @@ def _make_build(loader, z, vn, vx, cmap_group, ex, ey, t, cb):
             f"{_t} (layer {_z})",
             _cb,
             style=style,
+            group=_grp,
         )
         return fig
 
