@@ -443,9 +443,9 @@ def main() -> int:
     assert session_style.title_scale == 0.4, "Title scale widget did not mutate the style"
     sc._w_round_clim.setChecked(True)
     assert session_style.round_clim is True, "Round colour limits widget did not mutate the style"
-    sc._w_cbar_fmt.setCurrentIndex(2)  # "0 decimals (plain numbers)"
-    assert session_style.colorbar_tick_format == "0", (
-        "Tick-format combo must store the format value"
+    sc._w_tickfmt["strain"].setCurrentIndex(3)  # "0 decimals (plain numbers)" in new _TICK_FMTS
+    assert session_style.tickfmt_strain == "0", (
+        "Per-group tick-format combo must store the format value"
     )
 
     # ExportDialog constructed from the session style starts with that style.

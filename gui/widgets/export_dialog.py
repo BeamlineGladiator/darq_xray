@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMessageBox,
     QPushButton,
+    QScrollArea,
     QSpinBox,
     QVBoxLayout,
     QWidget,
@@ -34,15 +35,24 @@ from .mpl_canvas import MplCanvas
 _COLORS = ["black", "white", "red", "green", "blue", "yellow", "grey"]
 _CMAPS = list(CMAP_CHOICES)
 _WIDTHS = ["auto", "single", "double"]
-_TICK_FMTS = ["auto", "scientific", "0", "1", "2", "3"]
+_TICK_FMTS = ["auto", "scientific", "arb", "0", "1", "2", "3"]
 _TICK_FMT_LABELS = {
     "auto": "auto (matplotlib default)",
     "scientific": "scientific (×10ⁿ offset)",
+    "arb": "arbitrary units (no ticks)",
     "0": "0 decimals (plain numbers)",
     "1": "1 decimal (plain numbers)",
     "2": "2 decimals (plain numbers)",
     "3": "3 decimals (plain numbers)",
 }
+_OFFSET_POS = ["top", "bottom"]
+# (group field-suffix, friendly label) — drives the per-group colourbar rows.
+_CBAR_GROUPS = (
+    ("mosa_com", "Mosa misorientation"),
+    ("mosa_fwhm", "Mosa FWHM"),
+    ("strain", "Strain"),
+    ("raw", "Raw intensity"),
+)
 _LOCS = ["lower right", "lower left", "upper right", "upper left"]
 
 
@@ -113,8 +123,13 @@ class StyleControls(QWidget):
         self._w_cbar_label.setText(s.colorbar_label or "")
         self._w_cbar_frac.setValue(s.colorbar_fraction)
         self._w_cbar_ticks.setValue(s.colorbar_ticks)
-        cur_fmt = s.colorbar_tick_format if s.colorbar_tick_format in _TICK_FMTS else "auto"
-        self._w_cbar_fmt.setCurrentIndex(_TICK_FMTS.index(cur_fmt))
+        for grp, _label in _CBAR_GROUPS:
+            cur = getattr(s, f"tickfmt_{grp}")
+            self._w_tickfmt[grp].setCurrentIndex(
+                _TICK_FMTS.index(cur if cur in _TICK_FMTS else "auto")
+            )
+            self._w_offscale[grp].setValue(getattr(s, f"offset_scale_{grp}"))
+            self._w_offpos[grp].setCurrentText(getattr(s, f"offset_pos_{grp}"))
         self._w_round_clim.setChecked(s.round_clim)
         self._w_fig_width.setCurrentText(
             s.figure_width
@@ -139,7 +154,7 @@ class StyleControls(QWidget):
 
     def _all_widgets(self) -> list[QWidget]:
         """Return a flat list of all leaf widgets (for blockSignals)."""
-        return [
+        widgets = [
             self._w_cmap_mosa_com,
             self._w_cmap_mosa_fwhm,
             self._w_cmap_strain,
@@ -163,7 +178,6 @@ class StyleControls(QWidget):
             self._w_cbar_label,
             self._w_cbar_frac,
             self._w_cbar_ticks,
-            self._w_cbar_fmt,
             self._w_round_clim,
             self._w_fig_width,
             self._w_fmt_png,
@@ -171,6 +185,9 @@ class StyleControls(QWidget):
             self._w_fmt_svg,
             self._w_dpi,
         ]
+        for grp, _label in _CBAR_GROUPS:
+            widgets += [self._w_tickfmt[grp], self._w_offscale[grp], self._w_offpos[grp]]
+        return widgets
 
     def _emit(self) -> None:
         self.changed.emit()
@@ -390,18 +407,53 @@ class StyleControls(QWidget):
         )
         form.addRow("Colourbar ticks", self._w_cbar_ticks)
 
-        self._w_cbar_fmt = QComboBox()
-        for fmt in _TICK_FMTS:
-            self._w_cbar_fmt.addItem(_TICK_FMT_LABELS[fmt], fmt)
-        cur_fmt = s.colorbar_tick_format if s.colorbar_tick_format in _TICK_FMTS else "auto"
-        self._w_cbar_fmt.setCurrentIndex(_TICK_FMTS.index(cur_fmt))
-        self._w_cbar_fmt.currentIndexChanged.connect(
-            lambda _i: (
-                setattr(self._style, "colorbar_tick_format", self._w_cbar_fmt.currentData()),
-                self._emit(),
+        form.addRow(QLabel("<b>Colourbar — per group</b>"))
+        self._w_tickfmt: dict[str, QComboBox] = {}
+        self._w_offscale: dict[str, QDoubleSpinBox] = {}
+        self._w_offpos: dict[str, QComboBox] = {}
+        for grp, label in _CBAR_GROUPS:
+            fmt_combo = QComboBox()
+            for fmt in _TICK_FMTS:
+                fmt_combo.addItem(_TICK_FMT_LABELS[fmt], fmt)
+            cur = getattr(s, f"tickfmt_{grp}")
+            fmt_combo.setCurrentIndex(_TICK_FMTS.index(cur if cur in _TICK_FMTS else "auto"))
+            fmt_combo.currentIndexChanged.connect(
+                lambda _i, g=grp, c=fmt_combo: (
+                    setattr(self._style, f"tickfmt_{g}", c.currentData()),
+                    self._emit(),
+                )
             )
-        )
-        form.addRow("Tick format", self._w_cbar_fmt)
+
+            off_scale = QDoubleSpinBox()
+            off_scale.setRange(0.2, 5.0)
+            off_scale.setDecimals(2)
+            off_scale.setSingleStep(0.1)
+            off_scale.setValue(getattr(s, f"offset_scale_{grp}"))
+            off_scale.setToolTip(
+                "Size of the scientific ×10ⁿ exponent (only when format = scientific)."
+            )
+            off_scale.valueChanged.connect(
+                lambda v, g=grp: (setattr(self._style, f"offset_scale_{g}", v), self._emit())
+            )
+
+            off_pos = QComboBox()
+            off_pos.addItems(_OFFSET_POS)
+            off_pos.setCurrentText(getattr(s, f"offset_pos_{grp}"))
+            off_pos.setToolTip(
+                "Where the scientific ×10ⁿ exponent sits (only when format = scientific)."
+            )
+            off_pos.currentTextChanged.connect(
+                lambda v, g=grp: (setattr(self._style, f"offset_pos_{g}", v), self._emit())
+            )
+
+            row = QHBoxLayout()
+            row.addWidget(fmt_combo, 2)
+            row.addWidget(off_scale, 1)
+            row.addWidget(off_pos, 1)
+            form.addRow(label, row)
+            self._w_tickfmt[grp] = fmt_combo
+            self._w_offscale[grp] = off_scale
+            self._w_offpos[grp] = off_pos
 
         self._w_round_clim = QCheckBox()
         self._w_round_clim.setChecked(s.round_clim)
@@ -576,10 +628,13 @@ class ExportDialog(QDialog):
         btns.addWidget(reset_btn)
         btns.addWidget(export_btn)
 
+        controls_scroll = QScrollArea()
+        controls_scroll.setWidgetResizable(True)
+        controls_scroll.setWidget(self._controls)
+
         right = QVBoxLayout()
         right.addWidget(self._selector)
-        right.addWidget(self._controls)
-        right.addStretch(1)
+        right.addWidget(controls_scroll, 1)
         right.addLayout(btns)
 
         rw = QWidget()
