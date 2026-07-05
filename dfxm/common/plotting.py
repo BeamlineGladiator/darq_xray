@@ -39,6 +39,16 @@ CMAP_CHOICES: tuple[str, ...] = (
     "turbo",
 )
 
+# Volume "kind" (as stored in HDF5 attrs by the map stages) -> quantity group.
+# Shared by slices and profiles so the kind->group mapping lives in one place.
+GROUP_BY_KIND: dict[str, str] = {
+    "mosa_com": "mosa_com",
+    "mosa_fwhm": "mosa_fwhm",
+    "strain": "strain",
+    "raw_sum": "raw",
+    "raw_specific": "raw",
+}
+
 
 @dataclass
 class PlotStyle:
@@ -67,7 +77,21 @@ class PlotStyle:
     colorbar_label: str | None = None  # None -> the figure's own label
     colorbar_fraction: float = 0.046  # matplotlib colorbar `fraction` (thickness)
     colorbar_ticks: int = 0  # 0 -> matplotlib default; >=2 -> N evenly spaced incl min/mid/max
-    colorbar_tick_format: str = "auto"  # "auto" | "scientific" | a digit count like "2"
+    colorbar_tick_format: str = "auto"  # DEPRECATED (removed once GUI migrates); see tickfmt_*
+    # per-group colourbar number format: "auto" | "scientific" | "arb" | a digit count like "2"
+    tickfmt_mosa_com: str = "auto"
+    tickfmt_mosa_fwhm: str = "auto"
+    tickfmt_strain: str = "auto"
+    tickfmt_raw: str = "auto"
+    # per-group scientific-notation ×10ⁿ offset text: size multiplier (×font_scale) + placement
+    offset_scale_mosa_com: float = 1.0
+    offset_scale_mosa_fwhm: float = 1.0
+    offset_scale_strain: float = 1.0
+    offset_scale_raw: float = 1.0
+    offset_pos_mosa_com: str = "top"  # "top" | "bottom"
+    offset_pos_mosa_fwhm: str = "top"
+    offset_pos_strain: str = "top"
+    offset_pos_raw: str = "top"
     round_clim: bool = False  # round auto colour limits outward to nice values
     # figure
     figure_width: str | float = "auto"  # "single" | "double" | "auto" | width in inches
@@ -85,6 +109,30 @@ class PlotStyle:
         if group not in CMAP_GROUPS:
             raise KeyError(f"unknown colormap group {group!r}")
         return getattr(self, f"cmap_{group}")
+
+    def tickfmt_for(self, group: str | None) -> str:
+        """Tick format for a quantity group; ``group=None`` -> the neutral ``"auto"``."""
+        if group is None:
+            return "auto"
+        if group not in CMAP_GROUPS:
+            raise KeyError(f"unknown colormap group {group!r}")
+        return getattr(self, f"tickfmt_{group}")
+
+    def offset_scale_for(self, group: str | None) -> float:
+        """Scientific-offset size multiplier for a group; ``group=None`` -> ``1.0``."""
+        if group is None:
+            return 1.0
+        if group not in CMAP_GROUPS:
+            raise KeyError(f"unknown colormap group {group!r}")
+        return getattr(self, f"offset_scale_{group}")
+
+    def offset_pos_for(self, group: str | None) -> str:
+        """Scientific-offset placement for a group; ``group=None`` -> ``"top"``."""
+        if group is None:
+            return "top"
+        if group not in CMAP_GROUPS:
+            raise KeyError(f"unknown colormap group {group!r}")
+        return getattr(self, f"offset_pos_{group}")
 
 
 PUBLICATION_STYLE = PlotStyle(

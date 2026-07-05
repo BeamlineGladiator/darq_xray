@@ -531,3 +531,32 @@ def test_apply_text_scale_increases_title_pad_on_constrained_figure():
         f"apply_text_scale should push the title up on a constrained-layout figure "
         f"at large font_scale, but ref y0={ref_y:.3f} >= treated y0={treated_y:.3f}"
     )
+
+
+def test_per_group_tickfmt_defaults_and_lookup():
+    from dfxm.common.plotting import GROUP_BY_KIND
+
+    s = PlotStyle()
+    # bare defaults preserve the legacy look
+    assert s.tickfmt_for("strain") == "auto"
+    assert s.tickfmt_for("raw") == "auto"
+    assert s.offset_scale_for("mosa_com") == 1.0
+    assert s.offset_pos_for("mosa_fwhm") == "top"
+    # group=None is the neutral fallback (callers that don't know their group)
+    assert s.tickfmt_for(None) == "auto"
+    assert s.offset_scale_for(None) == 1.0
+    assert s.offset_pos_for(None) == "top"
+    # unknown non-None group raises, like cmap_for
+    import pytest
+
+    with pytest.raises(KeyError):
+        s.tickfmt_for("bogus")
+    # explicit per-group values round-trip through the lookups
+    s2 = PlotStyle(tickfmt_strain="scientific", offset_scale_strain=1.5, offset_pos_strain="bottom")
+    assert s2.tickfmt_for("strain") == "scientific"
+    assert s2.offset_scale_for("strain") == 1.5
+    assert s2.offset_pos_for("strain") == "bottom"
+    # GROUP_BY_KIND collapses raw_sum / raw_specific onto the raw group
+    assert GROUP_BY_KIND["raw_sum"] == "raw"
+    assert GROUP_BY_KIND["raw_specific"] == "raw"
+    assert GROUP_BY_KIND["strain"] == "strain"
