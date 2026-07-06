@@ -92,6 +92,14 @@ _STD_VOLUMES = (
     ("include_strain", "stacked", "strain_volume_file", "strain", "strain"),
     ("include_raw_sum", "aligned", "aligned_rocking_file", "sum_intensity", "raw_sum"),
     ("include_raw_specific", "aligned", "aligned_rocking_file", "specific_frame", "raw_specific"),
+    ("include_mosa_sum", "aligned", "aligned_mosa_file", "sum_intensity", "raw_mosa_sum"),
+    (
+        "include_mosa_specific",
+        "aligned",
+        "aligned_mosa_file",
+        "specific_frame",
+        "raw_mosa_specific",
+    ),
 )
 
 
@@ -132,6 +140,16 @@ STAGE = StageSpec(
             help=(
                 "The aligned rocking volume (aligned_raw_rocking_volumes.h5) from the rocking "
                 "stage. Leave blank to slice without raw intensity."
+            ),
+        ),
+        Param(
+            "aligned_mosa_file",
+            ParamType.PATH,
+            "Aligned mosa volume",
+            must_exist=True,
+            help=(
+                "The aligned mosa-sum volume (aligned_raw_mosa_volumes.h5) from the rocking stage "
+                "run with Source scan = mosaicity. Leave blank to skip the mosa raw fields."
             ),
         ),
         Param(
@@ -351,6 +369,24 @@ STAGE = StageSpec(
             advanced=True,
             group="Quantities",
             help="Slice the specific-frame raw intensity volume.",
+        ),
+        Param(
+            "include_mosa_sum",
+            ParamType.BOOL,
+            "Slice mosa sum",
+            default=True,
+            advanced=True,
+            group="Quantities",
+            help="Slice the mosa-scan summed intensity volume (from the aligned mosa file).",
+        ),
+        Param(
+            "include_mosa_specific",
+            ParamType.BOOL,
+            "Slice mosa specific",
+            default=True,
+            advanced=True,
+            group="Quantities",
+            help="Slice the mosa-scan specific-frame intensity volume.",
         ),
         Param(
             "slices_json",
@@ -683,6 +719,12 @@ def prepare_volume(cfg, p, scale_x, scale_y, samy_dir, style=None):
             "Intensity (a.u.)",
             f"_frame{int(extra.get('specific_frame_idx', -1))}",
         ),
+        "raw_mosa_sum": ("Mosa-integrated Sum Intensity", "Sum intensity (a.u.)", ""),
+        "raw_mosa_specific": (
+            f"Mosa-integrated Frame {int(extra.get('specific_frame_idx', -1))}",
+            "Intensity (a.u.)",
+            f"_frame{int(extra.get('specific_frame_idx', -1))}",
+        ),
     }
     title, cbar_label, suffix = titles[kind]
     vmin_f, vmax_f, clim_note = apply_round_clim(float(auto_vmin), float(auto_vmax), style)
@@ -821,6 +863,7 @@ def _standard_volumes(p, roi_x, roi_y):
         "mosa_volume_file": (p["mosa_volume_file"], p["raw_root"], p["mosa_pattern"]),
         "strain_volume_file": (p["strain_volume_file"], p["raw_root"], p["strain_pattern"]),
         "aligned_rocking_file": (p["aligned_rocking_file"], "", ""),
+        "aligned_mosa_file": (p["aligned_mosa_file"], "", ""),
     }
     out = []
     for toggle, source, file_param, dataset, kind in _STD_VOLUMES:

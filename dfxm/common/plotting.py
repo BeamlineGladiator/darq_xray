@@ -47,6 +47,8 @@ GROUP_BY_KIND: dict[str, str] = {
     "strain": "strain",
     "raw_sum": "raw",
     "raw_specific": "raw",
+    "raw_mosa_sum": "raw",
+    "raw_mosa_specific": "raw",
 }
 
 

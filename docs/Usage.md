@@ -323,7 +323,7 @@ rendering, with a `valid_mask` and NaN sentinels.
 Cut arbitrary planes (defined in physical µm, optionally swept along the normal)
 through the aligned volumes — all in one world frame so the slices co-register.
 
-- **Input:** stacked volumes + the aligned rocking volume.
+- **Input:** stacked volumes + the aligned rocking volume + (optionally) the aligned mosa volume (`aligned_raw_mosa_volumes.h5` from the rocking stage run with Source scan = mosaicity).
 - **Output:** `oblique_slices.h5` (consumed by [[#8. Line profiles (`profiles`)|profiles]]) + a PNG per plane. Per-plane PNGs are written into one subfolder per slice direction: `<output_dir>/<slice name>/`. For example, a slice named `oblique` produces `<output_dir>/oblique/mosa_com_chi.png`, etc.
 
 **Essentials:** three volume files, raw root, slices JSON, output dir
@@ -331,7 +331,10 @@ through the aligned volumes — all in one world frame so the slices co-register
 | Param | Meaning |
 |---|---|
 | `slices_json` | a JSON list of plane specs (see below) |
-| `include_*` | which volumes to slice (χ/μ CoM/FWHM, strain, raw sum/specific) |
+| `include_*` | which volumes to slice (χ/μ CoM/FWHM, strain, raw rocking sum/specific, mosa-scan sum/specific) |
+| `aligned_mosa_file` | path to `aligned_raw_mosa_volumes.h5`; leave blank to skip the mosa raw fields |
+| `include_mosa_sum` | slice the mosa-scan summed intensity (mapped to the "raw" colour group) |
+| `include_mosa_specific` | slice the mosa-scan specific-frame intensity (mapped to the "raw" colour group) |
 | `center_method` / `range_pct` | CoM colour centring |
 
 > [!example] A slice spec

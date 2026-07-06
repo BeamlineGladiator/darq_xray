@@ -419,3 +419,41 @@ def test_run_without_round_clim_has_no_notes_or_raw_attrs(tmp_path):
     with h5py.File(res.output_h5, "r") as f:
         for vid in res.volume_ids:
             assert "vmin_raw" not in f[vid].attrs
+
+
+def test_run_includes_mosa_raw_field(tmp_path):
+    proc, raw = _setup(tmp_path)
+    rng = np.random.default_rng(1)
+    with h5py.File(proc / "aligned_raw_mosa_volumes.h5", "w") as f:
+        f.create_dataset("sum_intensity", data=rng.standard_normal((L, NY, NX)).astype(np.float32))
+        f.create_dataset("specific_frame", data=rng.standard_normal((L, NY, NX)).astype(np.float32))
+        f.create_dataset("z_uniform_um", data=np.arange(L, dtype=np.float32))
+        f.attrs["scale_x_um_per_px"] = 0.152
+        f.attrs["scale_y_um_per_px"] = 0.385
+        f.attrs["scale_z_um_per_px"] = 1.0
+        f.attrs["specific_frame_idx"] = 2
+    slices_json = (
+        '[{"name":"mid","normal":[0,0,1],"origin":[0.5,0.5,1.5],'
+        '"half_u":0.4,"half_v":0.4,"du":0.2,"dv":0.2,"sweep_step_um":null}]'
+    )
+    res = S.run(
+        {
+            "aligned_mosa_file": str(proc / "aligned_raw_mosa_volumes.h5"),
+            "include_mosa_sum": True,
+            "include_mosa_specific": False,
+            # keep the run small: turn the standard volumes off
+            "include_mosa_com_chi": False,
+            "include_mosa_fwhm_chi": False,
+            "include_mosa_com_mu": False,
+            "include_mosa_fwhm_mu": False,
+            "include_strain": False,
+            "include_raw_sum": False,
+            "include_raw_specific": False,
+            "slices_json": slices_json,
+            "output_dir": str(tmp_path / "sl"),
+        }
+    )
+    assert "raw_mosa_sum" in res.volume_ids
+    with h5py.File(res.output_h5, "r") as f:
+        assert f["raw_mosa_sum"].attrs["kind"] == "raw_mosa_sum"
+        assert f["raw_mosa_sum"].attrs["title"] == "Mosa-integrated Sum Intensity"
