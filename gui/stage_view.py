@@ -355,7 +355,9 @@ class StageView(QWidget):
         )
         dlg.exec()
         if dlg.written:
-            self._log.append(f"Replotted {len(dlg.written)} PNG(s) → {replots_dir}")
+            self._log.append(
+                f"Replotted {len(dlg.written)} PNG(s) → {os.path.dirname(dlg.written[0])}"
+            )
             self._tabs.setCurrentWidget(self._log)
 
     def _poll(self) -> None:

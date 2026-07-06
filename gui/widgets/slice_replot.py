@@ -114,7 +114,7 @@ class SliceReplotDialog(QDialog):
             return
         try:
             catalog = _sl.replot_catalog(self._h5_path)
-        except (OSError, KeyError) as exc:  # unreadable / not a slices file
+        except Exception as exc:  # noqa: BLE001 — GUI reload: show status, never crash
             self._status.setText(f"cannot read: {exc}")
             return
         by_vid: dict[str, QTreeWidgetItem] = {}
@@ -122,11 +122,15 @@ class SliceReplotDialog(QDialog):
             vtop = by_vid.get(entry.volume_id)
             if vtop is None:
                 vtop = QTreeWidgetItem(self._tree, [entry.volume_id])
-                vtop.setFlags(vtop.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+                vtop.setFlags(
+                    vtop.flags() | Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsAutoTristate
+                )
                 vtop.setCheckState(0, Qt.CheckState.Unchecked)
                 by_vid[entry.volume_id] = vtop
             snode = QTreeWidgetItem(vtop, [entry.slice_name])
-            snode.setFlags(snode.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            snode.setFlags(
+                snode.flags() | Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsAutoTristate
+            )
             snode.setCheckState(0, Qt.CheckState.Unchecked)
             snode.setData(0, Qt.ItemDataRole.UserRole, (entry.volume_id, entry.slice_name))
             for k, off in enumerate(entry.offsets_um):
@@ -139,27 +143,24 @@ class SliceReplotDialog(QDialog):
 
     # -- bulk selection -------------------------------------------------------
     def select_all(self) -> None:
-        """Check every leaf (plane) node so _selections() yields all planes."""
+        """Check every volume node; auto-tristate cascades to all slices + planes."""
         for i in range(self._tree.topLevelItemCount()):
-            vtop = self._tree.topLevelItem(i)
-            for j in range(vtop.childCount()):
-                snode = vtop.child(j)
-                for k in range(snode.childCount()):
-                    snode.child(k).setCheckState(0, Qt.CheckState.Checked)
+            self._tree.topLevelItem(i).setCheckState(0, Qt.CheckState.Checked)
 
     def _deselect_all(self) -> None:
         for i in range(self._tree.topLevelItemCount()):
-            vtop = self._tree.topLevelItem(i)
-            vtop.setCheckState(0, Qt.CheckState.Unchecked)
-            for j in range(vtop.childCount()):
-                snode = vtop.child(j)
-                snode.setCheckState(0, Qt.CheckState.Unchecked)
-                for k in range(snode.childCount()):
-                    snode.child(k).setCheckState(0, Qt.CheckState.Unchecked)
+            self._tree.topLevelItem(i).setCheckState(0, Qt.CheckState.Unchecked)
 
     # -- selection → core -----------------------------------------------------
     def _selections(self):
-        """Collect checked (vid, slice, plane_idxs) tuples from the tree."""
+        """Collect checked (vid, slice, plane_idxs|None) tuples from the tree.
+
+        Auto-tristate cascades a Checked parent down to all leaf (plane) children,
+        so checking a volume or slice checks every leaf beneath it. Leaf states are
+        read directly: all-checked → explicit index list; snode Checked with no
+        leaves (zero-plane edge case) → None (all planes). Partially-checked slices
+        yield only the checked leaf indices.
+        """
         sels = []
         for i in range(self._tree.topLevelItemCount()):
             vtop = self._tree.topLevelItem(i)

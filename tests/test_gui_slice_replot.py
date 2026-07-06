@@ -46,5 +46,6 @@ def test_dialog_populates_tree_and_renders(tmp_path):
     assert dlg._tree.topLevelItemCount() == 2
     # select everything and render straight through the core
     dlg.select_all()
+    assert dlg._selections(), "select_all() left the selection empty"
     written = dlg.render_selection(str(out))
     assert written and all(os.path.exists(p) for p in written)
