@@ -253,6 +253,7 @@ the mosaicity reference so they overlay the other volumes.
 | `roi_x` / `roi_y` | detector crop applied at read time |
 | `specific_frame_idx` | which frame to extract (blank = central) |
 | `normalize_sum` | divide the summed intensity by frame count |
+| `subtract_background` | subtract per-pixel median background before summing (default on; turn off for a plain intensity sum, e.g. a mosa-scan topograph) |
 
 ### 5. Visualize volumes (`visualize`)
 

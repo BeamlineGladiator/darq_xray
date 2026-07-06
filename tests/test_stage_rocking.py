@@ -124,6 +124,24 @@ def test_run_requires_mosa_reference(tmp_path):
         RK.run({"raw_root": str(raw), "rocking_pattern": "rock__*", "mosa_pattern": "mosa__*"})
 
 
+def test_process_raw_scan_no_background_subtraction(tmp_path):
+    """subtract_background=False -> plain sum and raw specific frame (no median removed)."""
+    frames = _rng_frames(3)
+    folder = _write_motor_folder(str(tmp_path), "rock__1", 0.0, 0.0, frames=frames)
+    h5p = os.path.join(folder, "rock__1.h5")
+    sum_2d, spec_2d, n_frames, idx = RK.process_raw_scan(
+        h5p,
+        "1.1/measurement/pco_ff",
+        None,
+        None,
+        None,
+        normalize_sum=False,
+        subtract_background=False,
+    )
+    np.testing.assert_allclose(sum_2d, frames.sum(axis=0), rtol=1e-5)
+    np.testing.assert_allclose(spec_2d, frames[idx], rtol=1e-5)
+
+
 def test_figures_use_raw_group(tmp_path):
     """Rocking figure specs resolve their cmap from the style's raw group."""
     from dfxm.common.plotting import PlotStyle

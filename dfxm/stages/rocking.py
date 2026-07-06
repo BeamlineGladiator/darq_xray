@@ -224,6 +224,19 @@ STAGE = StageSpec(
             ),
         ),
         Param(
+            "subtract_background",
+            ParamType.BOOL,
+            "Subtract background",
+            default=True,
+            advanced=True,
+            group="Alignment",
+            help=(
+                "Subtract a per-pixel median background (across the scan's frames) before "
+                "summing. On for the standard rocking sum; turn off for a plain intensity sum "
+                "(e.g. a mosa-scan topograph that keeps the background)."
+            ),
+        ),
+        Param(
             "output_dir",
             ParamType.DIR,
             "Output dir",
@@ -361,8 +374,14 @@ def process_raw_scan(
     roi_y: tuple | None,
     specific_frame_idx: int | None,
     normalize_sum: bool,
+    subtract_background: bool = True,
 ) -> tuple[np.ndarray, np.ndarray, int, int]:
-    """Background-subtract one rocking scan; return (sum_2d, specific_2d, n_frames, idx)."""
+    """Read one scan; return (sum_2d, specific_2d, n_frames, idx).
+
+    With ``subtract_background`` (default) a per-pixel median across the scan's
+    frames is removed before summing (rocking behaviour); otherwise a plain sum
+    and the raw specific frame are returned (mosa-topograph behaviour).
+    """
     with h5py.File(h5_path, "r") as f:
         det = f[detector_path]
         n_frames = det.shape[0]
@@ -373,7 +392,6 @@ def process_raw_scan(
         xe = roi_x[1] if roi_x else w_full
         frames = det[:, ys:ye, xs:xe].astype(np.float32)
 
-    # Resolve + copy the specific frame BEFORE the in-place median reorder.
     if specific_frame_idx is None:
         idx = n_frames // 2
     else:
@@ -382,15 +400,16 @@ def process_raw_scan(
             idx = n_frames // 2
     raw_specific = frames[idx].copy()
 
-    # Per-pixel background = median across the rocking dimension (in-place OK:
-    # the SUM is order-independent and the specific frame was already copied).
-    background = np.median(frames, axis=0, overwrite_input=True).astype(np.float32)
-    frames -= background[np.newaxis, :, :]
+    if subtract_background:
+        background = np.median(frames, axis=0, overwrite_input=True).astype(np.float32)
+        frames -= background[np.newaxis, :, :]
+        specific_2d = raw_specific - background
+    else:
+        specific_2d = raw_specific
 
     sum_2d = frames.sum(axis=0)
     if normalize_sum:
         sum_2d = sum_2d / max(1, n_frames)
-    specific_2d = raw_specific - background
 
     del frames, raw_specific
     return sum_2d, specific_2d, n_frames, idx
@@ -405,6 +424,7 @@ def build_raw_volumes(
     roi_y: tuple | None,
     specific_frame_idx: int | None,
     normalize_sum: bool,
+    subtract_background: bool = True,
     progress: ProgressFn = _noop,
 ):
     """Process each scan (caller pre-sorts by samz) and stack into two 3-D volumes.
@@ -424,7 +444,13 @@ def build_raw_volumes(
             continue
         try:
             sum_2d, spec_2d, _nf, spec_idx = process_raw_scan(
-                h5p, detector_path, roi_x, roi_y, specific_frame_idx, normalize_sum
+                h5p,
+                detector_path,
+                roi_x,
+                roi_y,
+                specific_frame_idx,
+                normalize_sum,
+                subtract_background,
             )
         except (KeyError, OSError, ValueError):
             continue
@@ -680,6 +706,7 @@ def run(params: dict, progress: ProgressFn | None = None) -> RockingResult:
         roi_y,
         spec_cfg,
         bool(p["normalize_sum"]),
+        bool(p["subtract_background"]),
         progress=lambda fr, m: progress(0.1 + 0.5 * fr, m),
     )
     if sum_vol is None:

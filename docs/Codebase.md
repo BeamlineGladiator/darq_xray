@@ -301,8 +301,8 @@ Port of `stack_h5_darfix_volumes`. Stacks χ/μ Center-of-mass + FWHM maps.
 Port of `build_aligned_raw_rocking_volumes_v3`. Aligned 3-D volumes straight
 from raw rocking scans, anchored to the mosaicity reference.
 - `RockingProducts` / `RockingResult` — per-volume render products + aligned path/shape/reference. `RockingProducts.notes` collects one entry per volume whose auto colour limits were rounded (when `round_clim` is set), surfaced in the run log and the Results summary.
-- `process_raw_scan(...)` — per-scan median **background subtraction** → integrated **sum** + one **specific frame**.
-- `build_raw_volumes(...)` — stack scans (sorted by samz) into two 3-D volumes.
+- `process_raw_scan(..., normalize_sum, subtract_background=True)` — when `subtract_background` (default), removes a per-pixel median background before summing (rocking behaviour); with `False`, returns a plain frame sum and the raw specific frame (mosa-topograph behaviour).
+- `build_raw_volumes(..., normalize_sum, subtract_background=True, progress=...)` — stack scans (sorted by samz) into two 3-D volumes; threads `subtract_background` into each `process_raw_scan` call.
 - `save_aligned_raw_volumes(...)` — write `aligned_raw_rocking_volumes.h5` (the schema [[#slices.py]] reads).
 - `_render(..., style=None)` — per-volume PNGs/animation/top-view via [[#render.py]]; `run` resolves the raw-group colormap (`resolve_cmap(style, "raw")`, default gray) and threads the injected style through.
 - `figures(result, params)` — `@register("rocking")` catalog: one `kind="map"` `FigureSpec` per Z layer for each aligned volume (sum intensity, specific frame), via `volume_layer_specs` with `cmap_group="raw"`.
