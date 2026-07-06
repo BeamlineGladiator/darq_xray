@@ -384,6 +384,28 @@ through the aligned volumes — all in one world frame so the slices co-register
 > `offset_tol_um`), so you can also feed that offset straight to a profile job
 > without re-slicing.
 
+#### Replotting slices without re-running
+
+The **Replot…** button (always enabled, even before any run) opens a dialog that
+reads an `oblique_slices.h5` **directly from disk** — a prior stage run in the
+current session is not required. It works from a cold start or after a restart.
+
+1. Click **Replot…** on the slices stage panel.
+2. The file field pre-fills from the current form values; click **Browse…** or
+   type a path and **Load** to use a different file.
+3. Tick the volumes, slices, and individual planes you want to re-render
+   (defaults: all unchecked). Use **Select all** to check every plane at once.
+4. Optionally override the stored colour limits with custom **vmin** / **vmax**
+   values (leave blank to use the limits stored in the HDF5).
+5. Set an **Output dir** (pre-filled to a timestamped `replots/<stamp>/`
+   subfolder inside the slices output directory).
+6. Click **Render** — PNGs are written into `<out_dir>/<slice_name>/`, mirroring
+   the layout the slices stage uses.
+
+The dialog renders with the current session publication style (font scale,
+colourmap, scale bar, etc.) from the **Publication style…** dialog, so style
+changes made since the original run are reflected in the replot.
+
 ### 8. Line profiles (`profiles`)
 
 Profile a straight line (or a band of parallel lines) across one slice plane —

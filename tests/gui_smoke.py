@@ -783,6 +783,44 @@ def main() -> int:
     assert restored.font_scale == style.font_scale
     print("[25] publication style round-trips through QSettings")
 
+    # [26] SliceReplotDialog: opens from the slices view, selects all, renders one plane.
+    import h5py as _h5py26
+    import numpy as _np26
+
+    from gui.widgets.slice_replot import SliceReplotDialog as _SRD
+
+    _slice_tmp = tempfile.mkdtemp()
+    _h5_path26 = os.path.join(_slice_tmp, "oblique_slices.h5")
+    _u26 = _np26.linspace(-4.0, 4.0, 9)
+    _v26 = _np26.linspace(-3.0, 3.0, 7)
+    with _h5py26.File(_h5_path26, "w") as _f26:
+        _g26 = _f26.create_group("strain")
+        _g26.attrs["kind"] = "strain"
+        _g26.attrs["cmap"] = "RdBu_r"
+        _g26.attrs["title"] = "strain"
+        _g26.attrs["cbar_label"] = "ε"
+        _g26.attrs["vmin"] = -1.0
+        _g26.attrs["vmax"] = 1.0
+        _sg26 = _g26.create_group("oblique")
+        _sg26.create_dataset(
+            "slices", data=_np26.zeros((1, _v26.size, _u26.size), dtype=_np26.float32)
+        )
+        _sg26.create_dataset("u_um", data=_u26)
+        _sg26.create_dataset("v_um", data=_v26)
+        _sg26.create_dataset("offsets_um", data=_np26.array([0.0]))
+
+    # verify the Replot… button is present on the slices view
+    slices_view = win._views["slices"]
+    assert slices_view._replot_btn is not None, "slices view missing _replot_btn"
+
+    _out26 = os.path.join(_slice_tmp, "replots")
+    _dlg26 = _SRD(_h5_path26, style=None, out_default=_out26)
+    assert _dlg26._tree.topLevelItemCount() == 1
+    _dlg26.select_all()
+    _written26 = _dlg26.render_selection(_out26)
+    assert len(_written26) == 1 and os.path.exists(_written26[0]), _written26
+    print("[26] SliceReplotDialog: Replot… button wired; select_all + render_selection writes PNGs")
+
     print("\nGUI SMOKE PASSED")
     return 0
 

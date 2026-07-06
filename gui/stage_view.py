@@ -99,6 +99,12 @@ class StageView(QWidget):
             self._pick_btn = QPushButton("Pick line…")
             self._pick_btn.clicked.connect(self._on_pick_line)
             btn_row.addWidget(self._pick_btn)
+        # slices: re-render selected planes from an existing oblique_slices.h5
+        self._replot_btn: QPushButton | None = None
+        if stage_name == "slices":
+            self._replot_btn = QPushButton("Replot…")
+            self._replot_btn.clicked.connect(self._on_replot)
+            btn_row.addWidget(self._replot_btn)
         btn_row.addStretch(1)
 
         self._progress = QProgressBar()
@@ -316,6 +322,40 @@ class StageView(QWidget):
             self._log.append(
                 f"Picked line on '{slice_name}' @ {off:+.3f} µm -> jobs_json updated; Run to profile."
             )
+            self._tabs.setCurrentWidget(self._log)
+
+    # -- slices interactive replot (lazy) ---------------------------------
+    def _on_replot(self) -> None:
+        import time
+        from dataclasses import replace
+
+        vals = self._form.values()
+        out_dir = vals.get("output_dir", "") or os.path.join(
+            os.path.dirname(
+                vals.get("mosa_volume_file", "") or vals.get("strain_volume_file", "") or "."
+            ),
+            "oblique_slices",
+        )
+        h5 = os.path.join(out_dir, vals.get("output_h5_name", "") or "oblique_slices.h5")
+
+        window = self.window()
+        style = window.global_plot_style() if hasattr(window, "global_plot_style") else None
+
+        replots_dir = os.path.abspath(
+            os.path.join(out_dir, "replots", time.strftime("%Y%m%d-%H%M%S"))
+        )
+
+        from .widgets.slice_replot import SliceReplotDialog  # imported on demand
+
+        dlg = SliceReplotDialog(
+            h5,
+            style=replace(style) if style is not None else None,
+            out_default=replots_dir,
+            parent=self,
+        )
+        dlg.exec()
+        if dlg.written:
+            self._log.append(f"Replotted {len(dlg.written)} PNG(s) → {replots_dir}")
             self._tabs.setCurrentWidget(self._log)
 
     def _poll(self) -> None:
