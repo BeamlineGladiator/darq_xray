@@ -183,7 +183,17 @@ def main() -> int:
     assert win._views["profiles"]._pick_btn is not None
     assert win._views["visualize"]._vol3d is not None
     assert "pyvista" not in sys.modules and "pyvistaqt" not in sys.modules
-    print("[6] interactive viewers wired and lazy (no pyvista import at startup)")
+    # Confirm field checkboxes are present on the profiles pick button (dialog built lazily).
+    # We verify the attribute exists on the dialog class without opening a real H5 file.
+    from gui.widgets.line_picker import LinePickerDialog
+
+    assert hasattr(LinePickerDialog, "selected_fields"), (
+        "LinePickerDialog must expose selected_fields()"
+    )
+    print(
+        "[6] interactive viewers wired and lazy (no pyvista import at startup)"
+        "; LinePickerDialog.selected_fields present"
+    )
 
     # Cancel kills the worker.
     runner = StageRunner(_sleeper, {}, start_method="fork")

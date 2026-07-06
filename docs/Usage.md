@@ -610,8 +610,12 @@ On the **profiles** view, click **Pick line…** to open the picker:
 
 1. Use **◀ plane / plane ▶** to scroll through the slice's planes.
 2. Click two points to set the line endpoints.
-3. **Use line** writes `start_uv` / `end_uv` / `offset_um` into `jobs_json`.
-4. Press **Run** to profile.
+3. The **Fields** row shows one checkbox per volume present in the slice (all
+   checked by default). Untick a field to exclude it from this job's profile —
+   the ticked fields are written as a `"fields"` list into `jobs_json` for that job,
+   overriding the global `restrict` for this job only.
+4. **Use line** writes `start_uv` / `end_uv` / `offset_um` / `fields` into `jobs_json`.
+5. Press **Run** to profile.
 
 ---
 

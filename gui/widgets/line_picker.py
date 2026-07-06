@@ -2,7 +2,7 @@
 
 Replaces the legacy TkAgg click-loop with an embedded matplotlib-Qt canvas:
 scroll the planes of one slice, click two endpoints, and read back
-``(start_uv, end_uv, offset_um)`` in the slice's (u, v) frame. Opened only when
+``(start_uv, end_uv, offset_um, fields)`` in the slice's (u, v) frame. Opened only when
 the user clicks "Pick line…", so the consolidated file is read and the canvas
 built on demand, never at stage-view construction.
 """
@@ -13,6 +13,7 @@ import matplotlib.colors as mcolors
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
 from PySide6.QtWidgets import (
+    QCheckBox,
     QDialog,
     QHBoxLayout,
     QLabel,
@@ -27,7 +28,7 @@ from dfxm.stages import profiles as _pr
 class LinePickerDialog(QDialog):
     """Modal picker over one slice of an oblique_slices.h5 file.
 
-    On accept, :attr:`result` is ``(start_uv, end_uv, offset_um)``; otherwise None.
+    On accept, :attr:`result` is ``(start_uv, end_uv, offset_um, fields)``; otherwise None.
     """
 
     def __init__(self, h5_path, slice_name, init_offset=0.0, ref_pref="", parent=None) -> None:
@@ -47,6 +48,7 @@ class LinePickerDialog(QDialog):
             self._f.close()
             raise KeyError(f"slice {slice_name!r} not present in {h5_path}")
         self._ref_id = pr._pick_reference_id(present, ref_pref)
+        self._present = present
         self._sg = self._f[f"{self._ref_id}/{slice_name}"]
         self._u, self._v, self._offsets = pr.read_axes(self._sg)
         self._attrs = pr.read_volume_attrs(self._f, self._ref_id)
@@ -70,6 +72,16 @@ class LinePickerDialog(QDialog):
         self._use.clicked.connect(self._accept)
         self._cancel.clicked.connect(self.reject)
 
+        self._field_boxes: dict[str, QCheckBox] = {}
+        fields_row = QHBoxLayout()
+        fields_row.addWidget(QLabel("Fields:"))
+        for vid in self._present:
+            box = QCheckBox(vid)
+            box.setChecked(True)
+            self._field_boxes[vid] = box
+            fields_row.addWidget(box)
+        fields_row.addStretch(1)
+
         nav = QHBoxLayout()
         nav.addWidget(self._prev)
         nav.addWidget(self._next)
@@ -80,6 +92,7 @@ class LinePickerDialog(QDialog):
         lay = QVBoxLayout(self)
         lay.addWidget(self._canvas, 1)
         lay.addWidget(self._info)
+        lay.addLayout(fields_row)
         lay.addLayout(nav)
 
         self._canvas.mpl_connect("button_press_event", self._on_click)
@@ -137,8 +150,17 @@ class LinePickerDialog(QDialog):
     def _accept(self) -> None:
         if len(self._pts) != 2:
             return
-        self.result = (self._pts[0], self._pts[1], float(self._offsets[self._idx]))
+        self.result = (
+            self._pts[0],
+            self._pts[1],
+            float(self._offsets[self._idx]),
+            self.selected_fields(),
+        )
         self.accept()
+
+    def selected_fields(self) -> list[str]:
+        """Ticked field ids, in catalog order (all present when none unticked)."""
+        return [vid for vid in self._present if self._field_boxes[vid].isChecked()]
 
     # -- cleanup ----------------------------------------------------------
     def done(self, code) -> None:  # noqa: D401 - Qt override

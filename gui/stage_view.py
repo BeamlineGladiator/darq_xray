@@ -314,9 +314,9 @@ class StageView(QWidget):
             self._tabs.setCurrentWidget(self._log)
             return
         if dlg.exec() and dlg.result:
-            start, end, off = dlg.result
+            start, end, off, fields = dlg.result
             new_jobs = inject_line_into_jobs(
-                vals.get("jobs_json", "") or "[]", slice_name, start, end, off
+                vals.get("jobs_json", "") or "[]", slice_name, start, end, off, fields=fields
             )
             self._form.set_values({"jobs_json": new_jobs})
             self._log.append(

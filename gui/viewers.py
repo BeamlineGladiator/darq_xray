@@ -58,7 +58,7 @@ def volume_sources(stage_name: str, result, params: dict) -> dict[str, VolumeSou
 
 
 def inject_line_into_jobs(
-    jobs_json: str, slice_name: str, start_uv, end_uv, offset_um: float
+    jobs_json: str, slice_name: str, start_uv, end_uv, offset_um: float, fields=None
 ) -> str:
     """Return a new jobs_json with the picked line written into the matching job.
 
@@ -84,4 +84,6 @@ def inject_line_into_jobs(
     target["offset_um"] = round(float(offset_um), 4)
     target["start_uv"] = [round(float(start_uv[0]), 4), round(float(start_uv[1]), 4)]
     target["end_uv"] = [round(float(end_uv[0]), 4), round(float(end_uv[1]), 4)]
+    if fields is not None:
+        target["fields"] = list(fields)
     return json.dumps(jobs, indent=2)
