@@ -421,11 +421,44 @@ strain and misorientation line up.
 |---|---|
 | `mode` | `parameter` (reproducible run from committed coords) / `preview` (just show the plane) |
 | `jobs_json` | list of profile jobs (slice name, offset, `start_uv`/`end_uv`, band width) |
-| `reference_volume_id` | which field is the top image |
+| `reference_volume_id` | which field is the top image (global default) |
+| `volume_ids` | comma-separated field ids to profile, in order (global default; blank = all) |
 
 > [!tip] Don't type coordinates by hand
 > Use **Pick line…** to click the endpoints on the plane — see
 > [[#Line picker (profiles)]].
+
+#### Jobs JSON: per-job `fields` and `reference`
+
+Each job in `jobs_json` may carry two optional keys that override the global
+`volume_ids` / `reference_volume_id` for that job alone:
+
+| Key | Type | Meaning |
+|---|---|---|
+| `"fields"` | list of strings | Field ids to profile for this job, in this order. Ids not present for the slice are silently dropped. Omit to use the global `volume_ids` (or all fields when blank). |
+| `"reference"` | string | Field id to use as the top reference image for this job. Omit to use the global `reference_volume_id` fallback. |
+
+Example — profile only `strain` for one job while the global default profiles all fields:
+
+```json
+[
+  {
+    "name": "oblique_full",
+    "offset_um": 0.0,
+    "start_uv": [-5, -3],
+    "end_uv": [5, 3],
+    "n_samples": 40,
+    "width_pixels": 1,
+    "fig_name": "strain_only",
+    "fields": ["strain"],
+    "reference": "raw_sum"
+  }
+]
+```
+
+Both `run()` and the export catalog rebuild (`figures()`) honour per-job
+`fields`/`reference` automatically — they both call the shared `_collect`
+function where the override is applied.
 
 ### 9. Rocking-matched layers (`matched`)
 

@@ -137,7 +137,9 @@ STAGE = StageSpec(
             default=_DEFAULT_JOBS,
             help=(
                 "JSON list of profile jobs: slice name, plane offset, line start/end in µm "
-                "('start_uv'/'end_uv'), and band width in pixels. Easiest filled by 'Pick line…'."
+                "('start_uv'/'end_uv'), and band width in pixels. Optional per-job 'fields' "
+                "(list of field ids to profile, in order) and 'reference' (top image) override "
+                "the global Fields/Reference. Easiest filled by 'Pick line…'."
             ),
         ),
         Param(
@@ -555,7 +557,10 @@ def _collect(f, job, p, ref_pref, restrict):
     present = volume_ids_with_slice(f, name)
     if not present:
         raise KeyError(f"slice {name!r} not present in any field group")
-    ref_id = _pick_reference_id(present, ref_pref)
+    # per-job overrides fall back to the global reference / restrict
+    job_ref = job.get("reference") or ref_pref
+    job_fields = job.get("fields") or restrict
+    ref_id = _pick_reference_id(present, job_ref)
     u_um, v_um, offsets = read_axes(f[f"{ref_id}/{name}"])
     idx, off_used = resolve_plane_index(offsets, job["offset_um"])
     ref_attrs = read_volume_attrs(f, ref_id)
@@ -571,7 +576,7 @@ def _collect(f, job, p, ref_pref, restrict):
     )
     geom_tol, off_tol = float(p["geom_tol_um"]), float(p["offset_tol_um"])
     fields = []
-    for vid in _ordered_field_ids(present, ref_id, restrict):
+    for vid in _ordered_field_ids(present, ref_id, job_fields):
         sg = f[f"{vid}/{name}"]
         cu, cv, coff = read_axes(sg)
         check_geometry(u_um, v_um, cu, cv, vid, geom_tol)
