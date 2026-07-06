@@ -167,6 +167,15 @@ def test_run_mosaicity_source_builds_mosa_volume(tmp_path):
     assert res.volume_shape[0] == 3
     # source-aware product title
     assert any(d.name == "raw_sum_intensity" for d in res.datasets)
+    # figures() returns source-aware titles
+    fig_params = {
+        "source_scan": "mosaicity",
+        "pixel_size_x_um": 0.152,
+        "pixel_size_y_um": 0.385,
+    }
+    specs = RK.figures(res, fig_params)
+    sum_titles = [s.title for s in specs if "sum_intensity" in s.figure_id]
+    assert sum_titles and sum_titles[0] == "Mosa-integrated Sum Intensity — layer 0"
 
 
 def test_figures_use_raw_group(tmp_path):

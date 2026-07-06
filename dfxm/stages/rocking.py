@@ -836,7 +836,7 @@ def run(params: dict, progress: ProgressFn | None = None) -> RockingResult:
         group="raw",
     )
 
-    progress(1.0, f"aligned {result.n_layers_used} rocking layers -> {out_dir}")
+    progress(1.0, f"aligned {result.n_layers_used} {source} layers -> {out_dir}")
     return result
 
 
@@ -854,12 +854,6 @@ _PRODUCT_DATASET: dict[str, str] = {
 # in figures() because it depends on the normalize_sum param)
 _PRODUCT_CBAR: dict[str, str] = {
     "specific_frame": "Intensity (a.u.)",
-}
-
-# Titles matching _render() calls (static entries; specific_frame is built dynamically
-# in figures() because it includes the frame index)
-_PRODUCT_TITLE: dict[str, str] = {
-    "sum_intensity": "Background-subtracted Sum Intensity",
 }
 
 
@@ -900,10 +894,17 @@ def figures(result: RockingResult, params: dict) -> list[FigureSpec]:
             title = _sum_title(source)
         else:
             cbar_label = _PRODUCT_CBAR.get(ds_key, prod.name)
-            if ds_key == "specific_frame" and result.specific_frame_idx is not None:
-                title = _spec_title(source, result.specific_frame_idx)
+            if ds_key == "specific_frame":
+                if result.specific_frame_idx is not None:
+                    title = _spec_title(source, result.specific_frame_idx)
+                else:
+                    title = (
+                        "Mosa-integrated Specific Frame"
+                        if source == "mosaicity"
+                        else "Background-subtracted Specific Frame"
+                    )
             else:
-                title = _PRODUCT_TITLE.get(ds_key, prod.name)
+                title = prod.name
         # id_prefix uses the product name so each product gets distinct ids/filenames
         id_prefix = prod.name
 
