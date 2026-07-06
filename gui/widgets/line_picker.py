@@ -154,13 +154,19 @@ class LinePickerDialog(QDialog):
             self._pts[0],
             self._pts[1],
             float(self._offsets[self._idx]),
-            self.selected_fields(),
+            self.field_restriction(),
         )
         self.accept()
 
     def selected_fields(self) -> list[str]:
         """Ticked field ids, in catalog order (all present when none unticked)."""
         return [vid for vid in self._present if self._field_boxes[vid].isChecked()]
+
+    def field_restriction(self) -> list[str] | None:
+        """The per-job ``fields`` restriction, or None when the user left ALL
+        present fields checked (= no restriction; job auto-adapts to new fields)."""
+        sel = self.selected_fields()
+        return None if set(sel) == set(self._present) else sel
 
     # -- cleanup ----------------------------------------------------------
     def done(self, code) -> None:  # noqa: D401 - Qt override

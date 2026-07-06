@@ -43,6 +43,32 @@ def test_picker_exposes_field_checkboxes(tmp_path):
     dlg = LinePickerDialog(str(h5), "oblique_full")
     # one checkbox per present field, all checked by default
     assert set(dlg.selected_fields()) == {"raw_sum", "strain"}
+    # when all boxes are checked field_restriction() returns None (no restriction)
+    assert dlg.field_restriction() is None
     # unticking one narrows the returned set
     dlg._field_boxes["raw_sum"].setCheckState(Qt.CheckState.Unchecked)
     assert dlg.selected_fields() == ["strain"]
+    # and field_restriction() now returns the restricted list (not None)
+    assert dlg.field_restriction() == ["strain"]
+    dlg.done(0)
+
+
+def test_inject_line_into_jobs_with_fields():
+    """inject_line_into_jobs is pure — unit-test the fields= kwarg directly."""
+    import json
+
+    from gui.viewers import inject_line_into_jobs
+
+    base = json.dumps([{"name": "oblique_full", "offset_um": 0.0}])
+
+    # fields=["strain"] → job has "fields": ["strain"]
+    result = inject_line_into_jobs(
+        base, "oblique_full", (0.0, 0.0), (1.0, 0.0), 0.0, fields=["strain"]
+    )
+    job = json.loads(result)[0]
+    assert job["fields"] == ["strain"]
+
+    # fields=None → job has NO "fields" key (backward-compatible default)
+    result = inject_line_into_jobs(base, "oblique_full", (0.0, 0.0), (1.0, 0.0), 0.0, fields=None)
+    job = json.loads(result)[0]
+    assert "fields" not in job
