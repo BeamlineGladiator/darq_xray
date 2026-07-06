@@ -97,6 +97,19 @@ def test_center_unknown_method_raises():
         A.center_around_zero(np.zeros((2, 2, 2)), "bogus")
 
 
+def test_interpolate_to_uniform_z_single_layer():
+    """A single-layer volume must return finite data (not NaN) with scale_z > 0 (FIX 3)."""
+    rng = np.random.default_rng(42)
+    vol = rng.standard_normal((1, 4, 5))
+    samz = np.array([0.001])  # mm — single position
+    vol_out, z_uniform, scale_z = A.interpolate_to_uniform_z(vol, samz)
+    assert vol_out.shape == (1, 4, 5), f"expected (1,4,5), got {vol_out.shape}"
+    assert np.all(np.isfinite(vol_out)), "single-layer output must be fully finite"
+    np.testing.assert_array_equal(vol_out, vol)
+    assert scale_z > 0, f"scale_z must be positive, got {scale_z}"
+    assert len(z_uniform) == 1
+
+
 # -- raster -------------------------------------------------------------------
 def _write_raw(folder, samy, samz):
     os.makedirs(folder, exist_ok=True)

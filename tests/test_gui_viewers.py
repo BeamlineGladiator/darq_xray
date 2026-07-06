@@ -136,3 +136,18 @@ def test_inject_creates_job_when_empty():
 def test_inject_handles_garbage():
     out = viewers.inject_line_into_jobs("not json", "s", (0, 0), (1, 1), 0.0)
     assert json.loads(out)[0]["name"] == "s"
+
+
+def test_inject_clears_stale_fields_when_none():
+    """A stale 'fields' key must be removed when fields=None is passed (FIX 1)."""
+    base = json.dumps([{"name": "oblique_full", "offset_um": 0.0}])
+    # First inject with a field restriction
+    restricted = viewers.inject_line_into_jobs(
+        base, "oblique_full", (0.0, 0.0), (1.0, 0.0), 0.0, fields=["strain"]
+    )
+    assert json.loads(restricted)[0]["fields"] == ["strain"]
+    # Second inject with fields=None — stale key must be removed
+    unrestricted = viewers.inject_line_into_jobs(
+        restricted, "oblique_full", (0.0, 0.0), (1.0, 0.0), 0.0, fields=None
+    )
+    assert "fields" not in json.loads(unrestricted)[0]

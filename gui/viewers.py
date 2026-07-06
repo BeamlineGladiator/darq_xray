@@ -86,4 +86,6 @@ def inject_line_into_jobs(
     target["end_uv"] = [round(float(end_uv[0]), 4), round(float(end_uv[1]), 4)]
     if fields is not None:
         target["fields"] = list(fields)
+    else:
+        target.pop("fields", None)
     return json.dumps(jobs, indent=2)

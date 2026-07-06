@@ -208,7 +208,20 @@ class SliceReplotDialog(QDialog):
         if not sels:
             self._status.setText("nothing selected")
             return
-        written = self.render_selection(out_dir)
+        # Validate colour-limit boxes before rendering: non-empty but unparseable → error
+        for label, edit in (("vmin", self._vmin), ("vmax", self._vmax)):
+            t = edit.text().strip()
+            if t:
+                try:
+                    float(t)
+                except ValueError:
+                    self._status.setText(f"invalid colour limit ({label}): {t!r}")
+                    return
+        try:
+            written = self.render_selection(out_dir)
+        except Exception as exc:  # noqa: BLE001 — surface render errors in the status bar
+            self._status.setText(f"render failed: {exc}")
+            return
         self._status.setText(f"wrote {len(written)} PNG(s) → {out_dir}")
 
     def _on_browse_h5(self) -> None:

@@ -113,6 +113,11 @@ def interpolate_to_uniform_z(
     if median_step < 1e-6:
         median_step = 1.0
 
+    if n_use == 1:
+        # A single layer has no Z extent: return it unchanged on a length-1 grid
+        # with a nonzero scale (avoids scale_z=0 and the all-NaN interp1d result).
+        return volume[:1].astype(volume.dtype), z_um, median_step
+
     z_min, z_max = float(z_um.min()), float(z_um.max())
     n_uniform = max(2, int(np.round((z_max - z_min) / median_step)) + 1)
     z_uniform = np.linspace(z_min, z_max, n_uniform)

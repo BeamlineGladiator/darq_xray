@@ -270,8 +270,13 @@ frame**, anchored to the mosaicity reference so they overlay the other volumes.
   volumes side-by-side.
 
 > [!tip]
-> An explicit `output_dir` or `aligned_h5_name` is always respected; the
-> auto-rename only applies when both are still at their rocking defaults.
+> An explicit value is always respected; each default is substituted
+> independently. The filename is auto-renamed to the mosa variant whenever
+> `aligned_h5_name` is still at its rocking default; the output directory is
+> renamed whenever `output_dir` is left blank. If you reuse a single explicit
+> `output_dir` for both a rocking and a mosaicity run, the rendered media
+> (per-layer PNGs, animation, top-view) will be overwritten even though the
+> `.h5` files have distinct default names.
 
 ### 5. Visualize volumes (`visualize`)
 

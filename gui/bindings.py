@@ -135,7 +135,11 @@ def experiment_overrides(stage_name: str, exp: Experiment) -> dict:
             mosa_volume_file=os.path.join(proc, _MOSA_VOLUME) if proc else "",
             strain_volume_file=os.path.join(proc, _STRAIN_VOLUME) if proc else "",
             aligned_rocking_file=os.path.join(proc, _ALIGNED_ROCKING) if proc else "",
-            aligned_mosa_file=os.path.join(proc, _ALIGNED_MOSA) if proc else "",
+            aligned_mosa_file=(
+                os.path.join(proc, _ALIGNED_MOSA)
+                if proc and os.path.exists(os.path.join(proc, _ALIGNED_MOSA))
+                else ""
+            ),
             raw_root=exp.raw_root,
             mosa_pattern=exp.mosa_pattern,
             strain_pattern=exp.folder_pattern,

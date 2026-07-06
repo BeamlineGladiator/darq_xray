@@ -95,6 +95,9 @@ class LinePickerDialog(QDialog):
         lay.addLayout(fields_row)
         lay.addLayout(nav)
 
+        for box in self._field_boxes.values():
+            box.toggled.connect(self._refresh_use_button)
+
         self._canvas.mpl_connect("button_press_event", self._on_click)
         self._draw_plane()
 
@@ -138,13 +141,17 @@ class LinePickerDialog(QDialog):
         self._idx = max(0, min(self._idx + d, len(self._offsets) - 1))
         self._draw_plane()
 
+    def _refresh_use_button(self) -> None:
+        """Enable the Use button only when 2 points are picked AND ≥1 field is checked."""
+        self._use.setEnabled(len(self._pts) == 2 and bool(self.selected_fields()))
+
     def _on_click(self, event) -> None:
         if event.inaxes is not self._ax or event.xdata is None or event.ydata is None:
             return
         if len(self._pts) >= 2:
             self._pts = []
         self._pts.append((float(event.xdata), float(event.ydata)))
-        self._use.setEnabled(len(self._pts) == 2)
+        self._refresh_use_button()
         self._draw_plane()
 
     def _accept(self) -> None:

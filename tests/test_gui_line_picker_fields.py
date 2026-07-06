@@ -53,6 +53,25 @@ def test_picker_exposes_field_checkboxes(tmp_path):
     dlg.done(0)
 
 
+def test_use_button_disabled_when_no_fields_checked(tmp_path):
+    """Use button must be disabled when all field boxes are unchecked (FIX 4)."""
+    from gui.widgets.line_picker import LinePickerDialog
+
+    h5 = tmp_path / "oblique_slices.h5"
+    _mini(str(h5))
+    _app = QApplication.instance() or QApplication([])
+    dlg = LinePickerDialog(str(h5), "oblique_full")
+    # Simulate 2-point pick directly (bypasses mpl event system)
+    dlg._pts = [(0.0, 0.0), (1.0, 0.0)]
+    dlg._refresh_use_button()  # apply the updated enable logic
+    assert dlg._use.isEnabled(), "Use button should be enabled with 2 pts + ≥1 field"
+    # Uncheck ALL field boxes — Use button must become disabled
+    for box in dlg._field_boxes.values():
+        box.setCheckState(Qt.CheckState.Unchecked)
+    assert not dlg._use.isEnabled(), "Use button must be disabled when no fields are checked"
+    dlg.done(0)
+
+
 def test_inject_line_into_jobs_with_fields():
     """inject_line_into_jobs is pure — unit-test the fields= kwarg directly."""
     import json
