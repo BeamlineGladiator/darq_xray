@@ -932,15 +932,17 @@ def run(params: dict, progress: ProgressFn | None = None) -> SlicesResult:
                     )
                     planes.append(s2d)
                     if save_png:
+                        slice_dir = os.path.join(out_dir, sl["name"])
+                        os.makedirs(slice_dir, exist_ok=True)
                         if len(offsets) == 1:
-                            png = os.path.join(out_dir, f"{sl['name']}__{prep['volume_id']}.png")
+                            png = os.path.join(slice_dir, f"{prep['volume_id']}.png")
                             save_slice_png(
                                 prep, sl, s2d, u_um, v_um, png, offset_um=None, style=style
                             )
                         else:
                             png = os.path.join(
-                                out_dir,
-                                f"{sl['name']}__{prep['volume_id']}__p{pi:03d}_{off:+08.2f}um.png",
+                                slice_dir,
+                                f"{prep['volume_id']}__p{pi:03d}_{off:+08.2f}um.png",
                             )
                             save_slice_png(
                                 prep, sl, s2d, u_um, v_um, png, offset_um=off, style=style

@@ -332,7 +332,7 @@ Port of `extract_oblique_slices_v5`. Arbitrary planes through the aligned volume
 - `save_slice_png(prep, sl, slice2d, u_um, v_um, out_png, *, offset_um, dpi=150, style=None)` — build a slice figure (legacy look when `style` is None) and save it to `out_png` (used by `run`, which passes the injected style).
 - `write_volume_group` — write one volume group to `oblique_slices.h5`; when `clim_note` is set it also writes `vmin_raw` / `vmax_raw` attrs alongside the rounded `vmin` / `vmax`, so downstream tools (profiles, line picker) can show or log the original unrounded limits.
 - `figures(result, params)` — `@register("slices")` catalog: one `kind="map"` `FigureSpec` per plane per slice-name sub-group per volume group in `oblique_slices.h5`. Each `build(style)` re-resolves the colormap from the stored `kind` via `resolve_cmap` (falling back to the stored `cmap` attr for files without a known kind). Volume-group attrs are read defensively (`.get` with defaults), so one group from an older/partial run missing an attr is catalogued with fallbacks instead of aborting the whole listing.
-- `run` validates each slice up front, writes `oblique_slices.h5` + a PNG per plane; appends a human-readable rounding note to `result.notes` (and logs it via `progress`) for each volume whose colour limits were rounded.
+- `run` validates each slice up front, writes `oblique_slices.h5` + a PNG per plane; PNGs are written into per-slice-direction subfolders (`<out_dir>/<slice name>/`), e.g. `<out_dir>/oblique/mosa_com_chi.png`; appends a human-readable rounding note to `result.notes` (and logs it via `progress`) for each volume whose colour limits were rounded.
 
 #### `profiles.py`
 Port of `line_profile_oblique_slices_v2` (headless modes). 1-D profiles across one
@@ -446,7 +446,7 @@ What each stage reads and writes (file names are the defaults), and what its `fi
 | `rocking` | raw rocking scans (+ mosa/strain motors) | `aligned_raw_rocking_volumes.h5` + media | map per layer for sum + specific-frame volumes |
 | `visualize` | `stacked_volumes.h5`, `stacked_strain_volumes.h5` | PNGs / MP4 / 3-D top-view | map per layer per aligned dataset |
 | `paraview` | the stacked volumes | `*_volume.pvti` + `*_pieces/` + `export_info.txt` | *(none)* |
-| `slices` | stacked volumes + aligned rocking volume | `oblique_slices.h5` + PNG per plane | map per plane per volume group |
+| `slices` | stacked volumes + aligned rocking volume | `oblique_slices.h5` + PNG per plane (in `<out_dir>/<slice name>/`) | map per plane per volume group |
 | `profiles` | `oblique_slices.h5` | companion figures + CSVs + overviews | companion figure per parameter-mode job |
 | `matched` | raw strain + rocking scans | grayscale `rocking_layers/*.png` | map per matched layer |
 

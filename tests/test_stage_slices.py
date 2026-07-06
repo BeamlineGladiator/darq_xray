@@ -374,6 +374,31 @@ def test_build_slice_figure_raw_arbitrary_units_drops_ticks():
     assert cbar_ax.get_ylabel() == "Sum intensity (a.u.)"  # already a.u. -> unchanged
 
 
+def test_run_writes_pngs_under_per_slice_subfolders(tmp_path):
+    proc, raw = _setup(tmp_path)
+    out = tmp_path / "sl"
+    slices_json = (
+        '[{"name":"mid","normal":[0,0,1],"origin":[0.5,0.5,1.5],'
+        '"half_u":0.4,"half_v":0.4,"du":0.2,"dv":0.2,"sweep_step_um":null}]'
+    )
+    res = S.run(
+        {
+            "mosa_volume_file": str(proc / "stacked_volumes.h5"),
+            "strain_volume_file": str(proc / "stacked_strain_volumes.h5"),
+            "raw_root": str(raw),
+            "mosa_pattern": "mosa__*",
+            "strain_pattern": "strain__*",
+            "slices_json": slices_json,
+            "output_dir": str(out),
+        }
+    )
+    assert res.pngs and all(os.path.exists(p) for p in res.pngs)
+    # every PNG lives under {out_dir}/mid/, not flat in {out_dir}
+    for p in res.pngs:
+        assert os.path.basename(os.path.dirname(p)) == "mid"
+        assert not os.path.exists(os.path.join(str(out), os.path.basename(p)))
+
+
 def test_run_without_round_clim_has_no_notes_or_raw_attrs(tmp_path):
     proc, raw = _setup(tmp_path)
     out = tmp_path / "sl"
