@@ -421,6 +421,63 @@ def test_run_without_round_clim_has_no_notes_or_raw_attrs(tmp_path):
             assert "vmin_raw" not in f[vid].attrs
 
 
+def _write_mini_consolidated(path):
+    """Two fields sharing one slice with 3 planes; raw-group + strain-group attrs."""
+    u = np.linspace(-4.0, 4.0, 9)
+    v = np.linspace(-3.0, 3.0, 7)
+    offsets = np.array([-1.0, 0.0, 1.0])
+    with h5py.File(path, "w") as f:
+        for vid, kind, cmap in (("raw_sum", "raw_sum", "gray"), ("strain", "strain", "RdBu_r")):
+            g = f.create_group(vid)
+            g.attrs["kind"] = kind
+            g.attrs["cmap"] = cmap
+            g.attrs["title"] = vid
+            g.attrs["cbar_label"] = "value"
+            g.attrs["vmin"] = -1.0
+            g.attrs["vmax"] = 1.0
+            sg = g.create_group("plane_a")
+            sg.create_dataset("slices", data=np.zeros((3, v.size, u.size), dtype=np.float32))
+            sg.create_dataset("u_um", data=u)
+            sg.create_dataset("v_um", data=v)
+            sg.create_dataset("offsets_um", data=offsets)
+
+
+def test_replot_catalog_enumerates_volumes_slices_planes(tmp_path):
+    h5 = tmp_path / "oblique_slices.h5"
+    _write_mini_consolidated(str(h5))
+    cat = S.replot_catalog(str(h5))
+    by_vid = {(e.volume_id, e.slice_name): e for e in cat}
+    assert set(by_vid) == {("raw_sum", "plane_a"), ("strain", "plane_a")}
+    assert by_vid[("strain", "plane_a")].n_planes == 3
+    assert by_vid[("strain", "plane_a")].offsets_um == [-1.0, 0.0, 1.0]
+
+
+def test_render_replot_writes_selected_planes_under_subfolders(tmp_path):
+    h5 = tmp_path / "oblique_slices.h5"
+    _write_mini_consolidated(str(h5))
+    out = tmp_path / "replots"
+    # strain: only planes 0 and 2; raw_sum: all planes (None)
+    written = S.render_replot(
+        str(h5),
+        [("strain", "plane_a", [0, 2]), ("raw_sum", "plane_a", None)],
+        style=None,
+        clim=None,
+        out_dir=str(out),
+    )
+    assert len(written) == 2 + 3
+    assert all(os.path.exists(p) for p in written)
+    # per-slice subfolder layout
+    assert all(os.path.basename(os.path.dirname(p)) == "plane_a" for p in written)
+
+
+def test_render_replot_clim_override_changes_norm(tmp_path):
+    h5 = tmp_path / "oblique_slices.h5"
+    _write_mini_consolidated(str(h5))
+    fig = S._rebuild_plane_figure(str(h5), "strain", "plane_a", 1, style=None, clim=(-5.0, 5.0))
+    im = fig.axes[0].images[0]
+    assert im.norm.vmin == -5.0 and im.norm.vmax == 5.0
+
+
 def test_run_includes_mosa_raw_field(tmp_path):
     proc, raw = _setup(tmp_path)
     rng = np.random.default_rng(1)

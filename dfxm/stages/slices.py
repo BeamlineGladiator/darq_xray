@@ -445,6 +445,14 @@ class SlicesResult:
     notes: list[str] = field(default_factory=list)
 
 
+@dataclass
+class ReplotEntry:
+    volume_id: str
+    slice_name: str
+    n_planes: int
+    offsets_um: list[float] = field(default_factory=list)
+
+
 # -----------------------------------------------------------------------------
 # Centering / colour-range helpers (faithful port)
 # -----------------------------------------------------------------------------
@@ -1034,43 +1042,17 @@ def figures(result: SlicesResult, params: dict) -> list[FigureSpec]:
     if not result.output_h5:
         return []
     specs = []
+    # attrs are read defensively inside _rebuild_plane_figure, so one group from an
+    # older/partial run missing an attr is rendered with fallbacks, not skipped.
     with h5py.File(result.output_h5, "r") as f:
         for vid in f.keys():
             vg = f[vid]
-            # Reconstruct prep keys that build_slice_figure / _make_norm consume.
-            # center_zero is not stored as an attr; derive it from "kind"
-            # (center_zero mirrors prepare_volume via _CENTERED_KINDS).
-            # Read attrs defensively: a single volume group written by an older
-            # or partial run that is missing an attr must NOT abort cataloguing
-            # for every other (valid) volume. Fall back to harmless defaults.
-            kind = str(vg.attrs.get("kind", ""))
-            prep = {
-                "cmap_name": str(vg.attrs.get("cmap", "magma")),
-                "title": str(vg.attrs.get("title", vid)),
-                "cbar_label": str(vg.attrs.get("cbar_label", "")),
-                "vmin": float(vg.attrs.get("vmin", 0.0)),
-                "vmax": float(vg.attrs.get("vmax", 1.0)),
-                "center_zero": kind in _CENTERED_KINDS,
-            }
             for sname in vg.keys():
                 n_planes = vg[sname]["slices"].shape[0]
                 for k in range(n_planes):
 
-                    def build(style, vid=vid, sname=sname, k=k, prep=dict(prep), kind=kind):
-                        prep = dict(prep)
-                        prep["cmap_name"] = resolve_cmap(
-                            style, GROUP_BY_KIND.get(kind), fallback=prep["cmap_name"]
-                        )
-                        prep["group"] = GROUP_BY_KIND.get(kind)
-                        with h5py.File(result.output_h5, "r") as g:
-                            sg = g[vid][sname]
-                            s2d = sg["slices"][k]
-                            u = sg["u_um"][:]
-                            v = sg["v_um"][:]
-                            off = float(sg["offsets_um"][k])
-                        return build_slice_figure(
-                            prep, {"name": sname}, s2d, u, v, offset_um=off, style=style
-                        )
+                    def build(style, vid=vid, sname=sname, k=k):
+                        return _rebuild_plane_figure(result.output_h5, vid, sname, k, style)
 
                     specs.append(
                         FigureSpec(
@@ -1082,6 +1064,95 @@ def figures(result: SlicesResult, params: dict) -> list[FigureSpec]:
                         )
                     )
     return specs
+
+
+def _rebuild_plane_figure(h5_path, vid, sname, k, style, *, clim=None) -> Figure:
+    """Rebuild one plane's slice figure from an oblique_slices.h5 group.
+
+    Shared by :func:`figures` (catalog/export) and :func:`render_replot` so the
+    prep-from-attrs reconstruction lives in exactly one place. ``clim`` is an
+    optional ``(vmin, vmax)`` override; ``None`` entries keep the stored value.
+    """
+    with h5py.File(h5_path, "r") as f:
+        vg = f[vid]
+        kind = str(vg.attrs.get("kind", ""))
+        prep = {
+            "cmap_name": str(vg.attrs.get("cmap", "magma")),
+            "title": str(vg.attrs.get("title", vid)),
+            "cbar_label": str(vg.attrs.get("cbar_label", "")),
+            "vmin": float(vg.attrs.get("vmin", 0.0)),
+            "vmax": float(vg.attrs.get("vmax", 1.0)),
+            "center_zero": kind in _CENTERED_KINDS,
+        }
+        sg = vg[sname]
+        s2d = sg["slices"][k]
+        u = sg["u_um"][:]
+        v = sg["v_um"][:]
+        off = float(sg["offsets_um"][k])
+    if clim is not None:
+        vmin_o, vmax_o = clim
+        if vmin_o is not None:
+            prep["vmin"] = float(vmin_o)
+        if vmax_o is not None:
+            prep["vmax"] = float(vmax_o)
+    prep["cmap_name"] = resolve_cmap(style, GROUP_BY_KIND.get(kind), fallback=prep["cmap_name"])
+    prep["group"] = GROUP_BY_KIND.get(kind)
+    return build_slice_figure(prep, {"name": sname}, s2d, u, v, offset_um=off, style=style)
+
+
+def replot_catalog(h5_path: str) -> list[ReplotEntry]:
+    """List every (volume_id, slice_name, n_planes, offsets_um) in an oblique_slices.h5."""
+    entries: list[ReplotEntry] = []
+    with h5py.File(h5_path, "r") as f:
+        for vid in f.keys():
+            vg = f[vid]
+            if not isinstance(vg, h5py.Group):
+                continue
+            for sname in vg.keys():
+                sg = vg[sname]
+                if not (isinstance(sg, h5py.Group) and "slices" in sg):
+                    continue
+                offsets = [float(o) for o in sg["offsets_um"][:]]
+                entries.append(ReplotEntry(vid, sname, int(sg["slices"].shape[0]), offsets))
+    return entries
+
+
+def render_replot(
+    h5_path: str,
+    selections: list[tuple[str, str, list[int] | None]],
+    style: PlotStyle | None,
+    clim: tuple[float | None, float | None] | None,
+    out_dir: str,
+    *,
+    dpi: int = 150,
+) -> list[str]:
+    """Rebuild + save the selected planes (appearance-only; no resampling).
+
+    ``selections`` is a list of ``(volume_id, slice_name, plane_idxs)`` where
+    ``plane_idxs`` is ``None`` for all planes. PNGs are written under
+    ``{out_dir}/{slice_name}/`` mirroring the slices run layout; returns the
+    written paths.
+    """
+    catalog = {(e.volume_id, e.slice_name): e for e in replot_catalog(h5_path)}
+    written: list[str] = []
+    for vid, sname, plane_idxs in selections:
+        entry = catalog.get((vid, sname))
+        if entry is None:
+            continue
+        idxs = list(range(entry.n_planes)) if plane_idxs is None else list(plane_idxs)
+        slice_dir = os.path.join(out_dir, sname)
+        os.makedirs(slice_dir, exist_ok=True)
+        for k in idxs:
+            if k < 0 or k >= entry.n_planes:
+                continue
+            fig = _rebuild_plane_figure(h5_path, vid, sname, k, style, clim=clim)
+            if entry.n_planes == 1:
+                png = os.path.join(slice_dir, f"{vid}.png")
+            else:
+                png = os.path.join(slice_dir, f"{vid}__p{k:03d}_{entry.offsets_um[k]:+08.2f}um.png")
+            fig.savefig(png, dpi=dpi, facecolor="white", bbox_inches="tight")
+            written.append(png)
+    return written
 
 
 def _main(argv: list[str] | None = None) -> int:
