@@ -335,6 +335,33 @@ through the aligned volumes — all in one world frame so the slices co-register
 > z-normal plane, u/v are exactly X/Y). Add an `"up": [x,y,z]` entry to a slice
 > spec to override the vertical direction.
 
+> [!tip] Pinning one plane from a sweep
+> A sweep writes many parallel planes; each plane's offset along the normal is in
+> its PNG filename (`…__p012_+024.00um.png`) and in the `offsets_um` dataset of
+> `oblique_slices.h5`. To re-render **just** the plane you liked, pin the sweep to
+> a single offset by setting `sweep_start_um == sweep_stop_um`. One gotcha:
+> `extent: "auto"` overwrites the sweep window (and re-centres the origin), so
+> drop it and give explicit `half_u`/`half_v` (µm):
+> ```json
+> [
+>   {"name": "oblique_pick", "normal": [0.647648, 0, 0.761939],
+>    "origin": [0, 0, 0], "half_u": 60.0, "half_v": 40.0,
+>    "sweep_step_um": 1.0, "sweep_start_um": 24.0, "sweep_stop_um": 24.0}
+> ]
+> ```
+> To reproduce the swept plane **exactly**, reuse the geometry the sweep stored:
+> copy `normal`/`origin`/`up`/`half_u`/`half_v` from the slice group's attrs in
+> `oblique_slices.h5`. The helper does this for you and snaps to the nearest
+> stored plane:
+> ```
+> python3 tools/pin_slice.py oblique_slices.h5 oblique_full --offset 24
+> ```
+> It prints a ready-to-paste one-element `slices_json`. The
+> [[#8. Line profiles (`profiles`)|profiles]] stage selects the same way — a job's
+> `offset_um` picks the nearest plane in the swept slice group (within
+> `offset_tol_um`), so you can also feed that offset straight to a profile job
+> without re-slicing.
+
 ### 8. Line profiles (`profiles`)
 
 Profile a straight line (or a band of parallel lines) across one slice plane —
