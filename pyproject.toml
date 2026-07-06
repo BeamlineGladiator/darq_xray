@@ -40,3 +40,14 @@ quote-style = "double"
 # project root so `python3 -m pytest` works without `pip install -e`.
 pythonpath = ["."]
 testpaths = ["tests"]
+# Silence two third-party deprecation warnings surfaced (not caused) by the
+# offscreen GUI tests, so suite output stays pristine:
+#  - matplotlib's Qt backend sets the AA_UseHighDpiPixmaps attribute that
+#    PySide6 6.x deprecated (fires when a GUI test builds an mpl-Qt canvas);
+#  - the GUI tests create a process-global QApplication (Qt threads), so the
+#    fork-based StageRunner test (which deliberately exercises start_method
+#    "fork") then warns about fork() in a multi-threaded process.
+filterwarnings = [
+    "ignore:.*AA_UseHighDpiPixmaps.*:DeprecationWarning",
+    "ignore:.*multi-threaded, use of fork.*:DeprecationWarning",
+]
