@@ -299,14 +299,15 @@ Port of `stack_h5_darfix_volumes`. Stacks χ/μ Center-of-mass + FWHM maps.
 
 #### `rocking.py`
 Port of `build_aligned_raw_rocking_volumes_v3`. Aligned 3-D volumes straight
-from raw rocking scans, anchored to the mosaicity reference.
+from raw scans (rocking or mosaicity), anchored to the mosaicity reference.
 - `RockingProducts` / `RockingResult` — per-volume render products + aligned path/shape/reference. `RockingProducts.notes` collects one entry per volume whose auto colour limits were rounded (when `round_clim` is set), surfaced in the run log and the Results summary.
+- `_sum_title(source)` / `_spec_title(source, idx)` — source-aware product titles; return "Mosa-integrated …" when `source == "mosaicity"`, "Background-subtracted …" otherwise. Used in both `run()` and `figures()`.
 - `process_raw_scan(..., normalize_sum, subtract_background=True)` — when `subtract_background` (default), removes a per-pixel median background before summing (rocking behaviour); with `False`, returns a plain frame sum and the raw specific frame (mosa-topograph behaviour).
 - `build_raw_volumes(..., normalize_sum, subtract_background=True, progress=...)` — stack scans (sorted by samz) into two 3-D volumes; threads `subtract_background` into each `process_raw_scan` call.
-- `save_aligned_raw_volumes(...)` — write `aligned_raw_rocking_volumes.h5` (the schema [[#slices.py]] reads).
+- `save_aligned_raw_volumes(...)` — write the aligned volume HDF5 (the schema [[#slices.py]] reads).
 - `_render(..., style=None)` — per-volume PNGs/animation/top-view via [[#render.py]]; `run` resolves the raw-group colormap (`resolve_cmap(style, "raw")`, default gray) and threads the injected style through.
-- `figures(result, params)` — `@register("rocking")` catalog: one `kind="map"` `FigureSpec` per Z layer for each aligned volume (sum intensity, specific frame), via `volume_layer_specs` with `cmap_group="raw"`.
-- `run` (mosa reference + mosa∪strain samz union filter + alignment) / `_main`.
+- `figures(result, params)` — `@register("rocking")` catalog: one `kind="map"` `FigureSpec` per Z layer for each aligned volume (sum intensity, specific frame), via `volume_layer_specs` with `cmap_group="raw"`; reads `source_scan` from params to pass source-aware titles via `_sum_title`/`_spec_title`.
+- `run` — `source_scan="rocking"` (default): mosa reference + mosa∪strain samz union filter + alignment, writes `aligned_raw_rocking_volumes.h5`; `source_scan="mosaicity"`: every matched mosa folder is a layer (no samz-union masking), writes `aligned_raw_mosa_volumes.h5` when the output name/dir are still the rocking defaults / `_main`.
 
 #### `visualize.py`
 Port of `visualize_aligned_volumes_v6`. Aligns the stacked volumes and renders.

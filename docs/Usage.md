@@ -236,24 +236,42 @@ Stack per-layer χ/μ **Center-of-mass** and **FWHM** maps into a 3-D volume.
 
 ### 4. Aligned rocking volumes (`rocking`)
 
-Build aligned 3-D volumes straight from raw rocking scans: per-scan background
-subtraction → an integrated **sum** image and one **specific frame**, anchored to
-the mosaicity reference so they overlay the other volumes.
+Build aligned 3-D volumes from raw scans — either the rocking scans or the
+mosaicity scans — producing an integrated **sum** image and one **specific
+frame**, anchored to the mosaicity reference so they overlay the other volumes.
 
-- **Input:** raw rocking scan folders (+ mosa/strain folders for the samz range &
-  reference).
-- **Output:** `aligned_raw_rocking_volumes.h5` + per-layer PNGs, animation, 3-D
-  top-view.
+- **Input:** raw scan folders (+ mosa/strain folders for the alignment reference
+  and, in rocking mode, the samz union range).
+- **Output:** `aligned_raw_rocking_volumes.h5` (rocking mode) or
+  `aligned_raw_mosa_volumes.h5` (mosaicity mode) + per-layer PNGs, animation,
+  3-D top-view.
 
 **Essentials:** raw root, ROI X/Y, specific frame, output dir
 
 | Param | Meaning |
 |---|---|
+| `source_scan` | `rocking` (default) — use the rocking scan folders; `mosaicity` — use every matched mosa folder as a layer (DFXM topograph) |
 | `rocking_pattern` / `mosa_pattern` / `strain_pattern` | which raw folders to use |
 | `roi_x` / `roi_y` | detector crop applied at read time |
 | `specific_frame_idx` | which frame to extract (blank = central) |
 | `normalize_sum` | divide the summed intensity by frame count |
 | `subtract_background` | subtract per-pixel median background before summing (default on; turn off for a plain intensity sum, e.g. a mosa-scan topograph) |
+
+**Source scan selector (`source_scan`)**
+
+- `rocking` (default): each rocking scan folder whose `samz` falls in the union
+  of the mosaicity and strain Z ranges becomes one layer. Output is written to
+  `aligned_raw_rocking_volumes.h5`.
+- `mosaicity`: every matched `mosa_pattern` folder is a layer — frames are
+  summed and aligned exactly like rocking but no samz-union masking is applied.
+  Product titles read "Mosa-integrated …". Output is auto-named
+  `aligned_raw_mosa_volumes.h5` (under `aligned_raw_mosa_volumes/`) so it never
+  clobbers the rocking file. Run the stage once per source to build both
+  volumes side-by-side.
+
+> [!tip]
+> An explicit `output_dir` or `aligned_h5_name` is always respected; the
+> auto-rename only applies when both are still at their rocking defaults.
 
 ### 5. Visualize volumes (`visualize`)
 

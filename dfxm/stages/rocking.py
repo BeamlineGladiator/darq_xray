@@ -45,6 +45,19 @@ def _noop(_frac: float, _msg: str) -> None:
     pass
 
 
+def _sum_title(source: str) -> str:
+    return (
+        "Mosa-integrated Sum Intensity"
+        if source == "mosaicity"
+        else ("Background-subtracted Sum Intensity")
+    )
+
+
+def _spec_title(source: str, idx: int) -> str:
+    base = "Mosa-integrated Frame" if source == "mosaicity" else "Background-subtracted Frame"
+    return f"{base} {idx}"
+
+
 STAGE = StageSpec(
     name="rocking",
     label="Aligned rocking volumes",
@@ -69,6 +82,21 @@ STAGE = StageSpec(
             advanced=True,
             group="Data layout",
             help="Glob matching the raw rocking scan folders.",
+        ),
+        Param(
+            "source_scan",
+            ParamType.ENUM,
+            "Source scan",
+            default="rocking",
+            choices=("rocking", "mosaicity"),
+            advanced=True,
+            group="Data layout",
+            help=(
+                "Which scans' detector frames are summed into the raw volume. 'rocking' uses the "
+                "rocking scans (within the mosa/strain Z range); 'mosaicity' sums each mosa scan's "
+                "frames — one mosa folder per layer — as a DFXM topograph. Run once per source to "
+                "build both."
+            ),
         ),
         Param(
             "mosa_pattern",
@@ -645,13 +673,19 @@ def run(params: dict, progress: ProgressFn | None = None) -> RockingResult:
     spec_cfg = _parse_opt_int(p["specific_frame_idx"])
     tol = float(p["samz_tol_mm"])
 
-    out_dir = p["output_dir"] or os.path.join(raw_root, "aligned_raw_rocking_volumes")
+    source = p.get("source_scan", "rocking")
+    default_dir = (
+        "aligned_raw_mosa_volumes" if source == "mosaicity" else "aligned_raw_rocking_volumes"
+    )
+    out_dir = p["output_dir"] or os.path.join(raw_root, default_dir)
     result = RockingResult(output_dir=out_dir)
     os.makedirs(out_dir, exist_ok=True)
 
     # 1. mosa reference (anchors X shift + Z origin) + samz union start
     progress(0.02, "reading mosaicity motor positions")
-    mosa_samy, mosa_samz, _ = _motors(raw_root, p["mosa_pattern"], p["samy_path"], p["samz_path"])
+    mosa_samy, mosa_samz, mosa_names = _motors(
+        raw_root, p["mosa_pattern"], p["samy_path"], p["samz_path"]
+    )
     if len(mosa_samy) == 0:
         raise StageUserError(
             "rocking needs the mosaicity reference; no mosa motor positions found",
@@ -663,34 +697,39 @@ def run(params: dict, progress: ProgressFn | None = None) -> RockingResult:
     samy_ref, samz_ref = float(mosa_samy[0]), float(mosa_samz[0])
     result.samy_reference_mm, result.samz_reference_mm = samy_ref, samz_ref
 
-    # 2. samz union range (mosa ∪ strain)
-    _, strain_samz, _ = _motors(raw_root, p["strain_pattern"], p["samy_path"], p["samz_path"])
-    all_samz = np.concatenate([mosa_samz, strain_samz]) if len(strain_samz) else mosa_samz
-    z_min, z_max = float(all_samz.min()), float(all_samz.max())
+    # 2/3. choose the layers to process
+    if source == "mosaicity":
+        # the mosa scans themselves are the layers (no samz-union masking)
+        keep_paths = [os.path.join(raw_root, n) for n in mosa_names]
+        keep_samy, keep_samz = np.asarray(mosa_samy), np.asarray(mosa_samz)
+    else:
+        # samz union range (mosa ∪ strain)
+        _, strain_samz, _ = _motors(raw_root, p["strain_pattern"], p["samy_path"], p["samz_path"])
+        all_samz = np.concatenate([mosa_samz, strain_samz]) if len(strain_samz) else mosa_samz
+        z_min, z_max = float(all_samz.min()), float(all_samz.max())
 
-    # 3. rocking scans within the samz union range, sorted by samz
-    progress(0.06, "reading rocking motor positions")
-    rock_samy, rock_samz, rock_names = _motors(
-        raw_root, p["rocking_pattern"], p["samy_path"], p["samz_path"]
-    )
-    if len(rock_names) == 0:
-        raise StageUserError(
-            f"no rocking folders matching {p['rocking_pattern']!r} in {raw_root}",
-            hint="Check 'Rocking pattern' against the scan folder names under the raw root.",
+        progress(0.06, "reading rocking motor positions")
+        rock_samy, rock_samz, rock_names = _motors(
+            raw_root, p["rocking_pattern"], p["samy_path"], p["samz_path"]
         )
-    rock_paths = [os.path.join(raw_root, n) for n in rock_names]
+        if len(rock_names) == 0:
+            raise StageUserError(
+                f"no rocking folders matching {p['rocking_pattern']!r} in {raw_root}",
+                hint="Check 'Rocking pattern' against the scan folder names under the raw root.",
+            )
+        rock_paths = [os.path.join(raw_root, n) for n in rock_names]
+        mask = (rock_samz >= z_min - tol) & (rock_samz <= z_max + tol)
+        keep_paths = [pp for pp, m in zip(rock_paths, mask) if m]
+        keep_samy, keep_samz = rock_samy[mask], rock_samz[mask]
+        if not keep_paths:
+            raise StageUserError(
+                f"no rocking scans fall in samz union [{z_min:.6f}, {z_max:.6f}] mm (tol={tol})",
+                hint=(
+                    "Loosen 'samz tolerance' or check that the rocking scans "
+                    "cover the mosaicity/strain Z range."
+                ),
+            )
 
-    mask = (rock_samz >= z_min - tol) & (rock_samz <= z_max + tol)
-    keep_paths = [pp for pp, m in zip(rock_paths, mask) if m]
-    keep_samy, keep_samz = rock_samy[mask], rock_samz[mask]
-    if not keep_paths:
-        raise StageUserError(
-            f"no rocking scans fall in samz union [{z_min:.6f}, {z_max:.6f}] mm (tol={tol})",
-            hint=(
-                "Loosen 'samz tolerance' or check that the rocking scans "
-                "cover the mosaicity/strain Z range."
-            ),
-        )
     order = np.argsort(keep_samz)
     keep_paths = [keep_paths[i] for i in order]
     keep_samy, keep_samz = keep_samy[order], keep_samz[order]
@@ -736,7 +775,10 @@ def run(params: dict, progress: ProgressFn | None = None) -> RockingResult:
 
     # 6. save aligned HDF5 (feeds the oblique slicer)
     if p["save_aligned_h5"]:
-        aligned_path = os.path.join(out_dir, p["aligned_h5_name"])
+        aligned_name = p["aligned_h5_name"]
+        if source == "mosaicity" and aligned_name == STAGE.defaults()["aligned_h5_name"]:
+            aligned_name = "aligned_raw_mosa_volumes.h5"
+        aligned_path = os.path.join(out_dir, aligned_name)
         save_aligned_raw_volumes(
             aligned_path,
             sum_aligned,
@@ -774,7 +816,7 @@ def run(params: dict, progress: ProgressFn | None = None) -> RockingResult:
         p,
         out_dir,
         raw_cmap,
-        "Background-subtracted Sum Intensity",
+        _sum_title(source),
         f"Sum intensity {sum_tag}",
         style=style,
         group="raw",
@@ -788,7 +830,7 @@ def run(params: dict, progress: ProgressFn | None = None) -> RockingResult:
         p,
         out_dir,
         raw_cmap,
-        f"Background-subtracted Frame {spec_idx}",
+        _spec_title(source, spec_idx),
         "Intensity (a.u.)",
         style=style,
         group="raw",
@@ -836,9 +878,9 @@ def figures(result: RockingResult, params: dict) -> list[FigureSpec]:
     with h5py.File(result.aligned_path, "r") as f:
         z_um = f["z_uniform_um"][:].tolist()
 
-    # FIX 1: mirror run()'s normalize_sum-aware label for the sum-intensity product
     normalize_sum = bool(params.get("normalize_sum", False))
     sum_tag = "(a.u., normalized)" if normalize_sum else "(a.u.)"
+    source = str(params.get("source_scan", "rocking"))
 
     all_specs: list[FigureSpec] = []
     for prod in result.datasets:
@@ -853,20 +895,15 @@ def figures(result: RockingResult, params: dict) -> list[FigureSpec]:
             # new RockingProducts kind is rendered in run().
             continue
 
-        # FIX 1: sum_intensity cbar label is normalize_sum-aware (mirrors run())
         if ds_key == "sum_intensity":
             cbar_label = f"Sum intensity {sum_tag}"
+            title = _sum_title(source)
         else:
             cbar_label = _PRODUCT_CBAR.get(ds_key, prod.name)
-
-        # FIX 2: specific_frame title includes the frame index (mirrors run())
-        if ds_key == "specific_frame":
-            if result.specific_frame_idx is not None:
-                title = f"Background-subtracted Frame {result.specific_frame_idx}"
+            if ds_key == "specific_frame" and result.specific_frame_idx is not None:
+                title = _spec_title(source, result.specific_frame_idx)
             else:
-                title = "Background-subtracted Specific Frame"
-        else:
-            title = _PRODUCT_TITLE.get(ds_key, prod.name)
+                title = _PRODUCT_TITLE.get(ds_key, prod.name)
         # id_prefix uses the product name so each product gets distinct ids/filenames
         id_prefix = prod.name
 

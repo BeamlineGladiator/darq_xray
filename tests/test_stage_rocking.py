@@ -142,6 +142,33 @@ def test_process_raw_scan_no_background_subtraction(tmp_path):
     np.testing.assert_allclose(spec_2d, frames[idx], rtol=1e-5)
 
 
+def test_run_mosaicity_source_builds_mosa_volume(tmp_path):
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    # three mosa layers, each with its own frame stack; these ARE the layers
+    for i, z in enumerate([0.0, 0.001, 0.002]):
+        _write_motor_folder(str(raw), f"mosa__{i + 1}", 0.0001 * i, z, frames=_rng_frames(i))
+    res = RK.run(
+        {
+            "raw_root": str(raw),
+            "source_scan": "mosaicity",
+            "mosa_pattern": "mosa__*",
+            "pixel_size_x_um": 0.152,
+            "pixel_size_y_um": 0.385,
+            "save_layers": False,
+            "save_animation": False,
+            "save_topview": False,
+        }
+    )
+    assert res.n_layers_used == 3
+    # default output auto-renamed so it never clobbers the rocking file
+    assert res.aligned_path.endswith("aligned_raw_mosa_volumes.h5")
+    assert os.path.exists(res.aligned_path)
+    assert res.volume_shape[0] == 3
+    # source-aware product title
+    assert any(d.name == "raw_sum_intensity" for d in res.datasets)
+
+
 def test_figures_use_raw_group(tmp_path):
     """Rocking figure specs resolve their cmap from the style's raw group."""
     from dfxm.common.plotting import PlotStyle
