@@ -280,7 +280,10 @@ re-renders selected layers cold from disk. PNGs are written under
 `{out_dir}/{stem}/` (e.g. `chi_com/chi_com_layer_0000.png`). An optional
 pixel-bounds ROI crops each layer (bounded by the stored data dimensions);
 an optional `clim=(vmin, vmax)` pair (either entry may be `None`) overrides the
-auto colour limits — one clim pair applies to the whole selected batch.
+auto colour limits — one clim pair applies to the whole selected batch. When an
+ROI crop is applied the resulting figure uses a **zero-origin µm extent** (the
+crop origin is treated as 0 µm), unlike a normal run which preserves the true
+physical axes.
 
 ### 4. Aligned rocking volumes (`rocking`)
 
@@ -341,7 +344,9 @@ re-renders selected layers cold from disk. PNGs are written under
 optional pixel-bounds ROI crops each layer (bounded by the stored data
 dimensions); an optional `clim=(vmin, vmax)` pair (either entry may be `None`)
 overrides the auto colour limits — one clim pair applies to the whole selected
-batch.
+batch. When an ROI crop is applied the resulting figure uses a **zero-origin µm
+extent** (the crop origin is treated as 0 µm), unlike a normal run which
+preserves the true physical axes.
 
 ### 5. Visualize volumes (`visualize`)
 

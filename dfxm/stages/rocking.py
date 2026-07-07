@@ -945,18 +945,21 @@ _DATASET_DISPLAY: dict[str, tuple[str, str]] = {
 }
 
 
-def _layer_clim(dataset) -> tuple[float, float]:
-    lo = float("inf")
-    hi = float("-inf")
-    for z in range(dataset.shape[0]):
-        layer = dataset[z]
-        finite = layer[np.isfinite(layer)]
-        if finite.size:
-            lo = min(lo, float(finite.min()))
-            hi = max(hi, float(finite.max()))
-    if lo > hi:
-        return 0.0, 1.0
-    return lo, hi
+def _replot_default_clim(dataset, params: dict, style) -> tuple[float, float]:
+    """Compute the default clim for a cold replot the same way the run does.
+
+    Reads the whole 3-D volume once (needed for the global percentile), then
+    applies ``_colorbar_range`` + ``apply_round_clim`` — mirroring the
+    ``_render`` path so blank-clim replots are faithful to the original PNGs.
+    Falls back to ``(0.0, 1.0)`` for an all-NaN volume.
+    """
+    defaults = STAGE.defaults()
+    pct_lo = float(params.get("cbar_pct_lo", defaults["cbar_pct_lo"]))
+    pct_hi = float(params.get("cbar_pct_hi", defaults["cbar_pct_hi"]))
+    vol = dataset[:]
+    vmin, vmax = _colorbar_range(vol, pct_lo, pct_hi)
+    vmin, vmax, _ = apply_round_clim(vmin, vmax, style)
+    return vmin, vmax
 
 
 def replot_catalog(h5_path: str) -> list[ReplotGroup]:
@@ -982,10 +985,20 @@ def render_replot(h5_path, selections, style, clim, out_dir, roi=None, params=No
     ``selections`` is ``list[(dataset_key, item_idxs | None)]`` where dataset_key
     is ``sum_intensity`` or ``specific_frame``. ``clim`` overrides vmin/vmax;
     ``roi`` crops each layer. PNGs under ``{out_dir}/{key}/``; returns paths.
+
+    When ``clim`` is ``None`` (both boxes blank), defaults are computed the same
+    way the run does — percentile-based via ``_replot_default_clim`` — so the
+    output is faithful to the original run PNGs. Explicit ``clim`` values still
+    win (forwarded verbatim to ``render_volume_layer``).
     """
     params = params or {}
     px = float(params.get("pixel_size_x_um", STAGE.defaults()["pixel_size_x_um"]))
     py = float(params.get("pixel_size_y_um", STAGE.defaults()["pixel_size_y_um"]))
+    # Source-aware title / cbar — mirrors figures() so the replot titles match
+    # the originals rather than the generic _DATASET_DISPLAY strings.
+    source = str(params.get("source_scan", STAGE.defaults().get("source_scan", "rocking")))
+    normalize_sum = bool(params.get("normalize_sum", STAGE.defaults().get("normalize_sum", False)))
+    sum_tag = "(a.u., normalized)" if normalize_sum else "(a.u.)"
     written: list[str] = []
     with h5py.File(h5_path, "r") as f:
         z_um = f["z_uniform_um"][:].tolist() if "z_uniform_um" in f else None
@@ -993,8 +1006,23 @@ def render_replot(h5_path, selections, style, clim, out_dir, roi=None, params=No
             obj = f.get(key)
             if not isinstance(obj, h5py.Dataset) or obj.ndim != 3:
                 continue
-            title, cbar_label = _DATASET_DISPLAY.get(key, (key, "Intensity (a.u.)"))
-            vmin, vmax = _layer_clim(obj)
+            # Build source-aware title + cbar label (mirrors figures())
+            if key == "sum_intensity":
+                title = _sum_title(source)
+                cbar_label = f"Sum intensity {sum_tag}"
+            elif key == "specific_frame":
+                title = (
+                    "Mosa-integrated Specific Frame"
+                    if source == "mosaicity"
+                    else "Background-subtracted Specific Frame"
+                )
+                cbar_label = _PRODUCT_CBAR.get(key, "Intensity (a.u.)")
+            else:
+                # Unknown product: graceful generic fallback
+                _generic_title, _generic_cbar = _DATASET_DISPLAY.get(key, (key, "Intensity (a.u.)"))
+                title, cbar_label = _generic_title, _generic_cbar
+            # Default clim: percentile-based (mirrors the run), not raw min/max
+            vmin, vmax = _replot_default_clim(obj, params, style)
             n_z = obj.shape[0]
             layer_list = list(range(n_z)) if idxs is None else list(idxs)
             sub_dir = os.path.join(out_dir, key)

@@ -244,3 +244,70 @@ def test_rocking_render_replot_writes_pngs_with_clim(tmp_path):
     )
     assert len(written) == 2
     assert all(os.path.exists(p) for p in written)
+
+
+# -- F1: blank-clim replot uses percentile scaling, not raw min/max -----------
+
+
+def _write_aligned_with_hot_pixel(path):
+    """Volume where one cell is a 1000-unit outlier; the rest are ~N(0,1)."""
+    rng = np.random.default_rng(99)
+    vol = rng.standard_normal((2, 8, 8)).astype(np.float32)
+    vol[0, 0, 0] = 1000.0  # hot pixel
+    with h5py.File(path, "w") as f:
+        f.create_dataset("sum_intensity", data=vol)
+        f.create_dataset("z_uniform_um", data=np.array([0.0, 1.0], dtype=np.float32))
+    return path, vol
+
+
+def test_rocking_replot_default_clim_uses_percentile(tmp_path):
+    """_replot_default_clim must clip the hot-pixel outlier via percentile, not raw min/max."""
+    from dfxm.common.plotting import apply_round_clim
+
+    h5 = str(tmp_path / "hot.h5")
+    _, vol = _write_aligned_with_hot_pixel(h5)
+
+    with h5py.File(h5, "r") as f:
+        got_vmin, got_vmax = RK._replot_default_clim(f["sum_intensity"], {}, style=None)
+
+    # Must NOT equal the raw max (1000)
+    assert got_vmax < float(vol.max()), "blank-clim replot must use percentile, not raw max"
+
+    # Must match _colorbar_range + apply_round_clim with the stage's default percentiles
+    defaults = RK.STAGE.defaults()
+    exp_vmin, exp_vmax = RK._colorbar_range(vol, defaults["cbar_pct_lo"], defaults["cbar_pct_hi"])
+    exp_vmin, exp_vmax, _ = apply_round_clim(exp_vmin, exp_vmax, None)
+    assert abs(got_vmin - exp_vmin) < 1e-5
+    assert abs(got_vmax - exp_vmax) < 1e-5
+
+
+# -- F2: blank-clim replot titles are source-aware ----------------------------
+
+
+def test_rocking_replot_title_is_source_aware(tmp_path):
+    """render_replot must pass the source-aware run title (not the generic one) to the renderer."""
+    from unittest.mock import patch
+
+    h5 = str(tmp_path / "aligned.h5")
+    _write_aligned(h5)
+    out = str(tmp_path / "replots_f2")
+
+    captured: list[str] = []
+
+    def _capture_title(*args, title, **kwargs):
+        captured.append(title)
+        return None  # skip rendering; render_replot will skip None figures
+
+    with patch("dfxm.stages.rocking.render_volume_layer", side_effect=_capture_title):
+        RK.render_replot(
+            h5,
+            [("sum_intensity", [0])],
+            style=None,
+            clim=None,
+            out_dir=out,
+            params={"source_scan": "mosaicity"},
+        )
+
+    assert len(captured) == 1
+    expected_title = RK._sum_title("mosaicity")
+    assert captured[0] == expected_title, f"got {captured[0]!r}, want {expected_title!r}"

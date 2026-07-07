@@ -354,7 +354,7 @@ class StageView(QWidget):
                 h5_default = p
                 break
         base = os.path.dirname(h5_default) if h5_default else "."
-        out_dir = os.path.join(base, "replots", ts)
+        out_dir = os.path.abspath(os.path.join(base, "replots", ts))
 
         from .widgets.replot_dialog import ReplotDialog  # imported on demand
 
