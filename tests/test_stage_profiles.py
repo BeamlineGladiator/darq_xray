@@ -234,3 +234,58 @@ def test_build_trace_figure_no_std_no_band():
         fld, geom, aspect_wh=(4.0, 3.0), width_in=6.0, linewidth=2.0, color="", font_scale=1.0
     )
     assert len(fig.axes[0].collections) == 0  # no fill_between std band
+
+
+# -- run() trace/companion toggles (Task 2) -----------------------------------
+def _base_params(h5, out, **extra):
+    jobs = (
+        '[{"name":"oblique_full","offset_um":0.0,"start_uv":[-5,-3],"end_uv":[5,3],'
+        '"n_samples":40,"width_pixels":1,"fig_name":"prof0"}]'
+    )
+    return {
+        "consolidated_h5": str(h5),
+        "mode": "parameter",
+        "jobs_json": jobs,
+        "output_dir": str(out),
+        **extra,
+    }
+
+
+def test_run_writes_traces_by_default(tmp_path):
+    h5 = tmp_path / "oblique_slices.h5"
+    _write_consolidated(str(h5))
+    out = tmp_path / "prof"
+    res = PR.run(_base_params(h5, out))
+    jr = res.jobs[0]
+    assert jr.figure and os.path.exists(jr.figure)  # companion on by default
+    assert len(jr.traces) == 2 and all(os.path.exists(t) for t in jr.traces)
+    assert all("__trace__" in t for t in jr.traces)
+
+
+def test_run_companion_off_yields_no_companion(tmp_path):
+    h5 = tmp_path / "oblique_slices.h5"
+    _write_consolidated(str(h5))
+    out = tmp_path / "prof"
+    res = PR.run(_base_params(h5, out, save_companion=False))
+    jr = res.jobs[0]
+    assert jr.figure is None
+    assert not os.path.exists(os.path.join(str(out), "prof0.png"))
+    assert len(jr.traces) == 2
+
+
+def test_run_traces_off_keeps_companion(tmp_path):
+    h5 = tmp_path / "oblique_slices.h5"
+    _write_consolidated(str(h5))
+    out = tmp_path / "prof"
+    res = PR.run(_base_params(h5, out, save_traces=False))
+    jr = res.jobs[0]
+    assert jr.figure and os.path.exists(jr.figure)
+    assert jr.traces == []
+
+
+def test_run_bad_aspect_raises(tmp_path):
+    h5 = tmp_path / "oblique_slices.h5"
+    _write_consolidated(str(h5))
+    out = tmp_path / "prof"
+    with pytest.raises(StageUserError):
+        PR.run(_base_params(h5, out, trace_aspect="oops"))

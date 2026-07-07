@@ -510,7 +510,7 @@ Profile a straight line (or a band of parallel lines) across one slice plane —
 strain and misorientation line up.
 
 - **Input:** `oblique_slices.h5`.
-- **Output:** a stacked companion figure + per-field CSVs + per-field overviews.
+- **Output:** one line-profile figure **per field** (`<fig_name>__trace__<field>.png`) + per-field CSVs + per-field overviews, plus (optionally) the stacked companion figure.
 
 **Essentials:** slices file, mode, jobs JSON, output dir
 
@@ -556,6 +556,25 @@ Example — profile only `strain` for one job while the global default profiles 
 Both `run()` and the export catalog rebuild (`figures()`) honour per-job
 `fields`/`reference` automatically — they both call the shared `_collect`
 function where the override is applied.
+
+#### Separate trace figures (per field)
+
+By default each profiled field is written as its **own** figure
+(`<fig_name>__trace__<field>.png`) so a single trace — say misorientation vs
+distance — reads clearly as a paper subfigure. Shape and style them with:
+
+| Param | Meaning |
+|---|---|
+| `save_traces` | Write the separate per-field trace figures (default on). |
+| `save_companion` | Also write the old stacked companion figure (overview + all traces in one). Turn off for traces-only. |
+| `trace_aspect` | Aspect ratio `width:height` of each trace figure — `4:3`, `1:1`, `16:9`, … |
+| `trace_width_in` | Width of each trace figure in inches; the height follows the aspect. |
+| `trace_linewidth` | Thickness (pt) of the plotted profile curve. |
+| `trace_color` | Colour of the curve and its std band (blank = default matplotlib blue). |
+| `trace_font_scale` | Multiplies the trace figures' label/tick/title fonts, independent of the map figures' font scale. |
+
+The overview images (plane + line, per field) are still written by
+`save_overview` and are unaffected by these knobs.
 
 ### 9. Rocking-matched layers (`matched`)
 

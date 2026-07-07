@@ -205,6 +205,83 @@ STAGE = StageSpec(
             help="Resolution of the saved figures, in dots per inch.",
         ),
         Param(
+            "save_traces",
+            ParamType.BOOL,
+            "Save traces",
+            default=True,
+            advanced=True,
+            group="Output",
+            help=(
+                "Write each profiled field as its own line-profile figure "
+                "(separate from the stacked companion)."
+            ),
+        ),
+        Param(
+            "save_companion",
+            ParamType.BOOL,
+            "Save companion",
+            default=True,
+            advanced=True,
+            group="Output",
+            help=(
+                "Also write the stacked companion figure (overview image + all traces in one). "
+                "Turn off to export only the separate traces."
+            ),
+        ),
+        Param(
+            "trace_aspect",
+            ParamType.STR,
+            "Trace aspect",
+            default="4:3",
+            advanced=True,
+            group="Appearance",
+            help="Aspect ratio (width:height) of each separate trace figure, e.g. 4:3, 1:1, 16:9.",
+        ),
+        Param(
+            "trace_width_in",
+            ParamType.FLOAT,
+            "Trace width",
+            unit="in",
+            default=6.0,
+            advanced=True,
+            group="Appearance",
+            help="Width of each separate trace figure in inches; the height follows the aspect ratio.",
+        ),
+        Param(
+            "trace_linewidth",
+            ParamType.FLOAT,
+            "Trace line width",
+            unit="pt",
+            default=2.0,
+            advanced=True,
+            group="Appearance",
+            help="Line thickness of the plotted profile curve on the separate trace figures.",
+        ),
+        Param(
+            "trace_color",
+            ParamType.STR,
+            "Trace colour",
+            default="",
+            advanced=True,
+            group="Appearance",
+            help=(
+                "Colour of the profile curve and its std band on the separate trace figures "
+                "(blank = default matplotlib blue)."
+            ),
+        ),
+        Param(
+            "trace_font_scale",
+            ParamType.FLOAT,
+            "Trace font scale",
+            default=1.4,
+            advanced=True,
+            group="Appearance",
+            help=(
+                "Multiplies the label/tick/title font size of the separate trace figures "
+                "(independent of the map figures' font scale)."
+            ),
+        ),
+        Param(
             "output_dir",
             ParamType.DIR,
             "Output dir",
@@ -221,6 +298,7 @@ class ProfileJobResult:
     figure: str | None = None
     csvs: list[str] = field(default_factory=list)
     overviews: list[str] = field(default_factory=list)
+    traces: list[str] = field(default_factory=list)
     fields: list[str] = field(default_factory=list)
 
 
@@ -747,6 +825,15 @@ def run(params: dict, progress: ProgressFn | None = None) -> ProfilesResult:
     restrict = [v.strip() for v in p["volume_ids"].split(",") if v.strip()] or None
     line_override = p["line_color"] or None
     dpi = int(p["fig_dpi"])
+    save_traces = bool(p["save_traces"])
+    save_companion = bool(p["save_companion"])
+    trace_aspect = p["trace_aspect"]
+    trace_width_in = float(p["trace_width_in"])
+    trace_linewidth = float(p["trace_linewidth"])
+    trace_color = p["trace_color"] or None
+    trace_font_scale = float(p["trace_font_scale"])
+    if save_traces:
+        parse_aspect(trace_aspect)  # fail fast on a bad aspect before the h5 loop
 
     with h5py.File(h5_path, "r") as f:
         for ji, job in enumerate(jobs):
@@ -794,14 +881,29 @@ def run(params: dict, progress: ProgressFn | None = None) -> ProfilesResult:
             stem = job.get("fig_name") or f"profile_{name}_{off_used:+.2f}um".replace(
                 "+", "p"
             ).replace("-", "m")
-            out_png = os.path.join(out_dir, f"{stem}.png")
-            save_companion_figure(ref, fields, geom, color, out_png, dpi, style=style)
             jr = ProfileJobResult(
                 name=name,
                 offset_used_um=off_used,
-                figure=out_png,
                 fields=[fl["vid"] for fl in fields],
             )
+            if save_companion:
+                out_png = os.path.join(out_dir, f"{stem}.png")
+                save_companion_figure(ref, fields, geom, color, out_png, dpi, style=style)
+                jr.figure = out_png
+            if save_traces:
+                jr.traces = _save_traces(
+                    out_dir,
+                    stem,
+                    fields,
+                    geom,
+                    aspect=trace_aspect,
+                    width_in=trace_width_in,
+                    linewidth=trace_linewidth,
+                    color=trace_color,
+                    font_scale=trace_font_scale,
+                    dpi=dpi,
+                    style=style,
+                )
             if bool(p["save_csv"]):
                 jr.csvs = _write_csvs(out_dir, stem, geom["distance"], fields)
             if bool(p["save_overview"]):
