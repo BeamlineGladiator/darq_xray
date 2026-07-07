@@ -448,9 +448,13 @@ current session is not required. It works from a cold start or after a restart.
    (defaults: all unchecked). Use **Select all** to check every plane at once.
 4. Optionally override the stored colour limits with custom **vmin** / **vmax**
    values (leave blank to use the limits stored in the HDF5).
-5. Set an **Output dir** (pre-filled to a timestamped `replots/<stamp>/`
+5. Optionally enter an **ROI crop** as four pixel-index integers (**r0**, **r1**,
+   **c0**, **c1**) to restrict each plane to a sub-region. Leave all four boxes
+   blank for the full image. Partial fills (some boxes filled, some blank) are
+   ignored — all four must be provided together.
+6. Set an **Output dir** (pre-filled to a timestamped `replots/<stamp>/`
    subfolder inside the slices output directory).
-6. Click **Render** — PNGs are written into `<out_dir>/<slice_name>/`, mirroring
+7. Click **Render** — PNGs are written into `<out_dir>/<slice_name>/`, mirroring
    the layout the slices stage uses.
 
 The dialog renders with the current session publication style (font scale,

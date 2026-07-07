@@ -49,3 +49,27 @@ def test_dialog_populates_tree_and_renders(tmp_path):
     assert dlg._selections(), "select_all() left the selection empty"
     written = dlg.render_selection(str(out))
     assert written and all(os.path.exists(p) for p in written)
+
+
+def test_slice_replot_dialog_passes_roi(tmp_path, monkeypatch):
+    from dfxm.stages import slices as sl
+    from gui.widgets.slice_replot import SliceReplotDialog
+
+    captured = {}
+
+    def fake_render_replot(h5, selections, style, clim, out_dir, roi=None, **kw):
+        captured["roi"] = roi
+        return []
+
+    monkeypatch.setattr(sl, "render_replot", fake_render_replot)
+    h5 = tmp_path / "oblique_slices.h5"
+    _mini(str(h5))
+    _app = QApplication.instance() or QApplication([])
+    dlg = SliceReplotDialog(str(h5), style=None, out_default=str(tmp_path))
+    dlg.select_all()
+    dlg._r0.setText("0")
+    dlg._r1.setText("2")
+    dlg._c0.setText("0")
+    dlg._c1.setText("2")
+    dlg.render_selection(str(tmp_path))
+    assert captured["roi"] == (0, 2, 0, 2)

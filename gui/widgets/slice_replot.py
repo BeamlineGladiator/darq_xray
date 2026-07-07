@@ -75,6 +75,16 @@ class SliceReplotDialog(QDialog):
         clim_row.addWidget(self._vmin)
         clim_row.addWidget(self._vmax)
 
+        # ROI crop override
+        self._r0, self._r1 = QLineEdit(), QLineEdit()
+        self._c0, self._c1 = QLineEdit(), QLineEdit()
+        for e, ph in ((self._r0, "r0"), (self._r1, "r1"), (self._c0, "c0"), (self._c1, "c1")):
+            e.setPlaceholderText(ph)
+        roi_row = QHBoxLayout()
+        roi_row.addWidget(QLabel("ROI crop (px, blank=full):"))
+        for e in (self._r0, self._r1, self._c0, self._c1):
+            roi_row.addWidget(e)
+
         # output dir
         self._out_edit = QLineEdit(out_default)
         out_browse = QPushButton("Browse…")
@@ -100,6 +110,7 @@ class SliceReplotDialog(QDialog):
         layout.addWidget(self._tree, 1)
         layout.addLayout(tree_toolbar)
         layout.addLayout(clim_row)
+        layout.addLayout(roi_row)
         layout.addLayout(out_row)
         layout.addLayout(btn_row)
 
@@ -191,10 +202,22 @@ class SliceReplotDialog(QDialog):
             return None
         return (vmin, vmax)
 
+    def _roi(self):
+        def _i(edit):
+            t = edit.text().strip()
+            return int(t) if t else None
+
+        vals = (_i(self._r0), _i(self._r1), _i(self._c0), _i(self._c1))
+        if all(v is None for v in vals):
+            return None
+        if any(v is None for v in vals):
+            return None  # partial ROI ignored; keep parity with the four-box contract
+        return vals
+
     def render_selection(self, out_dir):
         """Render currently-checked planes into *out_dir*; returns written paths."""
         self.written = _sl.render_replot(
-            self._h5_path, self._selections(), self._style, self._clim(), out_dir
+            self._h5_path, self._selections(), self._style, self._clim(), out_dir, roi=self._roi()
         )
         return self.written
 
