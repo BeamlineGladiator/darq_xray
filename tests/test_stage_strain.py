@@ -230,3 +230,50 @@ def test_strain_map_cmap_follows_style():
         strain, 0.152, 0.385, None, (None, None), style=PlotStyle(cmap_strain="seismic")
     )
     assert fig.axes[0].images[0].cmap.name == "seismic"
+
+
+# ---------------------------------------------------------------------------
+# Replot helpers
+# ---------------------------------------------------------------------------
+
+
+def _write_strain_vol(path, names=("a", "b")):
+    import h5py
+    import numpy as np
+
+    rng = np.random.default_rng(7)
+    with h5py.File(path, "w") as f:
+        f.create_dataset("strain", data=rng.standard_normal((len(names), 4, 5)).astype(np.float32))
+        f.attrs["num_layers"] = len(names)
+        f.attrs["source_folders"] = "\n".join(names)
+        f.attrs["scale_x_um"] = 0.152
+        f.attrs["scale_y_um"] = 0.385
+    return path
+
+
+def test_strain_replot_catalog_single_group_per_layer(tmp_path):
+    h5 = str(tmp_path / "strain.h5")
+    _write_strain_vol(h5, names=("a", "b", "c"))
+    cat = S.replot_catalog(h5)
+    assert len(cat) == 1 and cat[0].key == "strain"
+    assert cat[0].item_labels == ["a", "b", "c"]
+
+
+def test_strain_rebuild_map_clim_override(tmp_path):
+    h5 = str(tmp_path / "strain.h5")
+    _write_strain_vol(h5)
+    fig = S._rebuild_strain_map(h5, 0, style=None, clim=(-1e-3, 1e-3))
+    im = fig.axes[0].images[0]
+    assert im.norm.vmin == -1e-3 and im.norm.vmax == 1e-3
+
+
+def test_strain_render_replot_writes_pngs_with_crop(tmp_path):
+    import os
+
+    h5 = str(tmp_path / "strain.h5")
+    _write_strain_vol(h5, names=("a", "b"))
+    out = str(tmp_path / "replots")
+    written = S.render_replot(
+        h5, [("strain", [0])], style=None, clim=None, out_dir=out, roi=(0, 2, 0, 3)
+    )
+    assert len(written) == 1 and os.path.exists(written[0])

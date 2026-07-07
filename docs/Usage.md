@@ -220,6 +220,27 @@ Per-pixel axial strain (cot method) from darfix `maps.h5`, then stacked into a
 > The full map is **detrended first** (separable 2-D arctan fit), then the ROI
 > is cropped. This order is a physics constraint and is not configurable.
 
+#### Replotting strain layers without re-running
+
+`strain.replot_catalog(h5_path)` reads a `stacked_strain_volumes.h5` and returns
+a single `ReplotGroup` (key `"strain"`) with one item per stored layer (names
+come from `source_folders` in the file's attributes).
+`strain.render_replot(h5_path, selections, style, clim, out_dir, roi=None, params=None)`
+re-renders selected layers cold from disk — no prior run in the current session
+is required. PNGs are written under `{out_dir}/strain/` (e.g.
+`strain/a_strain.png`). Colour limits follow the same rules as the live export:
+both `vmin`/`vmax` blank → symmetric auto-limits (white = zero strain on RdBu_r);
+`clim=(vmin, vmax)` overrides them.
+
+> [!note] ROI and axis caveats for replot
+> When a pixel-bounds `roi=(r0, r1, c0, c1)` is supplied the layer is cropped
+> to that rectangle and the resulting figure uses a **zero-origin extent** — the
+> µm-axis labels start at 0 rather than reflecting the position within the
+> original scan. This is a replot-only simplification: during a normal run the
+> extent is derived from the full-scan ROI stored in the params, which is not
+> re-applied here unless you pass `params={"roi": "r0,r1,c0,c1", …}`. For exact
+> axis reproduction, pass the original `params` dict rather than a pixel crop.
+
 ### 3. Mosaicity volume (`mosaicity`)
 
 Stack per-layer χ/μ **Center-of-mass** and **FWHM** maps into a 3-D volume.

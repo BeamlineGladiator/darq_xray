@@ -30,7 +30,7 @@ from matplotlib.figure import Figure
 from scipy.optimize import curve_fit
 
 from ..common.errors import StageUserError
-from ..common.figures import FigureSpec, register
+from ..common.figures import FigureSpec, ReplotGroup, crop_roi_2d, register
 from ..common.plotting import (
     PlotStyle,
     add_colorbar,
@@ -807,6 +807,98 @@ def run(params: dict, progress: ProgressFn | None = None) -> StrainResult:
     result.volume_shape = shape
     progress(1.0, f"stacked {len(slices)} layers -> {os.path.basename(stacked_path)}")
     return result
+
+
+# ---------------------------------------------------------------------------
+# Cold replot helpers (re-render from stacked strain h5, no re-run needed)
+# ---------------------------------------------------------------------------
+
+
+def _rebuild_strain_map(
+    h5_path: str,
+    layer_idx: int,
+    style,
+    *,
+    clim: tuple | None = None,
+    roi: tuple | None = None,
+    params: dict | None = None,
+):
+    """Rebuild one strain-map Figure from the stacked volume, cold, with clim/ROI.
+
+    ``roi`` (pixel bounds ``(r0, r1, c0, c1)``) crops the stored layer; the
+    cropped view uses a zero-origin extent (``roi=None`` passed to
+    ``build_strain_map``).  ``clim`` overrides the symmetric vlim.  Returns
+    ``None`` when the crop is empty.
+    """
+    params = params or {}
+    with h5py.File(h5_path, "r") as fh:
+        arr = fh["strain"][layer_idx]
+        px = float(params.get("pixel_size_x_um") or fh.attrs.get("scale_x_um", 0.152))
+        py = float(params.get("pixel_size_y_um") or fh.attrs.get("scale_y_um", 0.385))
+    if roi is not None:
+        cropped = crop_roi_2d(arr, roi)
+        if cropped is None:
+            return None
+        arr = cropped
+        extent_roi = None  # cropped view → zero-origin extent
+    else:
+        extent_roi = _parse_roi(str(params.get("roi", "") or ""))
+    if clim is not None:
+        vlim = clim
+    else:
+        vlim = (_parse_float(params.get("vmin", "")), _parse_float(params.get("vmax", "")))
+    return build_strain_map(arr, px, py, extent_roi, vlim, style=style)
+
+
+def replot_catalog(h5_path: str) -> list[ReplotGroup]:
+    """Return a single ``ReplotGroup`` with one item per stored layer.
+
+    Layer names come from ``f.attrs["source_folders"]`` (newline-joined).
+    """
+    with h5py.File(h5_path, "r") as f:
+        raw = str(f.attrs.get("source_folders", ""))
+        n = int(f.attrs.get("num_layers", f["strain"].shape[0]))
+    names = [s for s in raw.split("\n") if s] if raw else [f"layer {i}" for i in range(n)]
+    if len(names) != n:
+        names = [f"layer {i}" for i in range(n)]
+    return [ReplotGroup(key="strain", label="Strain map", item_labels=names)]
+
+
+def render_replot(
+    h5_path: str,
+    selections: list,
+    style,
+    clim: tuple | None,
+    out_dir: str,
+    roi: tuple | None = None,
+    params: dict | None = None,
+) -> list[str]:
+    """Re-render selected strain-map layers cold from the stacked strain h5.
+
+    ``selections`` is ``list[("strain", item_idxs | None)]``.  PNGs are saved
+    under ``{out_dir}/strain/``; the list of written paths is returned.
+    """
+    with h5py.File(h5_path, "r") as f:
+        n_z = int(f["strain"].shape[0])
+        names = str(f.attrs.get("source_folders", "")).split("\n")
+    sub_dir = os.path.join(out_dir, "strain")
+    os.makedirs(sub_dir, exist_ok=True)
+    written: list[str] = []
+    for key, idxs in selections:
+        if key != "strain":
+            continue
+        layer_list = list(range(n_z)) if idxs is None else list(idxs)
+        for z in layer_list:
+            if z < 0 or z >= n_z:
+                continue
+            fig = _rebuild_strain_map(h5_path, z, style, clim=clim, roi=roi, params=params)
+            if fig is None:
+                continue
+            stem = names[z] if z < len(names) and names[z] else f"layer_{z:04d}"
+            png = os.path.join(sub_dir, f"{stem}_strain.png")
+            fig.savefig(png, dpi=200, facecolor="white", bbox_inches="tight")
+            written.append(png)
+    return written
 
 
 def _main(argv: list[str] | None = None) -> int:
