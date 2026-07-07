@@ -918,13 +918,18 @@ def run(params: dict, progress: ProgressFn | None = None) -> ProfilesResult:
 
 @register("profiles")
 def figures(result: ProfilesResult, params: dict) -> list[FigureSpec]:
-    """One ``kind="plot"`` FigureSpec per parameter-mode job in the result.
+    """``kind="plot"`` FigureSpecs per parameter-mode job in the result.
 
-    Each spec's ``build(style)`` re-reads the profiling data from the
-    consolidated ``oblique_slices.h5`` (``params["consolidated_h5"]``) and
-    rebuilds that job's companion figure via :func:`build_companion_figure`.
-    Returns ``[]`` when there is no consolidated h5 or no parameter-mode jobs.
-    Raises :exc:`FileNotFoundError` at build time when the h5 is missing.
+    Per job (when the matching toggle is on): a companion FigureSpec
+    (``profiles_<name>``, rebuilt via :func:`build_companion_figure`) followed by
+    one trace FigureSpec per field (``profiles_<name>__trace__<vid>``, rebuilt via
+    :func:`build_trace_figure`). Toggles (``save_companion``/``save_traces``, both
+    default on) and the ``trace_*`` appearance params come from *params* with a
+    ``STAGE.defaults()`` fallback. Each spec's ``build(style)`` re-reads the
+    profiling data from the consolidated ``oblique_slices.h5``
+    (``params["consolidated_h5"]``). Returns ``[]`` when there is no consolidated
+    h5 or no parameter-mode jobs. Raises :exc:`FileNotFoundError` at build time
+    when the h5 is missing.
     """
     h5_path = params.get("consolidated_h5", "")
     if not h5_path:
@@ -947,6 +952,15 @@ def figures(result: ProfilesResult, params: dict) -> list[FigureSpec]:
     restrict_raw = params.get("volume_ids", "") or ""
     restrict = [v.strip() for v in restrict_raw.split(",") if v.strip()] or None
     line_override = params.get("line_color") or None
+
+    defaults = STAGE.defaults()
+    save_companion = bool(params.get("save_companion", defaults["save_companion"]))
+    save_traces = bool(params.get("save_traces", defaults["save_traces"]))
+    trace_aspect = params.get("trace_aspect", defaults["trace_aspect"])
+    trace_width_in = float(params.get("trace_width_in", defaults["trace_width_in"]))
+    trace_linewidth = float(params.get("trace_linewidth", defaults["trace_linewidth"]))
+    trace_color = params.get("trace_color", defaults["trace_color"]) or None
+    trace_font_scale = float(params.get("trace_font_scale", defaults["trace_font_scale"]))
 
     specs = []
     used_stems: dict[str, int] = {}
@@ -995,15 +1009,73 @@ def figures(result: ProfilesResult, params: dict) -> list[FigureSpec]:
             color = auto_line_color(ref[3]["cmap"], _lo)
             return build_companion_figure(ref, fields, geom, color, style=style)
 
-        specs.append(
-            FigureSpec(
-                figure_id=f"profiles_{name}",
-                title=f"Profile: {name}",
-                kind="plot",
-                filename=fig_name,
-                build=_build,
+        if save_companion:
+            specs.append(
+                FigureSpec(
+                    figure_id=f"profiles_{name}",
+                    title=f"Profile: {name}",
+                    kind="plot",
+                    filename=fig_name,
+                    build=_build,
+                )
             )
-        )
+        if save_traces:
+            for vid in jr.fields:
+
+                def _tbuild(
+                    style,
+                    *,
+                    _h5=h5_path,
+                    _job=job_spec,
+                    _p=dict(params),
+                    _ref=ref_pref,
+                    _res=restrict,
+                    _vid=vid,
+                    _asp=trace_aspect,
+                    _w=trace_width_in,
+                    _lw=trace_linewidth,
+                    _col=trace_color,
+                    _fs=trace_font_scale,
+                    _name=name,
+                ):
+                    if not _job:
+                        raise ValueError(
+                            f"job spec for {_name!r} not found in jobs_json — "
+                            "re-run profiles with the current jobs_json to rebuild this figure"
+                        )
+                    if not _h5 or not os.path.exists(_h5):
+                        raise FileNotFoundError(
+                            f"consolidated h5 not found at {_h5!r} — re-run the slices stage"
+                        )
+                    import h5py as _h5py
+
+                    _p.setdefault("geom_tol_um", STAGE.defaults().get("geom_tol_um", 1e-4))
+                    _p.setdefault("offset_tol_um", STAGE.defaults().get("offset_tol_um", 1e-3))
+                    with _h5py.File(_h5, "r") as f:
+                        _, _fields, _geom, _ = _collect(f, _job, _p, _ref, _res)
+                    _fld = next((fl for fl in _fields if fl["vid"] == _vid), None)
+                    if _fld is None:
+                        raise ValueError(f"field {_vid!r} not present for job {_name!r}")
+                    return build_trace_figure(
+                        _fld,
+                        _geom,
+                        aspect_wh=parse_aspect(_asp),
+                        width_in=_w,
+                        linewidth=_lw,
+                        color=_col,
+                        font_scale=_fs,
+                        style=style,
+                    )
+
+                specs.append(
+                    FigureSpec(
+                        figure_id=f"profiles_{name}__trace__{vid}",
+                        title=f"Profile trace: {name} · {vid}",
+                        kind="plot",
+                        filename=f"{fig_name}__trace__{vid}",
+                        build=_tbuild,
+                    )
+                )
     return specs
 
 

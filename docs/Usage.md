@@ -700,7 +700,7 @@ form.
 | `rocking` | Per-layer maps for sum intensity and specific-frame intensity |
 | `visualize` | Per-layer maps for all aligned datasets |
 | `slices` | One map per plane per volume (`kind="map"`) |
-| `profiles` | One companion figure per parameter-mode job (`kind="plot"`) — reference image + per-field line traces |
+| `profiles` | Per parameter-mode job: one line-profile figure per field (`kind="plot"`), plus the stacked companion (reference image + all traces) when `save_companion` is on |
 | `matched` | Per-layer matched rocking-frame maps |
 | `concat`, `paraview` | No exportable figures |
 
