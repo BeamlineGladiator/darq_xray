@@ -242,6 +242,21 @@ STAGE = StageSpec(
             ),
         ),
         Param(
+            "trace_file_aspect",
+            ParamType.STR,
+            "Trace file aspect",
+            default="",
+            advanced=True,
+            group="Appearance",
+            help=(
+                "Aspect ratio (width:height) of the saved trace PNG file, e.g. 4:3 — blank = the "
+                "file is tight-cropped to fit the plot and its labels (its shape follows the text "
+                "sizes). When set, the PNG is exactly this ratio and the plot box keeps its own "
+                "'Trace aspect', centred with padding. (Applies to this stage's PNG output; the "
+                "publication export always tight-crops.)"
+            ),
+        ),
+        Param(
             "trace_width_in",
             ParamType.FLOAT,
             "Trace width",
@@ -633,8 +648,10 @@ def build_trace_figure(
     requested ratio regardless of how much room the labels/title consume or how
     large ``font_scale`` is. The figure canvas is created at
     ``(width_in, width_in * h / w)`` so it roughly matches the box (minimal
-    whitespace); the saved PNG is tight-cropped, so its file dimensions hug
-    box+labels while the box itself stays exactly ``w:h``.
+    whitespace); on save the PNG is tight-cropped by default (its file
+    dimensions hug box+labels), unless the caller's ``trace_file_aspect`` knob
+    pins the file to a fixed ratio in ``_save_traces``. The box itself stays
+    exactly ``w:h`` either way.
 
     All trace text is multiplied by ``font_scale`` — this is the trace figures'
     own scale, independent of the map figures' ``style.font_scale``. The curve
@@ -787,9 +804,26 @@ def _save_overviews(out_dir, stem, ref, fields, geom, off_used, line_override, d
 
 
 def _save_traces(
-    out_dir, stem, fields, geom, *, aspect, width_in, linewidth, color, font_scale, dpi, style=None
+    out_dir,
+    stem,
+    fields,
+    geom,
+    *,
+    aspect,
+    file_aspect,
+    width_in,
+    linewidth,
+    color,
+    font_scale,
+    dpi,
+    style=None,
 ):
     aspect_wh = parse_aspect(aspect)
+    # file_aspect (blank -> None) pins the saved PNG's outer dimensions; the plot
+    # box keeps `aspect` regardless. When set we size the canvas to the file ratio
+    # and skip bbox_inches="tight" so the file is exactly that ratio (the box sits
+    # centred with padding). Blank keeps the tight-cropped "fit the text" default.
+    file_wh = parse_aspect(file_aspect) if file_aspect else None
     paths = []
     for fld in fields:
         tr_png = os.path.join(out_dir, f"{stem}__trace__{fld['vid']}.png")
@@ -803,7 +837,12 @@ def _save_traces(
             font_scale=font_scale,
             style=style,
         )
-        fig.savefig(tr_png, dpi=dpi, facecolor="white", edgecolor="none", bbox_inches="tight")
+        if file_wh is not None:
+            fw, fh = file_wh
+            fig.set_size_inches(float(width_in), float(width_in) * fh / fw)
+            fig.savefig(tr_png, dpi=dpi, facecolor="white", edgecolor="none")
+        else:
+            fig.savefig(tr_png, dpi=dpi, facecolor="white", edgecolor="none", bbox_inches="tight")
         paths.append(tr_png)
     return paths
 
@@ -848,8 +887,11 @@ def run(params: dict, progress: ProgressFn | None = None) -> ProfilesResult:
     trace_linewidth = float(p["trace_linewidth"])
     trace_color = p["trace_color"] or None
     trace_font_scale = float(p["trace_font_scale"])
+    trace_file_aspect = p["trace_file_aspect"] or ""
     if save_traces:
         parse_aspect(trace_aspect)  # fail fast on a bad aspect before the h5 loop
+        if trace_file_aspect:
+            parse_aspect(trace_file_aspect)  # same for the optional file aspect
         for _label, _val in (
             ("trace_width_in", trace_width_in),
             ("trace_linewidth", trace_linewidth),
@@ -924,6 +966,7 @@ def run(params: dict, progress: ProgressFn | None = None) -> ProfilesResult:
                     fields,
                     geom,
                     aspect=trace_aspect,
+                    file_aspect=trace_file_aspect,
                     width_in=trace_width_in,
                     linewidth=trace_linewidth,
                     color=trace_color,

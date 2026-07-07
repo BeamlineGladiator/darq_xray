@@ -325,3 +325,39 @@ def test_run_bad_trace_dimensions_raise(tmp_path, bad):
     out = tmp_path / "prof"
     with pytest.raises(StageUserError):
         PR.run(_base_params(h5, out, **bad))
+
+
+def test_run_trace_file_aspect_sets_exact_file_ratio(tmp_path):
+    # trace_file_aspect pins the SAVED FILE to exactly W:H, independent of the box
+    import matplotlib.image as mpimg
+
+    h5 = tmp_path / "oblique_slices.h5"
+    _write_consolidated(str(h5))
+    # square file even though the plot box is 4:3
+    sq = PR.run(
+        _base_params(
+            h5,
+            tmp_path / "sq",
+            trace_aspect="4:3",
+            trace_file_aspect="1:1",
+            trace_width_in=4.0,
+            fig_dpi=60,
+        )
+    )
+    for t in sq.jobs[0].traces:
+        a = mpimg.imread(t)
+        assert abs(a.shape[0] - a.shape[1]) <= 2  # square PNG
+    # 2:1 wide file
+    wide = PR.run(
+        _base_params(h5, tmp_path / "wide", trace_file_aspect="2:1", trace_width_in=4.0, fig_dpi=60)
+    )
+    for t in wide.jobs[0].traces:
+        a = mpimg.imread(t)
+        assert abs(a.shape[1] - 2 * a.shape[0]) <= 3  # width ≈ 2×height
+
+
+def test_run_bad_trace_file_aspect_raises(tmp_path):
+    h5 = tmp_path / "oblique_slices.h5"
+    _write_consolidated(str(h5))
+    with pytest.raises(StageUserError):
+        PR.run(_base_params(h5, tmp_path / "o", trace_file_aspect="nope"))
