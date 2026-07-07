@@ -45,7 +45,9 @@ def test_build_basis_matches_layer_plot_orientation():
 
 def test_slice_plane_offsets():
     np.testing.assert_allclose(SL.slice_plane_offsets({"sweep_step_um": None}), [0.0])
-    off = SL.slice_plane_offsets({"sweep_step_um": 2.0, "sweep_start_um": 0.0, "sweep_stop_um": 6.0})
+    off = SL.slice_plane_offsets(
+        {"sweep_step_um": 2.0, "sweep_start_um": 0.0, "sweep_stop_um": 6.0}
+    )
     np.testing.assert_allclose(off, [0, 2, 4, 6])
 
 

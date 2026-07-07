@@ -350,5 +350,27 @@ def test_representative_image_profiles_uses_job_figure():
     assert _representative_image("profiles", result) == "f.png"
 
 
+def test_representative_image_profiles_falls_back_to_trace():
+    result = ProfilesResult(
+        jobs=[ProfileJobResult(name="j", offset_used_um=0.0, figure=None, traces=["t.png"])]
+    )
+    assert _representative_image("profiles", result) == "t.png"
+
+
+def test_summarize_profiles_reports_trace_count_and_no_companion():
+    result = ProfilesResult(
+        output_dir="o",
+        mode="parameter",
+        jobs=[
+            ProfileJobResult(
+                name="line1", offset_used_um=0.5, figure=None, traces=["a.png", "b.png"]
+            )
+        ],
+    )
+    out = _summarize("profiles", result)
+    assert "traces=2" in out
+    assert "(no companion)" in out
+
+
 def test_representative_image_stage_without_images_returns_none():
     assert _representative_image("concat", ConcatResult()) is None

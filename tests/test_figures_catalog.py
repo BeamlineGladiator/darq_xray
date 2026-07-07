@@ -1192,8 +1192,13 @@ def test_profiles_catalog_one_spec_per_job(tmp_path):
         "jobs_json": json.dumps([job]),
     }
     specs = Profiles.figures(res, params)
-    assert len(specs) == 1
-    assert specs[0].kind == "plot"
+    # 1 companion + 1 trace per field (raw_sum, strain), both toggles default on
+    assert len(specs) == 3
+    ids = {s.figure_id for s in specs}
+    assert "profiles_oblique_full" in ids
+    assert "profiles_oblique_full__trace__raw_sum" in ids
+    assert "profiles_oblique_full__trace__strain" in ids
+    assert all(s.kind == "plot" for s in specs)
 
 
 def test_profiles_catalog_distinct_ids_multi_job(tmp_path):
@@ -1234,9 +1239,9 @@ def test_profiles_catalog_distinct_ids_multi_job(tmp_path):
         "jobs_json": json.dumps([job_a, job_b]),
     }
     specs = Profiles.figures(res, params)
-    assert len(specs) == 2
-    assert len({s.figure_id for s in specs}) == 2
-    assert len({s.filename for s in specs}) == 2
+    assert len(specs) == 4  # 2 jobs × (companion + 1 trace)
+    assert len({s.figure_id for s in specs}) == 4
+    assert len({s.filename for s in specs}) == 4
 
 
 def test_profiles_catalog_build_returns_figure(tmp_path):
@@ -1252,13 +1257,58 @@ def test_profiles_catalog_build_returns_figure(tmp_path):
         "jobs_json": json.dumps([job]),
     }
     specs = Profiles.figures(res, params)
-    assert len(specs) == 1
+    assert len(specs) == 3  # companion (specs[0]) + one trace per field
     from matplotlib.figure import Figure
 
     fig = specs[0].build(None)
     assert isinstance(fig, Figure)
     # Image panel (ax_img) + N trace panels (one per field)
     assert len(fig.axes) >= 2
+
+
+def test_profiles_catalog_traces_off_only_companion(tmp_path):
+    """save_traces=False → only the companion spec per job."""
+    import json
+
+    h5 = tmp_path / "oblique_slices.h5"
+    _write_profiles_h5(h5)
+    job = _profiles_job_spec()
+    res = _profiles_result(str(h5))
+    params = {"consolidated_h5": str(h5), "jobs_json": json.dumps([job]), "save_traces": False}
+    specs = Profiles.figures(res, params)
+    assert len(specs) == 1
+    assert specs[0].figure_id == "profiles_oblique_full"
+
+
+def test_profiles_catalog_companion_off_only_traces(tmp_path):
+    """save_companion=False → only the per-field trace specs."""
+    import json
+
+    h5 = tmp_path / "oblique_slices.h5"
+    _write_profiles_h5(h5)
+    job = _profiles_job_spec()
+    res = _profiles_result(str(h5))
+    params = {"consolidated_h5": str(h5), "jobs_json": json.dumps([job]), "save_companion": False}
+    specs = Profiles.figures(res, params)
+    assert len(specs) == 2
+    assert all("__trace__" in s.figure_id for s in specs)
+
+
+def test_profiles_catalog_trace_build_returns_single_axes_figure(tmp_path):
+    """A trace spec's build(None) returns a single-axes Figure."""
+    import json
+
+    from matplotlib.figure import Figure
+
+    h5 = tmp_path / "oblique_slices.h5"
+    _write_profiles_h5(h5)
+    job = _profiles_job_spec()
+    res = _profiles_result(str(h5))
+    params = {"consolidated_h5": str(h5), "jobs_json": json.dumps([job]), "save_companion": False}
+    specs = Profiles.figures(res, params)
+    fig = specs[0].build(None)
+    assert isinstance(fig, Figure)
+    assert len(fig.axes) == 1  # one trace panel, no colorbar
 
 
 def test_profiles_catalog_build_missing_h5_raises(tmp_path):
@@ -1276,7 +1326,7 @@ def test_profiles_catalog_build_missing_h5_raises(tmp_path):
         "jobs_json": json.dumps([job]),
     }
     specs = Profiles.figures(res, params)
-    assert len(specs) == 1
+    assert len(specs) == 3  # companion (specs[0]) + one trace per field
     with pytest.raises(FileNotFoundError):
         specs[0].build(None)
 
@@ -1295,8 +1345,8 @@ def test_profiles_figures_via_figures_for(tmp_path):
     }
     direct = Profiles.figures(res, params)
     via_catalog = figures.figures_for("profiles", res, params)
-    assert len(direct) == 1
-    assert len(via_catalog) == 1
+    assert len(direct) == 3  # companion + one trace per field
+    assert len(via_catalog) == 3
 
 
 def test_profiles_build_companion_figure_returns_figure():
@@ -1406,7 +1456,7 @@ def test_profiles_build_missing_job_spec_raises_value_error(tmp_path):
     # Omit jobs_json entirely so job_spec_by_name is empty → _job is None.
     params = {"consolidated_h5": str(h5)}
     specs = Profiles.figures(res, params)
-    assert len(specs) == 1
+    assert len(specs) == 3  # companion (specs[0]) + one trace per field
     with pytest.raises(ValueError, match="job spec for"):
         specs[0].build(None)
 

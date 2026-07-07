@@ -87,8 +87,8 @@ STAGE = StageSpec(
     description=(
         "Draws 1-D line profiles across a slice plane — every field is sampled at the same "
         "in-plane positions, so intensity, strain and misorientation line up point by point. "
-        "Writes a stacked figure plus CSVs. Use 'Pick line…' to choose the line by clicking "
-        "on the plane."
+        "Writes one figure per field (plus an optional stacked companion) and CSVs. Use "
+        "'Pick line…' to choose the line by clicking on the plane."
     ),
     params=(
         Param(
@@ -205,6 +205,83 @@ STAGE = StageSpec(
             help="Resolution of the saved figures, in dots per inch.",
         ),
         Param(
+            "save_traces",
+            ParamType.BOOL,
+            "Save traces",
+            default=True,
+            advanced=True,
+            group="Output",
+            help=(
+                "Write each profiled field as its own line-profile figure "
+                "(separate from the stacked companion)."
+            ),
+        ),
+        Param(
+            "save_companion",
+            ParamType.BOOL,
+            "Save companion",
+            default=True,
+            advanced=True,
+            group="Output",
+            help=(
+                "Also write the stacked companion figure (overview image + all traces in one). "
+                "Turn off to export only the separate traces."
+            ),
+        ),
+        Param(
+            "trace_aspect",
+            ParamType.STR,
+            "Trace aspect",
+            default="4:3",
+            advanced=True,
+            group="Appearance",
+            help="Aspect ratio (width:height) of each separate trace figure, e.g. 4:3, 1:1, 16:9.",
+        ),
+        Param(
+            "trace_width_in",
+            ParamType.FLOAT,
+            "Trace width",
+            unit="in",
+            default=6.0,
+            advanced=True,
+            group="Appearance",
+            help="Width of each separate trace figure in inches; the height follows the aspect ratio.",
+        ),
+        Param(
+            "trace_linewidth",
+            ParamType.FLOAT,
+            "Trace line width",
+            unit="pt",
+            default=2.0,
+            advanced=True,
+            group="Appearance",
+            help="Line thickness of the plotted profile curve on the separate trace figures.",
+        ),
+        Param(
+            "trace_color",
+            ParamType.STR,
+            "Trace colour",
+            default="",
+            advanced=True,
+            group="Appearance",
+            help=(
+                "Colour of the profile curve and its std band on the separate trace figures "
+                "(blank = default matplotlib blue)."
+            ),
+        ),
+        Param(
+            "trace_font_scale",
+            ParamType.FLOAT,
+            "Trace font scale",
+            default=1.4,
+            advanced=True,
+            group="Appearance",
+            help=(
+                "Multiplies the label/tick/title font size of the separate trace figures "
+                "(independent of the map figures' font scale)."
+            ),
+        ),
+        Param(
             "output_dir",
             ParamType.DIR,
             "Output dir",
@@ -221,6 +298,7 @@ class ProfileJobResult:
     figure: str | None = None
     csvs: list[str] = field(default_factory=list)
     overviews: list[str] = field(default_factory=list)
+    traces: list[str] = field(default_factory=list)
     fields: list[str] = field(default_factory=list)
 
 
@@ -365,6 +443,23 @@ def check_geometry(ref_u, ref_v, cand_u, cand_v, vid, tol):
 # -----------------------------------------------------------------------------
 # Style helpers
 # -----------------------------------------------------------------------------
+def parse_aspect(s: str) -> tuple[float, float]:
+    """Parse a 'W:H' aspect string into positive (width, height) floats."""
+    parts = str(s).split(":")
+    hint = "Enter the ratio as two numbers separated by a colon, e.g. 4:3 or 1:1."
+    if len(parts) != 2:
+        raise StageUserError(f"aspect must be 'W:H' (got {s!r})", hint=hint)
+    try:
+        w, h = float(parts[0]), float(parts[1])
+    except ValueError:
+        raise StageUserError(
+            f"aspect must be 'W:H' with numeric parts (got {s!r})", hint=hint
+        ) from None
+    if not (np.isfinite(w) and np.isfinite(h) and w > 0 and h > 0):
+        raise StageUserError(f"aspect parts must be positive and finite (got {s!r})", hint=hint)
+    return w, h
+
+
 def auto_line_color(cmap_name, override):
     if override:
         return override
@@ -516,6 +611,54 @@ def save_companion_figure(ref, fields, geom, line_color, out_png, dpi, style=Non
     )
 
 
+def build_trace_figure(
+    fld,
+    geom,
+    *,
+    aspect_wh,
+    width_in,
+    linewidth,
+    color,
+    font_scale,
+    style: PlotStyle | None = None,
+) -> Figure:
+    """Build a standalone line-profile figure for a single field. Does NOT savefig.
+
+    Figure size is ``(width_in, width_in * h / w)`` for ``aspect_wh == (w, h)``.
+    All trace text is multiplied by ``font_scale`` — this is the trace figures'
+    own scale, independent of the map figures' ``style.font_scale``. The curve
+    and its std band use ``color`` (blank/None -> ``"C0"``). No colorbar (it is a
+    1-D plot); ``style`` only selects the ``styled_figure`` layout engine so the
+    background/layout matches the rest of the stage's output.
+    """
+    w_ratio, h_ratio = aspect_wh
+    fs = float(font_scale)
+    curve_color = color or "C0"
+    fig = styled_figure(
+        (float(width_in), float(width_in) * float(h_ratio) / float(w_ratio)),
+        styled=style is not None,
+    )
+    ax = fig.add_subplot(111)
+    distance = geom["distance"]
+    vm = fld["value_mean"]
+    ax.plot(distance, vm, "-", lw=float(linewidth), color=curve_color, zorder=3)
+    if fld["value_std"] is not None:
+        vs = fld["value_std"]
+        ax.fill_between(distance, vm - vs, vm + vs, color=curve_color, alpha=0.22, lw=0, zorder=2)
+    ax.set_ylabel(fld["attrs"]["cbar_label"], fontsize=10 * fs)
+    src = os.path.basename(fld["attrs"]["source_volume"]) or "(consolidated)"
+    ax.set_title(f"{fld['attrs']['kind']}  |  {fld['vid']}  |  {src}", fontsize=10 * fs, loc="left")
+    ax.grid(True, color="0.85", lw=0.6)
+    ax.set_xlim(0.0, geom["L"])
+    ax.set_xlabel("distance along line (µm)", fontsize=12 * fs)
+    ax.tick_params(axis="both", labelsize=10 * fs)
+    # tick_params does not touch the scientific ×10ⁿ offset text — scale it too so
+    # "all trace text" honours font_scale even when an axis uses an offset.
+    ax.yaxis.get_offset_text().set_fontsize(10 * fs)
+    ax.xaxis.get_offset_text().set_fontsize(10 * fs)
+    return fig
+
+
 def render_single(ref, geom, line_color, out_png, header, dpi, style=None):
     plane, u_um, v_um, attrs, label = ref
     fig = styled_figure((11, 9), styled=style is not None)
@@ -631,6 +774,28 @@ def _save_overviews(out_dir, stem, ref, fields, geom, off_used, line_override, d
     return paths
 
 
+def _save_traces(
+    out_dir, stem, fields, geom, *, aspect, width_in, linewidth, color, font_scale, dpi, style=None
+):
+    aspect_wh = parse_aspect(aspect)
+    paths = []
+    for fld in fields:
+        tr_png = os.path.join(out_dir, f"{stem}__trace__{fld['vid']}.png")
+        fig = build_trace_figure(
+            fld,
+            geom,
+            aspect_wh=aspect_wh,
+            width_in=width_in,
+            linewidth=linewidth,
+            color=color,
+            font_scale=font_scale,
+            style=style,
+        )
+        fig.savefig(tr_png, dpi=dpi, facecolor="white", edgecolor="none", bbox_inches="tight")
+        paths.append(tr_png)
+    return paths
+
+
 # -----------------------------------------------------------------------------
 # Entry point
 # -----------------------------------------------------------------------------
@@ -664,6 +829,26 @@ def run(params: dict, progress: ProgressFn | None = None) -> ProfilesResult:
     restrict = [v.strip() for v in p["volume_ids"].split(",") if v.strip()] or None
     line_override = p["line_color"] or None
     dpi = int(p["fig_dpi"])
+    save_traces = bool(p["save_traces"])
+    save_companion = bool(p["save_companion"])
+    trace_aspect = p["trace_aspect"]
+    trace_width_in = float(p["trace_width_in"])
+    trace_linewidth = float(p["trace_linewidth"])
+    trace_color = p["trace_color"] or None
+    trace_font_scale = float(p["trace_font_scale"])
+    if save_traces:
+        parse_aspect(trace_aspect)  # fail fast on a bad aspect before the h5 loop
+        for _label, _val in (
+            ("trace_width_in", trace_width_in),
+            ("trace_linewidth", trace_linewidth),
+            ("trace_font_scale", trace_font_scale),
+        ):
+            if not (np.isfinite(_val) and _val > 0):
+                raise StageUserError(
+                    f"{_label} must be a positive number (got {_val!r})",
+                    hint="Enter a positive value, e.g. trace_width_in=6, "
+                    "trace_linewidth=2, trace_font_scale=1.4.",
+                )
 
     with h5py.File(h5_path, "r") as f:
         for ji, job in enumerate(jobs):
@@ -711,14 +896,29 @@ def run(params: dict, progress: ProgressFn | None = None) -> ProfilesResult:
             stem = job.get("fig_name") or f"profile_{name}_{off_used:+.2f}um".replace(
                 "+", "p"
             ).replace("-", "m")
-            out_png = os.path.join(out_dir, f"{stem}.png")
-            save_companion_figure(ref, fields, geom, color, out_png, dpi, style=style)
             jr = ProfileJobResult(
                 name=name,
                 offset_used_um=off_used,
-                figure=out_png,
                 fields=[fl["vid"] for fl in fields],
             )
+            if save_companion:
+                out_png = os.path.join(out_dir, f"{stem}.png")
+                save_companion_figure(ref, fields, geom, color, out_png, dpi, style=style)
+                jr.figure = out_png
+            if save_traces:
+                jr.traces = _save_traces(
+                    out_dir,
+                    stem,
+                    fields,
+                    geom,
+                    aspect=trace_aspect,
+                    width_in=trace_width_in,
+                    linewidth=trace_linewidth,
+                    color=trace_color,
+                    font_scale=trace_font_scale,
+                    dpi=dpi,
+                    style=style,
+                )
             if bool(p["save_csv"]):
                 jr.csvs = _write_csvs(out_dir, stem, geom["distance"], fields)
             if bool(p["save_overview"]):
@@ -733,13 +933,18 @@ def run(params: dict, progress: ProgressFn | None = None) -> ProfilesResult:
 
 @register("profiles")
 def figures(result: ProfilesResult, params: dict) -> list[FigureSpec]:
-    """One ``kind="plot"`` FigureSpec per parameter-mode job in the result.
+    """``kind="plot"`` FigureSpecs per parameter-mode job in the result.
 
-    Each spec's ``build(style)`` re-reads the profiling data from the
-    consolidated ``oblique_slices.h5`` (``params["consolidated_h5"]``) and
-    rebuilds that job's companion figure via :func:`build_companion_figure`.
-    Returns ``[]`` when there is no consolidated h5 or no parameter-mode jobs.
-    Raises :exc:`FileNotFoundError` at build time when the h5 is missing.
+    Per job (when the matching toggle is on): a companion FigureSpec
+    (``profiles_<name>``, rebuilt via :func:`build_companion_figure`) followed by
+    one trace FigureSpec per field (``profiles_<name>__trace__<vid>``, rebuilt via
+    :func:`build_trace_figure`). Toggles (``save_companion``/``save_traces``, both
+    default on) and the ``trace_*`` appearance params come from *params* with a
+    ``STAGE.defaults()`` fallback. Each spec's ``build(style)`` re-reads the
+    profiling data from the consolidated ``oblique_slices.h5``
+    (``params["consolidated_h5"]``). Returns ``[]`` when there is no consolidated
+    h5 or no parameter-mode jobs. Raises :exc:`FileNotFoundError` at build time
+    when the h5 is missing.
     """
     h5_path = params.get("consolidated_h5", "")
     if not h5_path:
@@ -762,6 +967,15 @@ def figures(result: ProfilesResult, params: dict) -> list[FigureSpec]:
     restrict_raw = params.get("volume_ids", "") or ""
     restrict = [v.strip() for v in restrict_raw.split(",") if v.strip()] or None
     line_override = params.get("line_color") or None
+
+    defaults = STAGE.defaults()
+    save_companion = bool(params.get("save_companion", defaults["save_companion"]))
+    save_traces = bool(params.get("save_traces", defaults["save_traces"]))
+    trace_aspect = params.get("trace_aspect", defaults["trace_aspect"])
+    trace_width_in = float(params.get("trace_width_in", defaults["trace_width_in"]))
+    trace_linewidth = float(params.get("trace_linewidth", defaults["trace_linewidth"]))
+    trace_color = params.get("trace_color", defaults["trace_color"]) or None
+    trace_font_scale = float(params.get("trace_font_scale", defaults["trace_font_scale"]))
 
     specs = []
     used_stems: dict[str, int] = {}
@@ -810,15 +1024,73 @@ def figures(result: ProfilesResult, params: dict) -> list[FigureSpec]:
             color = auto_line_color(ref[3]["cmap"], _lo)
             return build_companion_figure(ref, fields, geom, color, style=style)
 
-        specs.append(
-            FigureSpec(
-                figure_id=f"profiles_{name}",
-                title=f"Profile: {name}",
-                kind="plot",
-                filename=fig_name,
-                build=_build,
+        if save_companion:
+            specs.append(
+                FigureSpec(
+                    figure_id=f"profiles_{name}",
+                    title=f"Profile: {name}",
+                    kind="plot",
+                    filename=fig_name,
+                    build=_build,
+                )
             )
-        )
+        if save_traces:
+            for vid in jr.fields:
+
+                def _tbuild(
+                    style,
+                    *,
+                    _h5=h5_path,
+                    _job=job_spec,
+                    _p=dict(params),
+                    _ref=ref_pref,
+                    _res=restrict,
+                    _vid=vid,
+                    _asp=trace_aspect,
+                    _w=trace_width_in,
+                    _lw=trace_linewidth,
+                    _col=trace_color,
+                    _fs=trace_font_scale,
+                    _name=name,
+                ):
+                    if not _job:
+                        raise ValueError(
+                            f"job spec for {_name!r} not found in jobs_json — "
+                            "re-run profiles with the current jobs_json to rebuild this figure"
+                        )
+                    if not _h5 or not os.path.exists(_h5):
+                        raise FileNotFoundError(
+                            f"consolidated h5 not found at {_h5!r} — re-run the slices stage"
+                        )
+                    import h5py as _h5py
+
+                    _p.setdefault("geom_tol_um", STAGE.defaults().get("geom_tol_um", 1e-4))
+                    _p.setdefault("offset_tol_um", STAGE.defaults().get("offset_tol_um", 1e-3))
+                    with _h5py.File(_h5, "r") as f:
+                        _, _fields, _geom, _ = _collect(f, _job, _p, _ref, _res)
+                    _fld = next((fl for fl in _fields if fl["vid"] == _vid), None)
+                    if _fld is None:
+                        raise ValueError(f"field {_vid!r} not present for job {_name!r}")
+                    return build_trace_figure(
+                        _fld,
+                        _geom,
+                        aspect_wh=parse_aspect(_asp),
+                        width_in=_w,
+                        linewidth=_lw,
+                        color=_col,
+                        font_scale=_fs,
+                        style=style,
+                    )
+
+                specs.append(
+                    FigureSpec(
+                        figure_id=f"profiles_{name}__trace__{vid}",
+                        title=f"Profile trace: {name} · {vid}",
+                        kind="plot",
+                        filename=f"{fig_name}__trace__{vid}",
+                        build=_tbuild,
+                    )
+                )
     return specs
 
 

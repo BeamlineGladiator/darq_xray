@@ -8,7 +8,9 @@ import os
 
 import h5py
 import numpy as np
+import pytest
 
+from dfxm.common.errors import StageUserError
 from dfxm.stages import profiles as PR
 
 A, B = 0.7, -1.3  # linear field coefficients
@@ -165,3 +167,147 @@ def test_run_per_job_fields_restricts_profiled_fields(tmp_path):
         {"consolidated_h5": str(h5), "mode": "parameter", "jobs_json": jobs, "output_dir": str(out)}
     )
     assert res.jobs[0].fields == ["strain"]  # raw_sum excluded for this job
+
+
+# -- trace-figure primitives (Task 1) -----------------------------------------
+def _fake_field(vid="strain", *, std=True):
+    n = 20
+    dist = np.linspace(0.0, 10.0, n)
+    vm = np.sin(dist)
+    vs = np.full(n, 0.1) if std else None
+    fld = {
+        "vid": vid,
+        "attrs": {
+            "cbar_label": "c",
+            "kind": vid,
+            "source_volume": "",
+            "title": vid,
+            "cmap": "gray",
+        },
+        "value_mean": vm,
+        "value_std": vs,
+    }
+    geom = {"distance": dist, "L": 10.0}
+    return fld, geom
+
+
+def test_parse_aspect_valid():
+    assert PR.parse_aspect("4:3") == (4.0, 3.0)
+    assert PR.parse_aspect("1:1") == (1.0, 1.0)
+    assert PR.parse_aspect("1.5:1") == (1.5, 1.0)
+
+
+@pytest.mark.parametrize("bad", ["", "4", "4:0", "a:b", "1:2:3", "-4:3"])
+def test_parse_aspect_invalid_raises(bad):
+    with pytest.raises(StageUserError):
+        PR.parse_aspect(bad)
+
+
+def test_build_trace_figure_aspect_linewidth_color():
+    from matplotlib.colors import to_rgba
+
+    fld, geom = _fake_field(std=True)
+    fig = PR.build_trace_figure(
+        fld, geom, aspect_wh=(2.0, 1.0), width_in=6.0, linewidth=3.5, color="red", font_scale=1.0
+    )
+    w, h = fig.get_size_inches()
+    assert abs(w - 6.0) < 1e-6 and abs(h - 3.0) < 1e-6
+    line = fig.axes[0].lines[0]
+    assert abs(line.get_linewidth() - 3.5) < 1e-9
+    assert to_rgba(line.get_color()) == to_rgba("red")
+
+
+def test_build_trace_figure_blank_color_defaults_c0():
+    from matplotlib.colors import to_rgba
+
+    fld, geom = _fake_field(std=True)
+    fig = PR.build_trace_figure(
+        fld, geom, aspect_wh=(4.0, 3.0), width_in=6.0, linewidth=2.0, color="", font_scale=1.0
+    )
+    line = fig.axes[0].lines[0]
+    assert to_rgba(line.get_color()) == to_rgba("C0")
+
+
+def test_build_trace_figure_no_std_no_band():
+    fld, geom = _fake_field(std=False)
+    fig = PR.build_trace_figure(
+        fld, geom, aspect_wh=(4.0, 3.0), width_in=6.0, linewidth=2.0, color="", font_scale=1.0
+    )
+    assert len(fig.axes[0].collections) == 0  # no fill_between std band
+
+
+def test_build_trace_figure_scales_offset_text():
+    # the scientific ×10ⁿ offset text must scale with font_scale like the rest
+    fld, geom = _fake_field(std=True)
+    fig = PR.build_trace_figure(
+        fld, geom, aspect_wh=(4.0, 3.0), width_in=6.0, linewidth=2.0, color="", font_scale=2.0
+    )
+    ax = fig.axes[0]
+    assert ax.yaxis.get_offset_text().get_fontsize() == 20.0
+    assert ax.xaxis.get_offset_text().get_fontsize() == 20.0
+
+
+# -- run() trace/companion toggles (Task 2) -----------------------------------
+def _base_params(h5, out, **extra):
+    jobs = (
+        '[{"name":"oblique_full","offset_um":0.0,"start_uv":[-5,-3],"end_uv":[5,3],'
+        '"n_samples":40,"width_pixels":1,"fig_name":"prof0"}]'
+    )
+    return {
+        "consolidated_h5": str(h5),
+        "mode": "parameter",
+        "jobs_json": jobs,
+        "output_dir": str(out),
+        **extra,
+    }
+
+
+def test_run_writes_traces_by_default(tmp_path):
+    h5 = tmp_path / "oblique_slices.h5"
+    _write_consolidated(str(h5))
+    out = tmp_path / "prof"
+    res = PR.run(_base_params(h5, out))
+    jr = res.jobs[0]
+    assert jr.figure and os.path.exists(jr.figure)  # companion on by default
+    assert len(jr.traces) == 2 and all(os.path.exists(t) for t in jr.traces)
+    assert all("__trace__" in t for t in jr.traces)
+
+
+def test_run_companion_off_yields_no_companion(tmp_path):
+    h5 = tmp_path / "oblique_slices.h5"
+    _write_consolidated(str(h5))
+    out = tmp_path / "prof"
+    res = PR.run(_base_params(h5, out, save_companion=False))
+    jr = res.jobs[0]
+    assert jr.figure is None
+    assert not os.path.exists(os.path.join(str(out), "prof0.png"))
+    assert len(jr.traces) == 2
+
+
+def test_run_traces_off_keeps_companion(tmp_path):
+    h5 = tmp_path / "oblique_slices.h5"
+    _write_consolidated(str(h5))
+    out = tmp_path / "prof"
+    res = PR.run(_base_params(h5, out, save_traces=False))
+    jr = res.jobs[0]
+    assert jr.figure and os.path.exists(jr.figure)
+    assert jr.traces == []
+
+
+def test_run_bad_aspect_raises(tmp_path):
+    h5 = tmp_path / "oblique_slices.h5"
+    _write_consolidated(str(h5))
+    out = tmp_path / "prof"
+    with pytest.raises(StageUserError):
+        PR.run(_base_params(h5, out, trace_aspect="oops"))
+
+
+@pytest.mark.parametrize(
+    "bad", [{"trace_width_in": -6.0}, {"trace_linewidth": 0.0}, {"trace_font_scale": -1.0}]
+)
+def test_run_bad_trace_dimensions_raise(tmp_path, bad):
+    h5 = tmp_path / "oblique_slices.h5"
+    _write_consolidated(str(h5))
+    out = tmp_path / "prof"
+    with pytest.raises(StageUserError):
+        PR.run(_base_params(h5, out, **bad))

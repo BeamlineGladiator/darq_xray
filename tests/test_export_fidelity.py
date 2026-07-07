@@ -198,8 +198,8 @@ def test_profiles_export_disambiguates_shared_fig_name(tmp_path):
     )
     specs = Profiles.figures(result, params)
     stems = [s.filename for s in specs]
-    assert len(stems) == 2
-    assert len(set(stems)) == 2, f"two jobs share an export stem -> silent overwrite: {stems}"
+    assert len(stems) == 4  # 2 companion + 2 trace
+    assert len(set(stems)) == 4, f"two jobs share an export stem -> silent overwrite: {stems}"
 
 
 def test_slices_catalog_skips_group_missing_attr(tmp_path):
