@@ -567,8 +567,8 @@ distance — reads clearly as a paper subfigure. Shape and style them with:
 |---|---|
 | `save_traces` | Write the separate per-field trace figures (default on). |
 | `save_companion` | Also write the old stacked companion figure (overview + all traces in one). Turn off for traces-only. |
-| `trace_aspect` | Aspect ratio `width:height` of each trace figure — `4:3`, `1:1`, `16:9`, … |
-| `trace_width_in` | Width of each trace figure in inches; the height follows the aspect. |
+| `trace_aspect` | Aspect ratio `width:height` of the **plot box** (data area) — `4:3`, `1:1`, `16:9`, …; the plotted rectangle keeps this ratio exactly, regardless of label/title margins. |
+| `trace_width_in` | Width of the trace figure canvas in inches (sets the overall scale; the plot box is inset from it by the label/title margins). |
 | `trace_linewidth` | Thickness (pt) of the plotted profile curve. |
 | `trace_color` | Colour of the curve and its std band (blank = default matplotlib blue). |
 | `trace_font_scale` | Multiplies the trace figures' label/tick/title fonts, independent of the map figures' font scale. |

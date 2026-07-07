@@ -235,7 +235,11 @@ STAGE = StageSpec(
             default="4:3",
             advanced=True,
             group="Appearance",
-            help="Aspect ratio (width:height) of each separate trace figure, e.g. 4:3, 1:1, 16:9.",
+            help=(
+                "Aspect ratio (width:height) of the plot box — the data area — of each "
+                "separate trace figure, e.g. 4:3, 1:1, 16:9. The plotted rectangle keeps this "
+                "ratio exactly, regardless of label/title margins."
+            ),
         ),
         Param(
             "trace_width_in",
@@ -624,7 +628,14 @@ def build_trace_figure(
 ) -> Figure:
     """Build a standalone line-profile figure for a single field. Does NOT savefig.
 
-    Figure size is ``(width_in, width_in * h / w)`` for ``aspect_wh == (w, h)``.
+    ``aspect_wh == (w, h)`` pins the **plot box** (the data rectangle) to exactly
+    ``w:h`` via ``ax.set_box_aspect(h / w)`` — so the plotted area keeps the
+    requested ratio regardless of how much room the labels/title consume or how
+    large ``font_scale`` is. The figure canvas is created at
+    ``(width_in, width_in * h / w)`` so it roughly matches the box (minimal
+    whitespace); the saved PNG is tight-cropped, so its file dimensions hug
+    box+labels while the box itself stays exactly ``w:h``.
+
     All trace text is multiplied by ``font_scale`` — this is the trace figures'
     own scale, independent of the map figures' ``style.font_scale``. The curve
     and its std band use ``color`` (blank/None -> ``"C0"``). No colorbar (it is a
@@ -639,6 +650,7 @@ def build_trace_figure(
         styled=style is not None,
     )
     ax = fig.add_subplot(111)
+    ax.set_box_aspect(float(h_ratio) / float(w_ratio))  # pin the DATA box to exactly w:h
     distance = geom["distance"]
     vm = fld["value_mean"]
     ax.plot(distance, vm, "-", lw=float(linewidth), color=curve_color, zorder=3)

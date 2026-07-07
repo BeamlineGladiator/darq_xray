@@ -247,6 +247,20 @@ def test_build_trace_figure_scales_offset_text():
     assert ax.xaxis.get_offset_text().get_fontsize() == 20.0
 
 
+def test_build_trace_figure_pins_plot_box_aspect():
+    # trace_aspect pins the PLOT BOX (data rectangle) to exactly W:H via
+    # set_box_aspect(h/w), independent of the label/title/font margins.
+    fld, geom = _fake_field(std=True)
+    fig = PR.build_trace_figure(
+        fld, geom, aspect_wh=(4.0, 3.0), width_in=6.0, linewidth=2.0, color="", font_scale=3.0
+    )
+    assert abs(fig.axes[0].get_box_aspect() - 3.0 / 4.0) < 1e-9  # height/width
+    sq = PR.build_trace_figure(
+        fld, geom, aspect_wh=(1.0, 1.0), width_in=5.0, linewidth=2.0, color="", font_scale=1.0
+    )
+    assert abs(sq.axes[0].get_box_aspect() - 1.0) < 1e-9
+
+
 # -- run() trace/companion toggles (Task 2) -----------------------------------
 def _base_params(h5, out, **extra):
     jobs = (
