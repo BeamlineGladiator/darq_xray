@@ -290,6 +290,19 @@ frame**, anchored to the mosaicity reference so they overlay the other volumes.
 > (per-layer PNGs, animation, top-view) will be overwritten even though the
 > `.h5` files have distinct default names.
 
+#### Replotting rocking layers without re-running
+
+`rocking.replot_catalog(h5_path)` enumerates the 3-D datasets present in an
+`aligned_raw_rocking_volumes.h5` (or `aligned_raw_mosa_volumes.h5`) and returns
+one `ReplotGroup` per dataset (`sum_intensity` and `specific_frame`).
+`rocking.render_replot(h5_path, selections, style, clim, out_dir, roi=None, params=None)`
+re-renders selected layers cold from disk — no prior stage run in the current
+session is required. PNGs are written under `{out_dir}/{key}/` (e.g.
+`sum_intensity/sum_intensity_layer_0000.png`). An optional pixel-bounds ROI crops
+each layer; an optional `clim=(vmin, vmax)` pair (either entry may be `None`)
+overrides the auto colour limits. These functions are the back-end for the GUI
+**Replot…** button (wired in Task 8).
+
 ### 5. Visualize volumes (`visualize`)
 
 Align the stacked mosaicity/strain volumes and render them.

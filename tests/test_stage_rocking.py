@@ -202,3 +202,45 @@ def test_figures_use_raw_group(tmp_path):
     assert fig.axes[0].images[0].cmap.name == "viridis"
     fig = specs[0].build(None)  # default raw group -> gray (was magma)
     assert fig.axes[0].images[0].cmap.name == "gray"
+
+
+# -- replot_catalog + render_replot -------------------------------------------
+
+
+def _write_aligned(path):
+    import h5py
+    import numpy as np
+
+    rng = np.random.default_rng(5)
+    with h5py.File(path, "w") as f:
+        f.create_dataset("sum_intensity", data=rng.standard_normal((2, 4, 5)).astype(np.float32))
+        f.create_dataset("specific_frame", data=rng.standard_normal((2, 4, 5)).astype(np.float32))
+        f.create_dataset("z_uniform_um", data=np.arange(2, dtype=np.float32))
+        f.attrs["scale_x_um_per_px"] = 0.152
+        f.attrs["scale_y_um_per_px"] = 0.385
+    return path
+
+
+def test_rocking_replot_catalog_lists_products(tmp_path):
+    h5 = str(tmp_path / "aligned.h5")
+    _write_aligned(h5)
+    cat = RK.replot_catalog(h5)
+    keys = {g.key for g in cat}
+    assert keys == {"sum_intensity", "specific_frame"}
+
+
+def test_rocking_render_replot_writes_pngs_with_clim(tmp_path):
+    import os
+
+    h5 = str(tmp_path / "aligned.h5")
+    _write_aligned(h5)
+    out = str(tmp_path / "replots")
+    written = RK.render_replot(
+        h5,
+        [("sum_intensity", None)],
+        style=None,
+        clim=(0.0, 2.0),
+        out_dir=out,
+    )
+    assert len(written) == 2
+    assert all(os.path.exists(p) for p in written)

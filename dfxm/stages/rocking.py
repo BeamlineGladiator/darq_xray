@@ -32,7 +32,13 @@ import numpy as np
 from ..common import alignment as A
 from ..common import render as Rnd
 from ..common.errors import StageUserError
-from ..common.figures import FigureSpec, register, volume_layer_specs
+from ..common.figures import (
+    FigureSpec,
+    ReplotGroup,
+    register,
+    render_volume_layer,
+    volume_layer_specs,
+)
 from ..common.plotting import apply_round_clim, resolve_cmap, style_from_params
 from ..common.raster import extract_motor_positions, find_h5_file
 from ..common.sort import find_matching_folders
@@ -926,6 +932,99 @@ def figures(result: RockingResult, params: dict) -> list[FigureSpec]:
         )
 
     return all_specs
+
+
+# ---------------------------------------------------------------------------
+# Cold replot (re-render from aligned h5 without re-running the stage)
+# ---------------------------------------------------------------------------
+
+# in-file dataset key → (default title, default cbar) for cold replot
+_DATASET_DISPLAY: dict[str, tuple[str, str]] = {
+    "sum_intensity": ("Sum intensity", "Sum intensity (a.u.)"),
+    "specific_frame": ("Specific Frame", "Intensity (a.u.)"),
+}
+
+
+def _layer_clim(dataset) -> tuple[float, float]:
+    lo = float("inf")
+    hi = float("-inf")
+    for z in range(dataset.shape[0]):
+        layer = dataset[z]
+        finite = layer[np.isfinite(layer)]
+        if finite.size:
+            lo = min(lo, float(finite.min()))
+            hi = max(hi, float(finite.max()))
+    if lo > hi:
+        return 0.0, 1.0
+    return lo, hi
+
+
+def replot_catalog(h5_path: str) -> list[ReplotGroup]:
+    """List every aligned rocking product (3-D dataset) as a replot group."""
+    groups: list[ReplotGroup] = []
+    with h5py.File(h5_path, "r") as f:
+        z_um = f["z_uniform_um"][:].tolist() if "z_uniform_um" in f else None
+        for key, (title, _cbar) in _DATASET_DISPLAY.items():
+            obj = f.get(key)
+            if not isinstance(obj, h5py.Dataset) or obj.ndim != 3:
+                continue
+            n_z = obj.shape[0]
+            labels = [
+                f"layer {z}" + (f"  (Z={z_um[z]:.2f} µm)" if z_um else "") for z in range(n_z)
+            ]
+            groups.append(ReplotGroup(key=key, label=title, item_labels=labels))
+    return groups
+
+
+def render_replot(h5_path, selections, style, clim, out_dir, roi=None, params=None) -> list[str]:
+    """Re-render selected aligned rocking map layers cold from an aligned h5.
+
+    ``selections`` is ``list[(dataset_key, item_idxs | None)]`` where dataset_key
+    is ``sum_intensity`` or ``specific_frame``. ``clim`` overrides vmin/vmax;
+    ``roi`` crops each layer. PNGs under ``{out_dir}/{key}/``; returns paths.
+    """
+    params = params or {}
+    px = float(params.get("pixel_size_x_um", STAGE.defaults()["pixel_size_x_um"]))
+    py = float(params.get("pixel_size_y_um", STAGE.defaults()["pixel_size_y_um"]))
+    written: list[str] = []
+    with h5py.File(h5_path, "r") as f:
+        z_um = f["z_uniform_um"][:].tolist() if "z_uniform_um" in f else None
+        for key, idxs in selections:
+            obj = f.get(key)
+            if not isinstance(obj, h5py.Dataset) or obj.ndim != 3:
+                continue
+            title, cbar_label = _DATASET_DISPLAY.get(key, (key, "Intensity (a.u.)"))
+            vmin, vmax = _layer_clim(obj)
+            n_z = obj.shape[0]
+            layer_list = list(range(n_z)) if idxs is None else list(idxs)
+            sub_dir = os.path.join(out_dir, key)
+            os.makedirs(sub_dir, exist_ok=True)
+            for z in layer_list:
+                if z < 0 or z >= n_z:
+                    continue
+                fig = render_volume_layer(
+                    h5_path,
+                    key,
+                    z,
+                    cmap="gray",
+                    cmap_group="raw",
+                    title=title,
+                    cbar_label=cbar_label,
+                    sx=px,
+                    sy=py,
+                    vmin=vmin,
+                    vmax=vmax,
+                    style=style,
+                    clim=clim,
+                    roi=roi,
+                    z_um=z_um,
+                )
+                if fig is None:
+                    continue
+                png = os.path.join(sub_dir, f"{key}_layer_{z:04d}.png")
+                fig.savefig(png, dpi=150, facecolor="white", bbox_inches="tight")
+                written.append(png)
+    return written
 
 
 def _main(argv: list[str] | None = None) -> int:
