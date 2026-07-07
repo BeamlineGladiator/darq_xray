@@ -10,14 +10,14 @@ import pytest
 from matplotlib.offsetbox import AnchoredOffsetbox
 
 from dfxm.common.plotting import PlotStyle
-from dfxm.stages import slices as S
+from dfxm.stages import slices as SL
 
 L, NY, NX = 4, 6, 8
 
 
 # -- geometry / sampling ------------------------------------------------------
 def test_build_basis_orthonormal_right_handed():
-    u, v, n = S.build_basis((0.3, 0.0, 0.95))
+    u, v, n = SL.build_basis((0.3, 0.0, 0.95))
     for a in (u, v, n):
         assert np.isclose(np.linalg.norm(a), 1.0)
     assert np.isclose(np.dot(u, v), 0, atol=1e-9)
@@ -33,19 +33,19 @@ def test_build_basis_matches_layer_plot_orientation():
     X-Z plane the vertical axis must stay world-Y with the horizontal axis the
     +X-ish in-plane direction — not the 90°-rotated (Y-horizontal) layout.
     """
-    u, v, _ = S.build_basis((0, 0, 1))
+    u, v, _ = SL.build_basis((0, 0, 1))
     np.testing.assert_allclose(u, [1, 0, 0], atol=1e-12)
     np.testing.assert_allclose(v, [0, 1, 0], atol=1e-12)
 
-    u, v, _ = S.build_basis((0.647648, 0, 0.761939))  # default oblique_full normal
+    u, v, _ = SL.build_basis((0.647648, 0, 0.761939))  # default oblique_full normal
     np.testing.assert_allclose(v, [0, 1, 0], atol=1e-9)  # vertical axis = world Y
     assert u[0] > 0.5  # horizontal axis points +X-ish
     assert abs(u[1]) < 1e-9
 
 
 def test_slice_plane_offsets():
-    np.testing.assert_allclose(S.slice_plane_offsets({"sweep_step_um": None}), [0.0])
-    off = S.slice_plane_offsets({"sweep_step_um": 2.0, "sweep_start_um": 0.0, "sweep_stop_um": 6.0})
+    np.testing.assert_allclose(SL.slice_plane_offsets({"sweep_step_um": None}), [0.0])
+    off = SL.slice_plane_offsets({"sweep_step_um": 2.0, "sweep_start_um": 0.0, "sweep_stop_um": 6.0})
     np.testing.assert_allclose(off, [0, 2, 4, 6])
 
 
@@ -61,8 +61,8 @@ def test_sample_plane_on_index_field():
         "y_ref_shift_px": 0.0,
         "z_ref_shift_um": 0.0,
     }
-    u_hat, v_hat, _ = S.build_basis((0, 0, 1))  # u->X, v->Y
-    s, u_um, v_um = S.sample_plane(prep, (3.0, 2.0, 1.0), u_hat, v_hat, 2.0, 1.0, 1.0, 1.0)
+    u_hat, v_hat, _ = SL.build_basis((0, 0, 1))  # u->X, v->Y
+    s, u_um, v_um = SL.sample_plane(prep, (3.0, 2.0, 1.0), u_hat, v_hat, 2.0, 1.0, 1.0, 1.0)
     # world X at column c = origin_x + u_um[c]; value == that X
     for c, u in enumerate(u_um):
         col = s[:, c]
@@ -73,7 +73,7 @@ def test_sample_plane_on_index_field():
 
 def test_resolve_auto_extent_fits_box():
     box = (0.0, 10.0, 0.0, 8.0, 0.0, 6.0)
-    out = S.resolve_auto_extent(
+    out = SL.resolve_auto_extent(
         {"name": "z", "normal": [0, 0, 1], "origin": [0, 0, 0], "extent": "auto", "du": 1.0}, box
     )
     assert out["half_u"] > 0 and out["half_v"] > 0
@@ -85,7 +85,7 @@ def test_resolve_auto_extent_default_step_uses_pixel_scale():
     """No du / no sweep_step_um -> step defaults to the configured pixel scale."""
     box = (0.0, 10.0, 0.0, 8.0, 0.0, 6.0)
     sl = {"name": "z", "normal": [0, 0, 1], "origin": [0, 0, 0], "extent": "auto"}
-    out = S.resolve_auto_extent(sl, box, default_du=0.385)
+    out = SL.resolve_auto_extent(sl, box, default_du=0.385)
     assert out["sweep_step_um"] == 0.385
 
 
@@ -133,7 +133,7 @@ def test_run_writes_consolidated_h5_and_pngs(tmp_path):
         '"half_u":0.4,"half_v":0.4,"du":0.2,"dv":0.2,"sweep_step_um":null},'
         '{"name":"zsweep","normal":[0,0,1],"origin":[0,0,0],"extent":"auto","sweep_step_um":1.0}]'
     )
-    res = S.run(
+    res = SL.run(
         {
             "mosa_volume_file": str(proc / "stacked_volumes.h5"),
             "strain_volume_file": str(proc / "stacked_strain_volumes.h5"),
@@ -170,7 +170,7 @@ def test_run_writes_consolidated_h5_and_pngs(tmp_path):
 
 
 def test_run_no_volumes_selected(tmp_path):
-    res = S.run({"mosa_volume_file": "", "strain_volume_file": "", "aligned_rocking_file": ""})
+    res = SL.run({"mosa_volume_file": "", "strain_volume_file": "", "aligned_rocking_file": ""})
     assert any("no input volumes" in s for s in res.skipped)
 
 
@@ -178,7 +178,7 @@ def test_run_rejects_nonpositive_du(tmp_path):
     proc, raw = _setup(tmp_path)
     bad = '[{"name":"mid","normal":[0,0,1],"origin":[0,0,0],"half_u":1,"half_v":1,"du":0,"dv":0.2}]'
     with pytest.raises(ValueError, match="du must be > 0"):
-        S.run(
+        SL.run(
             {
                 "mosa_volume_file": str(proc / "stacked_volumes.h5"),
                 "raw_root": str(raw),
@@ -193,7 +193,7 @@ def test_run_rejects_missing_half(tmp_path):
     proc, raw = _setup(tmp_path)
     bad = '[{"name":"mid","normal":[0,0,1],"origin":[0,0,0],"du":0.2,"dv":0.2}]'
     with pytest.raises(ValueError, match="half_u and half_v"):
-        S.run(
+        SL.run(
             {
                 "mosa_volume_file": str(proc / "stacked_volumes.h5"),
                 "raw_root": str(raw),
@@ -221,7 +221,7 @@ def _prep():
 def test_build_slice_figure_returns_figure_with_equal_aspect():
     sl = {"name": "p0"}
     s2d = np.random.rand(10, 12)
-    fig = S.build_slice_figure(
+    fig = SL.build_slice_figure(
         _prep(),
         sl,
         s2d,
@@ -237,7 +237,7 @@ def test_build_slice_figure_returns_figure_with_equal_aspect():
 def test_build_slice_figure_legacy_figsize_and_colorbar():
     sl = {"name": "p0"}
     s2d = np.random.rand(10, 12)
-    fig = S.build_slice_figure(
+    fig = SL.build_slice_figure(
         _prep(),
         sl,
         s2d,
@@ -258,7 +258,7 @@ def test_build_slice_figure_legacy_figsize_and_colorbar():
 def test_build_slice_figure_offset_annotation_in_title():
     sl = {"name": "p0"}
     s2d = np.random.rand(10, 12)
-    fig = S.build_slice_figure(
+    fig = SL.build_slice_figure(
         _prep(),
         sl,
         s2d,
@@ -292,7 +292,7 @@ def test_run_resolves_cmaps_from_injected_style(tmp_path):
     proc, raw = _setup(tmp_path)
     params = _minimal_params(proc, raw, tmp_path / "sl_styled")
     params["plot_style"] = {"cmap_mosa_com": "viridis", "cmap_raw": "bone", "font_scale": 1.0}
-    res = S.run(params)
+    res = SL.run(params)
     with h5py.File(res.output_h5, "r") as f:
         assert f["mosa_com_chi"].attrs["cmap"] == "viridis"
         assert f["raw_sum"].attrs["cmap"] == "bone"
@@ -301,7 +301,7 @@ def test_run_resolves_cmaps_from_injected_style(tmp_path):
 
 def test_run_without_style_uses_group_defaults(tmp_path):
     proc, raw = _setup(tmp_path)
-    res = S.run(_minimal_params(proc, raw, tmp_path / "sl_default"))
+    res = SL.run(_minimal_params(proc, raw, tmp_path / "sl_default"))
     with h5py.File(res.output_h5, "r") as f:
         assert f["mosa_com_chi"].attrs["cmap"] == "fast"  # real fast, no coolwarm fallback
         assert f["raw_sum"].attrs["cmap"] == "gray"
@@ -312,8 +312,8 @@ def test_figures_re_resolve_cmap_by_kind(tmp_path):
     from dfxm.common.plotting import PlotStyle
 
     proc, raw = _setup(tmp_path)
-    res = S.run(_minimal_params(proc, raw, tmp_path / "sl_figs"))
-    specs = S.figures(res, {})
+    res = SL.run(_minimal_params(proc, raw, tmp_path / "sl_figs"))
+    specs = SL.figures(res, {})
     spec = next(s for s in specs if "mosa_com_chi" in s.figure_id)
     fig = spec.build(PlotStyle(cmap_mosa_com="plasma"))
     assert fig.axes[0].images[0].cmap.name == "plasma"
@@ -337,7 +337,7 @@ def test_run_round_clim_rounds_notes_and_h5_attrs(tmp_path):
         "output_dir": str(out),
         "plot_style": {"round_clim": True},
     }
-    res = S.run(params)
+    res = SL.run(params)
     assert res.notes and all("rounded" in n for n in res.notes)
     with h5py.File(res.output_h5, "r") as f:
         for note in res.notes:
@@ -381,7 +381,7 @@ def test_run_writes_pngs_under_per_slice_subfolders(tmp_path):
         '[{"name":"mid","normal":[0,0,1],"origin":[0.5,0.5,1.5],'
         '"half_u":0.4,"half_v":0.4,"du":0.2,"dv":0.2,"sweep_step_um":null}]'
     )
-    res = S.run(
+    res = SL.run(
         {
             "mosa_volume_file": str(proc / "stacked_volumes.h5"),
             "strain_volume_file": str(proc / "stacked_strain_volumes.h5"),
@@ -406,7 +406,7 @@ def test_run_without_round_clim_has_no_notes_or_raw_attrs(tmp_path):
         '[{"name":"mid","normal":[0,0,1],"origin":[0.5,0.5,1.5],'
         '"half_u":0.4,"half_v":0.4,"du":0.2,"dv":0.2,"sweep_step_um":null}]'
     )
-    res = S.run(
+    res = SL.run(
         {
             "mosa_volume_file": str(proc / "stacked_volumes.h5"),
             "raw_root": str(raw),
@@ -445,7 +445,7 @@ def _write_mini_consolidated(path):
 def test_replot_catalog_enumerates_volumes_slices_planes(tmp_path):
     h5 = tmp_path / "oblique_slices.h5"
     _write_mini_consolidated(str(h5))
-    cat = S.replot_catalog(str(h5))
+    cat = SL.replot_catalog(str(h5))
     by_vid = {(e.volume_id, e.slice_name): e for e in cat}
     assert set(by_vid) == {("raw_sum", "plane_a"), ("strain", "plane_a")}
     assert by_vid[("strain", "plane_a")].n_planes == 3
@@ -458,7 +458,7 @@ def test_render_replot_writes_selected_planes_under_subfolders(tmp_path):
     _write_mini_consolidated(str(h5))
     out = tmp_path / "replots"
     # strain: only planes 0 and 2; raw_sum: all planes (None)
-    written = S.render_replot(
+    written = SL.render_replot(
         str(h5),
         [("strain", "plane_a", [0, 2]), ("raw_sum", "plane_a", None)],
         style=None,
@@ -474,7 +474,7 @@ def test_render_replot_writes_selected_planes_under_subfolders(tmp_path):
 def test_render_replot_clim_override_changes_norm(tmp_path):
     h5 = tmp_path / "oblique_slices.h5"
     _write_mini_consolidated(str(h5))
-    fig = S._rebuild_plane_figure(str(h5), "strain", "plane_a", 1, style=None, clim=(-5.0, 5.0))
+    fig = SL._rebuild_plane_figure(str(h5), "strain", "plane_a", 1, style=None, clim=(-5.0, 5.0))
     im = fig.axes[0].images[0]
     assert im.norm.vmin == -5.0 and im.norm.vmax == 5.0
 
@@ -483,7 +483,7 @@ def test_render_replot_roi_crops_slice(tmp_path):
     h5 = tmp_path / "oblique_slices.h5"
     _write_mini_consolidated(str(h5))
     # crop to a sub-window; the rebuilt image must have the cropped shape
-    fig = S._rebuild_plane_figure(str(h5), "strain", "plane_a", 1, style=None, roi=(0, 2, 0, 2))
+    fig = SL._rebuild_plane_figure(str(h5), "strain", "plane_a", 1, style=None, roi=(0, 2, 0, 2))
     im = fig.axes[0].images[0]
     assert im.get_array().shape == (2, 2)
 
@@ -491,7 +491,7 @@ def test_render_replot_roi_crops_slice(tmp_path):
 def test_render_replot_roi_empty_crop_skipped(tmp_path):
     h5 = tmp_path / "oblique_slices.h5"
     _write_mini_consolidated(str(h5))
-    written = S.render_replot(
+    written = SL.render_replot(
         str(h5),
         [("strain", "plane_a", None)],
         style=None,
@@ -517,7 +517,7 @@ def test_run_includes_mosa_raw_field(tmp_path):
         '[{"name":"mid","normal":[0,0,1],"origin":[0.5,0.5,1.5],'
         '"half_u":0.4,"half_v":0.4,"du":0.2,"dv":0.2,"sweep_step_um":null}]'
     )
-    res = S.run(
+    res = SL.run(
         {
             "aligned_mosa_file": str(proc / "aligned_raw_mosa_volumes.h5"),
             "include_mosa_sum": True,
