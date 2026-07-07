@@ -81,7 +81,7 @@ class SliceReplotDialog(QDialog):
         for e, ph in ((self._r0, "r0"), (self._r1, "r1"), (self._c0, "c0"), (self._c1, "c1")):
             e.setPlaceholderText(ph)
         roi_row = QHBoxLayout()
-        roi_row.addWidget(QLabel("ROI crop (px, blank=full):"))
+        roi_row.addWidget(QLabel("ROI crop (px, blank=full) — r=rows(Y), c=cols(X):"))
         for e in (self._r0, self._r1, self._c0, self._c1):
             roi_row.addWidget(e)
 
@@ -138,7 +138,10 @@ class SliceReplotDialog(QDialog):
                 )
                 vtop.setCheckState(0, Qt.CheckState.Unchecked)
                 by_vid[entry.volume_id] = vtop
-            snode = QTreeWidgetItem(vtop, [entry.slice_name])
+            snode_label = entry.slice_name
+            if entry.shape is not None:
+                snode_label = f"{entry.slice_name}   ·   {entry.shape[0]}×{entry.shape[1]} px (Y×X)"
+            snode = QTreeWidgetItem(vtop, [snode_label])
             snode.setFlags(
                 snode.flags() | Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsAutoTristate
             )

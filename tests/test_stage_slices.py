@@ -450,6 +450,7 @@ def test_replot_catalog_enumerates_volumes_slices_planes(tmp_path):
     assert set(by_vid) == {("raw_sum", "plane_a"), ("strain", "plane_a")}
     assert by_vid[("strain", "plane_a")].n_planes == 3
     assert by_vid[("strain", "plane_a")].offsets_um == [-1.0, 0.0, 1.0]
+    assert by_vid[("strain", "plane_a")].shape == (7, 9)  # (nv, nu) plane pixels — ROI hint
 
 
 def test_render_replot_writes_selected_planes_under_subfolders(tmp_path):

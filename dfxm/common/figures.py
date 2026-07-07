@@ -22,6 +22,7 @@ class ReplotGroup:
     key: str  # in-file dataset key (mosaicity/rocking) or logical group id
     label: str  # tree display label
     item_labels: list[str] = field(default_factory=list)  # per-layer labels
+    shape: tuple[int, int] | None = None  # stored layer (Y, X) pixel shape (ROI-crop hint)
 
 
 @dataclass

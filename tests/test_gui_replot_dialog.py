@@ -60,3 +60,15 @@ def test_replot_dialog_partial_roi_ignored(tmp_path):
     dlg._r0.setText("0")  # only one box filled → ROI ignored
     dlg.render_selection(str(tmp_path))
     assert captured["roi"] is None
+
+
+def test_replot_dialog_shows_group_pixel_size(tmp_path):
+    h5 = tmp_path / "vol.h5"
+    h5.write_bytes(b"")
+
+    def catalog_fn(path):
+        return [ReplotGroup(key="A", label="chi", item_labels=["l0"], shape=(4, 5))]
+
+    dlg = ReplotDialog(str(h5), catalog_fn, lambda *a: [], out_default=str(tmp_path))
+    node_text = dlg._tree.topLevelItem(0).text(0)
+    assert "4×5 px" in node_text  # ROI hint annotated on the group node

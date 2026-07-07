@@ -257,6 +257,7 @@ def test_strain_replot_catalog_single_group_per_layer(tmp_path):
     cat = S.replot_catalog(h5)
     assert len(cat) == 1 and cat[0].key == "strain"
     assert cat[0].item_labels == ["a", "b", "c"]
+    assert cat[0].shape == (4, 5)  # (Y, X) of the stored layer — ROI hint
 
 
 def test_strain_rebuild_map_clim_override(tmp_path):

@@ -858,10 +858,11 @@ def replot_catalog(h5_path: str) -> list[ReplotGroup]:
     with h5py.File(h5_path, "r") as f:
         raw = str(f.attrs.get("source_folders", ""))
         n = int(f.attrs.get("num_layers", f["strain"].shape[0]))
+        shape = tuple(f["strain"].shape[1:])
     names = [s for s in raw.split("\n") if s] if raw else [f"layer {i}" for i in range(n)]
     if len(names) != n:
         names = [f"layer {i}" for i in range(n)]
-    return [ReplotGroup(key="strain", label="Strain map", item_labels=names)]
+    return [ReplotGroup(key="strain", label="Strain map", item_labels=names, shape=shape)]
 
 
 def render_replot(

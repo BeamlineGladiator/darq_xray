@@ -73,3 +73,14 @@ def test_slice_replot_dialog_passes_roi(tmp_path, monkeypatch):
     dlg._c1.setText("2")
     dlg.render_selection(str(tmp_path))
     assert captured["roi"] == (0, 2, 0, 2)
+
+
+def test_slice_replot_dialog_shows_plane_pixel_size(tmp_path):
+    from gui.widgets.slice_replot import SliceReplotDialog
+
+    h5 = tmp_path / "oblique_slices.h5"
+    _mini(str(h5))  # planes are (nv, nu) = (7, 9)
+    _app = QApplication.instance() or QApplication([])
+    dlg = SliceReplotDialog(str(h5), style=None, out_default=str(tmp_path))
+    snode = dlg._tree.topLevelItem(0).child(0)  # volume → slice node
+    assert "7×9 px" in snode.text(0)  # ROI hint annotated on the slice node

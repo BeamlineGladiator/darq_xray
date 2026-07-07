@@ -451,6 +451,7 @@ class ReplotEntry:
     slice_name: str
     n_planes: int
     offsets_um: list[float] = field(default_factory=list)
+    shape: tuple[int, int] | None = None  # stored plane (nv, nu) pixel shape (ROI-crop hint)
 
 
 # -----------------------------------------------------------------------------
@@ -1126,7 +1127,15 @@ def replot_catalog(h5_path: str) -> list[ReplotEntry]:
                 if not (isinstance(sg, h5py.Group) and "slices" in sg):
                     continue
                 offsets = [float(o) for o in sg["offsets_um"][:]]
-                entries.append(ReplotEntry(vid, sname, int(sg["slices"].shape[0]), offsets))
+                entries.append(
+                    ReplotEntry(
+                        vid,
+                        sname,
+                        int(sg["slices"].shape[0]),
+                        offsets,
+                        shape=tuple(sg["slices"].shape[1:]),
+                    )
+                )
     return entries
 
 

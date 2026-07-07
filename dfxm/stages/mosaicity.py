@@ -331,6 +331,7 @@ def replot_catalog(h5_path: str) -> list[ReplotGroup]:
                     key=key,
                     label=title,
                     item_labels=[f"layer {z}" for z in range(n_z)],
+                    shape=tuple(obj.shape[1:]),
                 )
             )
     return groups

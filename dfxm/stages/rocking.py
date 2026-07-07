@@ -975,7 +975,9 @@ def replot_catalog(h5_path: str) -> list[ReplotGroup]:
             labels = [
                 f"layer {z}" + (f"  (Z={z_um[z]:.2f} µm)" if z_um else "") for z in range(n_z)
             ]
-            groups.append(ReplotGroup(key=key, label=title, item_labels=labels))
+            groups.append(
+                ReplotGroup(key=key, label=title, item_labels=labels, shape=tuple(obj.shape[1:]))
+            )
     return groups
 
 

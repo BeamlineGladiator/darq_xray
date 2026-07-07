@@ -227,6 +227,7 @@ def test_rocking_replot_catalog_lists_products(tmp_path):
     cat = RK.replot_catalog(h5)
     keys = {g.key for g in cat}
     assert keys == {"sum_intensity", "specific_frame"}
+    assert all(g.shape == (4, 5) for g in cat)  # (Y, X) of the stored layer — ROI hint
 
 
 def test_rocking_render_replot_writes_pngs_with_clim(tmp_path):

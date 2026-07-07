@@ -73,7 +73,7 @@ class ReplotDialog(QDialog):
         for e, ph in ((self._r0, "r0"), (self._r1, "r1"), (self._c0, "c0"), (self._c1, "c1")):
             e.setPlaceholderText(ph)
         roi_row = QHBoxLayout()
-        roi_row.addWidget(QLabel("ROI crop (px, blank=full):"))
+        roi_row.addWidget(QLabel("ROI crop (px, blank=full) — r=rows(Y), c=cols(X):"))
         for e in (self._r0, self._r1, self._c0, self._c1):
             roi_row.addWidget(e)
 
@@ -118,7 +118,10 @@ class ReplotDialog(QDialog):
             self._status.setText(f"cannot read: {exc}")
             return
         for grp in catalog:
-            top = QTreeWidgetItem(self._tree, [grp.label])
+            label = grp.label
+            if grp.shape is not None:
+                label = f"{grp.label}   ·   {grp.shape[0]}×{grp.shape[1]} px (Y×X)"
+            top = QTreeWidgetItem(self._tree, [label])
             top.setFlags(
                 top.flags() | Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsAutoTristate
             )

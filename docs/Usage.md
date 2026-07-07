@@ -250,7 +250,12 @@ rules as the live export: both `vmin`/`vmax` blank → symmetric auto-limits
 > re-applied here unless you pass `params={"roi": "r0,r1,c0,c1", …}`. For exact
 > axis reproduction, pass the original `params` dict rather than a pixel crop.
 > The ROI crop is bounded by the stored data dimensions — values outside the
-> array shape are clamped silently.
+> array shape are clamped silently. To make those bounds visible, each group /
+> slice node in the replot tree is labelled with its stored pixel size,
+> e.g. `120×256 px (Y×X)`, so you can read off the valid range: rows `r0:r1` ∈
+> `[0, Y]`, cols `c0:c1` ∈ `[0, X]`. (For strain and rocking that size is the
+> run's already-ROI-cropped layer — i.e. the largest region a replot crop can
+> reach; a wider frame needs a re-run.)
 
 ### 3. Mosaicity volume (`mosaicity`)
 
@@ -278,8 +283,9 @@ to point at a different file.
 FWHM). `mosaicity.render_replot(h5_path, selections, style, clim, out_dir, roi=None, params=None)`
 re-renders selected layers cold from disk. PNGs are written under
 `{out_dir}/{stem}/` (e.g. `chi_com/chi_com_layer_0000.png`). An optional
-pixel-bounds ROI crops each layer (bounded by the stored data dimensions);
-an optional `clim=(vmin, vmax)` pair (either entry may be `None`) overrides the
+pixel-bounds ROI crops each layer (bounded by the stored data dimensions — the
+tree labels each group with its stored pixel size, e.g. `120×256 px (Y×X)`, as
+the crop bound); an optional `clim=(vmin, vmax)` pair (either entry may be `None`) overrides the
 auto colour limits — one clim pair applies to the whole selected batch. When an
 ROI crop is applied the resulting figure uses a **zero-origin µm extent** (the
 crop origin is treated as 0 µm), unlike a normal run which preserves the true
@@ -342,7 +348,8 @@ one `ReplotGroup` per dataset (`sum_intensity` and `specific_frame`).
 re-renders selected layers cold from disk. PNGs are written under
 `{out_dir}/{key}/` (e.g. `sum_intensity/sum_intensity_layer_0000.png`). An
 optional pixel-bounds ROI crops each layer (bounded by the stored data
-dimensions); an optional `clim=(vmin, vmax)` pair (either entry may be `None`)
+dimensions — the tree labels each product with its stored pixel size, e.g.
+`120×256 px (Y×X)`, as the crop bound); an optional `clim=(vmin, vmax)` pair (either entry may be `None`)
 overrides the auto colour limits — one clim pair applies to the whole selected
 batch. When an ROI crop is applied the resulting figure uses a **zero-origin µm
 extent** (the crop origin is treated as 0 µm), unlike a normal run which
@@ -473,9 +480,11 @@ current session is not required. It works from a cold start or after a restart.
 4. Optionally override the stored colour limits with custom **vmin** / **vmax**
    values (leave blank to use the limits stored in the HDF5).
 5. Optionally enter an **ROI crop** as four pixel-index integers (**r0**, **r1**,
-   **c0**, **c1**) to restrict each plane to a sub-region. Leave all four boxes
-   blank for the full image. Partial fills (some boxes filled, some blank) are
-   ignored — all four must be provided together.
+   **c0**, **c1**) to restrict each plane to a sub-region. Each slice node in the
+   tree is labelled with its stored plane pixel size, e.g. `7×9 px (Y×X)`, so the
+   valid range is visible: rows `r0:r1` ∈ `[0, nv]`, cols `c0:c1` ∈ `[0, nu]`.
+   Leave all four boxes blank for the full image. Partial fills (some boxes
+   filled, some blank) are ignored — all four must be provided together.
 6. Set an **Output dir** (pre-filled to a timestamped `replots/<stamp>/`
    subfolder inside the slices output directory).
 7. Click **Render** — PNGs are written into `<out_dir>/<slice_name>/`, mirroring

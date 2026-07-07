@@ -126,6 +126,7 @@ def test_mosaicity_replot_catalog_lists_datasets(tmp_path):
     by_key = {g.key: g for g in cat}
     assert set(by_key) == {"/chi/Center of mass", "/chi/FWHM"}
     assert len(by_key["/chi/FWHM"].item_labels) == 2
+    assert by_key["/chi/FWHM"].shape == (4, 5)  # (Y, X) of the stored layer — ROI hint
 
 
 def test_mosaicity_render_replot_writes_pngs_with_crop(tmp_path):
