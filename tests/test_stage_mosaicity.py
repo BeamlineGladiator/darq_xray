@@ -105,3 +105,42 @@ def test_matches_legacy_stack_h5_darfix_volumes(tmp_path):
             ("mu", "FWHM"),
         ]:
             np.testing.assert_array_equal(g[f"/{grp}/{ds}"][:], m[f"/{grp}/{ds}"][:])
+
+
+def _write_stacked(path):
+    import h5py
+    import numpy as np
+
+    rng = np.random.default_rng(3)
+    with h5py.File(path, "w") as f:
+        for key in ("/chi/Center of mass", "/chi/FWHM"):
+            f.create_dataset(key, data=rng.standard_normal((2, 4, 5)).astype(np.float32))
+        f.attrs["num_layers"] = 2
+    return path
+
+
+def test_mosaicity_replot_catalog_lists_datasets(tmp_path):
+    h5 = str(tmp_path / "stacked.h5")
+    _write_stacked(h5)
+    cat = M.replot_catalog(h5)
+    by_key = {g.key: g for g in cat}
+    assert set(by_key) == {"/chi/Center of mass", "/chi/FWHM"}
+    assert len(by_key["/chi/FWHM"].item_labels) == 2
+
+
+def test_mosaicity_render_replot_writes_pngs_with_crop(tmp_path):
+    import os
+
+    h5 = str(tmp_path / "stacked.h5")
+    _write_stacked(h5)
+    out = str(tmp_path / "replots")
+    written = M.render_replot(
+        h5,
+        [("/chi/Center of mass", [0]), ("/chi/FWHM", None)],
+        style=None,
+        clim=None,
+        out_dir=out,
+        roi=(0, 2, 0, 3),
+    )
+    assert len(written) == 1 + 2
+    assert all(os.path.exists(p) for p in written)

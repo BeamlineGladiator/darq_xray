@@ -24,7 +24,13 @@ import h5py
 import numpy as np
 
 from ..common.errors import StageUserError
-from ..common.figures import FigureSpec, register, volume_layer_specs
+from ..common.figures import (
+    FigureSpec,
+    ReplotGroup,
+    register,
+    render_volume_layer,
+    volume_layer_specs,
+)
 from ..common.plotting import build_histogram
 from ..common.sort import find_matching_folders
 from ..config.models import Param, ParamType, StageSpec
@@ -308,6 +314,76 @@ def figures(result: "MosaicityResult", params: dict) -> list[FigureSpec]:
             )
 
     return specs
+
+
+def replot_catalog(h5_path: str) -> list[ReplotGroup]:
+    """List every 3-D mosaicity dataset in a stacked h5 as a replot group."""
+    groups: list[ReplotGroup] = []
+    with h5py.File(h5_path, "r") as f:
+        for key in _KEY_DISPLAY:
+            obj = f.get(key)
+            if not isinstance(obj, h5py.Dataset) or obj.ndim != 3:
+                continue
+            _grp, _cbar, title = _KEY_DISPLAY[key]
+            n_z = obj.shape[0]
+            groups.append(
+                ReplotGroup(
+                    key=key,
+                    label=title,
+                    item_labels=[f"layer {z}" for z in range(n_z)],
+                )
+            )
+    return groups
+
+
+def render_replot(h5_path, selections, style, clim, out_dir, roi=None, params=None) -> list[str]:
+    """Re-render selected mosaicity map layers cold from a stacked h5.
+
+    ``selections`` is ``list[(dataset_key, item_idxs | None)]`` (``None`` = all
+    layers). ``clim`` overrides vmin/vmax; ``roi`` crops each layer (pixel bounds).
+    PNGs are written under ``{out_dir}/{stem}/``; returns written paths.
+    """
+    params = params or {}
+    px = float(params.get("pixel_size_x_um", 0.152))
+    py = float(params.get("pixel_size_y_um", 0.385))
+    written: list[str] = []
+    with h5py.File(h5_path, "r") as f:
+        for key, idxs in selections:
+            obj = f.get(key)
+            if not isinstance(obj, h5py.Dataset) or obj.ndim != 3:
+                continue
+            group, cbar_label, title = _KEY_DISPLAY.get(key, (None, "(°)", key))
+            stem = _KEY_STEM.get(key, key.lstrip("/").replace("/", "_").replace(" ", "_"))
+            n_z = obj.shape[0]
+            vmin, vmax = _streamed_clim(obj)
+            layer_list = list(range(n_z)) if idxs is None else list(idxs)
+            sub_dir = os.path.join(out_dir, stem)
+            os.makedirs(sub_dir, exist_ok=True)
+            for z in layer_list:
+                if z < 0 or z >= n_z:
+                    continue
+                fig = render_volume_layer(
+                    h5_path,
+                    key,
+                    z,
+                    cmap="magma",
+                    cmap_group=group,
+                    title=title,
+                    cbar_label=cbar_label,
+                    sx=px,
+                    sy=py,
+                    vmin=vmin,
+                    vmax=vmax,
+                    style=style,
+                    clim=clim,
+                    roi=roi,
+                )
+                if fig is None:
+                    continue
+                png = os.path.join(sub_dir, f"{stem}_layer_{z:04d}.png")
+                fig.savefig(png, dpi=150, facecolor="white", bbox_inches="tight")
+                written.append(png)
+    return written
 
 
 def _read_dataset(h5f: h5py.File, path: str) -> np.ndarray | None:

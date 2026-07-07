@@ -234,6 +234,18 @@ Stack per-layer χ/μ **Center-of-mass** and **FWHM** maps into a 3-D volume.
 | `folder_pattern` | usually the `*_mosa__*` glob |
 | `compression` | `gzip` / `lzf` / `none` |
 
+#### Replotting mosaicity layers without re-running
+
+`mosaicity.replot_catalog(h5_path)` enumerates the 3-D datasets present in a
+`stacked_volumes.h5` and returns one `ReplotGroup` per dataset (χ/μ CoM and
+FWHM). `mosaicity.render_replot(h5_path, selections, style, clim, out_dir, roi=None, params=None)`
+re-renders selected layers cold from disk — no prior stage run in the current
+session is required. PNGs are written under `{out_dir}/{stem}/` (e.g.
+`chi_com/chi_com_layer_0000.png`). An optional pixel-bounds ROI crops each layer;
+an optional `clim=(vmin, vmax)` pair (either entry may be `None`) overrides the
+auto colour limits. These functions are the back-end for the GUI **Replot…**
+button (wired in Task 8).
+
 ### 4. Aligned rocking volumes (`rocking`)
 
 Build aligned 3-D volumes from raw scans — either the rocking scans or the
