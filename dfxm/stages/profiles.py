@@ -87,8 +87,8 @@ STAGE = StageSpec(
     description=(
         "Draws 1-D line profiles across a slice plane — every field is sampled at the same "
         "in-plane positions, so intensity, strain and misorientation line up point by point. "
-        "Writes a stacked figure plus CSVs. Use 'Pick line…' to choose the line by clicking "
-        "on the plane."
+        "Writes one figure per field (plus an optional stacked companion) and CSVs. Use "
+        "'Pick line…' to choose the line by clicking on the plane."
     ),
     params=(
         Param(
@@ -652,6 +652,10 @@ def build_trace_figure(
     ax.set_xlim(0.0, geom["L"])
     ax.set_xlabel("distance along line (µm)", fontsize=12 * fs)
     ax.tick_params(axis="both", labelsize=10 * fs)
+    # tick_params does not touch the scientific ×10ⁿ offset text — scale it too so
+    # "all trace text" honours font_scale even when an axis uses an offset.
+    ax.yaxis.get_offset_text().set_fontsize(10 * fs)
+    ax.xaxis.get_offset_text().set_fontsize(10 * fs)
     return fig
 
 
@@ -834,6 +838,17 @@ def run(params: dict, progress: ProgressFn | None = None) -> ProfilesResult:
     trace_font_scale = float(p["trace_font_scale"])
     if save_traces:
         parse_aspect(trace_aspect)  # fail fast on a bad aspect before the h5 loop
+        for _label, _val in (
+            ("trace_width_in", trace_width_in),
+            ("trace_linewidth", trace_linewidth),
+            ("trace_font_scale", trace_font_scale),
+        ):
+            if not (np.isfinite(_val) and _val > 0):
+                raise StageUserError(
+                    f"{_label} must be a positive number (got {_val!r})",
+                    hint="Enter a positive value, e.g. trace_width_in=6, "
+                    "trace_linewidth=2, trace_font_scale=1.4.",
+                )
 
     with h5py.File(h5_path, "r") as f:
         for ji, job in enumerate(jobs):

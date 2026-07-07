@@ -236,6 +236,17 @@ def test_build_trace_figure_no_std_no_band():
     assert len(fig.axes[0].collections) == 0  # no fill_between std band
 
 
+def test_build_trace_figure_scales_offset_text():
+    # the scientific ×10ⁿ offset text must scale with font_scale like the rest
+    fld, geom = _fake_field(std=True)
+    fig = PR.build_trace_figure(
+        fld, geom, aspect_wh=(4.0, 3.0), width_in=6.0, linewidth=2.0, color="", font_scale=2.0
+    )
+    ax = fig.axes[0]
+    assert ax.yaxis.get_offset_text().get_fontsize() == 20.0
+    assert ax.xaxis.get_offset_text().get_fontsize() == 20.0
+
+
 # -- run() trace/companion toggles (Task 2) -----------------------------------
 def _base_params(h5, out, **extra):
     jobs = (
@@ -289,3 +300,14 @@ def test_run_bad_aspect_raises(tmp_path):
     out = tmp_path / "prof"
     with pytest.raises(StageUserError):
         PR.run(_base_params(h5, out, trace_aspect="oops"))
+
+
+@pytest.mark.parametrize(
+    "bad", [{"trace_width_in": -6.0}, {"trace_linewidth": 0.0}, {"trace_font_scale": -1.0}]
+)
+def test_run_bad_trace_dimensions_raise(tmp_path, bad):
+    h5 = tmp_path / "oblique_slices.h5"
+    _write_consolidated(str(h5))
+    out = tmp_path / "prof"
+    with pytest.raises(StageUserError):
+        PR.run(_base_params(h5, out, **bad))
