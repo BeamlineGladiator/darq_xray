@@ -365,6 +365,23 @@ def check_geometry(ref_u, ref_v, cand_u, cand_v, vid, tol):
 # -----------------------------------------------------------------------------
 # Style helpers
 # -----------------------------------------------------------------------------
+def parse_aspect(s: str) -> tuple[float, float]:
+    """Parse a 'W:H' aspect string into positive (width, height) floats."""
+    parts = str(s).split(":")
+    hint = "Enter the ratio as two numbers separated by a colon, e.g. 4:3 or 1:1."
+    if len(parts) != 2:
+        raise StageUserError(f"aspect must be 'W:H' (got {s!r})", hint=hint)
+    try:
+        w, h = float(parts[0]), float(parts[1])
+    except ValueError:
+        raise StageUserError(
+            f"aspect must be 'W:H' with numeric parts (got {s!r})", hint=hint
+        ) from None
+    if not (np.isfinite(w) and np.isfinite(h) and w > 0 and h > 0):
+        raise StageUserError(f"aspect parts must be positive and finite (got {s!r})", hint=hint)
+    return w, h
+
+
 def auto_line_color(cmap_name, override):
     if override:
         return override
@@ -516,6 +533,50 @@ def save_companion_figure(ref, fields, geom, line_color, out_png, dpi, style=Non
     )
 
 
+def build_trace_figure(
+    fld,
+    geom,
+    *,
+    aspect_wh,
+    width_in,
+    linewidth,
+    color,
+    font_scale,
+    style: PlotStyle | None = None,
+) -> Figure:
+    """Build a standalone line-profile figure for a single field. Does NOT savefig.
+
+    Figure size is ``(width_in, width_in * h / w)`` for ``aspect_wh == (w, h)``.
+    All trace text is multiplied by ``font_scale`` — this is the trace figures'
+    own scale, independent of the map figures' ``style.font_scale``. The curve
+    and its std band use ``color`` (blank/None -> ``"C0"``). No colorbar (it is a
+    1-D plot); ``style`` only selects the ``styled_figure`` layout engine so the
+    background/layout matches the rest of the stage's output.
+    """
+    w_ratio, h_ratio = aspect_wh
+    fs = float(font_scale)
+    curve_color = color or "C0"
+    fig = styled_figure(
+        (float(width_in), float(width_in) * float(h_ratio) / float(w_ratio)),
+        styled=style is not None,
+    )
+    ax = fig.add_subplot(111)
+    distance = geom["distance"]
+    vm = fld["value_mean"]
+    ax.plot(distance, vm, "-", lw=float(linewidth), color=curve_color, zorder=3)
+    if fld["value_std"] is not None:
+        vs = fld["value_std"]
+        ax.fill_between(distance, vm - vs, vm + vs, color=curve_color, alpha=0.22, lw=0, zorder=2)
+    ax.set_ylabel(fld["attrs"]["cbar_label"], fontsize=10 * fs)
+    src = os.path.basename(fld["attrs"]["source_volume"]) or "(consolidated)"
+    ax.set_title(f"{fld['attrs']['kind']}  |  {fld['vid']}  |  {src}", fontsize=10 * fs, loc="left")
+    ax.grid(True, color="0.85", lw=0.6)
+    ax.set_xlim(0.0, geom["L"])
+    ax.set_xlabel("distance along line (µm)", fontsize=12 * fs)
+    ax.tick_params(axis="both", labelsize=10 * fs)
+    return fig
+
+
 def render_single(ref, geom, line_color, out_png, header, dpi, style=None):
     plane, u_um, v_um, attrs, label = ref
     fig = styled_figure((11, 9), styled=style is not None)
@@ -628,6 +689,28 @@ def _save_overviews(out_dir, stem, ref, fields, geom, off_used, line_override, d
         color = auto_line_color(fld["attrs"]["cmap"], line_override)
         render_single(ov_ref, geom, color, ov_png, fld["attrs"]["title"], dpi, style=style)
         paths.append(ov_png)
+    return paths
+
+
+def _save_traces(
+    out_dir, stem, fields, geom, *, aspect, width_in, linewidth, color, font_scale, dpi, style=None
+):
+    aspect_wh = parse_aspect(aspect)
+    paths = []
+    for fld in fields:
+        tr_png = os.path.join(out_dir, f"{stem}__trace__{fld['vid']}.png")
+        fig = build_trace_figure(
+            fld,
+            geom,
+            aspect_wh=aspect_wh,
+            width_in=width_in,
+            linewidth=linewidth,
+            color=color,
+            font_scale=font_scale,
+            style=style,
+        )
+        fig.savefig(tr_png, dpi=dpi, facecolor="white", edgecolor="none", bbox_inches="tight")
+        paths.append(tr_png)
     return paths
 
 

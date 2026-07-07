@@ -8,7 +8,9 @@ import os
 
 import h5py
 import numpy as np
+import pytest
 
+from dfxm.common.errors import StageUserError
 from dfxm.stages import profiles as PR
 
 A, B = 0.7, -1.3  # linear field coefficients
@@ -165,3 +167,70 @@ def test_run_per_job_fields_restricts_profiled_fields(tmp_path):
         {"consolidated_h5": str(h5), "mode": "parameter", "jobs_json": jobs, "output_dir": str(out)}
     )
     assert res.jobs[0].fields == ["strain"]  # raw_sum excluded for this job
+
+
+# -- trace-figure primitives (Task 1) -----------------------------------------
+def _fake_field(vid="strain", *, std=True):
+    n = 20
+    dist = np.linspace(0.0, 10.0, n)
+    vm = np.sin(dist)
+    vs = np.full(n, 0.1) if std else None
+    fld = {
+        "vid": vid,
+        "attrs": {
+            "cbar_label": "c",
+            "kind": vid,
+            "source_volume": "",
+            "title": vid,
+            "cmap": "gray",
+        },
+        "value_mean": vm,
+        "value_std": vs,
+    }
+    geom = {"distance": dist, "L": 10.0}
+    return fld, geom
+
+
+def test_parse_aspect_valid():
+    assert PR.parse_aspect("4:3") == (4.0, 3.0)
+    assert PR.parse_aspect("1:1") == (1.0, 1.0)
+    assert PR.parse_aspect("1.5:1") == (1.5, 1.0)
+
+
+@pytest.mark.parametrize("bad", ["", "4", "4:0", "a:b", "1:2:3", "-4:3"])
+def test_parse_aspect_invalid_raises(bad):
+    with pytest.raises(StageUserError):
+        PR.parse_aspect(bad)
+
+
+def test_build_trace_figure_aspect_linewidth_color():
+    from matplotlib.colors import to_rgba
+
+    fld, geom = _fake_field(std=True)
+    fig = PR.build_trace_figure(
+        fld, geom, aspect_wh=(2.0, 1.0), width_in=6.0, linewidth=3.5, color="red", font_scale=1.0
+    )
+    w, h = fig.get_size_inches()
+    assert abs(w - 6.0) < 1e-6 and abs(h - 3.0) < 1e-6
+    line = fig.axes[0].lines[0]
+    assert abs(line.get_linewidth() - 3.5) < 1e-9
+    assert to_rgba(line.get_color()) == to_rgba("red")
+
+
+def test_build_trace_figure_blank_color_defaults_c0():
+    from matplotlib.colors import to_rgba
+
+    fld, geom = _fake_field(std=True)
+    fig = PR.build_trace_figure(
+        fld, geom, aspect_wh=(4.0, 3.0), width_in=6.0, linewidth=2.0, color="", font_scale=1.0
+    )
+    line = fig.axes[0].lines[0]
+    assert to_rgba(line.get_color()) == to_rgba("C0")
+
+
+def test_build_trace_figure_no_std_no_band():
+    fld, geom = _fake_field(std=False)
+    fig = PR.build_trace_figure(
+        fld, geom, aspect_wh=(4.0, 3.0), width_in=6.0, linewidth=2.0, color="", font_scale=1.0
+    )
+    assert len(fig.axes[0].collections) == 0  # no fill_between std band
