@@ -222,15 +222,24 @@ Per-pixel axial strain (cot method) from darfix `maps.h5`, then stacked into a
 
 #### Replotting strain layers without re-running
 
+The **Replot…** button on the strain stage panel opens a dialog that re-renders
+selected layers directly from a `stacked_strain_volumes.h5` — a prior run in
+the current session is not required (cold-start). Use **Browse…** / **Load** to
+point at a different file.
+
 `strain.replot_catalog(h5_path)` reads a `stacked_strain_volumes.h5` and returns
 a single `ReplotGroup` (key `"strain"`) with one item per stored layer (names
 come from `source_folders` in the file's attributes).
 `strain.render_replot(h5_path, selections, style, clim, out_dir, roi=None, params=None)`
-re-renders selected layers cold from disk — no prior run in the current session
-is required. PNGs are written under `{out_dir}/strain/` (e.g.
-`strain/a_strain.png`). Colour limits follow the same rules as the live export:
-both `vmin`/`vmax` blank → symmetric auto-limits (white = zero strain on RdBu_r);
-`clim=(vmin, vmax)` overrides them.
+re-renders selected layers cold from disk. PNGs are written under
+`{out_dir}/strain/` (e.g. `strain/a_strain.png`). Colour limits follow the same
+rules as the live export: both `vmin`/`vmax` blank → symmetric auto-limits
+(white = zero strain on RdBu_r); `clim=(vmin, vmax)` overrides them.
+
+> [!note] One clim per batch
+> A single **vmin** / **vmax** pair applies to every selected layer in the batch.
+> To apply different limits to individual layers, run the dialog twice with
+> different selections.
 
 > [!note] ROI and axis caveats for replot
 > When a pixel-bounds `roi=(r0, r1, c0, c1)` is supplied the layer is cropped
@@ -240,6 +249,8 @@ both `vmin`/`vmax` blank → symmetric auto-limits (white = zero strain on RdBu_
 > extent is derived from the full-scan ROI stored in the params, which is not
 > re-applied here unless you pass `params={"roi": "r0,r1,c0,c1", …}`. For exact
 > axis reproduction, pass the original `params` dict rather than a pixel crop.
+> The ROI crop is bounded by the stored data dimensions — values outside the
+> array shape are clamped silently.
 
 ### 3. Mosaicity volume (`mosaicity`)
 
@@ -257,15 +268,19 @@ Stack per-layer χ/μ **Center-of-mass** and **FWHM** maps into a 3-D volume.
 
 #### Replotting mosaicity layers without re-running
 
+The **Replot…** button on the mosaicity stage panel opens a dialog that
+re-renders selected layers directly from a `stacked_volumes.h5` — a prior run
+in the current session is not required (cold-start). Use **Browse…** / **Load**
+to point at a different file.
+
 `mosaicity.replot_catalog(h5_path)` enumerates the 3-D datasets present in a
 `stacked_volumes.h5` and returns one `ReplotGroup` per dataset (χ/μ CoM and
 FWHM). `mosaicity.render_replot(h5_path, selections, style, clim, out_dir, roi=None, params=None)`
-re-renders selected layers cold from disk — no prior stage run in the current
-session is required. PNGs are written under `{out_dir}/{stem}/` (e.g.
-`chi_com/chi_com_layer_0000.png`). An optional pixel-bounds ROI crops each layer;
+re-renders selected layers cold from disk. PNGs are written under
+`{out_dir}/{stem}/` (e.g. `chi_com/chi_com_layer_0000.png`). An optional
+pixel-bounds ROI crops each layer (bounded by the stored data dimensions);
 an optional `clim=(vmin, vmax)` pair (either entry may be `None`) overrides the
-auto colour limits. These functions are the back-end for the GUI **Replot…**
-button (wired in Task 8).
+auto colour limits — one clim pair applies to the whole selected batch.
 
 ### 4. Aligned rocking volumes (`rocking`)
 
@@ -313,16 +328,20 @@ frame**, anchored to the mosaicity reference so they overlay the other volumes.
 
 #### Replotting rocking layers without re-running
 
-`rocking.replot_catalog(h5_path)` enumerates the 3-D datasets present in an
-`aligned_raw_rocking_volumes.h5` (or `aligned_raw_mosa_volumes.h5`) and returns
+The **Replot…** button on the rocking stage panel opens a dialog that re-renders
+selected layers directly from an `aligned_raw_rocking_volumes.h5` (or
+`aligned_raw_mosa_volumes.h5`) — a prior run in the current session is not
+required (cold-start). Use **Browse…** / **Load** to point at a different file.
+
+`rocking.replot_catalog(h5_path)` enumerates the 3-D datasets present and returns
 one `ReplotGroup` per dataset (`sum_intensity` and `specific_frame`).
 `rocking.render_replot(h5_path, selections, style, clim, out_dir, roi=None, params=None)`
-re-renders selected layers cold from disk — no prior stage run in the current
-session is required. PNGs are written under `{out_dir}/{key}/` (e.g.
-`sum_intensity/sum_intensity_layer_0000.png`). An optional pixel-bounds ROI crops
-each layer; an optional `clim=(vmin, vmax)` pair (either entry may be `None`)
-overrides the auto colour limits. These functions are the back-end for the GUI
-**Replot…** button (wired in Task 8).
+re-renders selected layers cold from disk. PNGs are written under
+`{out_dir}/{key}/` (e.g. `sum_intensity/sum_intensity_layer_0000.png`). An
+optional pixel-bounds ROI crops each layer (bounded by the stored data
+dimensions); an optional `clim=(vmin, vmax)` pair (either entry may be `None`)
+overrides the auto colour limits — one clim pair applies to the whole selected
+batch.
 
 ### 5. Visualize volumes (`visualize`)
 

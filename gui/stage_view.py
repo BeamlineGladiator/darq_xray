@@ -99,9 +99,9 @@ class StageView(QWidget):
             self._pick_btn = QPushButton("Pick line…")
             self._pick_btn.clicked.connect(self._on_pick_line)
             btn_row.addWidget(self._pick_btn)
-        # slices: re-render selected planes from an existing oblique_slices.h5
+        # slices/strain/mosaicity/rocking: re-render layers from an existing h5
         self._replot_btn: QPushButton | None = None
-        if stage_name == "slices":
+        if stage_name in ("slices", "strain", "mosaicity", "rocking"):
             self._replot_btn = QPushButton("Replot…")
             self._replot_btn.clicked.connect(self._on_replot)
             btn_row.addWidget(self._replot_btn)
@@ -324,12 +324,60 @@ class StageView(QWidget):
             )
             self._tabs.setCurrentWidget(self._log)
 
-    # -- slices interactive replot (lazy) ---------------------------------
+    # -- interactive replot (lazy) ----------------------------------------
     def _on_replot(self) -> None:
         import time
         from dataclasses import replace
 
         vals = self._form.values()
+        window = self.window()
+        style = window.global_plot_style() if hasattr(window, "global_plot_style") else None
+        style = replace(style) if style is not None else None
+        ts = time.strftime("%Y%m%d-%H%M%S")
+
+        if self._stage_name == "slices":
+            self._replot_slices(vals, style, ts)
+            return
+
+        from dfxm.stages import mosaicity as _mo
+        from dfxm.stages import rocking as _ro
+        from dfxm.stages import strain as _st
+
+        module = {"strain": _st, "mosaicity": _mo, "rocking": _ro}[self._stage_name]
+        # Best-effort default h5 = the exact path the last run wrote (if any); the
+        # dialog's file field lets the user Browse/Load a different one (cold start).
+        res = self._last_result
+        h5_default = ""
+        for attr in ("stacked_path", "aligned_path"):
+            p = getattr(res, attr, "") if res is not None else ""
+            if p:
+                h5_default = p
+                break
+        base = os.path.dirname(h5_default) if h5_default else "."
+        out_dir = os.path.join(base, "replots", ts)
+
+        from .widgets.replot_dialog import ReplotDialog  # imported on demand
+
+        def render_fn(h5, selections, st, clim, roi, out, _m=module, _p=dict(vals)):
+            return _m.render_replot(h5, selections, st, clim, out, roi=roi, params=_p)
+
+        dlg = ReplotDialog(
+            h5_default,
+            module.replot_catalog,
+            render_fn,
+            style=style,
+            out_default=out_dir,
+            parent=self,
+        )
+        dlg.exec()
+        if dlg.written:
+            self._log.append(
+                f"Replotted {len(dlg.written)} PNG(s) → {os.path.dirname(dlg.written[0])}"
+            )
+            self._tabs.setCurrentWidget(self._log)
+
+    def _replot_slices(self, vals: dict, style, ts: str) -> None:
+        """Open the slices-specific replot dialog (SliceReplotDialog)."""
         out_dir = vals.get("output_dir", "") or os.path.join(
             os.path.dirname(
                 vals.get("mosa_volume_file", "") or vals.get("strain_volume_file", "") or "."
@@ -338,18 +386,13 @@ class StageView(QWidget):
         )
         h5 = os.path.join(out_dir, vals.get("output_h5_name", "") or "oblique_slices.h5")
 
-        window = self.window()
-        style = window.global_plot_style() if hasattr(window, "global_plot_style") else None
-
-        replots_dir = os.path.abspath(
-            os.path.join(out_dir, "replots", time.strftime("%Y%m%d-%H%M%S"))
-        )
+        replots_dir = os.path.abspath(os.path.join(out_dir, "replots", ts))
 
         from .widgets.slice_replot import SliceReplotDialog  # imported on demand
 
         dlg = SliceReplotDialog(
             h5,
-            style=replace(style) if style is not None else None,
+            style=style,
             out_default=replots_dir,
             parent=self,
         )
