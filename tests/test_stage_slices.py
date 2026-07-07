@@ -478,6 +478,29 @@ def test_render_replot_clim_override_changes_norm(tmp_path):
     assert im.norm.vmin == -5.0 and im.norm.vmax == 5.0
 
 
+def test_render_replot_roi_crops_slice(tmp_path):
+    h5 = tmp_path / "oblique_slices.h5"
+    _write_mini_consolidated(str(h5))
+    # crop to a sub-window; the rebuilt image must have the cropped shape
+    fig = S._rebuild_plane_figure(str(h5), "strain", "plane_a", 1, style=None, roi=(0, 2, 0, 2))
+    im = fig.axes[0].images[0]
+    assert im.get_array().shape == (2, 2)
+
+
+def test_render_replot_roi_empty_crop_skipped(tmp_path):
+    h5 = tmp_path / "oblique_slices.h5"
+    _write_mini_consolidated(str(h5))
+    written = S.render_replot(
+        str(h5),
+        [("strain", "plane_a", None)],
+        style=None,
+        clim=None,
+        out_dir=str(tmp_path / "r"),
+        roi=(2, 2, 0, 3),
+    )
+    assert written == []
+
+
 def test_run_includes_mosa_raw_field(tmp_path):
     proc, raw = _setup(tmp_path)
     rng = np.random.default_rng(1)

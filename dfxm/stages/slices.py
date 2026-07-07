@@ -38,7 +38,7 @@ from scipy.ndimage import map_coordinates
 from ..common import alignment as A
 from ..common import render as Rnd
 from ..common.errors import StageUserError
-from ..common.figures import FigureSpec, register
+from ..common.figures import FigureSpec, crop_roi_2d, register
 from ..common.plotting import (
     GROUP_BY_KIND,
     PlotStyle,
@@ -1066,12 +1066,14 @@ def figures(result: SlicesResult, params: dict) -> list[FigureSpec]:
     return specs
 
 
-def _rebuild_plane_figure(h5_path, vid, sname, k, style, *, clim=None) -> Figure:
+def _rebuild_plane_figure(h5_path, vid, sname, k, style, *, clim=None, roi=None) -> Figure | None:
     """Rebuild one plane's slice figure from an oblique_slices.h5 group.
 
     Shared by :func:`figures` (catalog/export) and :func:`render_replot` so the
     prep-from-attrs reconstruction lives in exactly one place. ``clim`` is an
     optional ``(vmin, vmax)`` override; ``None`` entries keep the stored value.
+    ``roi`` is an optional ``(r0, r1, c0, c1)`` pixel-index crop; returns
+    ``None`` when the clamped crop is empty.
     """
     with h5py.File(h5_path, "r") as f:
         vg = f[vid]
@@ -1089,6 +1091,17 @@ def _rebuild_plane_figure(h5_path, vid, sname, k, style, *, clim=None) -> Figure
         u = sg["u_um"][:]
         v = sg["v_um"][:]
         off = float(sg["offsets_um"][k])
+    if roi is not None:
+        cropped = crop_roi_2d(s2d, roi)
+        if cropped is None:
+            return None
+        r0, r1, c0, c1 = roi
+        h, w = s2d.shape[:2]
+        r0 = max(0, min(int(r0), h))
+        r1 = max(0, min(int(r1), h))
+        c0 = max(0, min(int(c0), w))
+        c1 = max(0, min(int(c1), w))
+        s2d, u, v = cropped, u[c0:c1], v[r0:r1]
     if clim is not None:
         vmin_o, vmax_o = clim
         if vmin_o is not None:
@@ -1123,6 +1136,7 @@ def render_replot(
     style: PlotStyle | None,
     clim: tuple[float | None, float | None] | None,
     out_dir: str,
+    roi: tuple[int, int, int, int] | None = None,
     *,
     dpi: int = 150,
 ) -> list[str]:
@@ -1131,7 +1145,9 @@ def render_replot(
     ``selections`` is a list of ``(volume_id, slice_name, plane_idxs)`` where
     ``plane_idxs`` is ``None`` for all planes. PNGs are written under
     ``{out_dir}/{slice_name}/`` mirroring the slices run layout; returns the
-    written paths.
+    written paths. ``roi`` is an optional ``(r0, r1, c0, c1)`` pixel-index crop
+    applied to every rebuilt plane; planes whose clamped crop is empty are
+    silently skipped.
     """
     catalog = {(e.volume_id, e.slice_name): e for e in replot_catalog(h5_path)}
     written: list[str] = []
@@ -1145,7 +1161,9 @@ def render_replot(
         for k in idxs:
             if k < 0 or k >= entry.n_planes:
                 continue
-            fig = _rebuild_plane_figure(h5_path, vid, sname, k, style, clim=clim)
+            fig = _rebuild_plane_figure(h5_path, vid, sname, k, style, clim=clim, roi=roi)
+            if fig is None:
+                continue
             if entry.n_planes == 1:
                 png = os.path.join(slice_dir, f"{vid}.png")
             else:

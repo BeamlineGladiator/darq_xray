@@ -457,6 +457,15 @@ The dialog renders with the current session publication style (font scale,
 colourmap, scale bar, etc.) from the **Publication style…** dialog, so style
 changes made since the original run are reflected in the replot.
 
+> [!note] ROI crop for slices replot
+> `render_replot` and `_rebuild_plane_figure` accept an optional
+> `roi=(r0, r1, c0, c1)` pixel-index crop. Both the 2-D slice array **and** the
+> stored `u_um` (columns) / `v_um` (rows) axis arrays are trimmed to the same
+> bounds, so the µm axis labels in the output figure correctly reflect the
+> cropped sub-region rather than starting at zero. Planes whose clamped crop is
+> empty (e.g. `r0 == r1`) are silently skipped and omitted from the returned
+> paths list.
+
 ### 8. Line profiles (`profiles`)
 
 Profile a straight line (or a band of parallel lines) across one slice plane —
