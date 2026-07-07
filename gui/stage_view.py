@@ -703,8 +703,16 @@ def _summarize_profiles(result) -> str:
         f"jobs: {len(result.jobs)}",
     ]
     for j in result.jobs:
-        extra = f" csv={len(j.csvs)} overviews={len(j.overviews)}" if j.csvs or j.overviews else ""
-        lines.append(f"  {j.name} @ {j.offset_used_um:+.2f} µm -> {j.figure}{extra}")
+        bits = []
+        if j.csvs:
+            bits.append(f"csv={len(j.csvs)}")
+        if j.overviews:
+            bits.append(f"overviews={len(j.overviews)}")
+        if j.traces:
+            bits.append(f"traces={len(j.traces)}")
+        extra = (" " + " ".join(bits)) if bits else ""
+        fig = j.figure or "(no companion)"
+        lines.append(f"  {j.name} @ {j.offset_used_um:+.2f} µm -> {fig}{extra}")
     lines += [f"skipped: {s}" for s in result.skipped]
     return "\n".join(lines)
 
@@ -775,7 +783,13 @@ def _image_first_png(result) -> str | None:
 
 
 def _image_profiles(result) -> str | None:
-    return result.jobs[0].figure if result.jobs else None
+    for j in result.jobs:
+        if j.figure:
+            return j.figure
+    for j in result.jobs:
+        if j.traces:
+            return j.traces[0]
+    return None
 
 
 _IMAGE_PICKERS = {
