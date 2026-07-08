@@ -120,15 +120,16 @@ class ReplotDialog(QDialog):
     def _reload(self) -> None:
         self._h5_path = self._file_edit.text().strip()
         self._tree.clear()
-        self._clim.set_groups([])
         if not self._out_pinned:
             self._out_edit.setText(self._default_out_for(self._h5_path))
         if not self._h5_path or not os.path.exists(self._h5_path):
+            self._clim.set_groups([])
             self._status.setText("no such file")
             return
         try:
             catalog = self._catalog_fn(self._h5_path)
         except Exception as exc:  # noqa: BLE001 — GUI reload: show status, never crash
+            self._clim.set_groups([])
             self._status.setText(f"cannot read: {exc}")
             return
         self._clim.set_groups([(grp.key, grp.label) for grp in catalog])

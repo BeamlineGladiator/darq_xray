@@ -344,9 +344,10 @@ def render_replot(h5_path, selections, style, clim, out_dir, roi=None, params=No
     ``selections`` is ``list[(dataset_key, item_idxs | None)]`` (``None`` = all
     layers). ``clim`` overrides vmin/vmax: ``None`` keeps the streamed default, a
     ``(vmin, vmax)`` tuple applies to every dataset, and a
-    ``{dataset_key: (vmin, vmax)}`` mapping sets them per dataset (``mosa_com`` vs
-    ``mosa_fwhm``). ``roi`` crops each layer (pixel bounds). PNGs are written
-    under ``{out_dir}/{stem}/``; returns written paths.
+    ``{dataset_key: (vmin, vmax)}`` mapping sets them per dataset — keyed by the
+    in-file HDF5 path (``ReplotGroup.key``, e.g. ``"/chi/Center of mass"`` and
+    ``"/chi/FWHM"``), not the colormap group name. ``roi`` crops each layer
+    (pixel bounds). PNGs are written under ``{out_dir}/{stem}/``; returns paths.
     """
     params = params or {}
     px = float(params.get("pixel_size_x_um", 0.152))

@@ -29,15 +29,20 @@ class ClimGroupSection(QWidget):
         self._layout = QVBoxLayout(self)
         self._layout.setContentsMargins(0, 0, 0, 0)
         self._edits: dict[str, tuple[QLineEdit, QLineEdit]] = {}
+        # Persistent text cache keyed by group — survives rebuilds (including an
+        # empty intermediate ``set_groups([])``) so typed limits are never wiped.
+        self._values: dict[str, tuple[str, str]] = {}
 
     def set_groups(self, groups: list[tuple[str, str]]) -> None:
         """Rebuild the rows for ``groups`` (``[(key, label), ...]``).
 
-        Text already entered for a key that is still present is carried over, so
-        reloading the same file (or a file with the same kinds) does not wipe the
-        user's limits.
+        Text already entered for a key is carried over via a persistent cache, so
+        reloading the file (or reordering rows) does not wipe the user's limits —
+        even across an empty intermediate rebuild.
         """
-        prev = {k: (vm.text(), vx.text()) for k, (vm, vx) in self._edits.items()}
+        # Fold whatever is currently displayed into the persistent cache first.
+        for k, (vm, vx) in self._edits.items():
+            self._values[k] = (vm.text(), vx.text())
         while self._layout.count():
             item = self._layout.takeAt(0)
             w = item.widget()
@@ -49,9 +54,9 @@ class ClimGroupSection(QWidget):
             vmin.setPlaceholderText("vmin (blank = stored)")
             vmax = QLineEdit()
             vmax.setPlaceholderText("vmax (blank = stored)")
-            if key in prev:
-                vmin.setText(prev[key][0])
-                vmax.setText(prev[key][1])
+            if key in self._values:
+                vmin.setText(self._values[key][0])
+                vmax.setText(self._values[key][1])
             row = QHBoxLayout()
             row.setContentsMargins(0, 0, 0, 0)
             lab = QLabel(f"{label}:")

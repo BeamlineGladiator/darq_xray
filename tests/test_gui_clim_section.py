@@ -41,6 +41,17 @@ def test_clim_section_preserves_values_across_reload():
     assert sec._edits["mosa_com"][0].text() == ""
 
 
+def test_clim_section_survives_empty_intermediate_rebuild():
+    # mirrors the old dialog _reload path (set_groups([]) then the real groups);
+    # the persistent cache must carry the typed value through the empty call.
+    sec = ClimGroupSection()
+    sec.set_groups([("strain", "Strain")])
+    sec._edits["strain"][0].setText("0.5")
+    sec.set_groups([])  # empty intermediate rebuild
+    sec.set_groups([("strain", "Strain")])
+    assert sec._edits["strain"][0].text() == "0.5"
+
+
 def test_clim_section_validate_flags_bad_input():
     sec = ClimGroupSection()
     sec.set_groups([("strain", "Strain")])
