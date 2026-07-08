@@ -37,6 +37,7 @@ from ..common.figures import (
     ReplotGroup,
     register,
     render_volume_layer,
+    resolve_clim,
     volume_layer_specs,
 )
 from ..common.plotting import apply_round_clim, resolve_cmap, style_from_params
@@ -985,13 +986,16 @@ def render_replot(h5_path, selections, style, clim, out_dir, roi=None, params=No
     """Re-render selected aligned rocking map layers cold from an aligned h5.
 
     ``selections`` is ``list[(dataset_key, item_idxs | None)]`` where dataset_key
-    is ``sum_intensity`` or ``specific_frame``. ``clim`` overrides vmin/vmax;
-    ``roi`` crops each layer. PNGs under ``{out_dir}/{key}/``; returns paths.
+    is ``sum_intensity`` or ``specific_frame``. ``clim`` overrides vmin/vmax and
+    may be ``None``, a single ``(vmin, vmax)`` tuple, or a
+    ``{dataset_key: (vmin, vmax)}`` mapping (per-product limits); ``roi`` crops
+    each layer. PNGs under ``{out_dir}/{key}/``; returns paths.
 
-    When ``clim`` is ``None`` (both boxes blank), defaults are computed the same
-    way the run does — percentile-based via ``_replot_default_clim`` — so the
-    output is faithful to the original run PNGs. Explicit ``clim`` values still
-    win (forwarded verbatim to ``render_volume_layer``).
+    When the resolved clim for a product is ``None`` (both boxes blank), defaults
+    are computed the same way the run does — percentile-based via
+    ``_replot_default_clim`` — so the output is faithful to the original run
+    PNGs. Explicit ``clim`` values still win (forwarded to
+    ``render_volume_layer``).
     """
     params = params or {}
     px = float(params.get("pixel_size_x_um", STAGE.defaults()["pixel_size_x_um"]))
@@ -1025,6 +1029,7 @@ def render_replot(h5_path, selections, style, clim, out_dir, roi=None, params=No
                 title, cbar_label = _generic_title, _generic_cbar
             # Default clim: percentile-based (mirrors the run), not raw min/max
             vmin, vmax = _replot_default_clim(obj, params, style)
+            clim_k = resolve_clim(clim, key)
             n_z = obj.shape[0]
             layer_list = list(range(n_z)) if idxs is None else list(idxs)
             sub_dir = os.path.join(out_dir, key)
@@ -1045,7 +1050,7 @@ def render_replot(h5_path, selections, style, clim, out_dir, roi=None, params=No
                     vmin=vmin,
                     vmax=vmax,
                     style=style,
-                    clim=clim,
+                    clim=clim_k,
                     roi=roi,
                     z_um=z_um,
                 )

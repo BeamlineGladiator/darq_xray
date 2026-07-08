@@ -29,16 +29,41 @@ def test_replot_dialog_collects_selection_clim_roi(tmp_path):
 
     dlg = ReplotDialog(str(h5), catalog_fn, render_fn, style=None, out_default=str(tmp_path))
     dlg.select_all()
-    dlg._vmin.setText("0.5")
+    dlg._clim._edits["A"][0].setText("0.5")  # vmin for group A
     dlg._r0.setText("0")
     dlg._r1.setText("2")
     dlg._c0.setText("0")
     dlg._c1.setText("3")
     written = dlg.render_selection(str(tmp_path))
     assert captured["selections"] == [("A", None)]
-    assert captured["clim"] == (0.5, None)
+    assert captured["clim"] == {"A": (0.5, None)}  # per-group mapping keyed by ReplotGroup.key
     assert captured["roi"] == (0, 2, 0, 3)
     assert written == [os.path.join(str(tmp_path), "x.png")]
+
+
+def test_replot_dialog_collects_per_group_clim(tmp_path):
+    """Two groups → one vmin/vmax row each; only filled groups appear in the dict."""
+    h5 = tmp_path / "vol.h5"
+    h5.write_bytes(b"")
+    captured = {}
+
+    def catalog_fn(path):
+        return [
+            ReplotGroup(key="mosa_com", label="COM", item_labels=["l0"]),
+            ReplotGroup(key="mosa_fwhm", label="FWHM", item_labels=["l0"]),
+        ]
+
+    def render_fn(path, selections, style, clim, roi, out_dir):
+        captured["clim"] = clim
+        return []
+
+    dlg = ReplotDialog(str(h5), catalog_fn, render_fn, out_default=str(tmp_path))
+    dlg.select_all()
+    dlg._clim._edits["mosa_com"][0].setText("-1")
+    dlg._clim._edits["mosa_com"][1].setText("1")
+    dlg._clim._edits["mosa_fwhm"][1].setText("0.3")  # vmax only; vmin stays stored
+    dlg.render_selection(str(tmp_path))
+    assert captured["clim"] == {"mosa_com": (-1.0, 1.0), "mosa_fwhm": (None, 0.3)}
 
 
 def test_replot_dialog_partial_roi_ignored(tmp_path):

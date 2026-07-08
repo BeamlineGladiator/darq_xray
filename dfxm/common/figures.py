@@ -25,6 +25,21 @@ class ReplotGroup:
     shape: tuple[int, int] | None = None  # stored layer (Y, X) pixel shape (ROI-crop hint)
 
 
+def resolve_clim(clim, key):
+    """Pick the ``(vmin, vmax)`` override for one replot group *key*.
+
+    ``clim`` may be ``None`` (keep stored/default limits), a single
+    ``(vmin, vmax)`` tuple (legacy — applies to every group), or a
+    ``{group_key: (vmin, vmax)}`` mapping (per-kind limits). A key missing from
+    the mapping resolves to ``None`` so that group keeps its stored limits.
+    """
+    if clim is None:
+        return None
+    if isinstance(clim, dict):
+        return clim.get(key)
+    return clim
+
+
 @dataclass
 class FigureSpec:
     figure_id: str

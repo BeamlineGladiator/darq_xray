@@ -12,6 +12,19 @@ def _write_vol(path, key="/chi/Center of mass", shape=(2, 4, 5)):
     return key
 
 
+def test_resolve_clim_none_tuple_and_mapping():
+    # None → keep stored limits for every key
+    assert F.resolve_clim(None, "strain") is None
+    # single tuple → applies to every key (legacy behaviour)
+    assert F.resolve_clim((-2.0, 2.0), "strain") == (-2.0, 2.0)
+    assert F.resolve_clim((-2.0, 2.0), "raw") == (-2.0, 2.0)
+    # mapping → per-key lookup; a key missing from the map keeps stored (None)
+    mapping = {"mosa_com": (-1.0, 1.0), "raw": (0.0, None)}
+    assert F.resolve_clim(mapping, "mosa_com") == (-1.0, 1.0)
+    assert F.resolve_clim(mapping, "raw") == (0.0, None)
+    assert F.resolve_clim(mapping, "strain") is None
+
+
 def test_crop_roi_2d_slices_and_clamps():
     arr = np.arange(20, dtype=float).reshape(4, 5)
     # exact crop

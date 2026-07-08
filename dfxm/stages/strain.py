@@ -30,7 +30,7 @@ from matplotlib.figure import Figure
 from scipy.optimize import curve_fit
 
 from ..common.errors import StageUserError
-from ..common.figures import FigureSpec, ReplotGroup, crop_roi_2d, register
+from ..common.figures import FigureSpec, ReplotGroup, crop_roi_2d, register, resolve_clim
 from ..common.plotting import (
     PlotStyle,
     add_colorbar,
@@ -869,15 +869,18 @@ def render_replot(
     h5_path: str,
     selections: list,
     style,
-    clim: tuple | None,
+    clim: tuple | dict[str, tuple] | None,
     out_dir: str,
     roi: tuple | None = None,
     params: dict | None = None,
 ) -> list[str]:
     """Re-render selected strain-map layers cold from the stacked strain h5.
 
-    ``selections`` is ``list[("strain", item_idxs | None)]``.  PNGs are saved
-    under ``{out_dir}/strain/``; the list of written paths is returned.
+    ``selections`` is ``list[("strain", item_idxs | None)]``.  ``clim`` overrides
+    the symmetric colour limits: ``None`` keeps them, a ``(vmin, vmax)`` tuple
+    applies to every layer, and a ``{group_key: (vmin, vmax)}`` mapping is keyed
+    by the ``ReplotGroup.key`` (``"strain"``).  PNGs are saved under
+    ``{out_dir}/strain/``; the list of written paths is returned.
     """
     with h5py.File(h5_path, "r") as f:
         n_z = int(f["strain"].shape[0])
@@ -888,11 +891,12 @@ def render_replot(
     for key, idxs in selections:
         if key != "strain":
             continue
+        clim_k = resolve_clim(clim, key)
         layer_list = list(range(n_z)) if idxs is None else list(idxs)
         for z in layer_list:
             if z < 0 or z >= n_z:
                 continue
-            fig = _rebuild_strain_map(h5_path, z, style, clim=clim, roi=roi, params=params)
+            fig = _rebuild_strain_map(h5_path, z, style, clim=clim_k, roi=roi, params=params)
             if fig is None:
                 continue
             stem = names[z] if z < len(names) and names[z] else f"layer_{z:04d}"

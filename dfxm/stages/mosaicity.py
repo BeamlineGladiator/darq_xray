@@ -29,6 +29,7 @@ from ..common.figures import (
     ReplotGroup,
     register,
     render_volume_layer,
+    resolve_clim,
     volume_layer_specs,
 )
 from ..common.plotting import build_histogram
@@ -341,8 +342,11 @@ def render_replot(h5_path, selections, style, clim, out_dir, roi=None, params=No
     """Re-render selected mosaicity map layers cold from a stacked h5.
 
     ``selections`` is ``list[(dataset_key, item_idxs | None)]`` (``None`` = all
-    layers). ``clim`` overrides vmin/vmax; ``roi`` crops each layer (pixel bounds).
-    PNGs are written under ``{out_dir}/{stem}/``; returns written paths.
+    layers). ``clim`` overrides vmin/vmax: ``None`` keeps the streamed default, a
+    ``(vmin, vmax)`` tuple applies to every dataset, and a
+    ``{dataset_key: (vmin, vmax)}`` mapping sets them per dataset (``mosa_com`` vs
+    ``mosa_fwhm``). ``roi`` crops each layer (pixel bounds). PNGs are written
+    under ``{out_dir}/{stem}/``; returns written paths.
     """
     params = params or {}
     px = float(params.get("pixel_size_x_um", 0.152))
@@ -355,6 +359,7 @@ def render_replot(h5_path, selections, style, clim, out_dir, roi=None, params=No
                 continue
             group, cbar_label, title = _KEY_DISPLAY.get(key, (None, "(°)", key))
             stem = _KEY_STEM.get(key, key.lstrip("/").replace("/", "_").replace(" ", "_"))
+            clim_k = resolve_clim(clim, key)
             n_z = obj.shape[0]
             vmin, vmax = _streamed_clim(obj)
             layer_list = list(range(n_z)) if idxs is None else list(idxs)
@@ -376,7 +381,7 @@ def render_replot(h5_path, selections, style, clim, out_dir, roi=None, params=No
                     vmin=vmin,
                     vmax=vmax,
                     style=style,
-                    clim=clim,
+                    clim=clim_k,
                     roi=roi,
                 )
                 if fig is None:

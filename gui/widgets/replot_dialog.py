@@ -8,6 +8,7 @@ stored render; nothing is recomputed. The file field keeps cold-start working.
 from __future__ import annotations
 
 import os
+import time
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
@@ -22,6 +23,8 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
+from .clim_section import ClimGroupSection
+
 
 class ReplotDialog(QDialog):
     """Pick groups/layers from a replot catalog (via catalog_fn) and re-render PNGs."""
@@ -35,6 +38,9 @@ class ReplotDialog(QDialog):
         self._render_fn = render_fn
         self._style = style
         self.written: list[str] = []
+        self._ts = time.strftime("%Y%m%d-%H%M%S")
+        # Explicit out_default pins the field; otherwise it tracks the loaded h5.
+        self._out_pinned = bool(out_default)
         self.setWindowTitle("Replot")
 
         self._file_edit = QLineEdit(self._h5_path)
@@ -59,14 +65,8 @@ class ReplotDialog(QDialog):
         toolbar.addWidget(deselect_btn)
         toolbar.addStretch(1)
 
-        self._vmin = QLineEdit()
-        self._vmin.setPlaceholderText("vmin")
-        self._vmax = QLineEdit()
-        self._vmax.setPlaceholderText("vmax")
-        clim_row = QHBoxLayout()
-        clim_row.addWidget(QLabel("Colour limits:"))
-        clim_row.addWidget(self._vmin)
-        clim_row.addWidget(self._vmax)
+        self._clim = ClimGroupSection()
+        clim_header = QLabel("Colour limits (per plot kind; blank = stored):")
 
         self._r0, self._r1 = QLineEdit(), QLineEdit()
         self._c0, self._c1 = QLineEdit(), QLineEdit()
@@ -77,7 +77,8 @@ class ReplotDialog(QDialog):
         for e in (self._r0, self._r1, self._c0, self._c1):
             roi_row.addWidget(e)
 
-        self._out_edit = QLineEdit(out_default)
+        self._out_edit = QLineEdit(out_default or self._default_out_for(self._h5_path))
+        self._out_edit.textEdited.connect(self._on_out_edited)
         out_browse = QPushButton("Browse…")
         out_browse.clicked.connect(self._on_browse_out)
         out_row = QHBoxLayout()
@@ -100,15 +101,28 @@ class ReplotDialog(QDialog):
         layout.addLayout(file_row)
         layout.addWidget(self._tree, 1)
         layout.addLayout(toolbar)
-        layout.addLayout(clim_row)
+        layout.addWidget(clim_header)
+        layout.addWidget(self._clim)
         layout.addLayout(roi_row)
         layout.addLayout(out_row)
         layout.addLayout(btn_row)
         self._reload()
 
+    def _default_out_for(self, h5_path: str) -> str:
+        """Default output dir = a timestamped subfolder beside the loaded h5."""
+        if not h5_path:
+            return ""
+        return os.path.join(os.path.dirname(os.path.abspath(h5_path)), "replots", self._ts)
+
+    def _on_out_edited(self, _text: str) -> None:
+        self._out_pinned = True
+
     def _reload(self) -> None:
         self._h5_path = self._file_edit.text().strip()
         self._tree.clear()
+        self._clim.set_groups([])
+        if not self._out_pinned:
+            self._out_edit.setText(self._default_out_for(self._h5_path))
         if not self._h5_path or not os.path.exists(self._h5_path):
             self._status.setText("no such file")
             return
@@ -117,6 +131,7 @@ class ReplotDialog(QDialog):
         except Exception as exc:  # noqa: BLE001 — GUI reload: show status, never crash
             self._status.setText(f"cannot read: {exc}")
             return
+        self._clim.set_groups([(grp.key, grp.label) for grp in catalog])
         for grp in catalog:
             label = grp.label
             if grp.shape is not None:
@@ -160,18 +175,9 @@ class ReplotDialog(QDialog):
         return sels
 
     @staticmethod
-    def _f(edit):
-        t = edit.text().strip()
-        return float(t) if t else None
-
-    @staticmethod
     def _i(edit):
         t = edit.text().strip()
         return int(t) if t else None
-
-    def _clim(self):
-        vmin, vmax = self._f(self._vmin), self._f(self._vmax)
-        return None if (vmin is None and vmax is None) else (vmin, vmax)
 
     def _roi(self):
         vals = (self._i(self._r0), self._i(self._r1), self._i(self._c0), self._i(self._c1))
@@ -179,7 +185,12 @@ class ReplotDialog(QDialog):
 
     def render_selection(self, out_dir):
         self.written = self._render_fn(
-            self._h5_path, self._selections(), self._style, self._clim(), self._roi(), out_dir
+            self._h5_path,
+            self._selections(),
+            self._style,
+            self._clim.clim_by_group(),
+            self._roi(),
+            out_dir,
         )
         return self.written
 
@@ -190,6 +201,10 @@ class ReplotDialog(QDialog):
             return
         if not self._selections():
             self._status.setText("nothing selected")
+            return
+        err = self._clim.validate()
+        if err:
+            self._status.setText(err)
             return
         try:
             written = self.render_selection(out_dir)
@@ -207,4 +222,5 @@ class ReplotDialog(QDialog):
     def _on_browse_out(self) -> None:
         path = QFileDialog.getExistingDirectory(self, "Output directory")
         if path:
+            self._out_pinned = True
             self._out_edit.setText(path)
