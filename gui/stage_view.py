@@ -35,6 +35,7 @@ from dfxm.runner import Done, Failed, Log, Progress, StageRunner
 from dfxm.stages.registry import STAGE_TARGETS
 
 from .bindings import experiment_overrides
+from .form_state import FormStateStore
 from .viewers import inject_line_into_jobs, volume_sources
 from .widgets.help_panel import HelpPanel
 from .widgets.log_console import LogConsole
@@ -43,6 +44,7 @@ from .widgets.volume3d import Volume3DPanel
 from .window_state import DEFAULT_STAGE_SIZES
 
 _POLL_MS = 50
+_SAVE_DEBOUNCE_MS = 400  # coalesce rapid form edits into one QSettings write
 
 # Stages whose run yields an aligned 3-D volume worth viewing interactively.
 _VOLUME_STAGES = ("visualize", "rocking")
@@ -68,21 +70,40 @@ class StageView(QWidget):
         spec: StageSpec,
         experiment: Experiment,
         parent: QWidget | None = None,
+        store: FormStateStore | None = None,
     ) -> None:
         super().__init__(parent)
         self._stage_name = stage_name
         self._spec = spec
         self._experiment = experiment
+        self._store = store
+        self._calib_names = {p.name for p in spec.params if p.calibration}
         self._runner: StageRunner | None = None
         self._last_params: dict = {}
         self._last_result = None
+        # Persistence bookkeeping: only a genuine *user* edit dirties a stage, so
+        # untouched stages never freeze a snapshot (they keep following the
+        # experiment). ``_loading`` suppresses the dirty flag during our own
+        # programmatic form rewrites (restore / experiment switch).
+        self._dirty = False
+        self._loading = False
 
         self._timer = QTimer(self)
         self._timer.setInterval(_POLL_MS)
         self._timer.timeout.connect(self._poll)
 
+        # Debounced save-on-edit of the form values (per experiment) — only when
+        # a store is wired in (production); unit tests without a store skip it.
+        self._save_timer = QTimer(self)
+        self._save_timer.setSingleShot(True)
+        self._save_timer.setInterval(_SAVE_DEBOUNCE_MS)
+        self._save_timer.timeout.connect(self._persist_now)
+
         # --- left: parameter form + run/cancel ---
         self._form = ParamForm(spec.params, self._initial_values())
+        if self._store is not None:
+            self._restore_state()  # overlay saved values before wiring save-on-edit
+            self._form.changed.connect(self._on_form_changed)
         self._run_btn = QPushButton("Run")
         self._run_btn.setProperty("role", "primary")
         self._cancel_btn = QPushButton("Cancel")
@@ -203,9 +224,72 @@ class StageView(QWidget):
         return values
 
     def set_experiment(self, experiment: Experiment) -> None:
-        """Re-apply experiment-derived defaults when the preset changes."""
+        """Re-apply experiment-derived defaults when the preset changes.
+
+        With a store wired in, this also persists the *outgoing* experiment's
+        form state, then rebuilds the form for the incoming experiment from its
+        baseline (defaults + overrides) and overlays that experiment's saved
+        values — so each experiment resumes its own last state. Without a store
+        it keeps the lightweight legacy behaviour (apply overrides only).
+        """
+        if self._store is None:
+            self._experiment = experiment
+            self._form.set_values(experiment_overrides(self._stage_name, experiment))
+            return
+        self.flush()  # snapshot the outgoing experiment before switching
         self._experiment = experiment
-        self._form.set_values(experiment_overrides(self._stage_name, experiment))
+        self._loading = True
+        try:
+            # Full reset to the new experiment's baseline (reset_values clears
+            # None-default fields too, so no field leaks across experiments),
+            # then overlay the incoming experiment's saved values.
+            self._form.reset_values(self._initial_values())
+            self._restore_state()
+        finally:
+            self._loading = False
+        self._dirty = False  # a freshly loaded experiment is not user-dirty
+
+    # -- form-state persistence (per experiment) ---------------------------
+    def _on_form_changed(self) -> None:
+        """A genuine user edit dirties the stage and (re)arms the debounced save."""
+        if self._loading:
+            return  # our own programmatic rewrite — not a user edit
+        self._dirty = True
+        self._save_timer.start()
+
+    def _persistable_values(self) -> dict:
+        """Form values minus calibration params (those follow the experiment)."""
+        return {k: v for k, v in self._form.values().items() if k not in self._calib_names}
+
+    def _persist_now(self) -> None:
+        if self._store is not None and self._dirty:
+            self._store.save(self._experiment.name, self._stage_name, self._persistable_values())
+
+    def _restore_state(self) -> None:
+        """Overlay this experiment's saved values (if any) onto the form.
+
+        Applied key-by-key and defensively: a stale/foreign value that no longer
+        coerces (schema drift, hand-edited settings) is skipped, never crashing
+        construction. Calibration keys are never overlaid — they follow the
+        experiment even if an old payload happens to carry one.
+        """
+        if self._store is None:
+            return
+        saved = self._store.load(self._experiment.name, self._stage_name)
+        if not saved:
+            return
+        for name, val in saved.items():
+            if name in self._calib_names:
+                continue
+            try:
+                self._form.set_values({name: val})
+            except Exception:  # noqa: BLE001 — skip a bad value, keep the rest
+                pass
+
+    def flush(self) -> None:
+        """Force any pending debounced save to disk now (called on close)."""
+        self._save_timer.stop()
+        self._persist_now()
 
     # -- banner / validation ------------------------------------------------
     def _show_banner(self, html_text: str, *, error: bool) -> None:

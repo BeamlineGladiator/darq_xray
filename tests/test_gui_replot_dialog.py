@@ -66,6 +66,21 @@ def test_replot_dialog_collects_per_group_clim(tmp_path):
     assert captured["clim"] == {"mosa_com": (-1.0, 1.0), "mosa_fwhm": (None, 0.3)}
 
 
+def test_replot_dialog_defaults_to_all_selected(tmp_path):
+    h5 = tmp_path / "vol.h5"
+    h5.write_bytes(b"")
+
+    def catalog_fn(path):
+        return [
+            ReplotGroup(key="A", label="A", item_labels=["l0", "l1"]),
+            ReplotGroup(key="B", label="B", item_labels=["l0"]),
+        ]
+
+    dlg = ReplotDialog(str(h5), catalog_fn, lambda *a: [], out_default=str(tmp_path))
+    sels = dlg._selections()  # every group ticked on open
+    assert {key for key, _idxs in sels} == {"A", "B"}
+
+
 def test_replot_dialog_partial_roi_ignored(tmp_path):
     h5 = tmp_path / "vol.h5"
     h5.write_bytes(b"")

@@ -836,6 +836,28 @@ def main() -> int:
     assert len(_written26) == 1 and os.path.exists(_written26[0]), _written26
     print("[26] SliceReplotDialog: Replot… button wired; select_all + render_selection writes PNGs")
 
+    # [27] Per-experiment form state saves on edit/flush and restores in a fresh StageView.
+    from PySide6.QtCore import QSettings as _QSettings27
+
+    from dfxm.config.models import Experiment as _Experiment27
+    from gui.bindings import STAGE_SPECS as _SPECS27
+    from gui.form_state import FormStateStore as _FSS27
+    from gui.stage_view import StageView as _SV27
+
+    _state_ini = os.path.join(tempfile.mkdtemp(), "form_state.ini")  # isolated from real settings
+    _store27 = _FSS27(_QSettings27(_state_ini, _QSettings27.Format.IniFormat))
+    _exp27 = _Experiment27(name="smoke_exp")
+    _v27 = _SV27("strain", _SPECS27["strain"], _exp27, store=_store27)
+    _v27._form.set_values({"root_folder": "/smoke/data"})
+    _v27._form.set_values({"pixel_size_x_um": 0.111})  # calibration — must NOT persist
+    _v27.flush()
+    _v27b = _SV27("strain", _SPECS27["strain"], _exp27, store=_store27)
+    assert _v27b._form.values()["root_folder"] == "/smoke/data", "form state not restored"
+    assert "pixel_size_x_um" not in (_store27.load("smoke_exp", "strain") or {}), "calib leaked"
+    print(
+        "[27] per-experiment form state: save-on-flush restores in a fresh StageView (calib excluded)"
+    )
+
     print("\nGUI SMOKE PASSED")
     return 0
 
