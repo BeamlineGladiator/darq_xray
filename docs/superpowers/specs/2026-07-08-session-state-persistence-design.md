@@ -102,3 +102,17 @@ that experiment (the saved value wins). Acceptable for the resume-first goal.
   (per-experiment, auto-saved, calibration follows the experiment).
 - `docs/Codebase.md` — `gui/form_state.py`; the `StageView` store/debounce/flush
   and `MainWindow` wiring rows.
+
+## Addendum (post-review, applied on the branch)
+
+Whole-branch review changed two things from the description above; the contract
+docs (`Usage.md`/`Codebase.md`) reflect the final behaviour:
+
+- **Saves are dirty-gated.** Only a genuine *user* edit persists a stage (a
+  `_loading` guard suppresses our own programmatic form rewrites). Untouched
+  stages never freeze a snapshot, so the "saved masks experiment edits"
+  limitation applies only to stages you've actually edited — not universally.
+- **Full reset on switch.** `set_experiment` uses new `ParamForm.reset_values`
+  (clears `None`-default fields to a type-appropriate empty) instead of
+  `set_values`, so no `None`-default path leaks across experiments. Restore is
+  key-by-key and defensive (skips uncoercible values and calibration keys).
