@@ -10,6 +10,7 @@ thin shell around slices.replot_catalog / slices.render_replot.
 from __future__ import annotations
 
 import os
+import time
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
@@ -26,6 +27,18 @@ from PySide6.QtWidgets import (
 
 from dfxm.stages import slices as _sl
 
+from .clim_section import ClimGroupSection
+
+# Kind-groups an oblique_slices.h5 can hold, in a stable display order, with
+# newcomer-friendly labels for the per-kind colour-limit rows.
+_SLICE_GROUP_ORDER = ["mosa_com", "mosa_fwhm", "strain", "raw"]
+_SLICE_GROUP_LABELS = {
+    "mosa_com": "Mosaicity COM",
+    "mosa_fwhm": "Mosaicity FWHM",
+    "strain": "Strain",
+    "raw": "Raw intensity",
+}
+
 
 class SliceReplotDialog(QDialog):
     """Pick volumes/slices/planes from an oblique_slices.h5 and re-render PNGs."""
@@ -35,6 +48,9 @@ class SliceReplotDialog(QDialog):
         self._h5_path = h5_path
         self._style = style
         self.written: list[str] = []
+        self._ts = time.strftime("%Y%m%d-%H%M%S")
+        # Explicit out_default pins the field; otherwise it tracks the loaded h5.
+        self._out_pinned = bool(out_default)
 
         self.setWindowTitle(f"Replot slices — {os.path.basename(h5_path)}")
 
@@ -65,15 +81,9 @@ class SliceReplotDialog(QDialog):
         tree_toolbar.addWidget(deselect_btn)
         tree_toolbar.addStretch(1)
 
-        # clim override
-        self._vmin = QLineEdit()
-        self._vmin.setPlaceholderText("vmin (blank = stored)")
-        self._vmax = QLineEdit()
-        self._vmax.setPlaceholderText("vmax (blank = stored)")
-        clim_row = QHBoxLayout()
-        clim_row.addWidget(QLabel("Colour limits:"))
-        clim_row.addWidget(self._vmin)
-        clim_row.addWidget(self._vmax)
+        # per-kind clim override (one vmin/vmax row per kind present in the file)
+        self._clim = ClimGroupSection()
+        clim_header = QLabel("Colour limits (per plot kind; blank = stored):")
 
         # ROI crop override
         self._r0, self._r1 = QLineEdit(), QLineEdit()
@@ -85,8 +95,9 @@ class SliceReplotDialog(QDialog):
         for e in (self._r0, self._r1, self._c0, self._c1):
             roi_row.addWidget(e)
 
-        # output dir
-        self._out_edit = QLineEdit(out_default)
+        # output dir (defaults to a subfolder beside the loaded slices file)
+        self._out_edit = QLineEdit(out_default or self._default_out_for(h5_path))
+        self._out_edit.textEdited.connect(self._on_out_edited)
         out_browse = QPushButton("Browse…")
         out_browse.clicked.connect(self._on_browse_out)
         out_row = QHBoxLayout()
@@ -109,25 +120,40 @@ class SliceReplotDialog(QDialog):
         layout.addLayout(file_row)
         layout.addWidget(self._tree, 1)
         layout.addLayout(tree_toolbar)
-        layout.addLayout(clim_row)
+        layout.addWidget(clim_header)
+        layout.addWidget(self._clim)
         layout.addLayout(roi_row)
         layout.addLayout(out_row)
         layout.addLayout(btn_row)
 
         self._reload()
 
+    def _default_out_for(self, h5_path: str) -> str:
+        """Default output dir = a timestamped subfolder beside the loaded h5."""
+        if not h5_path:
+            return ""
+        return os.path.join(os.path.dirname(os.path.abspath(h5_path)), "replots", self._ts)
+
+    def _on_out_edited(self, _text: str) -> None:
+        self._out_pinned = True
+
     # -- population -----------------------------------------------------------
     def _reload(self) -> None:
         self._h5_path = self._file_edit.text().strip()
         self._tree.clear()
+        if not self._out_pinned:
+            self._out_edit.setText(self._default_out_for(self._h5_path))
         if not self._h5_path or not os.path.exists(self._h5_path):
+            self._clim.set_groups([])
             self._status.setText("no such file")
             return
         try:
             catalog = _sl.replot_catalog(self._h5_path)
         except Exception as exc:  # noqa: BLE001 — GUI reload: show status, never crash
+            self._clim.set_groups([])
             self._status.setText(f"cannot read: {exc}")
             return
+        self._clim.set_groups(self._clim_groups(catalog))
         by_vid: dict[str, QTreeWidgetItem] = {}
         for entry in catalog:
             vtop = by_vid.get(entry.volume_id)
@@ -192,18 +218,18 @@ class SliceReplotDialog(QDialog):
                     sels.append((vid, sname, checked))
         return sels
 
-    def _clim(self):
-        def _f(edit):
-            t = edit.text().strip()
-            return float(t) if t else None
+    @staticmethod
+    def _clim_groups(catalog):
+        """Distinct kind-groups present in *catalog*, ordered for the clim rows.
 
-        try:
-            vmin, vmax = _f(self._vmin), _f(self._vmax)
-        except ValueError:
-            return None
-        if vmin is None and vmax is None:
-            return None
-        return (vmin, vmax)
+        Groups follow ``_SLICE_GROUP_ORDER`` first (so the rows are always in the
+        same familiar order), then any unrecognised group is appended in
+        first-seen order.
+        """
+        present = {e.group for e in catalog if e.group}
+        ordered = [g for g in _SLICE_GROUP_ORDER if g in present]
+        ordered += [g for g in dict.fromkeys(e.group for e in catalog) if g and g not in ordered]
+        return [(g, _SLICE_GROUP_LABELS.get(g, g)) for g in ordered]
 
     def _roi(self):
         def _i(edit):
@@ -220,7 +246,12 @@ class SliceReplotDialog(QDialog):
     def render_selection(self, out_dir):
         """Render currently-checked planes into *out_dir*; returns written paths."""
         self.written = _sl.render_replot(
-            self._h5_path, self._selections(), self._style, self._clim(), out_dir, roi=self._roi()
+            self._h5_path,
+            self._selections(),
+            self._style,
+            self._clim.clim_by_group(),
+            out_dir,
+            roi=self._roi(),
         )
         return self.written
 
@@ -235,14 +266,10 @@ class SliceReplotDialog(QDialog):
             self._status.setText("nothing selected")
             return
         # Validate colour-limit boxes before rendering: non-empty but unparseable → error
-        for label, edit in (("vmin", self._vmin), ("vmax", self._vmax)):
-            t = edit.text().strip()
-            if t:
-                try:
-                    float(t)
-                except ValueError:
-                    self._status.setText(f"invalid colour limit ({label}): {t!r}")
-                    return
+        err = self._clim.validate()
+        if err:
+            self._status.setText(err)
+            return
         try:
             written = self.render_selection(out_dir)
         except Exception as exc:  # noqa: BLE001 — surface render errors in the status bar
@@ -259,4 +286,5 @@ class SliceReplotDialog(QDialog):
     def _on_browse_out(self) -> None:
         path = QFileDialog.getExistingDirectory(self, "Output directory")
         if path:
+            self._out_pinned = True
             self._out_edit.setText(path)

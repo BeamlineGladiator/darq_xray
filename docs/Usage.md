@@ -234,12 +234,16 @@ come from `source_folders` in the file's attributes).
 re-renders selected layers cold from disk. PNGs are written under
 `{out_dir}/strain/` (e.g. `strain/a_strain.png`). Colour limits follow the same
 rules as the live export: both `vmin`/`vmax` blank → symmetric auto-limits
-(white = zero strain on RdBu_r); `clim=(vmin, vmax)` overrides them.
+(white = zero strain on RdBu_r). The dialog shows **one vmin/vmax row per plot
+kind** present in the file — strain has a single kind, so it is one row; `clim`
+is passed to the core as a `{kind: (vmin, vmax)}` mapping.
 
-> [!note] One clim per batch
-> A single **vmin** / **vmax** pair applies to every selected layer in the batch.
-> To apply different limits to individual layers, run the dialog twice with
-> different selections.
+> [!note] Colour limits are per kind, not per layer
+> The **vmin** / **vmax** you set for a kind apply to every selected layer *of
+> that kind* in the batch. To apply different limits to individual layers, run
+> the dialog twice with different selections. The **Output dir** pre-fills to a
+> timestamped `replots/<stamp>/` subfolder beside the loaded h5 and follows the
+> file if you Browse/Load a different one (until you edit it by hand).
 
 > [!note] ROI and axis caveats for replot
 > When a pixel-bounds `roi=(r0, r1, c0, c1)` is supplied the layer is cropped
@@ -285,11 +289,15 @@ re-renders selected layers cold from disk. PNGs are written under
 `{out_dir}/{stem}/` (e.g. `chi_com/chi_com_layer_0000.png`). An optional
 pixel-bounds ROI crops each layer (bounded by the stored data dimensions — the
 tree labels each group with its stored pixel size, e.g. `120×256 px (Y×X)`, as
-the crop bound); an optional `clim=(vmin, vmax)` pair (either entry may be `None`) overrides the
-auto colour limits — one clim pair applies to the whole selected batch. When an
-ROI crop is applied the resulting figure uses a **zero-origin µm extent** (the
-crop origin is treated as 0 µm), unlike a normal run which preserves the true
-physical axes.
+the crop bound); the colour limits are set **per dataset** — the dialog shows a
+separate vmin/vmax row for χ/μ **Center of mass** and for **FWHM**, so the two
+(which live on very different scales) get independent limits. `clim` reaches the
+core as a `{dataset_key: (vmin, vmax)}` mapping (either entry may be `None`; a
+dataset with both blank keeps its auto limits). When an ROI crop is applied the
+resulting figure uses a **zero-origin µm extent** (the crop origin is treated as
+0 µm), unlike a normal run which preserves the true physical axes. The **Output
+dir** pre-fills to a timestamped `replots/<stamp>/` subfolder beside the loaded
+h5 and follows the file on Browse/Load (until edited by hand).
 
 ### 4. Aligned rocking volumes (`rocking`)
 
@@ -349,11 +357,15 @@ re-renders selected layers cold from disk. PNGs are written under
 `{out_dir}/{key}/` (e.g. `sum_intensity/sum_intensity_layer_0000.png`). An
 optional pixel-bounds ROI crops each layer (bounded by the stored data
 dimensions — the tree labels each product with its stored pixel size, e.g.
-`120×256 px (Y×X)`, as the crop bound); an optional `clim=(vmin, vmax)` pair (either entry may be `None`)
-overrides the auto colour limits — one clim pair applies to the whole selected
-batch. When an ROI crop is applied the resulting figure uses a **zero-origin µm
-extent** (the crop origin is treated as 0 µm), unlike a normal run which
-preserves the true physical axes.
+`120×256 px (Y×X)`, as the crop bound); the colour limits are set **per product**
+— the dialog shows a separate vmin/vmax row for `sum_intensity` and for
+`specific_frame`. `clim` reaches the core as a `{product_key: (vmin, vmax)}`
+mapping (either entry may be `None`; a product with both blank keeps its
+percentile auto limits). When an ROI crop is applied the resulting figure uses a
+**zero-origin µm extent** (the crop origin is treated as 0 µm), unlike a normal
+run which preserves the true physical axes. The **Output dir** pre-fills to a
+timestamped `replots/<stamp>/` subfolder beside the loaded h5 and follows the
+file on Browse/Load (until edited by hand).
 
 ### 5. Visualize volumes (`visualize`)
 
@@ -477,16 +489,22 @@ current session is not required. It works from a cold start or after a restart.
    type a path and **Load** to use a different file.
 3. Tick the volumes, slices, and individual planes you want to re-render
    (defaults: all unchecked). Use **Select all** to check every plane at once.
-4. Optionally override the stored colour limits with custom **vmin** / **vmax**
-   values (leave blank to use the limits stored in the HDF5).
+4. Optionally override the stored colour limits **per plot kind**. The dialog
+   shows one **vmin** / **vmax** row for each kind present in the file —
+   Mosaicity COM, Mosaicity FWHM, Strain, Raw intensity — so the four (which sit
+   on very different scales) get independent limits. Leave a kind's boxes blank
+   to keep the limits stored in the HDF5. All raw volumes (`raw_sum`,
+   `raw_mosa_sum`, …) share the single **Raw intensity** row.
 5. Optionally enter an **ROI crop** as four pixel-index integers (**r0**, **r1**,
    **c0**, **c1**) to restrict each plane to a sub-region. Each slice node in the
    tree is labelled with its stored plane pixel size, e.g. `7×9 px (Y×X)`, so the
    valid range is visible: rows `r0:r1` ∈ `[0, nv]`, cols `c0:c1` ∈ `[0, nu]`.
    Leave all four boxes blank for the full image. Partial fills (some boxes
    filled, some blank) are ignored — all four must be provided together.
-6. Set an **Output dir** (pre-filled to a timestamped `replots/<stamp>/`
-   subfolder inside the slices output directory).
+6. The **Output dir** pre-fills to a timestamped `replots/<stamp>/` subfolder
+   **beside the loaded slices file** (i.e. inside the folder that holds the
+   `oblique_slices.h5`). It re-derives automatically if you Browse/Load a
+   different file, until you edit it by hand.
 7. Click **Render** — PNGs are written into `<out_dir>/<slice_name>/`, mirroring
    the layout the slices stage uses.
 

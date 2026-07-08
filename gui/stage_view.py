@@ -326,17 +326,15 @@ class StageView(QWidget):
 
     # -- interactive replot (lazy) ----------------------------------------
     def _on_replot(self) -> None:
-        import time
         from dataclasses import replace
 
         vals = self._form.values()
         window = self.window()
         style = window.global_plot_style() if hasattr(window, "global_plot_style") else None
         style = replace(style) if style is not None else None
-        ts = time.strftime("%Y%m%d-%H%M%S")
 
         if self._stage_name == "slices":
-            self._replot_slices(vals, style, ts)
+            self._replot_slices(vals, style)
             return
 
         from dfxm.stages import mosaicity as _mo
@@ -353,20 +351,19 @@ class StageView(QWidget):
             if p:
                 h5_default = p
                 break
-        base = os.path.dirname(h5_default) if h5_default else "."
-        out_dir = os.path.abspath(os.path.join(base, "replots", ts))
 
         from .widgets.replot_dialog import ReplotDialog  # imported on demand
 
         def render_fn(h5, selections, st, clim, roi, out, _m=module, _p=dict(vals)):
             return _m.render_replot(h5, selections, st, clim, out, roi=roi, params=_p)
 
+        # out_default="" lets the dialog default the output beside the loaded h5.
         dlg = ReplotDialog(
             h5_default,
             module.replot_catalog,
             render_fn,
             style=style,
-            out_default=out_dir,
+            out_default="",
             parent=self,
         )
         dlg.exec()
@@ -376,7 +373,7 @@ class StageView(QWidget):
             )
             self._tabs.setCurrentWidget(self._log)
 
-    def _replot_slices(self, vals: dict, style, ts: str) -> None:
+    def _replot_slices(self, vals: dict, style) -> None:
         """Open the slices-specific replot dialog (SliceReplotDialog)."""
         out_dir = vals.get("output_dir", "") or os.path.join(
             os.path.dirname(
@@ -386,14 +383,13 @@ class StageView(QWidget):
         )
         h5 = os.path.join(out_dir, vals.get("output_h5_name", "") or "oblique_slices.h5")
 
-        replots_dir = os.path.abspath(os.path.join(out_dir, "replots", ts))
-
         from .widgets.slice_replot import SliceReplotDialog  # imported on demand
 
+        # out_default="" lets the dialog default the output beside the loaded h5.
         dlg = SliceReplotDialog(
             h5,
             style=style,
-            out_default=replots_dir,
+            out_default="",
             parent=self,
         )
         dlg.exec()

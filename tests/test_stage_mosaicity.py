@@ -145,3 +145,25 @@ def test_mosaicity_render_replot_writes_pngs_with_crop(tmp_path):
     )
     assert len(written) == 1 + 2
     assert all(os.path.exists(p) for p in written)
+
+
+def test_mosaicity_render_replot_per_group_clim(tmp_path, monkeypatch):
+    h5 = str(tmp_path / "stacked.h5")
+    _write_stacked(h5)
+    seen: dict[str, tuple] = {}
+
+    def fake_layer(h5_path, key, z, **kw):
+        seen[key] = kw.get("clim")
+        return None  # skip figure build / save
+
+    monkeypatch.setattr(M, "render_volume_layer", fake_layer)
+    M.render_replot(
+        h5,
+        [("/chi/Center of mass", [0]), ("/chi/FWHM", [0])],
+        style=None,
+        clim={"/chi/Center of mass": (-0.5, 0.5), "/chi/FWHM": (0.0, 0.2)},
+        out_dir=str(tmp_path / "r"),
+    )
+    # each dataset gets its own limits — the whole point of per-kind clim
+    assert seen["/chi/Center of mass"] == (-0.5, 0.5)
+    assert seen["/chi/FWHM"] == (0.0, 0.2)

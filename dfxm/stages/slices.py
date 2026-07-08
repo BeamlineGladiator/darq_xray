@@ -38,7 +38,7 @@ from scipy.ndimage import map_coordinates
 from ..common import alignment as A
 from ..common import render as Rnd
 from ..common.errors import StageUserError
-from ..common.figures import FigureSpec, crop_roi_2d, register
+from ..common.figures import FigureSpec, crop_roi_2d, register, resolve_clim
 from ..common.plotting import (
     GROUP_BY_KIND,
     PlotStyle,
@@ -452,6 +452,7 @@ class ReplotEntry:
     n_planes: int
     offsets_um: list[float] = field(default_factory=list)
     shape: tuple[int, int] | None = None  # stored plane (nv, nu) pixel shape (ROI-crop hint)
+    group: str = ""  # kind-group (GROUP_BY_KIND[kind]) — keys per-kind clim overrides
 
 
 # -----------------------------------------------------------------------------
@@ -1122,6 +1123,8 @@ def replot_catalog(h5_path: str) -> list[ReplotEntry]:
             vg = f[vid]
             if not isinstance(vg, h5py.Group):
                 continue
+            kind = str(vg.attrs.get("kind", ""))
+            group = GROUP_BY_KIND.get(kind, kind)
             for sname in vg.keys():
                 sg = vg[sname]
                 if not (isinstance(sg, h5py.Group) and "slices" in sg):
@@ -1134,6 +1137,7 @@ def replot_catalog(h5_path: str) -> list[ReplotEntry]:
                         int(sg["slices"].shape[0]),
                         offsets,
                         shape=tuple(sg["slices"].shape[1:]),
+                        group=group,
                     )
                 )
     return entries
@@ -1143,7 +1147,7 @@ def render_replot(
     h5_path: str,
     selections: list[tuple[str, str, list[int] | None]],
     style: PlotStyle | None,
-    clim: tuple[float | None, float | None] | None,
+    clim: tuple[float | None, float | None] | dict[str, tuple] | None,
     out_dir: str,
     roi: tuple[int, int, int, int] | None = None,
     *,
@@ -1154,9 +1158,12 @@ def render_replot(
     ``selections`` is a list of ``(volume_id, slice_name, plane_idxs)`` where
     ``plane_idxs`` is ``None`` for all planes. PNGs are written under
     ``{out_dir}/{slice_name}/`` mirroring the slices run layout; returns the
-    written paths. ``roi`` is an optional ``(r0, r1, c0, c1)`` pixel-index crop
-    applied to every rebuilt plane; planes whose clamped crop is empty are
-    silently skipped.
+    written paths. ``clim`` overrides the stored colour limits: ``None`` keeps
+    them, a single ``(vmin, vmax)`` applies to every plane, and a
+    ``{kind_group: (vmin, vmax)}`` mapping (``mosa_com``/``mosa_fwhm``/
+    ``strain``/``raw``) sets them per kind. ``roi`` is an optional
+    ``(r0, r1, c0, c1)`` pixel-index crop applied to every rebuilt plane; planes
+    whose clamped crop is empty are silently skipped.
     """
     catalog = {(e.volume_id, e.slice_name): e for e in replot_catalog(h5_path)}
     written: list[str] = []
@@ -1165,12 +1172,13 @@ def render_replot(
         if entry is None:
             continue
         idxs = list(range(entry.n_planes)) if plane_idxs is None else list(plane_idxs)
+        clim_k = resolve_clim(clim, entry.group)
         slice_dir = os.path.join(out_dir, sname)
         os.makedirs(slice_dir, exist_ok=True)
         for k in idxs:
             if k < 0 or k >= entry.n_planes:
                 continue
-            fig = _rebuild_plane_figure(h5_path, vid, sname, k, style, clim=clim, roi=roi)
+            fig = _rebuild_plane_figure(h5_path, vid, sname, k, style, clim=clim_k, roi=roi)
             if fig is None:
                 continue
             if entry.n_planes == 1:

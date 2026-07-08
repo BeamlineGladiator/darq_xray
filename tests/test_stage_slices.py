@@ -453,6 +453,31 @@ def test_replot_catalog_enumerates_volumes_slices_planes(tmp_path):
     assert by_vid[("strain", "plane_a")].n_planes == 3
     assert by_vid[("strain", "plane_a")].offsets_um == [-1.0, 0.0, 1.0]
     assert by_vid[("strain", "plane_a")].shape == (7, 9)  # (nv, nu) plane pixels — ROI hint
+    # kind-group keys the per-kind clim overrides (raw_sum → "raw")
+    assert by_vid[("strain", "plane_a")].group == "strain"
+    assert by_vid[("raw_sum", "plane_a")].group == "raw"
+
+
+def test_render_replot_per_group_clim_maps_by_kind(tmp_path, monkeypatch):
+    h5 = tmp_path / "oblique_slices.h5"
+    _write_mini_consolidated(str(h5))
+    seen: dict[str, tuple] = {}
+
+    def fake_rebuild(h5_path, vid, sname, k, style, *, clim=None, roi=None):
+        seen[vid] = clim
+        return None  # skip the actual figure build / save
+
+    monkeypatch.setattr(SL, "_rebuild_plane_figure", fake_rebuild)
+    SL.render_replot(
+        str(h5),
+        [("strain", "plane_a", [0]), ("raw_sum", "plane_a", [0])],
+        style=None,
+        clim={"raw": (0.0, 10.0), "strain": (-5.0, 5.0)},
+        out_dir=str(tmp_path / "r"),
+    )
+    # each volume's plane gets the clim for its kind-group, not a single global one
+    assert seen["strain"] == (-5.0, 5.0)
+    assert seen["raw_sum"] == (0.0, 10.0)
 
 
 def test_render_replot_writes_selected_planes_under_subfolders(tmp_path):
