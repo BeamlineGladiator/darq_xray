@@ -164,10 +164,39 @@ class ParamForm(QWidget):
         return out
 
     def set_values(self, values: dict[str, Any]) -> None:
-        """Load *values* into the widgets (unknown keys ignored)."""
+        """Load *values* into the widgets (unknown keys ignored; ``None`` skipped)."""
         for name, val in values.items():
             if name in self._setters and val is not None:
                 self._setters[name](val)
+
+    def reset_values(self, values: dict[str, Any]) -> None:
+        """Set *every* param to ``values[name]``, clearing to a type-appropriate
+        empty when the value is missing or ``None``.
+
+        Unlike :meth:`set_values` (which skips ``None``), this leaves no field at
+        its previous value — used to fully reset the form to a new baseline (e.g.
+        an experiment switch) so a ``None``-default field can't retain a stale
+        entry from the prior context.
+        """
+        for p in self._params:
+            setter = self._setters.get(p.name)
+            if setter is None:
+                continue
+            val = values.get(p.name)
+            setter(self._empty_value(p) if val is None else val)
+
+    @staticmethod
+    def _empty_value(p: Param) -> Any:
+        """The cleared value for *p*, matching how its editor renders a ``None``."""
+        if p.type is ParamType.BOOL:
+            return False
+        if p.type is ParamType.INT:
+            return 0
+        if p.type is ParamType.FLOAT:
+            return 0.0
+        if p.type is ParamType.ENUM:
+            return str(p.choices[0]) if p.choices else ""
+        return ""
 
     # -- label ------------------------------------------------------------
     def _label_for(self, p: Param) -> QLabel:

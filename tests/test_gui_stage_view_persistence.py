@@ -61,6 +61,51 @@ def test_set_experiment_saves_outgoing_and_loads_incoming(tmp_path):
     assert view._form.values()["root_folder"] == "/from-B"
 
 
+def test_none_default_path_does_not_leak_across_experiments(tmp_path):
+    # F1 regression: output_dir has default=None and is NOT in experiment_overrides,
+    # so a plain set_values-based reset would leave A's value behind on a switch.
+    store = _store(tmp_path)
+    a, b = Experiment(name="expA"), Experiment(name="expB")
+    view = StageView("strain", STAGE_SPECS["strain"], a, store=store)
+    view._form.set_values({"output_dir": "/data/A/out"})
+    view.set_experiment(b)  # full reset to B's baseline — A's path must not survive
+    assert view._form.values()["output_dir"] == ""
+    view._form.set_values({"root_folder": "/b"})  # touch B so it persists
+    view.flush()
+    assert (store.load("expB", "strain") or {}).get("output_dir", "") == ""
+
+
+def test_untouched_stage_is_not_persisted(tmp_path):
+    # F2 regression: a stage with no user edit must not freeze a snapshot, so it
+    # keeps following the experiment.
+    store = _store(tmp_path)
+    exp = Experiment(name="expA")
+    view = StageView("strain", STAGE_SPECS["strain"], exp, store=store)
+    view.flush()
+    assert store.load("expA", "strain") is None
+
+
+def test_restore_skips_uncoercible_value_without_crashing(tmp_path):
+    # F3 regression: a foreign/hand-edited payload must not crash construction.
+    store = _store(tmp_path)
+    exp = Experiment(name="expA")
+    store.save("expA", "visualize", {"range_pct": "not_a_number", "raw_root": "/ok"})
+    view = StageView("visualize", STAGE_SPECS["visualize"], exp, store=store)  # must not raise
+    assert view._form.values()["raw_root"] == "/ok"  # the good key still applied
+
+
+def test_restore_ignores_calibration_key_in_payload(tmp_path):
+    # F4 regression: even if an old payload carries a calibration key, the overlay
+    # must not apply it — calibration follows the experiment.
+    store = _store(tmp_path)
+    exp = Experiment(name="expA")
+    store.save("expA", "strain", {"pixel_size_x_um": 0.999, "root_folder": "/x"})
+    view = StageView("strain", STAGE_SPECS["strain"], exp, store=store)
+    vals = view._form.values()
+    assert vals["root_folder"] == "/x"  # non-calibration value restored
+    assert vals["pixel_size_x_um"] != 0.999  # calibration NOT overlaid from the payload
+
+
 def test_no_store_means_no_persistence(tmp_path):
     # Without a store, StageView keeps the legacy behaviour and writes nothing.
     store = _store(tmp_path)

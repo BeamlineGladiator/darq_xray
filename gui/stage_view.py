@@ -81,6 +81,12 @@ class StageView(QWidget):
         self._runner: StageRunner | None = None
         self._last_params: dict = {}
         self._last_result = None
+        # Persistence bookkeeping: only a genuine *user* edit dirties a stage, so
+        # untouched stages never freeze a snapshot (they keep following the
+        # experiment). ``_loading`` suppresses the dirty flag during our own
+        # programmatic form rewrites (restore / experiment switch).
+        self._dirty = False
+        self._loading = False
 
         self._timer = QTimer(self)
         self._timer.setInterval(_POLL_MS)
@@ -97,7 +103,7 @@ class StageView(QWidget):
         self._form = ParamForm(spec.params, self._initial_values())
         if self._store is not None:
             self._restore_state()  # overlay saved values before wiring save-on-edit
-            self._form.changed.connect(self._save_timer.start)
+            self._form.changed.connect(self._on_form_changed)
         self._run_btn = QPushButton("Run")
         self._run_btn.setProperty("role", "primary")
         self._cancel_btn = QPushButton("Cancel")
@@ -232,25 +238,53 @@ class StageView(QWidget):
             return
         self.flush()  # snapshot the outgoing experiment before switching
         self._experiment = experiment
-        self._form.set_values(self._initial_values())  # reset to new baseline
-        self._restore_state()  # overlay the incoming experiment's saved values
+        self._loading = True
+        try:
+            # Full reset to the new experiment's baseline (reset_values clears
+            # None-default fields too, so no field leaks across experiments),
+            # then overlay the incoming experiment's saved values.
+            self._form.reset_values(self._initial_values())
+            self._restore_state()
+        finally:
+            self._loading = False
+        self._dirty = False  # a freshly loaded experiment is not user-dirty
 
     # -- form-state persistence (per experiment) ---------------------------
+    def _on_form_changed(self) -> None:
+        """A genuine user edit dirties the stage and (re)arms the debounced save."""
+        if self._loading:
+            return  # our own programmatic rewrite — not a user edit
+        self._dirty = True
+        self._save_timer.start()
+
     def _persistable_values(self) -> dict:
         """Form values minus calibration params (those follow the experiment)."""
         return {k: v for k, v in self._form.values().items() if k not in self._calib_names}
 
     def _persist_now(self) -> None:
-        if self._store is not None:
+        if self._store is not None and self._dirty:
             self._store.save(self._experiment.name, self._stage_name, self._persistable_values())
 
     def _restore_state(self) -> None:
-        """Overlay this experiment's saved values (if any) onto the form."""
+        """Overlay this experiment's saved values (if any) onto the form.
+
+        Applied key-by-key and defensively: a stale/foreign value that no longer
+        coerces (schema drift, hand-edited settings) is skipped, never crashing
+        construction. Calibration keys are never overlaid — they follow the
+        experiment even if an old payload happens to carry one.
+        """
         if self._store is None:
             return
         saved = self._store.load(self._experiment.name, self._stage_name)
-        if saved:
-            self._form.set_values(saved)
+        if not saved:
+            return
+        for name, val in saved.items():
+            if name in self._calib_names:
+                continue
+            try:
+                self._form.set_values({name: val})
+            except Exception:  # noqa: BLE001 — skip a bad value, keep the rest
+                pass
 
     def flush(self) -> None:
         """Force any pending debounced save to disk now (called on close)."""

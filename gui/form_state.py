@@ -28,7 +28,9 @@ def _slug(name: str) -> str:
 
     ``QSettings`` treats ``/`` as a group separator; collapse anything that
     isn't alphanumeric/dash/underscore to ``_`` so odd names can't create stray
-    nested groups. Empty names fall back to ``default``.
+    nested groups. Empty names fall back to ``default``. Names that differ only
+    in the collapsed characters (``a/b`` vs ``a_b``) share a slug — harmless for
+    the simple preset names this sees, but a theoretical collision.
     """
     slug = re.sub(r"[^0-9A-Za-z_-]+", "_", (name or "").strip())
     return slug or "default"

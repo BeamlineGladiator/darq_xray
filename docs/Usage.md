@@ -128,13 +128,16 @@ continue analysis without re-entering anything. (Storage is the app-wide
 QSettings, same place the window layout and publication style live — no files to
 manage.)
 
+Only stages you actually **edit** are remembered — an untouched stage keeps
+following the experiment, so a fresh preset still pre-fills normally.
+
 **Calibration fields are the exception:** the reference angle and pixel sizes
 (anything flagged *⚠ calibration*) always follow the active **experiment**, not
 the saved form state — a stale saved value can never silently override an
-updated experiment. Change them in the experiment editor. (Consequence: if you
-edit an experiment's *non*-calibration fields mid-analysis, a stage that already
-has saved values for that experiment keeps its saved values rather than
-re-deriving.)
+updated experiment. Change them in the experiment editor. (Consequence: once you
+have edited a stage under an experiment, later changing that experiment's
+*non*-calibration fields won't re-derive into that stage — its saved values win.
+Untouched stages are unaffected.)
 
 ### The stage panel
 
