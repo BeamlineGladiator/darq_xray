@@ -75,6 +75,18 @@ def test_slice_replot_dialog_passes_roi(tmp_path, monkeypatch):
     assert captured["roi"] == (0, 2, 0, 2)
 
 
+def test_slice_replot_defaults_to_all_selected(tmp_path):
+    from gui.widgets.slice_replot import SliceReplotDialog
+
+    h5 = tmp_path / "oblique_slices.h5"
+    _mini(str(h5))
+    _app = QApplication.instance() or QApplication([])
+    dlg = SliceReplotDialog(str(h5), style=None, out_default=str(tmp_path))
+    sels = dlg._selections()  # opens with everything ticked → a plain Render remakes all
+    assert sels, "dialog should open with all planes selected"
+    assert {vid for vid, _s, _p in sels} == {"raw_sum", "strain"}
+
+
 def test_slice_replot_passes_per_kind_clim(tmp_path, monkeypatch):
     from dfxm.stages import slices as sl
     from gui.widgets.slice_replot import SliceReplotDialog

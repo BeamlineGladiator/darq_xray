@@ -33,6 +33,7 @@ from dfxm.config.models import Experiment
 
 from .bindings import STAGE_ORDER, STAGE_SPECS
 from .experiment_panel import ExperimentPanel
+from .form_state import FormStateStore
 from .overview_page import OverviewPage
 from .stage_view import StageView
 from .theme import ThemeController
@@ -52,6 +53,7 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("DFXM pipeline")
         self.resize(1100, 720)
         self._window_state = WindowState()
+        self._form_state = FormStateStore()
 
         # Session-wide publication style — restored from QSettings when a
         # previous session saved one, else seeded from the module constant
@@ -68,7 +70,7 @@ class MainWindow(QMainWindow):
         self._stack.addWidget(self._overview)
         self._views: dict[str, StageView] = {}
         for name in STAGE_ORDER:
-            view = StageView(name, STAGE_SPECS[name], experiment)
+            view = StageView(name, STAGE_SPECS[name], experiment, store=self._form_state)
             view.runStarted.connect(self._on_run_started)
             view.runFinished.connect(self._on_run_finished)
             self._views[name] = view
@@ -236,6 +238,8 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event) -> None:  # Qt hook
         self._window_state.save(self, self._main_splitter)
         self._save_plot_style()
+        for view in self._views.values():
+            view.flush()  # write any pending debounced form-state save
         super().closeEvent(event)
 
     # -- slots ----------------------------------------------------------------

@@ -118,6 +118,24 @@ output auto-fills the next stage's input** (e.g. the strain/mosaicity volumes
 flow into `visualize`, `paraview` and `slices`; the slices file flows into
 `profiles`). You can still point any stage at files manually.
 
+### Resuming a session (per-experiment form memory)
+
+Every stage form's fields — all the paths, folders, numbers, ROIs, toggles and
+JSON boxes you enter — are **saved automatically as you type** and restored when
+you reopen the app, **kept separately for each experiment**. Switch experiments
+and each one comes back to the state you last left it in, so you can stop and
+continue analysis without re-entering anything. (Storage is the app-wide
+QSettings, same place the window layout and publication style live — no files to
+manage.)
+
+**Calibration fields are the exception:** the reference angle and pixel sizes
+(anything flagged *⚠ calibration*) always follow the active **experiment**, not
+the saved form state — a stale saved value can never silently override an
+updated experiment. Change them in the experiment editor. (Consequence: if you
+edit an experiment's *non*-calibration fields mid-analysis, a stage that already
+has saved values for that experiment keeps its saved values rather than
+re-deriving.)
+
 ### The stage panel
 
 Every stage uses the same layout:
@@ -487,8 +505,10 @@ current session is not required. It works from a cold start or after a restart.
 1. Click **Replot…** on the slices stage panel.
 2. The file field pre-fills from the current form values; click **Browse…** or
    type a path and **Load** to use a different file.
-3. Tick the volumes, slices, and individual planes you want to re-render
-   (defaults: all unchecked). Use **Select all** to check every plane at once.
+3. The tree opens with **everything checked**, so a plain **Render** remakes
+   every volume/slice/plane. **Untick** anything you don't want (or use
+   **Deselect all** then tick a subset). *(This all-checked default applies to
+   the strain/mosaicity/rocking Replot dialogs too.)*
 4. Optionally override the stored colour limits **per plot kind**. The dialog
    shows one **vmin** / **vmax** row for each kind present in the file —
    Mosaicity COM, Mosaicity FWHM, Strain, Raw intensity — so the four (which sit

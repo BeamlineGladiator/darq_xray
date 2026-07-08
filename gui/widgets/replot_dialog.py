@@ -149,6 +149,7 @@ class ReplotDialog(QDialog):
                 leaf.setCheckState(0, Qt.CheckState.Unchecked)
                 leaf.setData(0, Qt.ItemDataRole.UserRole, z)
         self._tree.expandAll()
+        self.select_all()  # default: remake everything; user unticks to subset
         self._status.setText(f"{self._tree.topLevelItemCount()} group(s)")
 
     def select_all(self) -> None:

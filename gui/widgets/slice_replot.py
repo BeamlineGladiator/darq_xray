@@ -179,6 +179,7 @@ class SliceReplotDialog(QDialog):
                 leaf.setCheckState(0, Qt.CheckState.Unchecked)
                 leaf.setData(0, Qt.ItemDataRole.UserRole, (entry.volume_id, entry.slice_name, k))
         self._tree.expandAll()
+        self.select_all()  # default: remake everything; user unticks to subset
         self._status.setText(f"{len(catalog)} slice group(s)")
 
     # -- bulk selection -------------------------------------------------------
