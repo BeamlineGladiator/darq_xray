@@ -173,3 +173,26 @@ def test_clim_rows_are_per_volume_id(tmp_path):
     keys = set(dlg._clim._edits.keys())
     assert keys == {"mosa_com_chi", "mosa_com_mu"}  # one row per quantity, not one 'mosa_com'
     dlg.deleteLater()
+
+
+def test_slice_pick_roi_fills_boxes(tmp_path, monkeypatch):
+    from gui.widgets.slice_replot import SliceReplotDialog
+
+    _ = QApplication.instance() or QApplication([])
+    h5 = tmp_path / "oblique_slices.h5"
+    _mini(str(h5))  # helper already in this file: raw_sum + strain, plane_a
+    dlg = SliceReplotDialog(str(h5), style=None, out_default=str(tmp_path / "o"))
+
+    import gui.widgets.slice_replot as SR
+
+    class _FakePicker:
+        def __init__(self, *a, **k):
+            self.result = (2, 6, 1, 8)
+
+        def exec(self):
+            return 1
+
+    monkeypatch.setattr(SR, "ROIPickerDialog", _FakePicker, raising=False)
+    dlg._on_pick_roi()
+    assert (dlg._r0.text(), dlg._r1.text(), dlg._c0.text(), dlg._c1.text()) == ("2", "6", "1", "8")
+    dlg.deleteLater()

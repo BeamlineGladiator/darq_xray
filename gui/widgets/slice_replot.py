@@ -101,10 +101,13 @@ class SliceReplotDialog(QDialog):
         self._c0, self._c1 = QLineEdit(), QLineEdit()
         for e, ph in ((self._r0, "r0"), (self._r1, "r1"), (self._c0, "c0"), (self._c1, "c1")):
             e.setPlaceholderText(ph)
+        self._pick_roi_btn = QPushButton("Pick ROI…")
+        self._pick_roi_btn.clicked.connect(self._on_pick_roi)
         roi_row = QHBoxLayout()
         roi_row.addWidget(QLabel("ROI crop (px, blank=full) — r=rows(Y), c=cols(X):"))
         for e in (self._r0, self._r1, self._c0, self._c1):
             roi_row.addWidget(e)
+        roi_row.addWidget(self._pick_roi_btn)
 
         # output dir (defaults to a subfolder beside the loaded slices file)
         self._out_edit = QLineEdit(out_default or self._default_out_for(h5_path))
@@ -247,6 +250,38 @@ class SliceReplotDialog(QDialog):
         if any(v is None for v in vals):
             return None  # partial ROI ignored; keep parity with the four-box contract
         return vals
+
+    def _on_pick_roi(self) -> None:
+        if not self._h5_path or not os.path.exists(self._h5_path):
+            self._status.setText("load a slices file first to pick an ROI")
+            return
+        try:
+            catalog = _sl.replot_catalog(self._h5_path)
+        except Exception as exc:  # noqa: BLE001
+            self._status.setText(f"cannot read: {exc}")
+            return
+        previews = [
+            (
+                f"{e.volume_id} · {e.slice_name}",
+                (lambda v=e.volume_id, s=e.slice_name: _sl.plane_preview(self._h5_path, v, s)),
+            )
+            for e in catalog
+        ]
+        if not previews:
+            self._status.setText("nothing to preview")
+            return
+        import sys
+
+        _mod = sys.modules[__name__]
+        if not hasattr(_mod, "ROIPickerDialog"):
+            from .roi_picker import ROIPickerDialog  # imported on demand
+
+            _mod.ROIPickerDialog = ROIPickerDialog
+        dlg = _mod.ROIPickerDialog(previews, initial=self._roi(), parent=self)
+        if dlg.exec() and dlg.result:
+            r0, r1, c0, c1 = dlg.result
+            for edit, val in ((self._r0, r0), (self._r1, r1), (self._c0, c0), (self._c1, c1)):
+                edit.setText(str(val))
 
     def render_selection(self, out_dir):
         """Render currently-checked planes into *out_dir*; returns written paths."""

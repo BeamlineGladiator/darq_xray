@@ -537,6 +537,12 @@ current session is not required. It works from a cold start or after a restart.
    valid range is visible: rows `r0:r1` ∈ `[0, nv]`, cols `c0:c1` ∈ `[0, nu]`.
    Leave all four boxes blank for the full image. Partial fills (some boxes
    filled, some blank) are ignored — all four must be provided together.
+   Click **Pick ROI…** (beside the four pixel boxes) to open a visual picker
+   that shows one preview per `(volume_id, slice_name)` pair in the loaded
+   file — the middle plane of each group is rendered at its stored µm pitch.
+   Accepting the selection writes all four boxes at once. Because different
+   volume/slice groups can have different plane dimensions, switching to a
+   differently-shaped preview clears the current selection before you confirm.
 6. The **Output dir** pre-fills to a timestamped `replots/<stamp>/` subfolder
    **beside the loaded slices file** (i.e. inside the folder that holds the
    `oblique_slices.h5`). It re-derives automatically if you Browse/Load a
