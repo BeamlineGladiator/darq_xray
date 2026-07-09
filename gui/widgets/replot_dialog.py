@@ -30,13 +30,21 @@ class ReplotDialog(QDialog):
     """Pick groups/layers from a replot catalog (via catalog_fn) and re-render PNGs."""
 
     def __init__(
-        self, h5_default, catalog_fn, render_fn, style=None, out_default="", parent=None
+        self,
+        h5_default,
+        catalog_fn,
+        render_fn,
+        style=None,
+        out_default="",
+        preview_fn=None,
+        parent=None,
     ) -> None:
         super().__init__(parent)
         self._h5_path = h5_default or ""
         self._catalog_fn = catalog_fn
         self._render_fn = render_fn
         self._style = style
+        self._preview_fn = preview_fn
         self.written: list[str] = []
         self._ts = time.strftime("%Y%m%d-%H%M%S")
         # Explicit out_default pins the field; otherwise it tracks the loaded h5.
@@ -72,10 +80,13 @@ class ReplotDialog(QDialog):
         self._c0, self._c1 = QLineEdit(), QLineEdit()
         for e, ph in ((self._r0, "r0"), (self._r1, "r1"), (self._c0, "c0"), (self._c1, "c1")):
             e.setPlaceholderText(ph)
+        self._pick_roi_btn = QPushButton("Pick ROI…")
+        self._pick_roi_btn.clicked.connect(self._on_pick_roi)
         roi_row = QHBoxLayout()
         roi_row.addWidget(QLabel("ROI crop (px, blank=full) — r=rows(Y), c=cols(X):"))
         for e in (self._r0, self._r1, self._c0, self._c1):
             roi_row.addWidget(e)
+        roi_row.addWidget(self._pick_roi_btn)
 
         self._out_edit = QLineEdit(out_default or self._default_out_for(self._h5_path))
         self._out_edit.textEdited.connect(self._on_out_edited)
@@ -184,6 +195,34 @@ class ReplotDialog(QDialog):
     def _roi(self):
         vals = (self._i(self._r0), self._i(self._r1), self._i(self._c0), self._i(self._c1))
         return vals if all(v is not None for v in vals) else None  # all-four-or-none
+
+    def _on_pick_roi(self) -> None:
+        if not self._preview_fn or not self._h5_path:
+            self._status.setText("load a volume file first to pick an ROI")
+            return
+        try:
+            catalog = self._catalog_fn(self._h5_path)
+        except Exception as exc:  # noqa: BLE001
+            self._status.setText(f"cannot read: {exc}")
+            return
+        previews = [
+            (grp.label, (lambda k=grp.key: self._preview_fn(self._h5_path, k))) for grp in catalog
+        ]
+        if not previews:
+            self._status.setText("nothing to preview")
+            return
+        import sys
+
+        _mod = sys.modules[__name__]
+        if not hasattr(_mod, "ROIPickerDialog"):
+            from .roi_picker import ROIPickerDialog  # imported on demand
+
+            _mod.ROIPickerDialog = ROIPickerDialog
+        dlg = _mod.ROIPickerDialog(previews, initial=self._roi(), parent=self)
+        if dlg.exec() and dlg.result:
+            r0, r1, c0, c1 = dlg.result
+            for edit, val in ((self._r0, r0), (self._r1, r1), (self._c0, c0), (self._c1, c1)):
+                edit.setText(str(val))
 
     def render_selection(self, out_dir):
         self.written = self._render_fn(

@@ -282,6 +282,13 @@ is passed to the core as a `{kind: (vmin, vmax)}` mapping.
 > run's already-ROI-cropped layer — i.e. the largest region a replot crop can
 > reach; a wider frame needs a re-run.)
 
+> [!tip] Picking an ROI interactively
+> Click **Pick ROI…** (beside the four pixel boxes) to open a visual picker that
+> shows the middle Z-layer of each plot-kind group at its natural pixel scale.
+> Drag a rectangle on the preview and click **OK** — the four boxes (r0, r1, c0,
+> c1) are filled automatically. The preview is oriented exactly like the exported
+> maps (rows = Y, columns = X), so the coordinates transfer directly.
+
 ### 3. Mosaicity volume (`mosaicity`)
 
 Stack per-layer χ/μ **Center-of-mass** and **FWHM** maps into a 3-D volume.
@@ -318,7 +325,10 @@ dataset with both blank keeps its auto limits). When an ROI crop is applied the
 resulting figure uses a **zero-origin µm extent** (the crop origin is treated as
 0 µm), unlike a normal run which preserves the true physical axes. The **Output
 dir** pre-fills to a timestamped `replots/<stamp>/` subfolder beside the loaded
-h5 and follows the file on Browse/Load (until edited by hand).
+h5 and follows the file on Browse/Load (until edited by hand). Click **Pick
+ROI…** (beside the four pixel boxes) to open a visual picker showing the middle
+Z-layer of each dataset; drag a rectangle and click **OK** to fill the boxes
+automatically. The preview is oriented exactly like the exported maps.
 
 ### 4. Aligned rocking volumes (`rocking`)
 
@@ -386,7 +396,10 @@ percentile auto limits). When an ROI crop is applied the resulting figure uses a
 **zero-origin µm extent** (the crop origin is treated as 0 µm), unlike a normal
 run which preserves the true physical axes. The **Output dir** pre-fills to a
 timestamped `replots/<stamp>/` subfolder beside the loaded h5 and follows the
-file on Browse/Load (until edited by hand).
+file on Browse/Load (until edited by hand). Click **Pick ROI…** (beside the
+four pixel boxes) to open a visual picker showing the middle Z-layer of each
+product; drag a rectangle and click **OK** to fill the boxes automatically. The
+preview is oriented exactly like the exported maps.
 
 ### 5. Visualize volumes (`visualize`)
 

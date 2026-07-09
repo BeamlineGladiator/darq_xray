@@ -436,10 +436,17 @@ class StageView(QWidget):
                 h5_default = p
                 break
 
+        from dfxm.common.figures import load_middle_layer
+
         from .widgets.replot_dialog import ReplotDialog  # imported on demand
 
         def render_fn(h5, selections, st, clim, roi, out, _m=module, _p=dict(vals)):
             return _m.render_replot(h5, selections, st, clim, out, roi=roi, params=_p)
+
+        def preview_fn(h5, key, _p=dict(vals)):
+            sx = float(_p.get("pixel_size_x_um", 0.152))
+            sy = float(_p.get("pixel_size_y_um", 0.385))
+            return load_middle_layer(h5, key), sx, sy
 
         # out_default="" lets the dialog default the output beside the loaded h5.
         dlg = ReplotDialog(
@@ -448,6 +455,7 @@ class StageView(QWidget):
             render_fn,
             style=style,
             out_default="",
+            preview_fn=preview_fn,
             parent=self,
         )
         dlg.exec()
