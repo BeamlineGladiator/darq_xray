@@ -1143,6 +1143,25 @@ def replot_catalog(h5_path: str) -> list[ReplotEntry]:
     return entries
 
 
+def plane_preview(h5_path: str, volume_id: str, slice_name: str) -> tuple[np.ndarray, float, float]:
+    """Middle plane of a slice group + its (du, dv) µm/px pitch, for the ROI picker.
+
+    Returns ``(array2d, sx, sy)`` where ``sx=du`` (cols/u/X) and ``sy=dv``
+    (rows/v/Y) come from the stored ``u_um``/``v_um`` axes — the resampled slice
+    pitch, NOT the detector pixel scale.
+    """
+    with h5py.File(h5_path, "r") as f:
+        sg = f[f"{volume_id}/{slice_name}"]
+        stack = sg["slices"]
+        mid = stack.shape[0] // 2
+        arr = stack[mid][...]
+        u = sg["u_um"][:]
+        v = sg["v_um"][:]
+    du = float(abs(u[1] - u[0])) if len(u) > 1 else 1.0
+    dv = float(abs(v[1] - v[0])) if len(v) > 1 else 1.0
+    return np.asarray(arr, dtype=float), du, dv
+
+
 def render_replot(
     h5_path: str,
     selections: list[tuple[str, str, list[int] | None]],

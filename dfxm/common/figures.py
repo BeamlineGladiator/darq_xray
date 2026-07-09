@@ -113,6 +113,16 @@ def _load_layer(h5_path: str, dataset: str, z: int):
         return f[dataset][z]
 
 
+def load_middle_layer(h5_path: str, dataset: str) -> np.ndarray:
+    """Return the middle-Z 2-D layer of a (Z,Y,X) HDF5 dataset (ROI-picker preview)."""
+    import h5py
+
+    with h5py.File(h5_path, "r") as f:
+        dset = f[dataset]
+        z = dset.shape[0] // 2
+        return dset[z][...]
+
+
 def crop_roi_2d(layer: np.ndarray, roi: tuple[int, int, int, int] | None) -> np.ndarray | None:
     """Crop a 2-D array to ``(r0, r1, c0, c1)`` pixel bounds, clamped to shape.
 

@@ -628,3 +628,14 @@ def test_run_includes_mosa_raw_field(tmp_path):
     with h5py.File(res.output_h5, "r") as f:
         assert f["raw_mosa_sum"].attrs["kind"] == "raw_mosa_sum"
         assert f["raw_mosa_sum"].attrs["title"] == "Mosa-integrated Sum Intensity"
+
+
+def test_plane_preview_returns_middle_plane_and_du_dv(tmp_path):
+    h5 = tmp_path / "oblique_slices.h5"
+    _write_mini_consolidated(
+        str(h5)
+    )  # u: 9 pts over [-4,4] -> du=1.0; v: 7 pts over [-3,3] -> dv=1.0
+    arr, sx, sy = SL.plane_preview(str(h5), "strain", "plane_a")
+    assert arr.shape == (7, 9)  # (nv, nu)
+    assert sx == pytest.approx(1.0)  # du (cols/X)
+    assert sy == pytest.approx(1.0)  # dv (rows/Y)
