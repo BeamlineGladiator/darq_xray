@@ -512,12 +512,12 @@ current session is not required. It works from a cold start or after a restart.
    every volume/slice/plane. **Untick** anything you don't want (or use
    **Deselect all** then tick a subset). *(This all-checked default applies to
    the strain/mosaicity/rocking Replot dialogs too.)*
-4. Optionally override the stored colour limits **per plot kind**. The dialog
-   shows one **vmin** / **vmax** row for each kind present in the file —
-   Mosaicity COM, Mosaicity FWHM, Strain, Raw intensity — so the four (which sit
-   on very different scales) get independent limits. Leave a kind's boxes blank
-   to keep the limits stored in the HDF5. All raw volumes (`raw_sum`,
-   `raw_mosa_sum`, …) share the single **Raw intensity** row.
+4. Optionally override the stored colour limits **per quantity**. The dialog
+   shows one **vmin** / **vmax** row for each distinct volume present in the
+   file, in first-seen order — χ and μ components of mosaicity are separate
+   rows (e.g. **Mosaicity COM (χ)** and **Mosaicity COM (μ)**), and each raw
+   variant (`raw_sum`, `raw_specific`, `raw_mosa_sum`, `raw_mosa_specific`) is
+   its own row. Leave a row's boxes blank to keep the limits stored in the HDF5.
 5. Optionally enter an **ROI crop** as four pixel-index integers (**r0**, **r1**,
    **c0**, **c1**) to restrict each plane to a sub-region. Each slice node in the
    tree is labelled with its stored plane pixel size, e.g. `7×9 px (Y×X)`, so the
