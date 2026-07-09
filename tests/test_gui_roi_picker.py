@@ -40,3 +40,15 @@ def test_dialog_no_selection_result_none():
     assert dlg.result is None
     assert not dlg._use.isEnabled()  # disabled until a non-degenerate rect exists
     dlg.deleteLater()
+
+
+def test_initial_rectangle_drawn_on_open():
+    """initial= pre-populates the selector so the rectangle is actually visible."""
+    from gui.widgets.roi_picker import ROIPickerDialog
+
+    _ = QApplication.instance() or QApplication([])
+    # initial=(r0, r1, c0, c1); extents order is (xmin, xmax, ymin, ymax)=(c0, c1, r0, r1)
+    dlg = ROIPickerDialog(_previews(), initial=(40, 160, 12, 88))
+    assert dlg._use.isEnabled()
+    assert tuple(round(v) for v in dlg._selector.extents) == (12, 88, 40, 160)
+    dlg.deleteLater()

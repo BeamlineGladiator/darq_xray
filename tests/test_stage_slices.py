@@ -639,3 +639,28 @@ def test_plane_preview_returns_middle_plane_and_du_dv(tmp_path):
     assert arr.shape == (7, 9)  # (nv, nu)
     assert sx == pytest.approx(1.0)  # du (cols/X)
     assert sy == pytest.approx(1.0)  # dv (rows/Y)
+
+
+def test_plane_preview_du_dv_not_swapped(tmp_path):
+    """Asymmetric pitch (du != dv) catches an sx/sy swap: sx=du(X/cols), sy=dv(Y/rows)."""
+    h5 = tmp_path / "oblique_slices_asym.h5"
+    u = np.linspace(-4.0, 4.0, 5)  # 5 pts → du = 2.0 (cols/X)
+    v = np.linspace(-3.0, 3.0, 7)  # 7 pts → dv = 1.0 (rows/Y)
+    offsets = np.array([0.0, 1.0])
+    with h5py.File(str(h5), "w") as f:
+        g = f.create_group("strain")
+        g.attrs["kind"] = "strain"
+        g.attrs["cmap"] = "RdBu_r"
+        g.attrs["title"] = "strain"
+        g.attrs["cbar_label"] = "value"
+        g.attrs["vmin"] = -1.0
+        g.attrs["vmax"] = 1.0
+        sg = g.create_group("slice0")
+        sg.create_dataset("slices", data=np.zeros((2, v.size, u.size), dtype=np.float32))
+        sg.create_dataset("u_um", data=u)
+        sg.create_dataset("v_um", data=v)
+        sg.create_dataset("offsets_um", data=offsets)
+    arr, sx, sy = SL.plane_preview(str(h5), "strain", "slice0")
+    assert arr.shape == (7, 5)  # (nv, nu) = (Y rows, X cols)
+    assert sx == pytest.approx(2.0)  # du / X / cols
+    assert sy == pytest.approx(1.0)  # dv / Y / rows

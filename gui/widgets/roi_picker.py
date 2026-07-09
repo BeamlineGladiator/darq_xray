@@ -125,9 +125,13 @@ class ROIPickerDialog(QDialog):
             self._readout.setText(f"shape {h}×{w} px — previous selection cleared")
         elif self._rect is None and self._initial is not None:
             r0, r1, c0, c1 = self._initial
+            if self._selector is not None:
+                self._selector.extents = (c0, c1, r0, r1)
             self._on_rect_change(c0, c1, r0, r1)
         elif self._rect is not None:
             xmin, xmax, ymin, ymax = self._rect
+            if self._selector is not None:
+                self._selector.extents = (xmin, xmax, ymin, ymax)
             self._on_rect_change(xmin, xmax, ymin, ymax)
         self._canvas.draw_idle()
 

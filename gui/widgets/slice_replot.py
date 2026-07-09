@@ -94,7 +94,7 @@ class SliceReplotDialog(QDialog):
 
         # per-kind clim override (one vmin/vmax row per kind present in the file)
         self._clim = ClimGroupSection()
-        clim_header = QLabel("Colour limits (per plot kind; blank = stored):")
+        clim_header = QLabel("Colour limits (per quantity; blank = stored):")
 
         # ROI crop override
         self._r0, self._r1 = QLineEdit(), QLineEdit()
