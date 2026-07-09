@@ -44,6 +44,23 @@ from .widgets.volume3d import Volume3DPanel
 from .window_state import DEFAULT_STAGE_SIZES
 
 _POLL_MS = 50
+
+
+def _roi_previews_for(stage_name: str, vals: dict):
+    """Resolve a stage's roi_previews(params) provider, or [] if it has none."""
+    if stage_name == "strain":
+        from dfxm.stages import strain as m
+    elif stage_name == "visualize":
+        from dfxm.stages import visualize as m
+    elif stage_name == "paraview":
+        from dfxm.stages import paraview as m
+    elif stage_name == "slices":
+        from dfxm.stages import slices as m
+    else:
+        return []
+    return m.roi_previews(vals) if hasattr(m, "roi_previews") else []
+
+
 _SAVE_DEBOUNCE_MS = 400  # coalesce rapid form edits into one QSettings write
 
 # Stages whose run yields an aligned 3-D volume worth viewing interactively.
@@ -126,6 +143,17 @@ class StageView(QWidget):
             self._replot_btn = QPushButton("Replot…")
             self._replot_btn.clicked.connect(self._on_replot)
             btn_row.addWidget(self._replot_btn)
+        # ROI-grouped stages: one "Pick ROI…" button per distinct roi_group
+        self._roi_buttons: dict[str, QPushButton] = {}
+        _seen_groups: list[str] = []
+        for p in spec.params:
+            if p.roi_group and p.roi_group not in _seen_groups:
+                _seen_groups.append(p.roi_group)
+        for _grp in _seen_groups:
+            _btn = QPushButton("Pick ROI…")
+            _btn.clicked.connect(lambda _checked=False, g=_grp: self._on_pick_roi_group(g))
+            btn_row.addWidget(_btn)
+            self._roi_buttons[_grp] = _btn
         btn_row.addStretch(1)
 
         self._progress = QProgressBar()
@@ -490,6 +518,53 @@ class StageView(QWidget):
                 f"Replotted {len(dlg.written)} PNG(s) → {os.path.dirname(dlg.written[0])}"
             )
             self._tabs.setCurrentWidget(self._log)
+
+    # -- interactive ROI picker (lazy, schema-driven) ---------------------
+    def _on_pick_roi_group(self, roi_group: str) -> None:
+        """Open the ROI picker for all params in *roi_group*, write results back."""
+        import sys
+
+        vals = self._form.values()
+        previews = _roi_previews_for(self._stage_name, vals)
+        if not previews:
+            self._log.append("Pick ROI: no preview available (set the volume/map file first).")
+            self._tabs.setCurrentWidget(self._log)
+            return
+        members = [p for p in self._spec.params if p.roi_group == roi_group]
+
+        def _cur_initial():
+            # Pre-fill the picker from existing box values, if fully set.
+            axis = {p.roi_axis: str(vals.get(p.name, "") or "") for p in members}
+            try:
+                if "both" in axis:
+                    r0, r1, c0, c1 = (int(t) for t in axis["both"].split(","))
+                    return (r0, r1, c0, c1)
+                c0, c1 = (int(t) for t in axis.get("x", "").split(","))
+                r0, r1 = (int(t) for t in axis.get("y", "").split(","))
+                return (r0, r1, c0, c1)
+            except Exception:  # noqa: BLE001
+                return None
+
+        _mod = sys.modules[__name__]
+        if not hasattr(_mod, "ROIPickerDialog"):
+            from .widgets.roi_picker import ROIPickerDialog  # imported on demand
+
+            _mod.ROIPickerDialog = ROIPickerDialog
+        dlg = _mod.ROIPickerDialog(previews, initial=_cur_initial(), parent=self)
+        if not (dlg.exec() and dlg.result):
+            return
+        r0, r1, c0, c1 = dlg.result
+        updates: dict[str, str] = {}
+        for p in members:
+            if p.roi_axis == "both":
+                updates[p.name] = f"{r0},{r1},{c0},{c1}"
+            elif p.roi_axis == "x":
+                updates[p.name] = f"{c0},{c1}"
+            elif p.roi_axis == "y":
+                updates[p.name] = f"{r0},{r1}"
+        self._form.set_values(updates)
+        self._log.append(f"Picked ROI → {updates}")
+        self._tabs.setCurrentWidget(self._log)
 
     def _poll(self) -> None:
         runner = self._runner

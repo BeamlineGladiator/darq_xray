@@ -159,6 +159,22 @@ a field and it shows that field's help; click away (or open another stage) and i
 returns to the stage description. The same per-field help is also available as a
 hover tooltip on each field and its label.
 
+#### Picking an ROI interactively
+
+The **strain**, **visualize**, **paraview**, and **slices** stages show a
+**Pick ROI…** button in the button row (alongside Run and Cancel). Clicking it
+opens a visual picker pre-loaded with the stage's representative map or volume
+layer; drag a rectangle and click **OK** to fill the ROI field(s) automatically.
+
+The picker is **per-stage** — accepting a rectangle writes only into the current
+stage's form and does not propagate to sibling stages. If you want the same crop
+on multiple stages you pick separately on each. Rocking does not have a picker
+because its detector crop is set in the raw-frame (before alignment) and must be
+entered manually to match the mechanical geometry.
+
+If no preview can be loaded (the required volume/map file is not set yet), the
+picker button logs a message and opens the Log tab instead of opening the picker.
+
 ---
 
 ## The pipeline at a glance
@@ -242,12 +258,12 @@ Per-pixel axial strain (cot method) from darfix `maps.h5`, then stacked into a
 > is cropped. This order is a physics constraint and is not configurable.
 
 > [!tip] Picking the run-time ROI interactively
-> Click **Pick ROI…** (beside the `roi` field) to open a visual picker that
-> shows the ccmth Center-of-mass map loaded from the current `maps.h5`. Drag a
-> rectangle on the CoM map and click **OK** — the `roi` field is filled with
-> `r0,r1,c0,c1` automatically. The preview is oriented like the exported maps
-> (rows = Y, columns = X). If the maps file cannot be resolved from the current
-> form inputs the picker shows no preview.
+> Click **Pick ROI…** (in the button row alongside Run/Cancel) to open a visual
+> picker that shows the ccmth Center-of-mass map loaded from the current
+> `maps.h5`. Drag a rectangle on the CoM map and click **OK** — the `roi` field
+> is filled with `r0,r1,c0,c1` automatically. The preview is oriented like the
+> exported maps (rows = Y, columns = X). If the maps file cannot be resolved from
+> the current form inputs the picker shows no preview.
 
 #### Replotting strain layers without re-running
 
@@ -427,10 +443,11 @@ Align the stacked mosaicity/strain volumes and render them.
 | `output_format` | `mp4` / `gif` / `both` |
 
 > [!tip] Picking the run-time ROI interactively
-> Click **Pick ROI…** (beside the `roi_x`/`roi_y` fields) to open a visual picker
-> that shows the middle Z-layer of the χ/μ Center-of-mass and strain volumes.
-> Drag a rectangle and click **OK** — the `roi_x` and `roi_y` fields are filled
-> automatically. Returns no preview when the volume files cannot be read.
+> Click **Pick ROI…** (in the button row alongside Run/Cancel) to open a visual
+> picker that shows the middle Z-layer of the χ/μ Center-of-mass and strain
+> volumes. Drag a rectangle and click **OK** — the `roi_x` and `roi_y` fields
+> are filled automatically. Returns no preview when the volume files cannot be
+> read.
 
 > [!note]
 > Colourmaps follow the publication-style **Colormaps** dropdowns (misorientation
@@ -454,10 +471,11 @@ rendering, with a `valid_mask` and NaN sentinels.
 | `anchor_origin_to_reference` | place the world origin in the raw-detector frame so all volumes co-register |
 
 > [!tip] Picking the run-time ROI interactively
-> Click **Pick ROI…** (beside the `roi_x`/`roi_y` fields) to open a visual picker
-> that shows the middle Z-layer of the χ/μ Center-of-mass and strain volumes.
-> Drag a rectangle and click **OK** — the `roi_x` and `roi_y` fields are filled
-> automatically. Returns no preview when the volume files cannot be read.
+> Click **Pick ROI…** (in the button row alongside Run/Cancel) to open a visual
+> picker that shows the middle Z-layer of the χ/μ Center-of-mass and strain
+> volumes. Drag a rectangle and click **OK** — the `roi_x` and `roi_y` fields
+> are filled automatically. Returns no preview when the volume files cannot be
+> read.
 
 > [!example] ParaView workflow
 > ```bash
@@ -487,10 +505,11 @@ through the aligned volumes — all in one world frame so the slices co-register
 | `align_roi_x` / `align_roi_y` | detector crop used during alignment (must match the crop from visualize/paraview runs) |
 
 > [!tip] Picking the alignment ROI interactively
-> Click **Pick ROI…** (beside the `align_roi_x`/`align_roi_y` fields) to open a
-> visual picker that shows the middle Z-layer of the χ/μ Center-of-mass and strain
-> volumes. Drag a rectangle and click **OK** — the two fields are filled
-> automatically. Returns no preview when the volume files cannot be read.
+> Click **Pick ROI…** (in the button row alongside Run/Cancel) to open a visual
+> picker that shows the middle Z-layer of the χ/μ Center-of-mass and strain
+> volumes. Drag a rectangle and click **OK** — the `align_roi_x` and
+> `align_roi_y` fields are filled automatically. Returns no preview when the
+> volume files cannot be read.
 
 > [!example] A slice spec
 > ```json

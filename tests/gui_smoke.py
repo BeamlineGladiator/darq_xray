@@ -858,6 +858,19 @@ def main() -> int:
         "[27] per-experiment form state: save-on-flush restores in a fresh StageView (calib excluded)"
     )
 
+    # [28] ROI picker button: schema-driven "Pick ROI…" button wired on roi-grouped stages.
+    vview = win._views["visualize"]
+    assert getattr(vview, "_roi_buttons", None), "visualize StageView missing Pick ROI… button"
+    assert "crop" in vview._roi_buttons, "expected 'crop' roi_group button on visualize"
+    sview28 = win._views["strain"]
+    assert getattr(sview28, "_roi_buttons", None), "strain StageView missing Pick ROI… button"
+    # Stages without roi_group params (e.g. concat, profiles) must have an empty dict.
+    concat_view = win._views["concat"]
+    assert getattr(concat_view, "_roi_buttons", None) == {}, (
+        "concat StageView should have no ROI buttons"
+    )
+    print("[28] schema-driven Pick ROI… buttons present on roi-grouped stages (visualize, strain)")
+
     print("\nGUI SMOKE PASSED")
     return 0
 
