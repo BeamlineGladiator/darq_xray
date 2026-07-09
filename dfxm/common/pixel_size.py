@@ -4,10 +4,14 @@ Qt-free. Reads the far-field geometry motors from the first BLISS entry of a
 raw scan and turns them into the physical detector pixel size (micrometres per
 pixel) that the strain/mosaicity maps are scaled by.
 
+``mainx`` is the far-field detector's along-beam position; on ID03 it reads
+negative in the motor frame, so the formulas below use ``|mainx|`` as the
+physical distance (a positive magnification and an acute 2theta).
+
 Geometry (lens-maker):
-    M   = mainx / obx - 1                 (CRL magnification)
+    M   = |mainx| / obx - 1               (CRL magnification)
     E_x = base / M                        (horizontal pixel size, um)
-    2th = atan2(ffz, mainx)               (detector angle)
+    2th = atan2(ffz, |mainx|)             (detector angle)
     E_y = E_x / sin(2th)  if condenser in, else E_x
 
 ``base`` is the far-field camera pixel (6.5 um) divided by the objective
@@ -110,22 +114,27 @@ def compute_pixel_size(
     ffz = _scalar(pos, FFZ, group)
     lenssel = _scalar(pos, LENSSEL, group)
 
+    # ``mainx`` is the far-field detector's along-beam position; on ID03 it reads
+    # negative in the motor frame, but the optics formulas below use it as a
+    # positive distance, so drive both the magnification and 2theta from |mainx|.
+    mainx_dist = abs(mainx)
+
     if obx == 0.0:
         raise StageUserError(
-            "obx = 0, cannot compute the magnification (mainx/obx - 1)",
+            "obx = 0, cannot compute the magnification (|mainx|/obx - 1)",
             hint="Check obx; set the pixel size manually.",
         )
-    magnification = mainx / obx - 1.0
+    magnification = mainx_dist / obx - 1.0
     if magnification <= 0.0:
         raise StageUserError(
-            f"non-physical magnification M={magnification:g} (mainx/obx - 1)",
-            hint="Check mainx and obx (expected mainx > obx). Set the pixel size manually.",
+            f"non-physical magnification M={magnification:g} (|mainx|/obx - 1)",
+            hint="Check mainx and obx (expected |mainx| > obx). Set the pixel size manually.",
         )
 
     objective, base = _match_objective(ffsel)
     px_x = base / magnification
 
-    two_theta = math.atan2(ffz, mainx)
+    two_theta = math.atan2(ffz, mainx_dist)
     condenser_in = abs(lenssel) <= _LENSSEL_TOL
     if condenser_in:
         sin2t = math.sin(two_theta)

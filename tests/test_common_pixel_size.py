@@ -55,6 +55,24 @@ def test_10x_condenser_out(tmp_path):
     assert res.pixel_size_y_um == pytest.approx(0.65 / m)
 
 
+def test_negative_mainx_gives_physical_geometry(tmp_path):
+    # Real ID03 scans report a negative mainx (motor-frame sign convention);
+    # the optics formulas use it as a positive distance, so |mainx| must drive
+    # both the magnification and the reported 2theta.
+    p = _write_scan(
+        tmp_path / "s.h5", mainx=-5000.0, obx=273.0, ffsel=-60.0, ffz=2100.0, lenssel=0.0
+    )
+    res = compute_pixel_size(p)
+    m = 5000.0 / 273.0 - 1.0
+    two_theta = math.atan2(2100.0, 5000.0)  # acute angle, not the obtuse ~157 deg
+    assert res.magnification == pytest.approx(m)
+    assert res.magnification > 0.0
+    assert res.pixel_size_x_um == pytest.approx(3.25 / m)
+    assert res.pixel_size_y_um == pytest.approx((3.25 / m) / math.sin(two_theta))
+    assert res.two_theta_deg == pytest.approx(math.degrees(two_theta))
+    assert 0.0 < res.two_theta_deg < 90.0
+
+
 def test_unrecognized_ffsel_raises(tmp_path):
     p = _write_scan(
         tmp_path / "s.h5", mainx=5000.0, obx=273.0, ffsel=-30.0, ffz=2100.0, lenssel=0.0

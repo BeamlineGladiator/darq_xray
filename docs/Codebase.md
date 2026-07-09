@@ -164,13 +164,14 @@ Stage-agnostic HDF5 I/O (used mostly by [[#concat.py]]).
 `compute_pixel_size(scan_h5, positioners_path="instrument/positioners",
 entry_suffix=".1") -> PixelSizeResult`. Reads the far-field geometry motors
 (`mainx`, `obx`, `ffsel`, `ffz`, `lenssel`) from the first matching entry of a
-raw (pre-darfix) scan and derives the effective detector pixel size:
-`M = mainx/obx − 1`, `E_x = base/M` (base 3.25 for 2× at `ffsel=−60`, 0.65 for
-10× at `ffsel=0`), `2θ = atan2(ffz, mainx)`, and `E_y = E_x/sin(2θ)` when the
+raw (pre-darfix) scan and derives the effective detector pixel size. `mainx`
+reads negative in the ID03 motor frame, so the formulas use its magnitude:
+`M = |mainx|/obx − 1`, `E_x = base/M` (base 3.25 for 2× at `ffsel=−60`, 0.65 for
+10× at `ffsel=0`), `2θ = atan2(ffz, |mainx|)`, and `E_y = E_x/sin(2θ)` when the
 condenser is in (`lenssel=0`) else `E_y = E_x`. Raises `StageUserError` for a
 missing entry/motor, an unrecognized `ffsel`, or a non-physical magnification.
 `PixelSizeResult` carries both pixel sizes plus `magnification`,
-`two_theta_deg`, `objective`, `condenser_in`, and the raw motor values.
+`two_theta_deg`, `objective`, `condenser_in`, and the raw (signed) motor values.
 
 #### `alignment.py`
 The **single source of truth** for putting volumes into the shared world frame.
