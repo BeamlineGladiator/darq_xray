@@ -1160,8 +1160,10 @@ def render_replot(
     ``{out_dir}/{slice_name}/`` mirroring the slices run layout; returns the
     written paths. ``clim`` overrides the stored colour limits: ``None`` keeps
     them, a single ``(vmin, vmax)`` applies to every plane, and a
-    ``{kind_group: (vmin, vmax)}`` mapping (``mosa_com``/``mosa_fwhm``/
-    ``strain``/``raw``) sets them per kind. ``roi`` is an optional
+    ``{key: (vmin, vmax)}`` mapping sets them per quantity — keyed by
+    ``volume_id`` (e.g. ``mosa_com_chi`` vs ``mosa_com_mu``, each ``raw_*``),
+    falling back to the colormap group (``mosa_com``/``mosa_fwhm``/``strain``/
+    ``raw``) for keys not found by volume_id. ``roi`` is an optional
     ``(r0, r1, c0, c1)`` pixel-index crop applied to every rebuilt plane; planes
     whose clamped crop is empty are silently skipped.
     """
@@ -1172,7 +1174,9 @@ def render_replot(
         if entry is None:
             continue
         idxs = list(range(entry.n_planes)) if plane_idxs is None else list(plane_idxs)
-        clim_k = resolve_clim(clim, entry.group)
+        clim_k = resolve_clim(clim, entry.volume_id)
+        if clim_k is None:
+            clim_k = resolve_clim(clim, entry.group)
         slice_dir = os.path.join(out_dir, sname)
         os.makedirs(slice_dir, exist_ok=True)
         for k in idxs:
