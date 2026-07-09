@@ -123,6 +123,46 @@ def load_middle_layer(h5_path: str, dataset: str) -> np.ndarray:
         return dset[z][...]
 
 
+def stacked_volume_previews(params: dict) -> list:
+    """(label, thunk) ROI-picker previews from a stacked mosa/strain volume file.
+
+    Middle-Z layers of the chi/mu CoM (mosa) and strain datasets named in the
+    form. Qt-free; returns [] when no readable volume file is set. Shared by the
+    co-registration stages' ``roi_previews`` (visualize/paraview/slices).
+    """
+    import os
+
+    p = dict(params)
+    sx = float(p.get("pixel_size_x_um", 0.152))
+    sy = float(p.get("pixel_size_y_um", 0.385))
+    out = []
+    mosa = p.get("mosa_volume_file", "") or ""
+    strain = p.get("strain_volume_file", "") or ""
+    if mosa and os.path.exists(mosa):
+        import h5py
+
+        try:
+            with h5py.File(mosa, "r") as f:
+                present = [ds for ds in ("chi/Center of mass", "mu/Center of mass") if ds in f]
+        except Exception:  # noqa: BLE001
+            present = []
+        for ds in present:
+            out.append(
+                (
+                    f"{ds} · {os.path.basename(mosa)}",
+                    (lambda _m=mosa, _d=ds, _sx=sx, _sy=sy: (load_middle_layer(_m, _d), _sx, _sy)),
+                )
+            )
+    if strain and os.path.exists(strain):
+        out.append(
+            (
+                f"strain · {os.path.basename(strain)}",
+                (lambda _s=strain, _sx=sx, _sy=sy: (load_middle_layer(_s, "strain"), _sx, _sy)),
+            )
+        )
+    return out
+
+
 def crop_roi_2d(layer: np.ndarray, roi: tuple[int, int, int, int] | None) -> np.ndarray | None:
     """Crop a 2-D array to ``(r0, r1, c0, c1)`` pixel bounds, clamped to shape.
 

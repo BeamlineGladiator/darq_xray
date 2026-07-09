@@ -256,6 +256,8 @@ STAGE = StageSpec(
             default="",
             advanced=True,
             group="Alignment",
+            roi_group="crop",
+            roi_axis="x",
             help=(
                 "Detector crop 'x0,x1' used during alignment — must match the crop used "
                 "when the volumes were rendered/exported."
@@ -268,6 +270,8 @@ STAGE = StageSpec(
             default="",
             advanced=True,
             group="Alignment",
+            roi_group="crop",
+            roi_axis="y",
             help=(
                 "Detector crop 'y0,y1' used during alignment — must match the crop used "
                 "when the volumes were rendered/exported."
@@ -1237,6 +1241,13 @@ def _main(argv: list[str] | None = None) -> int:
     )
     print(f"\nsliced {len(res.volume_ids)} volumes -> {res.output_h5}; planes {res.n_planes_total}")
     return 0
+
+
+def roi_previews(params: dict) -> list:
+    """(label, thunk) ROI-picker previews from the stacked mosa/strain volume(s)."""
+    from ..common.figures import stacked_volume_previews
+
+    return stacked_volume_previews(params)
 
 
 if __name__ == "__main__":

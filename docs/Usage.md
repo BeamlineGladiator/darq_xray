@@ -426,6 +426,12 @@ Align the stacked mosaicity/strain volumes and render them.
 | `roi_x` / `roi_y` | crop in pixels |
 | `output_format` | `mp4` / `gif` / `both` |
 
+> [!tip] Picking the run-time ROI interactively
+> Click **Pick ROI…** (beside the `roi_x`/`roi_y` fields) to open a visual picker
+> that shows the middle Z-layer of the χ/μ Center-of-mass and strain volumes.
+> Drag a rectangle and click **OK** — the `roi_x` and `roi_y` fields are filled
+> automatically. Returns no preview when the volume files cannot be read.
+
 > [!note]
 > Colourmaps follow the publication-style **Colormaps** dropdowns (misorientation
 > defaults to ParaView's `fast`, FWHM to `magma`, strain to diverging `RdBu_r`
@@ -446,6 +452,12 @@ rendering, with a `valid_mask` and NaN sentinels.
 |---|---|
 | `num_pieces_z` | Z pieces — match your `pvserver` MPI rank count |
 | `anchor_origin_to_reference` | place the world origin in the raw-detector frame so all volumes co-register |
+
+> [!tip] Picking the run-time ROI interactively
+> Click **Pick ROI…** (beside the `roi_x`/`roi_y` fields) to open a visual picker
+> that shows the middle Z-layer of the χ/μ Center-of-mass and strain volumes.
+> Drag a rectangle and click **OK** — the `roi_x` and `roi_y` fields are filled
+> automatically. Returns no preview when the volume files cannot be read.
 
 > [!example] ParaView workflow
 > ```bash
@@ -472,6 +484,13 @@ through the aligned volumes — all in one world frame so the slices co-register
 | `include_mosa_sum` | slice the mosa-scan summed intensity (mapped to the "raw" colour group) |
 | `include_mosa_specific` | slice the mosa-scan specific-frame intensity (mapped to the "raw" colour group) |
 | `center_method` / `range_pct` | CoM colour centring |
+| `align_roi_x` / `align_roi_y` | detector crop used during alignment (must match the crop from visualize/paraview runs) |
+
+> [!tip] Picking the alignment ROI interactively
+> Click **Pick ROI…** (beside the `align_roi_x`/`align_roi_y` fields) to open a
+> visual picker that shows the middle Z-layer of the χ/μ Center-of-mass and strain
+> volumes. Drag a rectangle and click **OK** — the two fields are filled
+> automatically. Returns no preview when the volume files cannot be read.
 
 > [!example] A slice spec
 > ```json
