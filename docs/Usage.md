@@ -241,6 +241,14 @@ Per-pixel axial strain (cot method) from darfix `maps.h5`, then stacked into a
 > The full map is **detrended first** (separable 2-D arctan fit), then the ROI
 > is cropped. This order is a physics constraint and is not configurable.
 
+> [!tip] Picking the run-time ROI interactively
+> Click **Pick ROI…** (beside the `roi` field) to open a visual picker that
+> shows the ccmth Center-of-mass map loaded from the current `maps.h5`. Drag a
+> rectangle on the CoM map and click **OK** — the `roi` field is filled with
+> `r0,r1,c0,c1` automatically. The preview is oriented like the exported maps
+> (rows = Y, columns = X). If the maps file cannot be resolved from the current
+> form inputs the picker shows no preview.
+
 #### Replotting strain layers without re-running
 
 The **Replot…** button on the strain stage panel opens a dialog that re-renders
