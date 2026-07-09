@@ -529,6 +529,69 @@ def test_render_replot_roi_empty_crop_skipped(tmp_path):
     assert written == []
 
 
+def _write_mosa_consolidated(path):
+    """Two mosa-COM volumes (chi, mu) sharing group 'mosa_com', one slice, 2 planes."""
+    u = np.linspace(-4.0, 4.0, 9)
+    v = np.linspace(-3.0, 3.0, 7)
+    offsets = np.array([0.0, 1.0])
+    with h5py.File(path, "w") as f:
+        for vid in ("mosa_com_chi", "mosa_com_mu"):
+            g = f.create_group(vid)
+            g.attrs["kind"] = "mosa_com"
+            g.attrs["cmap"] = "magma"
+            g.attrs["title"] = vid
+            g.attrs["cbar_label"] = "deg"
+            g.attrs["vmin"] = -1.0
+            g.attrs["vmax"] = 1.0
+            sg = g.create_group("plane_a")
+            sg.create_dataset("slices", data=np.zeros((2, v.size, u.size), dtype=np.float32))
+            sg.create_dataset("u_um", data=u)
+            sg.create_dataset("v_um", data=v)
+            sg.create_dataset("offsets_um", data=offsets)
+
+
+def test_render_replot_clim_keyed_by_volume_id(tmp_path, monkeypatch):
+    h5 = tmp_path / "oblique_slices.h5"
+    _write_mosa_consolidated(str(h5))
+    seen: dict[str, tuple] = {}
+
+    def fake_rebuild(h5_path, vid, sname, k, style, *, clim=None, roi=None):
+        seen[vid] = clim
+        return None
+
+    monkeypatch.setattr(SL, "_rebuild_plane_figure", fake_rebuild)
+    SL.render_replot(
+        str(h5),
+        [("mosa_com_chi", "plane_a", [0]), ("mosa_com_mu", "plane_a", [0])],
+        style=None,
+        clim={"mosa_com_chi": (-2.0, 2.0), "mosa_com_mu": (-9.0, 9.0)},
+        out_dir=str(tmp_path / "r"),
+    )
+    assert seen["mosa_com_chi"] == (-2.0, 2.0)
+    assert seen["mosa_com_mu"] == (-9.0, 9.0)  # chi and mu NO LONGER share a limit
+
+
+def test_render_replot_clim_group_key_still_works(tmp_path, monkeypatch):
+    """Back-compat: a group-keyed dict still applies via the fallback."""
+    h5 = tmp_path / "oblique_slices.h5"
+    _write_mosa_consolidated(str(h5))
+    seen: dict[str, tuple] = {}
+    monkeypatch.setattr(
+        SL,
+        "_rebuild_plane_figure",
+        lambda h5_path, vid, sname, k, style, *, clim=None, roi=None: seen.__setitem__(vid, clim),
+    )
+    SL.render_replot(
+        str(h5),
+        [("mosa_com_chi", "plane_a", [0]), ("mosa_com_mu", "plane_a", [0])],
+        style=None,
+        clim={"mosa_com": (-3.0, 3.0)},  # group key
+        out_dir=str(tmp_path / "r"),
+    )
+    assert seen["mosa_com_chi"] == (-3.0, 3.0)
+    assert seen["mosa_com_mu"] == (-3.0, 3.0)
+
+
 def test_run_includes_mosa_raw_field(tmp_path):
     proc, raw = _setup(tmp_path)
     rng = np.random.default_rng(1)
@@ -565,3 +628,39 @@ def test_run_includes_mosa_raw_field(tmp_path):
     with h5py.File(res.output_h5, "r") as f:
         assert f["raw_mosa_sum"].attrs["kind"] == "raw_mosa_sum"
         assert f["raw_mosa_sum"].attrs["title"] == "Mosa-integrated Sum Intensity"
+
+
+def test_plane_preview_returns_middle_plane_and_du_dv(tmp_path):
+    h5 = tmp_path / "oblique_slices.h5"
+    _write_mini_consolidated(
+        str(h5)
+    )  # u: 9 pts over [-4,4] -> du=1.0; v: 7 pts over [-3,3] -> dv=1.0
+    arr, sx, sy = SL.plane_preview(str(h5), "strain", "plane_a")
+    assert arr.shape == (7, 9)  # (nv, nu)
+    assert sx == pytest.approx(1.0)  # du (cols/X)
+    assert sy == pytest.approx(1.0)  # dv (rows/Y)
+
+
+def test_plane_preview_du_dv_not_swapped(tmp_path):
+    """Asymmetric pitch (du != dv) catches an sx/sy swap: sx=du(X/cols), sy=dv(Y/rows)."""
+    h5 = tmp_path / "oblique_slices_asym.h5"
+    u = np.linspace(-4.0, 4.0, 5)  # 5 pts → du = 2.0 (cols/X)
+    v = np.linspace(-3.0, 3.0, 7)  # 7 pts → dv = 1.0 (rows/Y)
+    offsets = np.array([0.0, 1.0])
+    with h5py.File(str(h5), "w") as f:
+        g = f.create_group("strain")
+        g.attrs["kind"] = "strain"
+        g.attrs["cmap"] = "RdBu_r"
+        g.attrs["title"] = "strain"
+        g.attrs["cbar_label"] = "value"
+        g.attrs["vmin"] = -1.0
+        g.attrs["vmax"] = 1.0
+        sg = g.create_group("slice0")
+        sg.create_dataset("slices", data=np.zeros((2, v.size, u.size), dtype=np.float32))
+        sg.create_dataset("u_um", data=u)
+        sg.create_dataset("v_um", data=v)
+        sg.create_dataset("offsets_um", data=offsets)
+    arr, sx, sy = SL.plane_preview(str(h5), "strain", "slice0")
+    assert arr.shape == (7, 5)  # (nv, nu) = (Y rows, X cols)
+    assert sx == pytest.approx(2.0)  # du / X / cols
+    assert sy == pytest.approx(1.0)  # dv / Y / rows

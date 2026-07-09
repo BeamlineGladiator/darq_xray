@@ -60,10 +60,16 @@ class Param:
     advanced: bool = False  # True -> rendered inside the collapsed Advanced expander
     group: str = ""  # themed section header inside Advanced (required when advanced)
     must_exist: bool = False  # input path/dir: GUI checks existence before a run
+    roi_group: str = ""  # params sharing a roi_group are one ROI-picker target
+    roi_axis: str = ""  # "" | "x" | "y" | "both" ("both" = one 4-int "r0,r1,c0,c1" field)
 
     def __post_init__(self) -> None:
         if self.type is ParamType.ENUM and not self.choices:
             raise ValueError(f"enum param {self.name!r} needs a non-empty `choices`")
+        if self.roi_axis and not self.roi_group:
+            raise ValueError(f"roi param {self.name!r}: roi_axis set but roi_group is empty")
+        if self.roi_axis not in ("", "x", "y", "both"):
+            raise ValueError(f"roi param {self.name!r}: bad roi_axis {self.roi_axis!r}")
 
     def coerce(self, value: Any) -> Any:
         """Convert a raw value (e.g. a string from a form field) to its type."""

@@ -159,6 +159,22 @@ a field and it shows that field's help; click away (or open another stage) and i
 returns to the stage description. The same per-field help is also available as a
 hover tooltip on each field and its label.
 
+#### Picking an ROI interactively
+
+The **strain**, **visualize**, **paraview**, and **slices** stages show a
+**Pick ROI…** button in the button row (alongside Run and Cancel). Clicking it
+opens a visual picker pre-loaded with the stage's representative map or volume
+layer; drag a rectangle and click **OK** to fill the ROI field(s) automatically.
+
+The picker is **per-stage** — accepting a rectangle writes only into the current
+stage's form and does not propagate to sibling stages. If you want the same crop
+on multiple stages you pick separately on each. Rocking does not have a picker
+because its detector crop is set in the raw-frame (before alignment) and must be
+entered manually to match the mechanical geometry.
+
+If no preview can be loaded (the required volume/map file is not set yet), the
+picker button logs a message and opens the Log tab instead of opening the picker.
+
 ---
 
 ## The pipeline at a glance
@@ -241,6 +257,14 @@ Per-pixel axial strain (cot method) from darfix `maps.h5`, then stacked into a
 > The full map is **detrended first** (separable 2-D arctan fit), then the ROI
 > is cropped. This order is a physics constraint and is not configurable.
 
+> [!tip] Picking the run-time ROI interactively
+> Click **Pick ROI…** (in the button row alongside Run/Cancel) to open a visual
+> picker that shows the ccmth Center-of-mass map loaded from the current
+> `maps.h5`. Drag a rectangle on the CoM map and click **OK** — the `roi` field
+> is filled with `r0,r1,c0,c1` automatically. The preview is oriented like the
+> exported maps (rows = Y, columns = X). If the maps file cannot be resolved from
+> the current form inputs the picker shows no preview.
+
 #### Replotting strain layers without re-running
 
 The **Replot…** button on the strain stage panel opens a dialog that re-renders
@@ -282,6 +306,13 @@ is passed to the core as a `{kind: (vmin, vmax)}` mapping.
 > run's already-ROI-cropped layer — i.e. the largest region a replot crop can
 > reach; a wider frame needs a re-run.)
 
+> [!tip] Picking an ROI interactively
+> Click **Pick ROI…** (beside the four pixel boxes) to open a visual picker that
+> shows the middle Z-layer of each plot-kind group at its natural pixel scale.
+> Drag a rectangle on the preview and click **OK** — the four boxes (r0, r1, c0,
+> c1) are filled automatically. The preview is oriented exactly like the exported
+> maps (rows = Y, columns = X), so the coordinates transfer directly.
+
 ### 3. Mosaicity volume (`mosaicity`)
 
 Stack per-layer χ/μ **Center-of-mass** and **FWHM** maps into a 3-D volume.
@@ -318,7 +349,10 @@ dataset with both blank keeps its auto limits). When an ROI crop is applied the
 resulting figure uses a **zero-origin µm extent** (the crop origin is treated as
 0 µm), unlike a normal run which preserves the true physical axes. The **Output
 dir** pre-fills to a timestamped `replots/<stamp>/` subfolder beside the loaded
-h5 and follows the file on Browse/Load (until edited by hand).
+h5 and follows the file on Browse/Load (until edited by hand). Click **Pick
+ROI…** (beside the four pixel boxes) to open a visual picker showing the middle
+Z-layer of each dataset; drag a rectangle and click **OK** to fill the boxes
+automatically. The preview is oriented exactly like the exported maps.
 
 ### 4. Aligned rocking volumes (`rocking`)
 
@@ -386,7 +420,10 @@ percentile auto limits). When an ROI crop is applied the resulting figure uses a
 **zero-origin µm extent** (the crop origin is treated as 0 µm), unlike a normal
 run which preserves the true physical axes. The **Output dir** pre-fills to a
 timestamped `replots/<stamp>/` subfolder beside the loaded h5 and follows the
-file on Browse/Load (until edited by hand).
+file on Browse/Load (until edited by hand). Click **Pick ROI…** (beside the
+four pixel boxes) to open a visual picker showing the middle Z-layer of each
+product; drag a rectangle and click **OK** to fill the boxes automatically. The
+preview is oriented exactly like the exported maps.
 
 ### 5. Visualize volumes (`visualize`)
 
@@ -404,6 +441,13 @@ Align the stacked mosaicity/strain volumes and render them.
 | `center_method` | `midrange` / `mean` / `median` (CoM colour centring only) |
 | `roi_x` / `roi_y` | crop in pixels |
 | `output_format` | `mp4` / `gif` / `both` |
+
+> [!tip] Picking the run-time ROI interactively
+> Click **Pick ROI…** (in the button row alongside Run/Cancel) to open a visual
+> picker that shows the middle Z-layer of the χ/μ Center-of-mass and strain
+> volumes. Drag a rectangle and click **OK** — the `roi_x` and `roi_y` fields
+> are filled automatically. Returns no preview when the volume files cannot be
+> read.
 
 > [!note]
 > Colourmaps follow the publication-style **Colormaps** dropdowns (misorientation
@@ -425,6 +469,13 @@ rendering, with a `valid_mask` and NaN sentinels.
 |---|---|
 | `num_pieces_z` | Z pieces — match your `pvserver` MPI rank count |
 | `anchor_origin_to_reference` | place the world origin in the raw-detector frame so all volumes co-register |
+
+> [!tip] Picking the run-time ROI interactively
+> Click **Pick ROI…** (in the button row alongside Run/Cancel) to open a visual
+> picker that shows the middle Z-layer of the χ/μ Center-of-mass and strain
+> volumes. Drag a rectangle and click **OK** — the `roi_x` and `roi_y` fields
+> are filled automatically. Returns no preview when the volume files cannot be
+> read.
 
 > [!example] ParaView workflow
 > ```bash
@@ -451,6 +502,14 @@ through the aligned volumes — all in one world frame so the slices co-register
 | `include_mosa_sum` | slice the mosa-scan summed intensity (mapped to the "raw" colour group) |
 | `include_mosa_specific` | slice the mosa-scan specific-frame intensity (mapped to the "raw" colour group) |
 | `center_method` / `range_pct` | CoM colour centring |
+| `align_roi_x` / `align_roi_y` | detector crop used during alignment (must match the crop from visualize/paraview runs) |
+
+> [!tip] Picking the alignment ROI interactively
+> Click **Pick ROI…** (in the button row alongside Run/Cancel) to open a visual
+> picker that shows the middle Z-layer of the χ/μ Center-of-mass and strain
+> volumes. Drag a rectangle and click **OK** — the `align_roi_x` and
+> `align_roi_y` fields are filled automatically. Returns no preview when the
+> volume files cannot be read.
 
 > [!example] A slice spec
 > ```json
@@ -512,18 +571,24 @@ current session is not required. It works from a cold start or after a restart.
    every volume/slice/plane. **Untick** anything you don't want (or use
    **Deselect all** then tick a subset). *(This all-checked default applies to
    the strain/mosaicity/rocking Replot dialogs too.)*
-4. Optionally override the stored colour limits **per plot kind**. The dialog
-   shows one **vmin** / **vmax** row for each kind present in the file —
-   Mosaicity COM, Mosaicity FWHM, Strain, Raw intensity — so the four (which sit
-   on very different scales) get independent limits. Leave a kind's boxes blank
-   to keep the limits stored in the HDF5. All raw volumes (`raw_sum`,
-   `raw_mosa_sum`, …) share the single **Raw intensity** row.
+4. Optionally override the stored colour limits **per quantity**. The dialog
+   shows one **vmin** / **vmax** row for each distinct volume present in the
+   file, in first-seen order — χ and μ components of mosaicity are separate
+   rows (e.g. **Mosaicity COM (χ)** and **Mosaicity COM (μ)**), and each raw
+   variant (`raw_sum`, `raw_specific`, `raw_mosa_sum`, `raw_mosa_specific`) is
+   its own row. Leave a row's boxes blank to keep the limits stored in the HDF5.
 5. Optionally enter an **ROI crop** as four pixel-index integers (**r0**, **r1**,
    **c0**, **c1**) to restrict each plane to a sub-region. Each slice node in the
    tree is labelled with its stored plane pixel size, e.g. `7×9 px (Y×X)`, so the
    valid range is visible: rows `r0:r1` ∈ `[0, nv]`, cols `c0:c1` ∈ `[0, nu]`.
    Leave all four boxes blank for the full image. Partial fills (some boxes
    filled, some blank) are ignored — all four must be provided together.
+   Click **Pick ROI…** (beside the four pixel boxes) to open a visual picker
+   that shows one preview per `(volume_id, slice_name)` pair in the loaded
+   file — the middle plane of each group is rendered at its stored µm pitch.
+   Accepting the selection writes all four boxes at once. Because different
+   volume/slice groups can have different plane dimensions, switching to a
+   differently-shaped preview clears the current selection before you confirm.
 6. The **Output dir** pre-fills to a timestamped `replots/<stamp>/` subfolder
    **beside the loaded slices file** (i.e. inside the folder that holds the
    `oblique_slices.h5`). It re-derives automatically if you Browse/Load a

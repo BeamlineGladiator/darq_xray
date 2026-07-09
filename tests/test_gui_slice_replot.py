@@ -99,10 +99,10 @@ def test_slice_replot_passes_per_kind_clim(tmp_path, monkeypatch):
 
     monkeypatch.setattr(sl, "render_replot", fake_render_replot)
     h5 = tmp_path / "oblique_slices.h5"
-    _mini(str(h5))  # volumes raw_sum (→ "raw") + strain (→ "strain")
+    _mini(str(h5))  # volume_ids raw_sum + strain
     _app = QApplication.instance() or QApplication([])
     dlg = SliceReplotDialog(str(h5), style=None, out_default=str(tmp_path))
-    assert set(dlg._clim._edits) == {"raw", "strain"}  # one row per kind-group present
+    assert set(dlg._clim._edits) == {"raw_sum", "strain"}  # one row per volume_id present
     dlg._clim._edits["strain"][0].setText("-5")
     dlg._clim._edits["strain"][1].setText("5")
     dlg.select_all()
@@ -146,3 +146,53 @@ def test_slice_replot_dialog_shows_plane_pixel_size(tmp_path):
     dlg = SliceReplotDialog(str(h5), style=None, out_default=str(tmp_path))
     snode = dlg._tree.topLevelItem(0).child(0)  # volume → slice node
     assert "7×9 px" in snode.text(0)  # ROI hint annotated on the slice node
+
+
+def test_clim_rows_are_per_volume_id(tmp_path):
+    from gui.widgets.slice_replot import SliceReplotDialog
+
+    _ = QApplication.instance() or QApplication([])
+    h5 = tmp_path / "oblique_slices.h5"
+    # two mosa-COM volumes sharing group 'mosa_com'
+    u = np.linspace(-4.0, 4.0, 9)
+    v = np.linspace(-3.0, 3.0, 7)
+    with h5py.File(h5, "w") as f:
+        for vid in ("mosa_com_chi", "mosa_com_mu"):
+            g = f.create_group(vid)
+            g.attrs["kind"] = "mosa_com"
+            g.attrs["cmap"] = "magma"
+            g.attrs["title"] = vid
+            g.attrs["cbar_label"] = "deg"
+            g.attrs["vmin"], g.attrs["vmax"] = -1.0, 1.0
+            sg = g.create_group("plane_a")
+            sg.create_dataset("slices", data=np.zeros((2, v.size, u.size), dtype=np.float32))
+            sg.create_dataset("u_um", data=u)
+            sg.create_dataset("v_um", data=v)
+            sg.create_dataset("offsets_um", data=np.array([0.0, 1.0]))
+    dlg = SliceReplotDialog(str(h5), style=None, out_default=str(tmp_path / "o"))
+    keys = set(dlg._clim._edits.keys())
+    assert keys == {"mosa_com_chi", "mosa_com_mu"}  # one row per quantity, not one 'mosa_com'
+    dlg.deleteLater()
+
+
+def test_slice_pick_roi_fills_boxes(tmp_path, monkeypatch):
+    from gui.widgets.slice_replot import SliceReplotDialog
+
+    _ = QApplication.instance() or QApplication([])
+    h5 = tmp_path / "oblique_slices.h5"
+    _mini(str(h5))  # helper already in this file: raw_sum + strain, plane_a
+    dlg = SliceReplotDialog(str(h5), style=None, out_default=str(tmp_path / "o"))
+
+    import gui.widgets.slice_replot as SR
+
+    class _FakePicker:
+        def __init__(self, *a, **k):
+            self.result = (2, 6, 1, 8)
+
+        def exec(self):
+            return 1
+
+    monkeypatch.setattr(SR, "ROIPickerDialog", _FakePicker, raising=False)
+    dlg._on_pick_roi()
+    assert (dlg._r0.text(), dlg._r1.text(), dlg._c0.text(), dlg._c1.text()) == ("2", "6", "1", "8")
+    dlg.deleteLater()

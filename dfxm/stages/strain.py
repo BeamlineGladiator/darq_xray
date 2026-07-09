@@ -170,6 +170,8 @@ STAGE = StageSpec(
             ParamType.STR,
             "ROI",
             default="",
+            roi_group="crop",
+            roi_axis="both",
             help=(
                 "Region of interest as 'r0,r1,c0,c1' in pixels (blank = full image). Cropped "
                 "after detrending, so the trend fit always uses the full map — that order is a "
@@ -496,6 +498,46 @@ def _derive_maps_path(layer_name: str, params: dict) -> str:
     else:
         root = (params.get("root_folder", "") or "").rstrip("/")
         return os.path.join(root, layer_name, maps_filename)
+
+
+def roi_previews(params: dict) -> list:
+    """Return ``(label, thunk)`` pairs for the ROI picker — the CoM map + pixel scales.
+
+    Best-effort: returns ``[]`` when the maps file can't be resolved from the form.
+    The picker draws on the same 2-D map the run-time ``roi`` crops.
+
+    Each thunk returns ``(array2d, sx_um, sy_um)`` where *array2d* is the raw
+    ccmth Center-of-mass map (before detrending/ROI) and *sx*/*sy* are the pixel
+    sizes in µm.
+    """
+    import os
+
+    p = dict(params)
+    try:
+        if p.get("mode", "batch") == "single":
+            maps_path = os.path.join(
+                p.get("input_folder", "") or "", p.get("maps_filename", "maps.h5")
+            )
+        else:
+            root = (p.get("root_folder", "") or "").rstrip("/")
+            folders = find_matching_folders(root, p.get("folder_pattern", "")) if root else []
+            if not folders:
+                return []
+            maps_path = _derive_maps_path(os.path.basename(folders[0].rstrip("/")), p)
+    except Exception:  # noqa: BLE001
+        return []
+    if not maps_path or not os.path.exists(maps_path):
+        return []
+    ccmth_com_path = p.get("ccmth_com_path", "/entry/ccmth/Center of mass/Center of mass")
+    sx = float(p.get("pixel_size_x_um", 0.152))
+    sy = float(p.get("pixel_size_y_um", 0.385))
+
+    def _thunk(_mp=maps_path, _ds=ccmth_com_path, _sx=sx, _sy=sy):
+        import numpy as np
+
+        return np.asarray(load_map(_mp, _ds), dtype=float), _sx, _sy
+
+    return [(f"CoM map · {os.path.basename(maps_path)}", _thunk)]
 
 
 def _build_hist(stacked_path: str, layer_idx: int, layer_name: str, style) -> "Figure":

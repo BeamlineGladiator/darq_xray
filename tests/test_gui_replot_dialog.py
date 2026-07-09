@@ -112,3 +112,44 @@ def test_replot_dialog_shows_group_pixel_size(tmp_path):
     dlg = ReplotDialog(str(h5), catalog_fn, lambda *a: [], out_default=str(tmp_path))
     node_text = dlg._tree.topLevelItem(0).text(0)
     assert "4×5 px" in node_text  # ROI hint annotated on the group node
+
+
+def test_pick_roi_fills_boxes(tmp_path, monkeypatch):
+    import numpy as np
+
+    from dfxm.common.figures import ReplotGroup
+    from gui.widgets.replot_dialog import ReplotDialog
+
+    _ = QApplication.instance() or QApplication([])
+
+    def catalog_fn(_h5):
+        return [
+            ReplotGroup(
+                key="/chi/Center of mass", label="χ", item_labels=["layer 0"], shape=(200, 100)
+            )
+        ]
+
+    def preview_fn(_h5, _key):
+        return np.zeros((200, 100)), 0.152, 0.385
+
+    dlg = ReplotDialog("nofile.h5", catalog_fn, lambda *a, **k: [], preview_fn=preview_fn)
+
+    # stub the modal picker: pretend the user dragged (r0,r1,c0,c1)
+    import gui.widgets.replot_dialog as RD
+
+    class _FakePicker:
+        def __init__(self, *a, **k):
+            self.result = (40, 160, 12, 88)
+
+        def exec(self):
+            return 1
+
+    monkeypatch.setattr(RD, "ROIPickerDialog", _FakePicker, raising=False)
+    dlg._on_pick_roi()
+    assert (dlg._r0.text(), dlg._r1.text(), dlg._c0.text(), dlg._c1.text()) == (
+        "40",
+        "160",
+        "12",
+        "88",
+    )
+    dlg.deleteLater()

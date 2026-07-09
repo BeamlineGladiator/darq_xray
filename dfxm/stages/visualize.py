@@ -172,6 +172,8 @@ STAGE = StageSpec(
             ParamType.STR,
             "ROI X",
             default="",
+            roi_group="crop",
+            roi_axis="x",
             help=(
                 "Crop along detector X as 'x0,x1' in pixels (blank = full width). "
                 "All volumes must share the same crop to stay co-registered."
@@ -182,6 +184,8 @@ STAGE = StageSpec(
             ParamType.STR,
             "ROI Y",
             default="",
+            roi_group="crop",
+            roi_axis="y",
             help=(
                 "Crop along detector Y as 'y0,y1' in pixels (blank = full height). "
                 "All volumes must share the same crop to stay co-registered."
@@ -829,6 +833,13 @@ def _main(argv: list[str] | None = None) -> int:
     )
     print(f"\n{len(res.datasets)} datasets -> {res.output_dir}; skipped {len(res.skipped)}")
     return 0
+
+
+def roi_previews(params: dict) -> list:
+    """(label, thunk) ROI-picker previews from the stacked mosa/strain volume(s)."""
+    from ..common.figures import stacked_volume_previews
+
+    return stacked_volume_previews(params)
 
 
 if __name__ == "__main__":

@@ -29,15 +29,26 @@ from dfxm.stages import slices as _sl
 
 from .clim_section import ClimGroupSection
 
-# Kind-groups an oblique_slices.h5 can hold, in a stable display order, with
-# newcomer-friendly labels for the per-kind colour-limit rows.
-_SLICE_GROUP_ORDER = ["mosa_com", "mosa_fwhm", "strain", "raw"]
-_SLICE_GROUP_LABELS = {
+# Friendly labels for the per-quantity colour-limit rows, keyed by volume_id.
+# volume_id is f"{kind}{suffix}" where suffix is ""/"_chi"/"_mu" (slices.py:_axis_suffix).
+_KIND_LABELS = {
     "mosa_com": "Mosaicity COM",
     "mosa_fwhm": "Mosaicity FWHM",
     "strain": "Strain",
-    "raw": "Raw intensity",
+    "raw_sum": "Raw sum intensity",
+    "raw_specific": "Raw frame",
+    "raw_mosa_sum": "Raw mosa-sum intensity",
+    "raw_mosa_specific": "Raw mosa frame",
 }
+
+
+def _volume_label(volume_id: str) -> str:
+    """Human label for a clim row, e.g. 'mosa_com_chi' -> 'Mosaicity COM (χ)'."""
+    for comp, sym in (("_chi", "χ"), ("_mu", "μ")):
+        if volume_id.endswith(comp):
+            base = volume_id[: -len(comp)]
+            return f"{_KIND_LABELS.get(base, base)} ({sym})"
+    return _KIND_LABELS.get(volume_id, volume_id)
 
 
 class SliceReplotDialog(QDialog):
@@ -83,17 +94,20 @@ class SliceReplotDialog(QDialog):
 
         # per-kind clim override (one vmin/vmax row per kind present in the file)
         self._clim = ClimGroupSection()
-        clim_header = QLabel("Colour limits (per plot kind; blank = stored):")
+        clim_header = QLabel("Colour limits (per quantity; blank = stored):")
 
         # ROI crop override
         self._r0, self._r1 = QLineEdit(), QLineEdit()
         self._c0, self._c1 = QLineEdit(), QLineEdit()
         for e, ph in ((self._r0, "r0"), (self._r1, "r1"), (self._c0, "c0"), (self._c1, "c1")):
             e.setPlaceholderText(ph)
+        self._pick_roi_btn = QPushButton("Pick ROI…")
+        self._pick_roi_btn.clicked.connect(self._on_pick_roi)
         roi_row = QHBoxLayout()
         roi_row.addWidget(QLabel("ROI crop (px, blank=full) — r=rows(Y), c=cols(X):"))
         for e in (self._r0, self._r1, self._c0, self._c1):
             roi_row.addWidget(e)
+        roi_row.addWidget(self._pick_roi_btn)
 
         # output dir (defaults to a subfolder beside the loaded slices file)
         self._out_edit = QLineEdit(out_default or self._default_out_for(h5_path))
@@ -221,16 +235,9 @@ class SliceReplotDialog(QDialog):
 
     @staticmethod
     def _clim_groups(catalog):
-        """Distinct kind-groups present in *catalog*, ordered for the clim rows.
-
-        Groups follow ``_SLICE_GROUP_ORDER`` first (so the rows are always in the
-        same familiar order), then any unrecognised group is appended in
-        first-seen order.
-        """
-        present = {e.group for e in catalog if e.group}
-        ordered = [g for g in _SLICE_GROUP_ORDER if g in present]
-        ordered += [g for g in dict.fromkeys(e.group for e in catalog) if g and g not in ordered]
-        return [(g, _SLICE_GROUP_LABELS.get(g, g)) for g in ordered]
+        """One (volume_id, label) row per distinct quantity, in first-seen order."""
+        vids = list(dict.fromkeys(e.volume_id for e in catalog))
+        return [(vid, _volume_label(vid)) for vid in vids]
 
     def _roi(self):
         def _i(edit):
@@ -243,6 +250,38 @@ class SliceReplotDialog(QDialog):
         if any(v is None for v in vals):
             return None  # partial ROI ignored; keep parity with the four-box contract
         return vals
+
+    def _on_pick_roi(self) -> None:
+        if not self._h5_path or not os.path.exists(self._h5_path):
+            self._status.setText("load a slices file first to pick an ROI")
+            return
+        try:
+            catalog = _sl.replot_catalog(self._h5_path)
+        except Exception as exc:  # noqa: BLE001
+            self._status.setText(f"cannot read: {exc}")
+            return
+        previews = [
+            (
+                f"{e.volume_id} · {e.slice_name}",
+                (lambda v=e.volume_id, s=e.slice_name: _sl.plane_preview(self._h5_path, v, s)),
+            )
+            for e in catalog
+        ]
+        if not previews:
+            self._status.setText("nothing to preview")
+            return
+        import sys
+
+        _mod = sys.modules[__name__]
+        if not hasattr(_mod, "ROIPickerDialog"):
+            from .roi_picker import ROIPickerDialog  # imported on demand
+
+            _mod.ROIPickerDialog = ROIPickerDialog
+        dlg = _mod.ROIPickerDialog(previews, initial=self._roi(), parent=self)
+        if dlg.exec() and dlg.result:
+            r0, r1, c0, c1 = dlg.result
+            for edit, val in ((self._r0, r0), (self._r1, r1), (self._c0, c0), (self._c1, c1)):
+                edit.setText(str(val))
 
     def render_selection(self, out_dir):
         """Render currently-checked planes into *out_dir*; returns written paths."""

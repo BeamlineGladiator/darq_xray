@@ -85,3 +85,17 @@ def test_render_volume_layer_empty_crop_returns_none(tmp_path):
         roi=(2, 2, 0, 5),
     )
     assert fig is None
+
+
+def test_load_middle_layer(tmp_path):
+    import h5py
+    import numpy as np
+
+    from dfxm.common.figures import load_middle_layer
+
+    p = tmp_path / "vol.h5"
+    with h5py.File(p, "w") as f:
+        f.create_dataset("/chi/Center of mass", data=np.arange(5 * 4 * 3).reshape(5, 4, 3))
+    layer = load_middle_layer(str(p), "/chi/Center of mass")
+    assert layer.shape == (4, 3)
+    assert np.array_equal(layer, np.arange(5 * 4 * 3).reshape(5, 4, 3)[2])  # middle z=2

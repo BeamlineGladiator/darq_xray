@@ -75,3 +75,21 @@ def test_must_exist_only_on_input_paths(stage_name):
 def test_experiment_schema_has_help():
     missing = [p.name for p in EXPERIMENT_SCHEMA if not (p.help or "").strip()]
     assert not missing, f"experiment schema params without help: {missing}"
+
+
+def test_roi_fields_default_empty():
+    from dfxm.config.models import Param, ParamType
+
+    p = Param("x", ParamType.STR, "X")
+    assert p.roi_group == ""
+    assert p.roi_axis == ""
+
+
+def test_roi_axis_requires_group_and_valid_value():
+    from dfxm.config.models import Param, ParamType
+
+    Param("roi_x", ParamType.STR, "ROI x", roi_group="align", roi_axis="x")  # ok
+    with pytest.raises(ValueError):
+        Param("roi_x", ParamType.STR, "ROI x", roi_axis="x")  # axis without group
+    with pytest.raises(ValueError):
+        Param("roi_x", ParamType.STR, "ROI x", roi_group="align", roi_axis="diagonal")  # bad value

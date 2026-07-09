@@ -256,6 +256,8 @@ STAGE = StageSpec(
             default="",
             advanced=True,
             group="Alignment",
+            roi_group="crop",
+            roi_axis="x",
             help=(
                 "Detector crop 'x0,x1' used during alignment — must match the crop used "
                 "when the volumes were rendered/exported."
@@ -268,6 +270,8 @@ STAGE = StageSpec(
             default="",
             advanced=True,
             group="Alignment",
+            roi_group="crop",
+            roi_axis="y",
             help=(
                 "Detector crop 'y0,y1' used during alignment — must match the crop used "
                 "when the volumes were rendered/exported."
@@ -1143,6 +1147,25 @@ def replot_catalog(h5_path: str) -> list[ReplotEntry]:
     return entries
 
 
+def plane_preview(h5_path: str, volume_id: str, slice_name: str) -> tuple[np.ndarray, float, float]:
+    """Middle plane of a slice group + its (du, dv) µm/px pitch, for the ROI picker.
+
+    Returns ``(array2d, sx, sy)`` where ``sx=du`` (cols/u/X) and ``sy=dv``
+    (rows/v/Y) come from the stored ``u_um``/``v_um`` axes — the resampled slice
+    pitch, NOT the detector pixel scale.
+    """
+    with h5py.File(h5_path, "r") as f:
+        sg = f[f"{volume_id}/{slice_name}"]
+        stack = sg["slices"]
+        mid = stack.shape[0] // 2
+        arr = stack[mid][...]
+        u = sg["u_um"][:]
+        v = sg["v_um"][:]
+    du = float(abs(u[1] - u[0])) if len(u) > 1 else 1.0
+    dv = float(abs(v[1] - v[0])) if len(v) > 1 else 1.0
+    return np.asarray(arr, dtype=float), du, dv
+
+
 def render_replot(
     h5_path: str,
     selections: list[tuple[str, str, list[int] | None]],
@@ -1160,8 +1183,10 @@ def render_replot(
     ``{out_dir}/{slice_name}/`` mirroring the slices run layout; returns the
     written paths. ``clim`` overrides the stored colour limits: ``None`` keeps
     them, a single ``(vmin, vmax)`` applies to every plane, and a
-    ``{kind_group: (vmin, vmax)}`` mapping (``mosa_com``/``mosa_fwhm``/
-    ``strain``/``raw``) sets them per kind. ``roi`` is an optional
+    ``{key: (vmin, vmax)}`` mapping sets them per quantity — keyed by
+    ``volume_id`` (e.g. ``mosa_com_chi`` vs ``mosa_com_mu``, each ``raw_*``),
+    falling back to the colormap group (``mosa_com``/``mosa_fwhm``/``strain``/
+    ``raw``) for keys not found by volume_id. ``roi`` is an optional
     ``(r0, r1, c0, c1)`` pixel-index crop applied to every rebuilt plane; planes
     whose clamped crop is empty are silently skipped.
     """
@@ -1172,7 +1197,9 @@ def render_replot(
         if entry is None:
             continue
         idxs = list(range(entry.n_planes)) if plane_idxs is None else list(plane_idxs)
-        clim_k = resolve_clim(clim, entry.group)
+        clim_k = resolve_clim(clim, entry.volume_id)
+        if clim_k is None:
+            clim_k = resolve_clim(clim, entry.group)
         slice_dir = os.path.join(out_dir, sname)
         os.makedirs(slice_dir, exist_ok=True)
         for k in idxs:
@@ -1214,6 +1241,13 @@ def _main(argv: list[str] | None = None) -> int:
     )
     print(f"\nsliced {len(res.volume_ids)} volumes -> {res.output_h5}; planes {res.n_planes_total}")
     return 0
+
+
+def roi_previews(params: dict) -> list:
+    """(label, thunk) ROI-picker previews from the stacked mosa/strain volume(s)."""
+    from ..common.figures import stacked_volume_previews
+
+    return stacked_volume_previews(params)
 
 
 if __name__ == "__main__":
