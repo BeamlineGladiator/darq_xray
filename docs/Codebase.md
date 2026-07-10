@@ -169,7 +169,9 @@ reads negative in the ID03 motor frame, so the formulas use its magnitude:
 `M = |mainx|/obx − 1`, `E_x = base/M` (base 3.25 for 2× at `ffsel=−60`, 0.65 for
 10× at `ffsel=0`), `2θ = atan2(ffz, |mainx|)`, and `E_y = E_x/sin(2θ)` when the
 condenser is in (`lenssel=0`) else `E_y = E_x`. Raises `StageUserError` for a
-missing entry/motor, an unrecognized `ffsel`, or a non-physical magnification.
+missing entry/motor, an unrecognized `ffsel`, a non-positive `obx`, a
+non-physical magnification, or (condenser in) a non-positive `2θ` (`ffz ≤ 0`) —
+so a sign-flipped motor errors out instead of writing a negative pixel size.
 `PixelSizeResult` carries both pixel sizes plus `magnification`,
 `two_theta_deg`, `objective`, `condenser_in`, and the raw (signed) motor values.
 

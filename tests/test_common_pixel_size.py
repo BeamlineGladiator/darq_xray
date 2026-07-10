@@ -113,3 +113,23 @@ def test_zero_obx_raises(tmp_path):
     p = _write_scan(tmp_path / "s.h5", mainx=5000.0, obx=0.0, ffsel=-60.0, ffz=2100.0, lenssel=0.0)
     with pytest.raises(StageUserError):
         compute_pixel_size(p)
+
+
+def test_negative_obx_raises(tmp_path):
+    # A negative obx would make M = |mainx|/obx - 1 negative; the error must
+    # point at obx itself, not the (satisfied) |mainx| > obx condition.
+    p = _write_scan(
+        tmp_path / "s.h5", mainx=-5000.0, obx=-273.0, ffsel=-60.0, ffz=2100.0, lenssel=0.0
+    )
+    with pytest.raises(StageUserError, match="obx"):
+        compute_pixel_size(p)
+
+
+def test_negative_ffz_condenser_in_raises(tmp_path):
+    # Negative ffz -> negative 2theta; dividing by sin(2theta) would silently
+    # produce a negative Y pixel size, so it must raise instead.
+    p = _write_scan(
+        tmp_path / "s.h5", mainx=-5000.0, obx=273.0, ffsel=-60.0, ffz=-2100.0, lenssel=0.0
+    )
+    with pytest.raises(StageUserError, match="2theta"):
+        compute_pixel_size(p)

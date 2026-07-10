@@ -114,15 +114,14 @@ def compute_pixel_size(
     ffz = _scalar(pos, FFZ, group)
     lenssel = _scalar(pos, LENSSEL, group)
 
-    # ``mainx`` is the far-field detector's along-beam position; on ID03 it reads
-    # negative in the motor frame, but the optics formulas below use it as a
-    # positive distance, so drive both the magnification and 2theta from |mainx|.
+    # mainx reads negative in the ID03 motor frame (see module docstring): use |mainx|.
     mainx_dist = abs(mainx)
 
-    if obx == 0.0:
+    if obx <= 0.0:
         raise StageUserError(
-            "obx = 0, cannot compute the magnification (|mainx|/obx - 1)",
-            hint="Check obx; set the pixel size manually.",
+            f"obx = {obx:g}, cannot compute the magnification (|mainx|/obx - 1)",
+            hint="Expected obx > 0 (the objective's along-beam distance). "
+            "Set the pixel size manually.",
         )
     magnification = mainx_dist / obx - 1.0
     if magnification <= 0.0:
@@ -138,10 +137,12 @@ def compute_pixel_size(
     condenser_in = abs(lenssel) <= _LENSSEL_TOL
     if condenser_in:
         sin2t = math.sin(two_theta)
-        if abs(sin2t) < 1e-9:
+        if sin2t < 1e-9:
             raise StageUserError(
-                "2theta ~ 0, cannot divide the Y pixel size by sin(2theta)",
-                hint="Check ffz/mainx; set the pixel size manually.",
+                f"non-physical 2theta = {math.degrees(two_theta):.4g} deg, cannot divide "
+                "the Y pixel size by sin(2theta)",
+                hint="Expected ffz > 0 (detector above the beam). Check ffz and mainx; "
+                "set the pixel size manually.",
             )
         px_y = px_x / sin2t
     else:

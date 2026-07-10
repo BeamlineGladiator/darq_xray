@@ -111,6 +111,13 @@ you, reporting the magnification, 2θ, the detected objective (2× / 10×) and
 whether the condenser was in. Any unrecognized `ffsel` leaves the fields
 untouched and explains what to set manually.
 
+Real ID03 scans record `mainx` negative (motor-frame sign convention); the
+calculator uses its magnitude, so those scans compute normally. Non-physical
+geometry — `obx ≤ 0`, `|mainx| ≤ obx`, or `ffz ≤ 0` while the condenser is
+in — raises an error instead of filling a wrong value. The calculator cannot
+tell a mis-read motor from a real one, so sanity-check the reported
+magnification and 2θ against your setup before saving the preset.
+
 ### Shared project state & auto-chaining
 
 Each stage's form is pre-filled from the experiment, and **an upstream stage's
