@@ -19,9 +19,14 @@ single 9-stage pipeline. (DFXM — never call it XRD / X-ray diffraction.)
 
 ## Autonomous execution kickoff
 
-- **Subagent model tier:** dispatch mid-tier implementer/reviewer subagents as the
-  custom `sonnet-4-6` agent type, never Sonnet 5; reserve fable for final
-  whole-branch reviews.
+- **Subagent model tier:** dispatch mid-tier implementer subagents and
+  between-task reviewers on Sonnet (Sonnet 5 is fine — the earlier `sonnet-4-6`
+  pin is lifted as of 2026-07-10; that custom agent type remains available but
+  is only for explicit requests).
+  Planning → the custom `planner` agent (Fable 5, `effort: high`); ongoing
+  supervision/oversight of in-progress work → the custom `supervisor` agent
+  (Fable 5, `effort: high`). Both are read-only. Reserve fable for these two
+  roles and for final whole-branch reviews.
 - **Kickoff confirmation:** before starting any autonomous multi-task run
   (subagent-driven-development, executing-plans), confirm via AskUserQuestion:
   (1) the stop point — a named task/phase boundary or "run to completion",
