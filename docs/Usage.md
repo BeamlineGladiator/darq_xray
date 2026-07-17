@@ -531,6 +531,16 @@ through the aligned volumes — all in one world frame so the slices co-register
 > only need `normal`. Otherwise give `half_u`, `half_v` (µm) and optional
 > `du`/`dv` (in-plane step).
 
+> [!warning] Mixed pixel scales → mixed plane grids
+> Without an explicit `du`/`dv`, each volume is sampled at **its own** pixel
+> scale — volumes carrying a different scale (typically the `raw_mosa_*` ones)
+> then land on a slightly different `(u, v)` grid for the *same* plane. The run
+> still succeeds, but the Results summary warns
+> (`slice '…': plane grids differ across volumes — …`), and downstream
+> [[#8. Line profiles (`profiles`)|profiles]] jobs can only mix fields that
+> share a grid. Set explicit `du`/`dv` in the slice spec to sample every volume
+> onto one common grid.
+
 > [!note] Plot orientation
 > Slice plots follow the same convention as the per-layer renders: the vertical
 > plot axis (`v`) is the detector-vertical Y-like in-plane direction (world Y,
@@ -670,6 +680,24 @@ Both `run()` and the export catalog rebuild (`figures()`) honour per-job
 `fields`/`reference` automatically — they both call the shared `_collect`
 function where the override is applied.
 
+#### Mixed grids and repeated slice names
+
+- **A field on a different plane grid is dropped, not fatal.** When a requested
+  field was sliced onto a different `(u, v)` grid than the job's reference
+  (typical for the `raw_mosa_*` fields, whose source volume carries its own
+  pixel scale), only that field is dropped — the job still profiles the fields
+  that match, and the **Results** summary lists the drop
+  (`field dropped — geometry shape mismatch for '…'`). A job is skipped outright
+  only when *no* requested field matches. To profile the odd field anyway,
+  either give it its own job with a matching `"reference"`, or re-run slices
+  with explicit `du`/`dv` so every volume shares one grid (the slices stage
+  warns when its volumes land on different grids).
+- **Two jobs may share a slice name.** Each job keeps its own outputs: when the
+  default file stems would collide (same slice, same offset, no distinct
+  `fig_name`), later jobs get a `_2`, `_3`, … suffix instead of overwriting the
+  first ones, and the Results/export tab rebuilds each figure from its own job
+  entry. Distinct `fig_name`s per job are still the tidier choice.
+
 #### Separate trace figures (per field)
 
 By default each profiled field is written as its **own** figure
@@ -689,6 +717,11 @@ distance — reads clearly as a paper subfigure. Shape and style them with:
 
 The overview images (plane + line, per field) are still written by
 `save_overview` and are unaffected by these knobs.
+
+When a run (or the publication export) carries the global plot style, the trace
+figures also honour its **Show title** toggle and **Title scale** — so a
+paper-ready trace can drop its `kind | field | source` header entirely. The
+companion and overview figures keep their fixed look.
 
 ### 9. Rocking-matched layers (`matched`)
 

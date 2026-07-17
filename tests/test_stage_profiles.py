@@ -247,6 +247,34 @@ def test_build_trace_figure_scales_offset_text():
     assert ax.xaxis.get_offset_text().get_fontsize() == 20.0
 
 
+def test_build_trace_figure_show_title_false_omits_title():
+    from dfxm.common.plotting import PlotStyle
+
+    fld, geom = _fake_field(std=True)
+    kwargs = dict(aspect_wh=(4.0, 3.0), width_in=6.0, linewidth=2.0, color="", font_scale=1.0)
+    off = PR.build_trace_figure(fld, geom, style=PlotStyle(show_title=False), **kwargs)
+    assert off.axes[0].get_title(loc="left") == ""
+    on = PR.build_trace_figure(fld, geom, style=PlotStyle(show_title=True), **kwargs)
+    assert on.axes[0].get_title(loc="left") != ""
+    legacy = PR.build_trace_figure(fld, geom, style=None, **kwargs)  # unstyled keeps the title
+    assert legacy.axes[0].get_title(loc="left") != ""
+
+
+def test_build_trace_figure_title_scale_scales_title_only():
+    from matplotlib import text as mtext
+
+    from dfxm.common.plotting import PlotStyle
+
+    fld, geom = _fake_field(std=True)
+    kwargs = dict(aspect_wh=(4.0, 3.0), width_in=6.0, linewidth=2.0, color="", font_scale=2.0)
+    fig = PR.build_trace_figure(fld, geom, style=PlotStyle(title_scale=1.5), **kwargs)
+    ax = fig.axes[0]
+    label = ax.get_title(loc="left")
+    ttl = next(t for t in ax.findobj(mtext.Text) if t.get_text() == label and t is not ax.title)
+    assert ttl.get_fontsize() == 10 * 2.0 * 1.5  # title follows title_scale
+    assert ax.xaxis.label.get_fontsize() == 12 * 2.0  # labels don't
+
+
 def test_build_trace_figure_pins_plot_box_aspect():
     # trace_aspect pins the PLOT BOX (data rectangle) to exactly W:H via
     # set_box_aspect(h/w), independent of the label/title/font margins.
@@ -361,3 +389,144 @@ def test_run_bad_trace_file_aspect_raises(tmp_path):
     _write_consolidated(str(h5))
     with pytest.raises(StageUserError):
         PR.run(_base_params(h5, tmp_path / "o", trace_file_aspect="nope"))
+
+
+# -- two jobs on the same slice -----------------------------------------------
+def test_run_same_name_jobs_write_distinct_outputs(tmp_path):
+    """Two jobs on one slice at the same offset must not overwrite each other."""
+    h5 = tmp_path / "oblique_slices.h5"
+    _write_consolidated(str(h5))
+    out = tmp_path / "prof"
+    jobs = (
+        '[{"name":"oblique_full","offset_um":0.0,"start_uv":[-5,-3],"end_uv":[5,3],'
+        '"n_samples":40,"width_pixels":1},'
+        '{"name":"oblique_full","offset_um":0.0,"start_uv":[-2,0],"end_uv":[2,0],'
+        '"n_samples":40,"width_pixels":1}]'
+    )
+    res = PR.run(_base_params(h5, out, jobs_json=jobs))
+    assert len(res.jobs) == 2
+    assert [jr.job_index for jr in res.jobs] == [0, 1]
+    figs = [jr.figure for jr in res.jobs]
+    assert figs[0] != figs[1]
+    assert all(f and os.path.exists(f) for f in figs)
+    all_traces = res.jobs[0].traces + res.jobs[1].traces
+    assert len(set(all_traces)) == len(all_traces)  # no trace overwrote another
+
+
+def test_run_preview_same_name_jobs_distinct_pngs(tmp_path):
+    h5 = tmp_path / "oblique_slices.h5"
+    _write_consolidated(str(h5))
+    jobs = (
+        '[{"name":"oblique_full","offset_um":0.0,"start_uv":[-5,-3],"end_uv":[5,3]},'
+        '{"name":"oblique_full","offset_um":1.0,"start_uv":[-2,0],"end_uv":[2,0]}]'
+    )
+    res = PR.run(_base_params(h5, tmp_path / "prev", mode="preview", jobs_json=jobs))
+    figs = [jr.figure for jr in res.jobs]
+    assert len(figs) == 2 and figs[0] != figs[1]
+    assert all(os.path.exists(f) for f in figs)
+
+
+# -- per-field drop on grid mismatch ------------------------------------------
+def _add_mismatched_field(path, vid="raw_mosa_sum"):
+    """Add a field whose slice sits on a slightly different (u, v) grid."""
+    u = np.linspace(-10.0, 10.0, 79)
+    v = np.linspace(-8.0, 8.0, 63)
+    uu, vv = np.meshgrid(u, v)
+    offsets = np.array([-1.0, 0.0, 1.0])
+    with h5py.File(path, "a") as f:
+        g = f.create_group(vid)
+        g.attrs["kind"] = "raw_mosa_sum"
+        g.attrs["cbar_label"] = "value"
+        g.attrs["cmap"] = "gray"
+        g.attrs["title"] = vid
+        g.attrs["vmin"] = -10.0
+        g.attrs["vmax"] = 10.0
+        sg = g.create_group("oblique_full")
+        stack = np.stack([A * uu + B * vv + o for o in offsets], axis=0).astype(np.float32)
+        sg.create_dataset("slices", data=stack)
+        sg.create_dataset("u_um", data=u)
+        sg.create_dataset("v_um", data=v)
+        sg.create_dataset("offsets_um", data=offsets)
+
+
+def test_run_drops_mismatched_field_keeps_job(tmp_path):
+    """A field on a different grid is dropped with a note; the job still runs."""
+    h5 = tmp_path / "oblique_slices.h5"
+    _write_consolidated(str(h5))
+    _add_mismatched_field(str(h5))
+    out = tmp_path / "prof"
+    res = PR.run(_base_params(h5, out))
+    assert len(res.jobs) == 1
+    jr = res.jobs[0]
+    assert set(jr.fields) == {"raw_sum", "strain"}  # raw_mosa_sum dropped, rest profiled
+    assert jr.figure and os.path.exists(jr.figure)
+    assert any("raw_mosa_sum" in n for n in res.notes)  # drop reason surfaced
+    assert res.skipped == []  # the job ran — drop notes must not count as skips
+
+
+def test_run_skips_job_when_no_usable_fields(tmp_path):
+    """When every requested field mismatches the reference grid, the job skips."""
+    h5 = tmp_path / "oblique_slices.h5"
+    _write_consolidated(str(h5))
+    _add_mismatched_field(str(h5))
+    out = tmp_path / "prof"
+    jobs = (
+        '[{"name":"oblique_full","offset_um":0.0,"start_uv":[-5,-3],"end_uv":[5,3],'
+        '"n_samples":40,"width_pixels":1,"fields":["raw_mosa_sum"]}]'
+    )
+    res = PR.run(_base_params(h5, out, jobs_json=jobs))
+    assert res.jobs == []
+    assert any("raw_mosa_sum" in s for s in res.skipped)
+
+
+def test_run_absent_only_fields_job_runs_reference_only(tmp_path):
+    """A job whose fields name only absent ids keeps the old behaviour: it runs
+    (reference-only companion), with no dangling 'no usable fields:' skip."""
+    h5 = tmp_path / "oblique_slices.h5"
+    _write_consolidated(str(h5))
+    out = tmp_path / "prof"
+    jobs = (
+        '[{"name":"oblique_full","offset_um":0.0,"start_uv":[-5,-3],"end_uv":[5,3],'
+        '"n_samples":40,"width_pixels":1,"fields":["no_such_field"]}]'
+    )
+    res = PR.run(_base_params(h5, out, jobs_json=jobs))
+    assert len(res.jobs) == 1 and res.jobs[0].fields == []
+    assert res.jobs[0].figure and os.path.exists(res.jobs[0].figure)
+    assert res.skipped == []
+
+
+def test_run_drops_field_with_shorter_sweep(tmp_path):
+    """A field whose slice stores fewer planes than the reference is dropped
+    with a note — never an uncaught IndexError."""
+    h5 = tmp_path / "oblique_slices.h5"
+    _write_consolidated(str(h5))
+    u = np.linspace(-10.0, 10.0, 81)
+    v = np.linspace(-8.0, 8.0, 65)
+    uu, vv = np.meshgrid(u, v)
+    with h5py.File(str(h5), "a") as f:
+        g = f.create_group("raw_short")
+        g.attrs["kind"] = "raw_sum"
+        g.attrs["cbar_label"] = "value"
+        g.attrs["cmap"] = "gray"
+        g.attrs["title"] = "raw_short"
+        g.attrs["vmin"] = -10.0
+        g.attrs["vmax"] = 10.0
+        sg = g.create_group("oblique_full")
+        sg.create_dataset("slices", data=(A * uu + B * vv)[None, ...].astype(np.float32))
+        sg.create_dataset("u_um", data=u)
+        sg.create_dataset("v_um", data=v)
+        sg.create_dataset("offsets_um", data=np.array([-1.0]))  # 1 plane vs ref's 3
+    out = tmp_path / "prof"
+    res = PR.run(_base_params(h5, out))  # ref offset 0.0 -> ref idx 1 >= len(short)
+    assert len(res.jobs) == 1
+    assert "raw_short" not in res.jobs[0].fields
+    assert any("raw_short" in n and "sweep shorter" in n for n in res.notes)
+
+
+def test_unique_name_registers_generated_suffixes():
+    """A user-supplied name equal to a generated one must not collide."""
+    used: dict[str, int] = {}
+    assert PR._unique_name(used, "line") == "line"
+    assert PR._unique_name(used, "line") == "line_2"
+    assert PR._unique_name(used, "line_2") == "line_2_2"  # not a second 'line_2'
+    assert PR._unique_name(used, "line") == "line_3"

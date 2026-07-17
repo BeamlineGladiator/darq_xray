@@ -876,6 +876,7 @@ def _summarize_profiles(result) -> str:
         extra = (" " + " ".join(bits)) if bits else ""
         fig = j.figure or "(no companion)"
         lines.append(f"  {j.name} @ {j.offset_used_um:+.2f} µm -> {fig}{extra}")
+    lines += [f"note: {n}" for n in getattr(result, "notes", [])]
     lines += [f"skipped: {s}" for s in result.skipped]
     return "\n".join(lines)
 

@@ -1244,6 +1244,37 @@ def test_profiles_catalog_distinct_ids_multi_job(tmp_path):
     assert len({s.filename for s in specs}) == 4
 
 
+def test_profiles_catalog_same_name_jobs_pair_per_job(tmp_path):
+    """Two jobs on the SAME slice each rebuild from their own job spec."""
+    import json
+
+    h5 = tmp_path / "oblique_slices.h5"
+    _write_profiles_h5(h5)
+    job1 = {**_profiles_job_spec(), "fig_name": "lineA"}
+    job2 = {
+        **_profiles_job_spec(),
+        "fig_name": "lineB",
+        "start_uv": [-2.0, 0.0],
+        "end_uv": [2.0, 0.0],
+    }
+    jr1 = Profiles.ProfileJobResult(
+        name="oblique_full", offset_used_um=0.0, fields=["raw_sum", "strain"], job_index=0
+    )
+    jr2 = Profiles.ProfileJobResult(
+        name="oblique_full", offset_used_um=0.0, fields=["raw_sum", "strain"], job_index=1
+    )
+    res = Profiles.ProfilesResult(output_dir="", mode="parameter", jobs=[jr1, jr2])
+    params = {"consolidated_h5": str(h5), "jobs_json": json.dumps([job1, job2])}
+    specs = Profiles.figures(res, params)
+    assert len(specs) == 6  # 2 × (companion + 2 traces)
+    assert len({s.figure_id for s in specs}) == 6
+    comp = [s for s in specs if "__trace__" not in s.figure_id]
+    assert comp[0].filename == "lineA" and comp[1].filename == "lineB"
+    # each companion closure carries its OWN job spec, not the last same-named one
+    assert comp[0].build.__kwdefaults__["_job"]["fig_name"] == "lineA"
+    assert comp[1].build.__kwdefaults__["_job"]["fig_name"] == "lineB"
+
+
 def test_profiles_catalog_build_returns_figure(tmp_path):
     """spec.build(None) returns a matplotlib Figure (the companion profile figure)."""
     import json

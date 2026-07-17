@@ -951,6 +951,7 @@ def run(params: dict, progress: ProgressFn | None = None) -> SlicesResult:
 
     out_h5 = os.path.join(out_dir, p["output_h5_name"])
     save_png = bool(p["save_png"])
+    grids_by_slice: dict[str, list[tuple[str, tuple[int, int]]]] = {}
     fh = h5py.File(out_h5, "w")
     fh.attrs["created_by"] = "dfxm.stages.slices"
     fh.attrs["center_method"] = p["center_method"]
@@ -1007,6 +1008,9 @@ def run(params: dict, progress: ProgressFn | None = None) -> SlicesResult:
                         result.pngs.append(png)
                 stack = np.stack(planes, axis=0)
                 result.n_planes_total += stack.shape[0]
+                grids_by_slice.setdefault(sl["name"], []).append(
+                    (prep["volume_id"], (len(v_um), len(u_um)))
+                )
                 up_used = sl.get("up", None)
                 records.append(
                     {
@@ -1034,6 +1038,25 @@ def run(params: dict, progress: ProgressFn | None = None) -> SlicesResult:
             result.volume_ids.append(prep["volume_id"])
     finally:
         fh.close()
+
+    # Volumes with different pixel scales sample the same plane onto different
+    # (nv, nu) grids when the slice spec has no explicit du/dv. Downstream
+    # (profiles) can then only mix fields that share a grid — say so up front.
+    for sname, entries in grids_by_slice.items():
+        by_shape: dict[tuple[int, int], list[str]] = {}
+        for vid, shape in entries:
+            by_shape.setdefault(shape, []).append(vid)
+        if len(by_shape) > 1:
+            desc = "; ".join(
+                f"{nv}×{nu} px: {', '.join(vids)}" for (nv, nu), vids in sorted(by_shape.items())
+            )
+            msg = (
+                f"slice {sname!r}: plane grids differ across volumes — {desc}. "
+                "Profiles jobs can only mix fields on one grid; set explicit "
+                "du/dv in slices_json to sample all volumes onto the same grid."
+            )
+            result.notes.append(msg)
+            progress(0.99, msg)
 
     result.output_h5 = out_h5
     progress(1.0, f"sliced {len(result.volume_ids)} volumes -> {os.path.basename(out_h5)}")

@@ -319,6 +319,9 @@ class ProfileJobResult:
     overviews: list[str] = field(default_factory=list)
     traces: list[str] = field(default_factory=list)
     fields: list[str] = field(default_factory=list)
+    # position of the originating spec in jobs_json — two jobs may share a slice
+    # name, so name alone cannot pair a result back to its spec
+    job_index: int | None = None
 
 
 @dataclass
@@ -326,7 +329,10 @@ class ProfilesResult:
     output_dir: str = ""
     mode: str = "parameter"
     jobs: list[ProfileJobResult] = field(default_factory=list)
+    # one entry per job that produced NO output (reason included); per-field
+    # drop notes for jobs that still ran go to `notes` instead
     skipped: list[str] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)
 
 
 # -----------------------------------------------------------------------------
@@ -656,8 +662,10 @@ def build_trace_figure(
     All trace text is multiplied by ``font_scale`` — this is the trace figures'
     own scale, independent of the map figures' ``style.font_scale``. The curve
     and its std band use ``color`` (blank/None -> ``"C0"``). No colorbar (it is a
-    1-D plot); ``style`` only selects the ``styled_figure`` layout engine so the
-    background/layout matches the rest of the stage's output.
+    1-D plot); ``style`` selects the ``styled_figure`` layout engine so the
+    background/layout matches the rest of the stage's output, and its
+    ``show_title``/``title_scale`` flags apply to the trace title (``style=None``
+    keeps the legacy always-on title).
     """
     w_ratio, h_ratio = aspect_wh
     fs = float(font_scale)
@@ -676,7 +684,16 @@ def build_trace_figure(
         ax.fill_between(distance, vm - vs, vm + vs, color=curve_color, alpha=0.22, lw=0, zorder=2)
     ax.set_ylabel(fld["attrs"]["cbar_label"], fontsize=10 * fs)
     src = os.path.basename(fld["attrs"]["source_volume"]) or "(consolidated)"
-    ax.set_title(f"{fld['attrs']['kind']}  |  {fld['vid']}  |  {src}", fontsize=10 * fs, loc="left")
+    # publication-style title flags apply here too; the unstyled (style=None)
+    # CLI path keeps today's always-on title. Mirrors apply_text_scale's
+    # show_title/title_scale semantics — kept inline because traces deliberately
+    # use their own font_scale, not style.font_scale, which apply_text_scale
+    # would impose on every label.
+    if style is None or style.show_title:
+        title_fs = 10 * fs * (style.title_scale if style is not None else 1.0)
+        ax.set_title(
+            f"{fld['attrs']['kind']}  |  {fld['vid']}  |  {src}", fontsize=title_fs, loc="left"
+        )
     ax.grid(True, color="0.85", lw=0.6)
     ax.set_xlim(0.0, geom["L"])
     ax.set_xlabel("distance along line (µm)", fontsize=12 * fs)
@@ -709,6 +726,23 @@ def render_single(ref, geom, line_color, out_png, header, dpi, style=None):
 # -----------------------------------------------------------------------------
 # Drivers
 # -----------------------------------------------------------------------------
+def _unique_name(used: dict[str, int], base: str) -> str:
+    """Return *base* or ``base_N``, registering the result in *used* — so a later
+    job whose own name equals an already-generated ``base_N`` still comes out
+    unique instead of silently colliding with it."""
+    if base not in used:
+        used[base] = 1
+        return base
+    n = used[base]
+    while True:
+        n += 1
+        candidate = f"{base}_{n}"
+        if candidate not in used:
+            used[base] = n
+            used[candidate] = 1
+            return candidate
+
+
 def _pick_reference_id(present, ref_pref):
     if ref_pref and ref_pref in present:
         return ref_pref
@@ -748,12 +782,26 @@ def _collect(f, job, p, ref_pref, restrict):
     )
     geom_tol, off_tol = float(p["geom_tol_um"]), float(p["offset_tol_um"])
     fields = []
+    dropped = []
     for vid in _ordered_field_ids(present, ref_id, job_fields):
         sg = f[f"{vid}/{name}"]
         cu, cv, coff = read_axes(sg)
-        check_geometry(u_um, v_um, cu, cv, vid, geom_tol)
-        if abs(float(coff[idx]) - off_used) > off_tol:
-            raise ValueError(f"offset mismatch for {vid!r}")
+        # A field on a different grid/sweep than the reference (e.g. a raw_mosa
+        # volume sliced with its own pixel scale) drops with a note; the job
+        # keeps going with the fields that do match.
+        reason = None
+        try:
+            check_geometry(u_um, v_um, cu, cv, vid, geom_tol)
+        except ValueError as exc:
+            reason = str(exc)
+        else:
+            if idx >= len(coff):
+                reason = f"plane sweep shorter than reference for {vid!r}"
+            elif abs(float(coff[idx]) - off_used) > off_tol:
+                reason = f"offset mismatch for {vid!r}"
+        if reason is not None:
+            dropped.append(f"field dropped — {reason}")
+            continue
         plane = sg["slices"][idx].astype(np.float64)
         vm, vs, nv = profile_plane(plane, geom)
         fields.append(
@@ -766,8 +814,13 @@ def _collect(f, job, p, ref_pref, restrict):
                 "plane": plane,
             }
         )
+    # No usable fields *because they were dropped* skips the job with reasons.
+    # An empty list with nothing dropped (a job's "fields" naming only absent
+    # ids) keeps the pre-drop behaviour: proceed and render reference-only.
+    if not fields and dropped:
+        raise ValueError("no usable fields: " + "; ".join(dropped))
     ref = (ref_plane, u_um, v_um, ref_attrs, f"{ref_id}  @ offset {off_used:+.3f} µm")
-    return ref, fields, geom, off_used
+    return ref, fields, geom, off_used, dropped
 
 
 def _write_csvs(out_dir, stem, distance, fields):
@@ -904,6 +957,10 @@ def run(params: dict, progress: ProgressFn | None = None) -> ProfilesResult:
                     "trace_linewidth=2, trace_font_scale=1.4.",
                 )
 
+    # Same-named jobs default to the same stem — suffix later ones so a second
+    # job on one slice cannot silently overwrite the first's files.
+    used_stems: dict[str, int] = {}
+
     with h5py.File(h5_path, "r") as f:
         for ji, job in enumerate(jobs):
             progress((ji + 0.5) / len(jobs), f"{mode}: {job.get('name')}")
@@ -931,29 +988,40 @@ def run(params: dict, progress: ProgressFn | None = None) -> ProfilesResult:
                     )
                 color = auto_line_color(attrs["cmap"], line_override)
                 ref = (ref_plane, u_um, v_um, attrs, f"{ref_id}  @ offset {off_used:+.3f} µm")
-                stem = (job.get("fig_name") or f"preview_{name}") + "__PREVIEW"
+                stem = _unique_name(
+                    used_stems, (job.get("fig_name") or f"preview_{name}") + "__PREVIEW"
+                )
                 out_png = os.path.join(out_dir, f"{stem}.png")
                 header = f"PREVIEW :: slice {name!r} offset {off_used:+.3f} µm"
                 render_single(ref, geom, color, out_png, header, dpi, style=style)
                 result.jobs.append(
-                    ProfileJobResult(name=name, offset_used_um=off_used, figure=out_png)
+                    ProfileJobResult(
+                        name=name, offset_used_um=off_used, figure=out_png, job_index=ji
+                    )
                 )
                 continue
 
             # parameter mode
             try:
-                ref, fields, geom, off_used = _collect(f, job, p, ref_pref, restrict)
+                ref, fields, geom, off_used, dropped = _collect(f, job, p, ref_pref, restrict)
             except (KeyError, ValueError) as exc:
                 result.skipped.append(f"{name}: {exc}")
                 continue
+            for reason in dropped:
+                msg = f"{name}: {reason}"
+                result.notes.append(msg)
+                progress((ji + 0.5) / len(jobs), msg)
             color = auto_line_color(ref[3]["cmap"], line_override)
-            stem = job.get("fig_name") or f"profile_{name}_{off_used:+.2f}um".replace(
-                "+", "p"
-            ).replace("-", "m")
+            stem = _unique_name(
+                used_stems,
+                job.get("fig_name")
+                or f"profile_{name}_{off_used:+.2f}um".replace("+", "p").replace("-", "m"),
+            )
             jr = ProfileJobResult(
                 name=name,
                 offset_used_um=off_used,
                 fields=[fl["vid"] for fl in fields],
+                job_index=ji,
             )
             if save_companion:
                 out_png = os.path.join(out_dir, f"{stem}.png")
@@ -1034,18 +1102,26 @@ def figures(result: ProfilesResult, params: dict) -> list[FigureSpec]:
 
     specs = []
     used_stems: dict[str, int] = {}
+    used_ids: dict[str, int] = {}
     for jr in jobs_with_fields:
         name = jr.name
-        fig_name = job_spec_by_name.get(name, {}).get("fig_name") or f"profile_{name}"
+        # Pair the result with its originating spec by position (job_index) —
+        # two jobs may share one slice name, and a by-name lookup would rebuild
+        # both from the last same-named spec. By-name stays as the fallback for
+        # results predating job_index.
+        job_spec = None
+        if jr.job_index is not None and 0 <= jr.job_index < len(job_specs):
+            candidate = job_specs[jr.job_index]
+            if isinstance(candidate, dict) and candidate.get("name") == name:
+                job_spec = candidate
+        if job_spec is None:
+            job_spec = job_spec_by_name.get(name)
         # fig_name is free-form user text: two jobs can share it. Disambiguate
         # the export stem so a shared fig_name does not silently overwrite a
-        # previously written figure (both would otherwise report ok).
-        if fig_name in used_stems:
-            used_stems[fig_name] += 1
-            fig_name = f"{fig_name}_{used_stems[fig_name]}"
-        else:
-            used_stems[fig_name] = 1
-        job_spec = job_spec_by_name.get(name)
+        # previously written figure (both would otherwise report ok). The
+        # figure_id must stay unique for same-named jobs too (export reporting).
+        fig_name = _unique_name(used_stems, (job_spec or {}).get("fig_name") or f"profile_{name}")
+        base_id = _unique_name(used_ids, f"profiles_{name}")
 
         # KEEP IN SYNC with the parameter-mode render in run() above:
         # _collect → auto_line_color → build_companion_figure (run() uses save_companion_figure).
@@ -1075,14 +1151,14 @@ def figures(result: ProfilesResult, params: dict) -> list[FigureSpec]:
             _p.setdefault("geom_tol_um", STAGE.defaults().get("geom_tol_um", 1e-4))
             _p.setdefault("offset_tol_um", STAGE.defaults().get("offset_tol_um", 1e-3))
             with _h5py.File(_h5, "r") as f:
-                ref, fields, geom, _ = _collect(f, _job, _p, _ref, _res)
+                ref, fields, geom, _, _dropped = _collect(f, _job, _p, _ref, _res)
             color = auto_line_color(ref[3]["cmap"], _lo)
             return build_companion_figure(ref, fields, geom, color, style=style)
 
         if save_companion:
             specs.append(
                 FigureSpec(
-                    figure_id=f"profiles_{name}",
+                    figure_id=base_id,
                     title=f"Profile: {name}",
                     kind="plot",
                     filename=fig_name,
@@ -1122,7 +1198,7 @@ def figures(result: ProfilesResult, params: dict) -> list[FigureSpec]:
                     _p.setdefault("geom_tol_um", STAGE.defaults().get("geom_tol_um", 1e-4))
                     _p.setdefault("offset_tol_um", STAGE.defaults().get("offset_tol_um", 1e-3))
                     with _h5py.File(_h5, "r") as f:
-                        _, _fields, _geom, _ = _collect(f, _job, _p, _ref, _res)
+                        _, _fields, _geom, _, _dropped = _collect(f, _job, _p, _ref, _res)
                     _fld = next((fl for fl in _fields if fl["vid"] == _vid), None)
                     if _fld is None:
                         raise ValueError(f"field {_vid!r} not present for job {_name!r}")
@@ -1139,7 +1215,7 @@ def figures(result: ProfilesResult, params: dict) -> list[FigureSpec]:
 
                 specs.append(
                     FigureSpec(
-                        figure_id=f"profiles_{name}__trace__{vid}",
+                        figure_id=f"{base_id}__trace__{vid}",
                         title=f"Profile trace: {name} · {vid}",
                         kind="plot",
                         filename=f"{fig_name}__trace__{vid}",

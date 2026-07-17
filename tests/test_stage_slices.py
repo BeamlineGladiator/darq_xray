@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 
 import h5py
@@ -288,6 +289,32 @@ def _minimal_params(proc, raw, out):
         "output_dir": str(out),
         "save_png": False,
     }
+
+
+def test_run_warns_on_mismatched_plane_grids(tmp_path):
+    """Volumes with different pixel scales land on different (u, v) grids when
+    the slice spec has no explicit du/dv — the run must say so in notes."""
+    proc, raw = _setup(tmp_path)
+    with h5py.File(proc / "aligned_raw_rocking_volumes.h5", "a") as f:
+        f.attrs["scale_x_um_per_px"] = 0.2  # differs from the stage pixel size
+        f.attrs["scale_y_um_per_px"] = 0.5
+    params = _minimal_params(proc, raw, tmp_path / "sl_warn")
+    spec = json.loads(params["slices_json"])
+    for sl in spec:
+        del sl["du"], sl["dv"]  # per-volume default step -> mismatched grids
+    params["slices_json"] = json.dumps(spec)
+    res = SL.run(params)
+    warn = [n for n in res.notes if "grid" in n]
+    assert warn and "mid" in warn[0]
+    assert "du" in warn[0]  # points at the explicit du/dv remedy
+    assert "raw_sum" in warn[0]
+
+
+def test_run_matching_grids_no_grid_note(tmp_path):
+    """Explicit du/dv puts every volume on one grid — no grid note."""
+    proc, raw = _setup(tmp_path)
+    res = SL.run(_minimal_params(proc, raw, tmp_path / "sl_nogrid"))
+    assert not any("grid" in n for n in res.notes)
 
 
 def test_run_resolves_cmaps_from_injected_style(tmp_path):
