@@ -508,7 +508,13 @@ def apply_text_scale(ax, style: "PlotStyle") -> None:
         )
 
 
-def draw_scale_bar(ax, length_um: float | None = None, *, style: "PlotStyle") -> None:
+def draw_scale_bar(
+    ax,
+    length_um: float | None = None,
+    *,
+    style: "PlotStyle",
+    fixed_scale_um_per_cm: float | None = None,
+) -> None:
     """Draw a µm scale bar (label centred over the bar, optional background box).
 
     *ax* must use data coordinates in microns. ``length_um=None`` auto-sizes.
@@ -518,6 +524,14 @@ def draw_scale_bar(ax, length_um: float | None = None, *, style: "PlotStyle") ->
     background box hugs its content at any ``font_scale`` (exact even under
     constrained layout, whose axes positions are only final at first draw),
     and the ``VPacker`` centres label and bar on each other by construction.
+
+    ``fixed_scale_um_per_cm`` is opt-in per call: when given a positive value,
+    the bar height is pinned to ``scale_bar_thickness_pt`` in TRUE printed
+    points at that known µm-per-cm scale, instead of a fraction of the axes'
+    Y extent. Only callers that have actually fit the axes to a physical page
+    size (so the axes' data-to-page scale really is that value) may pass it —
+    passing it for an un-fitted axes draws a bar with the wrong thickness.
+    Leave it ``None`` (the default) for the legacy auto-scaled geometry.
     """
     from matplotlib.font_manager import FontProperties
     from matplotlib.offsetbox import AnchoredOffsetbox, AuxTransformBox, TextArea, VPacker
@@ -527,11 +541,16 @@ def draw_scale_bar(ax, length_um: float | None = None, *, style: "PlotStyle") ->
     y0, y1 = ax.get_ylim()
     xr, yr = (x1 - x0), (y1 - y0)
     sl = length_um if length_um is not None else auto_scale_bar_length_um(abs(xr))
-    # Bar height in data coords: 0.004·thickness_pt·|yr| (≈0.012·|yr| at the
-    # default thickness_pt=3.0) — unchanged from the previous hand-rolled
-    # geometry; close to, but NOT byte-identical to, the pre-export legacy bar
-    # (which used 0.01·|yr| and 50/10/1 length rounding).
-    bh = abs(yr) * 0.004 * style.scale_bar_thickness_pt
+    if fixed_scale_um_per_cm:
+        # Fixed-scale mode: bar height = thickness in TRUE points at the known scale
+        # (1 pt = 2.54/72 cm of page = that many cm x um-per-cm of data).
+        bh = style.scale_bar_thickness_pt * (2.54 / 72.0) * float(fixed_scale_um_per_cm)
+    else:
+        # Bar height in data coords: 0.004·thickness_pt·|yr| (≈0.012·|yr| at the
+        # default thickness_pt=3.0) — unchanged from the previous hand-rolled
+        # geometry; close to, but NOT byte-identical to, the pre-export legacy bar
+        # (which used 0.01·|yr| and 50/10/1 length rounding).
+        bh = abs(yr) * 0.004 * style.scale_bar_thickness_pt
     # Floor guards the pad division below (and FontProperties) against
     # font_scale/label_scale = 0 from hand-written or stale persisted styles.
     label_size = max(10.0 * style.font_scale * style.scale_bar_label_scale, 0.1)

@@ -686,3 +686,43 @@ def test_scale_um_per_cm_json_roundtrip_and_old_snapshots():
     assert s2 is not None and s2.scale_um_per_cm == 75.0
     old = style_from_json('{"font_scale": 2.0}')  # snapshot predating the knob
     assert old is not None and old.scale_um_per_cm is None
+
+
+def _bar_rect(ax):
+    """The scale-bar Rectangle inside the AnchoredOffsetbox assembly."""
+    from matplotlib.offsetbox import AnchoredOffsetbox, AuxTransformBox
+
+    box = next(a for a in ax.artists if isinstance(a, AnchoredOffsetbox))
+    stack = [box.get_child()]
+    while stack:
+        a = stack.pop()
+        if isinstance(a, AuxTransformBox):
+            return a.get_children()[0]
+        if hasattr(a, "get_children"):
+            stack.extend(a.get_children())
+    raise AssertionError("no bar rectangle found")
+
+
+def _bar_axes(xr=200.0, yr=100.0):
+    from matplotlib.figure import Figure
+
+    fig = Figure(figsize=(6, 4))
+    ax = fig.add_subplot(111)
+    ax.set_xlim(0, xr)
+    ax.set_ylim(0, yr)
+    return ax
+
+
+def test_draw_scale_bar_fixed_mode_height_is_point_exact():
+    style = PlotStyle(scale_bar_thickness_pt=4.0)
+    ax = _bar_axes()
+    draw_scale_bar(ax, 50.0, style=style, fixed_scale_um_per_cm=100.0)
+    assert _bar_rect(ax).get_height() == pytest.approx(4.0 * (2.54 / 72.0) * 100.0)
+    assert _bar_rect(ax).get_width() == pytest.approx(50.0)
+
+
+def test_draw_scale_bar_default_mode_geometry_unchanged():
+    style = PlotStyle(scale_bar_thickness_pt=3.0)
+    ax = _bar_axes(yr=100.0)
+    draw_scale_bar(ax, 50.0, style=style)  # no kwarg -> today's geometry
+    assert _bar_rect(ax).get_height() == pytest.approx(100.0 * 0.004 * 3.0)
