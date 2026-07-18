@@ -274,6 +274,31 @@ def test_build_slice_figure_offset_annotation_in_title():
     assert "3.50" in title  # the offset annotation appears as "+3.50" in the title
 
 
+def _box_inches(fig, ax):
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+
+    if not hasattr(fig.canvas, "get_renderer"):
+        FigureCanvasAgg(fig)
+    fig.canvas.draw()
+    bb = ax.get_window_extent(fig.canvas.get_renderer())
+    return bb.width / fig.dpi, bb.height / fig.dpi
+
+
+def test_build_slice_figure_fixed_scale_equal_boxes_across_colorbar_text():
+    u = np.linspace(0.0, 200.0, 21)
+    v = np.linspace(0.0, 100.0, 11)
+    s2d = np.random.default_rng(3).random((11, 21))
+    style = PlotStyle(scale_um_per_cm=50.0, figure_width="single", tickfmt_strain="scientific")
+    boxes = []
+    for vmin, vmax, group in ((-1.0e-4, 1.0e-4, "strain"), (-1.0, 1.0, None)):
+        prep = dict(_prep(), vmin=vmin, vmax=vmax, group=group)
+        fig = SL.build_slice_figure(prep, {"name": "p"}, s2d, u, v, offset_um=None, style=style)
+        boxes.append(_box_inches(fig, fig.axes[0]))
+    tw, th = 200.0 / 50.0 / 2.54, 100.0 / 50.0 / 2.54
+    for w, h in boxes:
+        assert abs(w - tw) <= 0.05 and abs(h - th) <= 0.05
+
+
 def _minimal_params(proc, raw, out):
     return {
         "mosa_volume_file": str(proc / "stacked_volumes.h5"),

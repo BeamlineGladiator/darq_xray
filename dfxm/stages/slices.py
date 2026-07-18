@@ -47,6 +47,8 @@ from ..common.plotting import (
     apply_text_scale,
     draw_scale_bar,
     figure_size,
+    fit_axes_to_box,
+    fixed_scale_box,
     resolve_cmap,
     style_from_params,
     styled_figure,
@@ -799,10 +801,15 @@ def build_slice_figure(
 
     if use_legacy:
         figsize = (12, 10)
+        box = None
     else:
         ext_u = float(u_um[-1] - u_um[0])
         ext_v = float(v_um[-1] - v_um[0])
-        figsize = figure_size(st, ext_u, ext_v) or (12, 10)
+        box = fixed_scale_box(st, ext_u, ext_v)
+        if box is not None:
+            figsize = (box[0] + 1.5, box[1] + 1.5)
+        else:
+            figsize = figure_size(st, ext_u, ext_v) or (12, 10)
 
     fig = styled_figure(figsize, styled=not use_legacy)
     ax = fig.add_subplot(111)
@@ -823,9 +830,16 @@ def build_slice_figure(
     if st.colorbar:
         add_colorbar(fig, im, ax, prep["cbar_label"], st, group=prep.get("group"))
     if st.scale_bar:
-        draw_scale_bar(ax, st.scale_bar_length_um, style=st)
+        draw_scale_bar(
+            ax,
+            st.scale_bar_length_um,
+            style=st,
+            fixed_scale_um_per_cm=(box[2] if box is not None else None),
+        )
     if not use_legacy:
         apply_text_scale(ax, st)
+    if box is not None:
+        fit_axes_to_box(fig, ax, box[0], box[1])
 
     return fig
 

@@ -497,7 +497,7 @@ Cut arbitrary planes (defined in physical µm, optionally swept along the normal
 through the aligned volumes — all in one world frame so the slices co-register.
 
 - **Input:** stacked volumes + the aligned rocking volume + (optionally) the aligned mosa volume (`aligned_raw_mosa_volumes.h5` from the rocking stage run with Source scan = mosaicity).
-- **Output:** `oblique_slices.h5` (consumed by [[#8. Line profiles (`profiles`)|profiles]]) + a PNG per plane. Per-plane PNGs are written into one subfolder per slice direction: `<output_dir>/<slice name>/`. For example, a slice named `oblique` produces `<output_dir>/oblique/mosa_com_chi.png`, etc.
+- **Output:** `oblique_slices.h5` (consumed by [[#8. Line profiles (`profiles`)|profiles]]) + a PNG per plane. Per-plane PNGs are written into one subfolder per slice direction: `<output_dir>/<slice name>/`. For example, a slice named `oblique` produces `<output_dir>/oblique/mosa_com_chi.png`, etc. Slice PNGs honour the publication-style "Scale (µm/cm)" field once it's set — the map renders at a fixed physical scale instead of a fixed figure size (full knob documentation lands with the GUI field).
 
 **Essentials:** three volume files, raw root, slices JSON, output dir
 
