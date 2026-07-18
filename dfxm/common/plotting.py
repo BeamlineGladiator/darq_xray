@@ -10,6 +10,7 @@ explicit :class:`~matplotlib.figure.Figure` API instead and save via
 from __future__ import annotations
 
 import json
+import logging
 import math
 from dataclasses import dataclass, fields
 
@@ -21,6 +22,8 @@ from matplotlib.ticker import FuncFormatter
 from .cmaps import register as _register_fast_cmap
 
 _register_fast_cmap()
+
+_log = logging.getLogger(__name__)
 
 # Colormap quantity groups + the curated dropdown list (shared by the GUI).
 CMAP_GROUPS: tuple[str, ...] = ("mosa_com", "mosa_fwhm", "strain", "raw")
@@ -96,6 +99,9 @@ class PlotStyle:
     round_clim: bool = False  # round auto colour limits outward to nice values
     # figure
     figure_width: str | float = "auto"  # "single" | "double" | "auto" | width in inches
+    # fixed physical scale for MAP figures: µm of data per cm of page. None/blank = off.
+    # When set (>0), figure_width is ignored for maps (trace figures keep it).
+    scale_um_per_cm: float | None = None
     # output
     formats: tuple[str, ...] = ("png",)
     dpi: int = 300
@@ -239,6 +245,54 @@ def figure_size(style: PlotStyle, ext_x: float, ext_y: float) -> tuple[float, fl
         return None
     aspect = (ext_y / ext_x) if ext_x else 1.0
     return (float(w), float(w) * aspect + 1.0)
+
+
+_MAX_FIXED_SIDE_IN = 30.0  # sanity cap: a typo scale must not request a 47k-pixel render
+
+
+def fixed_scale(style: "PlotStyle | None") -> float | None:
+    """Defensively read ``style.scale_um_per_cm``: a positive finite float, else None.
+
+    Stale persisted styles may carry strings or nonsense — degrade to None
+    (today's behaviour), matching the other style-field guards. Never raises.
+    """
+    if style is None:
+        return None
+    v = getattr(style, "scale_um_per_cm", None)
+    if v is None or v == "":
+        return None
+    try:
+        v = float(v)
+    except (TypeError, ValueError):
+        return None
+    return v if (v > 0 and math.isfinite(v)) else None
+
+
+def fixed_scale_box(
+    style: "PlotStyle | None", ext_x_um: float, ext_y_um: float
+) -> tuple[float, float, float] | None:
+    """Target axes-box (w_in, h_in, effective_um_per_cm) for fixed-scale mode.
+
+    Returns None when the knob is off or the extents are degenerate (skip
+    fitting). Sides are clamped to 30 in preserving aspect — the scale is
+    effectively raised and a warning logged, never an exception.
+    """
+    s = fixed_scale(style)
+    if s is None:
+        return None
+    if not (math.isfinite(ext_x_um) and math.isfinite(ext_y_um)) or ext_x_um <= 0 or ext_y_um <= 0:
+        return None
+    w, h = ext_x_um / s / 2.54, ext_y_um / s / 2.54
+    m = max(w, h)
+    if m > _MAX_FIXED_SIDE_IN:
+        f = _MAX_FIXED_SIDE_IN / m
+        w, h, s = w * f, h * f, s / f
+        _log.warning(
+            "fixed-scale box clamped to %.0f in per side; effective scale raised to %.4g um/cm",
+            _MAX_FIXED_SIDE_IN,
+            s,
+        )
+    return (w, h, s)
 
 
 def symmetric_limits(data: np.ndarray, percentile: float | None = None) -> tuple[float, float]:

@@ -1,6 +1,7 @@
 from dataclasses import replace
 
 import numpy as np
+import pytest
 from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.figure import Figure
 from matplotlib.offsetbox import AnchoredOffsetbox
@@ -16,6 +17,10 @@ from dfxm.common.plotting import (
     colorbar_tick_values,
     draw_scale_bar,
     figure_size,
+    fixed_scale,
+    fixed_scale_box,
+    style_from_json,
+    style_to_json,
     styled_figure,
 )
 
@@ -646,3 +651,38 @@ def test_add_colorbar_scientific_hides_builtin_offset_and_draws_custom():
     assert abs(exps[0].get_fontsize() - 9 * 1.0 * 2.0) < 1e-6
     # placed below the axes (va="top", y < 0)
     assert exps[0].get_position()[1] < 0.0
+
+
+def test_fixed_scale_defensive_parse():
+    assert fixed_scale(None) is None
+    assert fixed_scale(PlotStyle()) is None
+    assert fixed_scale(PlotStyle(scale_um_per_cm=50.0)) == 50.0
+    assert fixed_scale(PlotStyle(scale_um_per_cm="50")) == 50.0  # stale persisted string
+    assert fixed_scale(PlotStyle(scale_um_per_cm="junk")) is None
+    assert fixed_scale(PlotStyle(scale_um_per_cm=-3)) is None
+    assert fixed_scale(PlotStyle(scale_um_per_cm=0)) is None
+
+
+def test_fixed_scale_box_geometry_clamp_and_degenerate():
+    box = fixed_scale_box(PlotStyle(scale_um_per_cm=50.0), 200.0, 100.0)
+    assert box is not None
+    w, h, eff = box
+    assert w == pytest.approx(200.0 / 50.0 / 2.54)
+    assert h == pytest.approx(100.0 / 50.0 / 2.54)
+    assert eff == 50.0
+    # typo scale (0.1 µm/cm on 200 µm ≈ 787 in): clamped to 30 in, aspect kept, scale raised
+    w, h, eff = fixed_scale_box(PlotStyle(scale_um_per_cm=0.1), 200.0, 100.0)
+    assert max(w, h) == pytest.approx(30.0)
+    assert h / w == pytest.approx(0.5)
+    assert eff > 0.1
+    # degenerate extents / knob off -> None
+    assert fixed_scale_box(PlotStyle(scale_um_per_cm=50.0), 0.0, 100.0) is None
+    assert fixed_scale_box(PlotStyle(), 200.0, 100.0) is None
+    assert fixed_scale_box(None, 200.0, 100.0) is None
+
+
+def test_scale_um_per_cm_json_roundtrip_and_old_snapshots():
+    s2 = style_from_json(style_to_json(PlotStyle(scale_um_per_cm=75.0)))
+    assert s2 is not None and s2.scale_um_per_cm == 75.0
+    old = style_from_json('{"font_scale": 2.0}')  # snapshot predating the knob
+    assert old is not None and old.scale_um_per_cm is None
