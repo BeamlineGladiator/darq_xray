@@ -136,3 +136,45 @@ def test_finalize_fixed_scale_noop_when_knob_off():
     finalize_fixed_scale(fig, ax, PlotStyle(), 200.0, 100.0)
     finalize_fixed_scale(fig, ax, None, 200.0, 100.0)
     assert tuple(fig.get_size_inches()) == (6.0, 5.0)
+
+
+def test_layer_figure_fixed_scale_equal_boxes_across_decoration_loads():
+    import numpy as np
+
+    from dfxm.common import render
+    from dfxm.common.plotting import PlotStyle
+
+    layer = np.random.default_rng(1).random((10, 20))
+    style = PlotStyle(scale_um_per_cm=50.0, figure_width="single", tickfmt_raw="scientific")
+    boxes = []
+    for vmax, title in ((1.0e-4, "short"), (123456.0, "a much longer two-line\ntitle text here")):
+        fig, ax, _ = render.layer_figure(
+            layer * vmax,
+            0.0,
+            vmax,
+            "gray",
+            200.0,
+            100.0,
+            title,
+            "I (a.u.)",
+            style=style,
+            group="raw",
+        )
+        boxes.append(_box_inches(fig, ax))
+    target_w, target_h = 200.0 / 50.0 / 2.54, 100.0 / 50.0 / 2.54
+    for w, h in boxes:
+        assert abs(w - target_w) <= 0.05 and abs(h - target_h) <= 0.05
+
+
+def test_build_strain_map_fixed_scale_box():
+    import numpy as np
+
+    from dfxm.common.plotting import PlotStyle
+    from dfxm.stages.strain import build_strain_map
+
+    strain = np.random.default_rng(2).standard_normal((50, 100)) * 1e-4
+    style = PlotStyle(scale_um_per_cm=10.0)
+    fig = build_strain_map(strain, 1.0, 1.0, None, (None, None), style=style)
+    w, h = _box_inches(fig, fig.axes[0])
+    assert abs(w - 100.0 / 10.0 / 2.54) <= 0.05
+    assert abs(h - 50.0 / 10.0 / 2.54) <= 0.05
