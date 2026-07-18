@@ -379,7 +379,7 @@ frame**, anchored to the mosaicity reference so they overlay the other volumes.
 |---|---|
 | `source_scan` | `rocking` (default) — use the rocking scan folders; `mosaicity` — use every matched mosa folder as a layer (DFXM topograph) |
 | `rocking_pattern` / `mosa_pattern` / `strain_pattern` | which raw folders to use |
-| `roi_x` / `roi_y` | detector crop applied at read time |
+| `roi_x` / `roi_y` | detector crop applied at read time — **start,end** pixels on the raw detector (darfix shows its ROI as origin+size: end = origin + size). Must cover the same detector window as the other volumes, or the slices stage flags a Y-height mismatch |
 | `specific_frame_idx` | which frame to extract (blank = central) |
 | `normalize_sum` | divide the summed intensity by frame count |
 | `subtract_background` | subtract per-pixel median background before summing (default on; turn off for a plain intensity sum, e.g. a mosa-scan topograph) |

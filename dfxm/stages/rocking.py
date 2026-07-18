@@ -208,8 +208,10 @@ STAGE = StageSpec(
             "ROI X",
             default="",
             help=(
-                "Detector crop 'x0,x1' in pixels applied while reading frames (blank = full). "
-                "Match the crop used for the other volumes."
+                "Detector crop 'x0,x1' — START and END pixel columns on the raw detector, "
+                "applied while reading frames (blank = full). Careful: darfix shows its ROI "
+                "as origin+size — end = origin + size, not the size itself. Must cover the "
+                "same detector window as the other volumes or they misregister."
             ),
         ),
         Param(
@@ -218,8 +220,10 @@ STAGE = StageSpec(
             "ROI Y",
             default="",
             help=(
-                "Detector crop 'y0,y1' in pixels applied while reading frames (blank = full). "
-                "Match the crop used for the other volumes."
+                "Detector crop 'y0,y1' — START and END pixel rows on the raw detector, "
+                "applied while reading frames (blank = full). Careful: darfix shows its ROI "
+                "as origin+size — end = origin + size, not the size itself. Must cover the "
+                "same detector window as the other volumes or they misregister along Y."
             ),
         ),
         Param(
