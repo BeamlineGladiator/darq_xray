@@ -608,15 +608,50 @@ def test_companion_map_legacy_scale_bar_unchanged():
 
 
 # -- fixed-scale overview vs. pinned companion --------------------------------
-def test_render_single_overview_fits_fixed_scale(tmp_path):
-    """The standalone overview map is fitted to the fixed physical scale."""
+def test_render_single_overview_fits_fixed_scale(tmp_path, monkeypatch):
+    """The standalone overview map is fitted to the fixed physical scale.
+
+    A PNG-existence check alone can't fail if the fit call is later deleted, so
+    this spies on profiles.fit_axes_to_box (patched where profiles.py looks it
+    up, i.e. dfxm.stages.profiles.fit_axes_to_box) to assert it is called
+    exactly once with the expected target box when the knob is set, and not at
+    all when it's unset — pinning the companion-path fidelity from the run side
+    too.
+    """
     from dfxm.common.plotting import PlotStyle
 
     ref, _fields, geom = _companion_inputs()
-    style = PlotStyle(scale_um_per_cm=50.0)
+    u_um, v_um = ref[1], ref[2]
+    ext_u = float(u_um[-1] - u_um[0])
+    ext_v = float(v_um[-1] - v_um[0])
+    scale = 50.0
+    expected_w = ext_u / scale / 2.54
+    expected_h = ext_v / scale / 2.54
+
+    calls = []
+    real_fit = PR.fit_axes_to_box
+
+    def spy(fig, ax, w_in, h_in, *args, **kwargs):
+        calls.append((w_in, h_in))
+        return real_fit(fig, ax, w_in, h_in, *args, **kwargs)
+
+    monkeypatch.setattr(PR, "fit_axes_to_box", spy)
+
+    style = PlotStyle(scale_um_per_cm=scale)
     out = str(tmp_path / "ov.png")
     PR.render_single(ref, geom, "red", out, "hdr", 100, style=style)
     assert os.path.exists(out)
+    assert len(calls) == 1
+    w_in, h_in = calls[0]
+    assert w_in == pytest.approx(expected_w, abs=1e-6)
+    assert h_in == pytest.approx(expected_h, abs=1e-6)
+
+    # knob off: fit_axes_to_box must NOT be called (legacy path stays unfitted)
+    calls.clear()
+    out2 = str(tmp_path / "ov_unfit.png")
+    PR.render_single(ref, geom, "red", out2, "hdr", 100, style=PlotStyle())
+    assert os.path.exists(out2)
+    assert calls == []
 
 
 def test_companion_map_panel_bar_geometry_unchanged_by_scale_knob():
