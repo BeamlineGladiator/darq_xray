@@ -32,7 +32,8 @@ def test_sto2_preset_ships_expected_values():
     exp = presets.load_experiment_by_name("STO2_overnight")
     assert exp.name == "STO2_overnight"
     assert exp.ccmth_ref_deg == 7.144
-    assert exp.pixel_size_x_um == 0.152 and exp.pixel_size_y_um == 0.385
+    # pixel-size calculator values, confirmed against real data 2026-07-18
+    assert exp.pixel_size_x_um == 0.151733 and exp.pixel_size_y_um == 0.387584
 
 
 def test_preset_round_trip(tmp_path):
