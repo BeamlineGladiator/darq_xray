@@ -734,7 +734,10 @@ The overview images (plane + line, per field) are still written by
 When a run (or the publication export) carries the global plot style, the trace
 figures also honour its **Show title** toggle and **Title scale** — so a
 paper-ready trace can drop its `kind | field | source` header entirely. The
-companion and overview figures keep their fixed look.
+companion and overview figures keep their fixed layout, but their reference map
+panel draws the publication-style scale bar (length, thickness, colour,
+location, background box — all the Scale bar controls apply, exactly as on the
+map stages).
 
 ### 9. Rocking-matched layers (`matched`)
 
@@ -810,7 +813,7 @@ form.
 | Box colour / alpha / margin | Control the background box appearance; margin is the padding inside the box, in points |
 
 > [!note] Scale bars on maps only
-> Scale bars are drawn **only on physical maps** (`kind="map"` figures: per-layer volume maps, strain maps, mosaicity maps, slice maps). Histograms, detrend diagnostics, and line-profile companion figures are `kind="plot"` — the scale-bar checkbox is ignored for them. Physical aspect ratio is always preserved on maps (`aspect="equal"`).
+> Scale bars are drawn **only on physical map panels** (per-layer volume maps, strain maps, mosaicity maps, slice maps, and the reference map panel of the line-profile companion/overview figures). Histograms, detrend diagnostics, and the 1-D trace panels have no scale bar — for those figures the scale-bar controls are ignored. Physical aspect ratio is always preserved on maps (`aspect="equal"`).
 
 **Text**
 

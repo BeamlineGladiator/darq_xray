@@ -530,3 +530,78 @@ def test_unique_name_registers_generated_suffixes():
     assert PR._unique_name(used, "line") == "line_2"
     assert PR._unique_name(used, "line_2") == "line_2_2"  # not a second 'line_2'
     assert PR._unique_name(used, "line") == "line_3"
+
+
+# -- companion-map scale bar --------------------------------------------------
+def _companion_inputs():
+    """Minimal (ref, fields, geom) for calling build_companion_figure directly."""
+    u, v, plane = _linear_plane()
+    geom = PR.line_geometry(u, v, (-5.0, -3.0), (5.0, 3.0), 40, 1, PR.grid_pitch(u, v))
+    vm, vs, _ = PR.profile_plane(plane, geom)
+    attrs = {
+        "cmap": "gray",
+        "cbar_label": "value",
+        "title": "t",
+        "vmin": -20.0,
+        "vmax": 20.0,
+        "kind": "raw_sum",
+        "source_volume": "vol.h5",
+    }
+    ref = (plane, u, v, attrs, "lbl")
+    fields = [{"vid": "raw_sum", "attrs": attrs, "value_mean": vm, "value_std": vs}]
+    return ref, fields, geom
+
+
+def _offsetbox_artists(ax):
+    from matplotlib.offsetbox import AnchoredOffsetbox
+
+    return [a for a in ax.artists if isinstance(a, AnchoredOffsetbox)]
+
+
+def _offsetbox_children(artist):
+    out, stack = [], [artist]
+    while stack:
+        a = stack.pop()
+        out.append(a)
+        if hasattr(a, "get_children"):
+            stack.extend(a.get_children())
+    return out
+
+
+def test_companion_map_styled_scale_bar_honours_style():
+    """Styled companion maps must draw the shared styled scale bar (exact length),
+    not the hard-coded legacy one."""
+    from matplotlib.patches import Rectangle
+
+    from dfxm.common.plotting import PlotStyle
+
+    ref, fields, geom = _companion_inputs()
+    style = PlotStyle(scale_bar_length_um=5.0)
+    fig = PR.build_companion_figure(ref, fields, geom, "cyan", style=style)
+    ax_img = fig.axes[0]
+    boxes = _offsetbox_artists(ax_img)
+    assert len(boxes) == 1  # styled offsetbox bar present
+    bar = next(p for p in _offsetbox_children(boxes[0]) if isinstance(p, Rectangle))
+    assert bar.get_width() == 5.0  # the requested length, not the legacy auto length
+    assert len(ax_img.patches) == 0  # legacy hand-drawn bar is gone
+
+
+def test_companion_map_scale_bar_off_draws_no_bar():
+    from dfxm.common.plotting import PlotStyle
+
+    ref, fields, geom = _companion_inputs()
+    fig = PR.build_companion_figure(ref, fields, geom, "cyan", style=PlotStyle(scale_bar=False))
+    ax_img = fig.axes[0]
+    assert not _offsetbox_artists(ax_img)
+    assert len(ax_img.patches) == 0
+
+
+def test_companion_map_legacy_scale_bar_unchanged():
+    """style=None keeps the legacy hand-drawn bar (Rectangle in ax.patches)."""
+    from matplotlib.patches import Rectangle
+
+    ref, fields, geom = _companion_inputs()
+    fig = PR.build_companion_figure(ref, fields, geom, "cyan", style=None)
+    ax_img = fig.axes[0]
+    assert any(isinstance(p, Rectangle) for p in ax_img.patches)
+    assert not _offsetbox_artists(ax_img)

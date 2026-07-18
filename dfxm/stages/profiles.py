@@ -39,6 +39,7 @@ from ..common.plotting import (
     PlotStyle,
     add_colorbar,
     apply_text_scale,
+    draw_scale_bar,
     style_from_params,
     styled_figure,
 )
@@ -519,7 +520,9 @@ def _scale_bar(ax, color="black"):
     )
 
 
-def _draw_reference_image(ax, plane2d, u_um, v_um, attrs, line_color, geom=None, title=None):
+def _draw_reference_image(
+    ax, plane2d, u_um, v_um, attrs, line_color, geom=None, title=None, style=None
+):
     extent = [float(u_um[0]), float(u_um[-1]), float(v_um[0]), float(v_um[-1])]
     vmin, vmax = attrs["vmin"], attrs["vmax"]
     norm = (
@@ -555,7 +558,10 @@ def _draw_reference_image(ax, plane2d, u_um, v_um, attrs, line_color, geom=None,
                     alpha=0.5,
                     zorder=4,
                 )
-    _scale_bar(ax)
+    if style is None:
+        _scale_bar(ax)  # legacy look, pinned
+    elif style.scale_bar:
+        draw_scale_bar(ax, style.scale_bar_length_um, style=style)
     return im
 
 
@@ -567,8 +573,9 @@ def build_companion_figure(
     When *style* is ``None`` the legacy appearance is reproduced exactly
     (image panel + N trace panels, same fonts and colorbar as before).
     When a :class:`~dfxm.common.plotting.PlotStyle` is supplied its font/
-    colorbar settings are honoured (these are ``kind="plot"`` figures — no
-    scale bar is drawn regardless of style).
+    colorbar settings are honoured and the map panel draws the shared styled
+    scale bar (``scale_bar``/``scale_bar_length_um`` and the look knobs all
+    apply, exactly as on the map stages).
     """
     ref_plane, u_um, v_um, ref_attrs, ref_label = ref
     n = len(fields)
@@ -584,6 +591,7 @@ def build_companion_figure(
         line_color,
         geom=geom,
         title=f"{ref_attrs['title']}\nreference: {ref_label}",
+        style=style,
     )
     if style is None:
         # Legacy path: always draw a plain colorbar.
@@ -710,7 +718,15 @@ def render_single(ref, geom, line_color, out_png, header, dpi, style=None):
     fig = styled_figure((11, 9), styled=style is not None)
     ax = fig.add_subplot(111)
     im = _draw_reference_image(
-        ax, plane, u_um, v_um, attrs, line_color, geom=geom, title=f"{header}\nreference: {label}"
+        ax,
+        plane,
+        u_um,
+        v_um,
+        attrs,
+        line_color,
+        geom=geom,
+        title=f"{header}\nreference: {label}",
+        style=style,
     )
     if style is None:
         fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04).set_label(attrs["cbar_label"])
