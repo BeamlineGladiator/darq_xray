@@ -871,6 +871,22 @@ def main() -> int:
     )
     print("[28] schema-driven Pick ROI… buttons present on roi-grouped stages (visualize, strain)")
 
+    # [29] StyleControls: Scale (µm/cm) field parses defensively and mutates the style.
+    from dfxm.common.plotting import PlotStyle as _PS29
+    from gui.widgets.export_dialog import StyleControls as _SC29
+
+    _st29 = _PS29()
+    _sc29 = _SC29(_st29)
+    _sc29._w_scale_umcm.setText("50")
+    assert _st29.scale_um_per_cm == 50.0
+    _sc29._w_scale_umcm.setText("junk")
+    assert _st29.scale_um_per_cm is None
+    _sc29._w_scale_umcm.setText("-2")
+    assert _st29.scale_um_per_cm is None
+    _sc29._w_scale_umcm.setText("")
+    assert _st29.scale_um_per_cm is None
+    print("[29] StyleControls Scale (µm/cm) field mutates the style defensively")
+
     print("\nGUI SMOKE PASSED")
     return 0
 

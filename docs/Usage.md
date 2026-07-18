@@ -850,6 +850,20 @@ form.
 | Control | Meaning |
 |---|---|
 | Figure width | `single` (3.5 in), `double` (7.0 in), or `auto` (keeps the stage's own figsize) |
+| Scale (µm/cm) | Fixed physical scale for **map** figures: µm of data per cm of page. Blank = off (default). |
+
+> [!tip] Fixed physical scale across figures
+> Setting **Scale (µm/cm)** fits every map's data box (per-layer maps, slices,
+> the strain diagnostic, and the profiles reference/overview panels — not the
+> profiles companion or trace figures) so the printed scale, and the scale
+> bar, are identical across figures regardless of each crop's pixel extent.
+> While it is set, **Figure width is ignored for maps** (trace figures still
+> honour it). Requested sides are clamped to 30 in — a typo scale (e.g. a
+> stray `0.001`) raises the effective scale instead of rendering a
+> 47000-pixel image. **Identical bars across different crops:** auto Bar
+> length still picks ~15 % of each crop's own extent, so it differs crop to
+> crop even at a fixed scale — set an explicit **Bar length** (e.g. 50 µm) as
+> well to get bars that match pixel-for-pixel across figures.
 
 **Output**
 

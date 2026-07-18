@@ -26,7 +26,7 @@ from PySide6.QtWidgets import (
 )
 
 from dfxm.common.figures import FigureSpec
-from dfxm.common.plotting import CMAP_CHOICES, PlotStyle
+from dfxm.common.plotting import CMAP_CHOICES, PlotStyle, fixed_scale
 
 from .mpl_canvas import MplCanvas
 
@@ -136,6 +136,8 @@ class StyleControls(QWidget):
             if isinstance(s.figure_width, str) and s.figure_width in _WIDTHS
             else "auto"
         )
+        _sv = fixed_scale(s)
+        self._w_scale_umcm.setText(f"{_sv:g}" if _sv is not None else "")
         for cb, name in zip(self._format_checkboxes, self._format_names):
             cb.setChecked(name in s.formats)
         self._w_dpi.setValue(s.dpi)
@@ -180,6 +182,7 @@ class StyleControls(QWidget):
             self._w_cbar_ticks,
             self._w_round_clim,
             self._w_fig_width,
+            self._w_scale_umcm,
             self._w_fmt_png,
             self._w_fmt_pdf,
             self._w_fmt_svg,
@@ -483,6 +486,21 @@ class StyleControls(QWidget):
         )
         form.addRow("Figure width", self._w_fig_width)
 
+        self._w_scale_umcm = QLineEdit()
+        self._w_scale_umcm.setPlaceholderText("(blank = off)")
+        _sv = fixed_scale(s)
+        if _sv is not None:
+            self._w_scale_umcm.setText(f"{_sv:g}")
+        self._w_scale_umcm.setToolTip(
+            "Fixed physical scale for map figures: µm of data per cm of page. When set, every "
+            "map's data box is fitted so the printed scale (and the scale bar) is identical "
+            "across figures; Figure width is ignored for maps (trace figures keep it). "
+            "Blank turns it off. For identical bars across different crops also set an "
+            "explicit Bar length."
+        )
+        self._w_scale_umcm.textChanged.connect(self._on_scale_umcm)
+        form.addRow("Scale (µm/cm)", self._w_scale_umcm)
+
         # --- Output section ---
         form.addRow(QLabel("<b>Output</b>"))
 
@@ -519,6 +537,20 @@ class StyleControls(QWidget):
             setattr(self._style, "scale_bar_length_um", None)
         else:
             setattr(self._style, "scale_bar_length_um", self._w_bar_len.value())
+        self._emit()
+
+    def _on_scale_umcm(self, text: str) -> None:
+        t = text.strip()
+        val: float | None = None
+        if t:
+            try:
+                val = float(t)
+            except ValueError:
+                val = None
+            else:
+                if val <= 0:
+                    val = None
+        self._style.scale_um_per_cm = val
         self._emit()
 
     def _on_formats_changed(self) -> None:
