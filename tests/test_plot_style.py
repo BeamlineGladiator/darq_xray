@@ -726,3 +726,16 @@ def test_draw_scale_bar_default_mode_geometry_unchanged():
     ax = _bar_axes(yr=100.0)
     draw_scale_bar(ax, 50.0, style=style)  # no kwarg -> today's geometry
     assert _bar_rect(ax).get_height() == pytest.approx(100.0 * 0.004 * 3.0)
+
+
+def test_draw_scale_bar_fixed_mode_rejects_non_positive_scale():
+    style = PlotStyle(scale_bar_thickness_pt=3.0)
+    legacy = 100.0 * 0.004 * 3.0
+
+    ax = _bar_axes(yr=100.0)
+    draw_scale_bar(ax, 50.0, style=style, fixed_scale_um_per_cm=0.0)
+    assert _bar_rect(ax).get_height() == pytest.approx(legacy)
+
+    ax2 = _bar_axes(yr=100.0)
+    draw_scale_bar(ax2, 50.0, style=style, fixed_scale_um_per_cm=-5.0)
+    assert _bar_rect(ax2).get_height() == pytest.approx(legacy)

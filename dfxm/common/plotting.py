@@ -541,7 +541,7 @@ def draw_scale_bar(
     y0, y1 = ax.get_ylim()
     xr, yr = (x1 - x0), (y1 - y0)
     sl = length_um if length_um is not None else auto_scale_bar_length_um(abs(xr))
-    if fixed_scale_um_per_cm:
+    if fixed_scale_um_per_cm is not None and fixed_scale_um_per_cm > 0:
         # Fixed-scale mode: bar height = thickness in TRUE points at the known scale
         # (1 pt = 2.54/72 cm of page = that many cm x um-per-cm of data).
         bh = style.scale_bar_thickness_pt * (2.54 / 72.0) * float(fixed_scale_um_per_cm)
