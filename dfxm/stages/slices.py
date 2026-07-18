@@ -898,6 +898,57 @@ def _standard_volumes(p, roi_x, roi_y):
     return out
 
 
+# Relative Y-height spread beyond which volumes are flagged as misregistered.
+# Legitimate pixel-size differences between runs (calculator vs nominal values)
+# are well under 1%; a wrong detector-row crop is tens of percent.
+_Y_HEIGHT_RTOL = 0.05
+
+
+def _y_height_notes(volumes, roi_y, scale_y):
+    """Warn when the selected volumes disagree on physical Y height.
+
+    Every volume anchors at Y=0 in the origin-0 world frame, so co-registration
+    along Y relies on all volumes covering the same detector-row window. A
+    height mismatch beyond pixel-size rounding means one volume was built with
+    a different crop — classically a rocking-stage roi_y entered as darfix's
+    origin+size instead of start,end detector rows. Reads only shapes/attrs.
+    """
+    entries = []
+    for cfg in volumes:
+        try:
+            with h5py.File(cfg["h5_path"], "r") as f:
+                ny = int(f[cfg["dataset_path"]].shape[1])
+                attrs = dict(f.attrs) if cfg["source"] == "aligned" else {}
+        except (KeyError, OSError):
+            continue  # unreadable volumes get reported as skips by prepare_volume
+        label = f"{cfg['kind']} ({os.path.basename(cfg['h5_path'])})"
+        if cfg["source"] == "aligned":
+            sy = float(attrs.get("scale_y_um_per_px", scale_y))
+            ys, ye = attrs.get("roi_y_start"), attrs.get("roi_y_end")
+            if ys is not None and ye is not None:
+                label += f" [file roi_y {int(ys)},{int(ye)}]"
+        else:
+            sy = scale_y
+            if roi_y:
+                ny = roi_y[1] - roi_y[0]
+                label += f" [align_roi_y {roi_y[0]},{roi_y[1]}]"
+        entries.append((label, ny * sy))
+    if len(entries) < 2:
+        return []
+    heights = [h for _, h in entries]
+    lo, hi = min(heights), max(heights)
+    if lo <= 0 or (hi - lo) / lo <= _Y_HEIGHT_RTOL:
+        return []
+    desc = "; ".join(f"{label}: {h:.1f} µm" for label, h in entries)
+    return [
+        f"volume Y heights differ — {desc}. All volumes anchor at Y=0 in the world "
+        "frame, so different heights misregister features along v/Y. Rebuild the "
+        "mismatched aligned raw volume with the same detector-row window the map "
+        "volumes use (rocking-stage roi_y is 'start,end' in raw-detector pixels; "
+        "note darfix displays its ROI as origin+size, not start,end)."
+    ]
+
+
 def run(params: dict, progress: ProgressFn | None = None) -> SlicesResult:
     progress = progress or _noop
     p = {**STAGE.defaults(), **params}
@@ -919,6 +970,9 @@ def run(params: dict, progress: ProgressFn | None = None) -> SlicesResult:
         progress(1.0, "no volumes to slice")
         return result
     os.makedirs(out_dir, exist_ok=True)  # only once we know there is work to do
+    for msg in _y_height_notes(volumes, roi_y, scale_y):
+        result.notes.append(msg)
+        progress(0.02, msg)
     slices = json.loads(p["slices_json"])
     if not isinstance(slices, list) or not slices:
         raise StageUserError(

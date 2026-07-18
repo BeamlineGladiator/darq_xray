@@ -541,6 +541,19 @@ through the aligned volumes — all in one world frame so the slices co-register
 > share a grid. Set explicit `du`/`dv` in the slice spec to sample every volume
 > onto one common grid.
 
+> [!warning] Mismatched volume heights → Y misregistration
+> All volumes anchor at Y=0 in the shared world frame, so they only co-register
+> vertically if they cover the **same detector-row window**. If an aligned raw
+> volume (from the rocking stage) was built with a different `roi_y` than the
+> crop behind `align_roi_y`, its features land at the wrong `v` in every slice.
+> The run checks the physical Y heights up front and warns
+> (`volume Y heights differ — …`, listing each volume's height and recorded
+> crop) when they disagree by more than ~5%. Classic cause: darfix displays its
+> ROI as **origin + size**, while the rocking stage's `roi_y` wants
+> **start,end** detector rows — entering origin/size as start/end shifts and
+> stretches the raw volume. Rebuild the flagged volume with the same
+> detector-row window the map volumes use.
+
 > [!note] Plot orientation
 > Slice plots follow the same convention as the per-layer renders: the vertical
 > plot axis (`v`) is the detector-vertical Y-like in-plane direction (world Y,

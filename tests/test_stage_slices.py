@@ -317,6 +317,24 @@ def test_run_matching_grids_no_grid_note(tmp_path):
     assert not any("grid" in n for n in res.notes)
 
 
+def test_run_warns_on_mismatched_y_heights(tmp_path):
+    """An aligned raw volume built with a different detector-row crop is taller
+    than the map volumes — the run must flag the Y misregistration in notes."""
+    proc, raw = _setup(tmp_path)
+    rng = np.random.default_rng(1)
+    with h5py.File(proc / "aligned_raw_rocking_volumes.h5", "a") as f:
+        for key in ("sum_intensity", "specific_frame"):
+            del f[key]
+            f.create_dataset(key, data=rng.standard_normal((L, NY * 2, NX)).astype(np.float32))
+        f.attrs["roi_y_start"] = 230
+        f.attrs["roi_y_end"] = 230 + NY * 2
+    res = SL.run(_minimal_params(proc, raw, tmp_path / "sl_h"))
+    warn = [n for n in res.notes if "Y heights differ" in n]
+    assert warn and "raw_sum" in warn[0]
+    assert "roi_y 230,242" in warn[0]  # the aligned file's recorded detector crop
+    assert "origin+size" in warn[0]  # points at the darfix origin/size trap
+
+
 def test_run_resolves_cmaps_from_injected_style(tmp_path):
     proc, raw = _setup(tmp_path)
     params = _minimal_params(proc, raw, tmp_path / "sl_styled")
