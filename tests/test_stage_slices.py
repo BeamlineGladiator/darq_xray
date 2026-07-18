@@ -818,3 +818,44 @@ def test_pin_slice_cli_delegates_to_core(tmp_path):
     assert r.returncode == 0, r.stderr
     out = json.loads(r.stdout)
     assert len(out) == 1 and out[0]["sweep_start_um"] == pytest.approx(1.0)
+
+
+def _pinned_params(proc, raw, out):
+    return {
+        "mosa_volume_file": str(proc / "stacked_volumes.h5"),
+        "raw_root": str(raw),
+        "mosa_pattern": "mosa__*",
+        "slices_json": "[]",  # would raise on the sweep path — proves routing skips it
+        "use_pinned": True,
+        "pinned_slices_json": (
+            '[{"name":"pin","normal":[0,0,1],"origin":[0.5,0.5,1.5],'
+            '"half_u":0.4,"half_v":0.4,"du":0.2,"dv":0.2,"sweep_step_um":null}]'
+        ),
+        "output_dir": str(out),
+        "save_png": False,
+    }
+
+
+def test_run_use_pinned_routes_and_renames_output(tmp_path):
+    proc, raw = _setup(tmp_path)
+    res = SL.run(_pinned_params(proc, raw, tmp_path / "sl"))
+    assert res.output_h5 and res.output_h5.endswith("oblique_slices_pinned.h5")
+    assert any("PINNED RUN" in n for n in res.notes)
+    assert res.slice_names == ["pin"]
+
+
+def test_run_use_pinned_respects_user_edited_name(tmp_path):
+    proc, raw = _setup(tmp_path)
+    p = _pinned_params(proc, raw, tmp_path / "sl")
+    p["output_h5_name"] = "custom.h5"
+    res = SL.run(p)
+    assert res.output_h5.endswith("custom.h5")
+
+
+def test_run_use_pinned_empty_or_invalid_raises_user_error(tmp_path):
+    proc, raw = _setup(tmp_path)
+    for bad in ("", "   ", "{not json", "[]"):
+        p = _pinned_params(proc, raw, tmp_path / "sl")
+        p["pinned_slices_json"] = bad
+        with pytest.raises(StageUserError, match="[Pp]inned"):
+            SL.run(p)

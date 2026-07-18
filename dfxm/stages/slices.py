@@ -406,6 +406,32 @@ STAGE = StageSpec(
             ),
         ),
         Param(
+            "use_pinned",
+            ParamType.BOOL,
+            "Run pinned planes only",
+            default=False,
+            help=(
+                "Render only the planes in 'Pinned planes (JSON)' instead of the full sweep — "
+                "fast re-computation of a few interesting planes. The sweep in 'Slices (JSON)' "
+                "is kept untouched and ignored while this is on; while on, the default output "
+                "filename becomes oblique_slices_pinned.h5 so the sweep file is never "
+                "overwritten. Untick to run the full sweep again."
+            ),
+        ),
+        Param(
+            "pinned_slices_json",
+            ParamType.TEXT,
+            "Pinned planes (JSON)",
+            default="",
+            advanced=True,
+            group="Pinned planes",
+            help=(
+                "JSON list of pinned single-plane specs, normally written by the Pin planes… "
+                "dialog (exact stored sweep geometry, snapped to stored planes). Only used "
+                "when 'Run pinned planes only' is ticked."
+            ),
+        ),
+        Param(
             "output_dir",
             ParamType.DIR,
             "Output dir",
@@ -420,7 +446,9 @@ STAGE = StageSpec(
             group="Output",
             help=(
                 "Filename of the consolidated slices file. "
-                "The profiles stage expects oblique_slices.h5."
+                "The profiles stage expects oblique_slices.h5. "
+                "While 'Run pinned planes only' is on, this default is replaced by "
+                "oblique_slices_pinned.h5 (an edited name is respected)."
             ),
         ),
         Param(
@@ -1055,16 +1083,43 @@ def run(params: dict, progress: ProgressFn | None = None) -> SlicesResult:
     for msg in _y_height_notes(volumes, roi_y, scale_y):
         result.notes.append(msg)
         progress(0.02, msg)
-    slices = json.loads(p["slices_json"])
-    if not isinstance(slices, list) or not slices:
-        raise StageUserError(
-            "slices_json must be a non-empty JSON list of slice specs",
-            hint=(
-                "Provide a JSON list of plane specs — the field's default "
-                "shows the format; 'extent': 'auto' fits the plane "
-                "automatically."
-            ),
+    if bool(p["use_pinned"]):
+        raw_pinned = (p["pinned_slices_json"] or "").strip()
+        try:
+            slices = json.loads(raw_pinned) if raw_pinned else []
+        except json.JSONDecodeError as exc:
+            raise StageUserError(
+                f"Pinned planes JSON is not valid JSON: {exc}",
+                hint=(
+                    "Open Pin planes… to regenerate the pinned list, or untick "
+                    "'Run pinned planes only' to run the full sweep."
+                ),
+            ) from exc
+        if not isinstance(slices, list) or not slices:
+            raise StageUserError(
+                "'Run pinned planes only' is on but the pinned planes list is empty",
+                hint=(
+                    "Open Pin planes… to pick planes, or untick "
+                    "'Run pinned planes only' to run the full sweep."
+                ),
+            )
+        msg = (
+            f"PINNED RUN: rendering {len(slices)} pinned plane(s); "
+            "the sweep in slices_json is ignored"
         )
+        result.notes.append(msg)
+        progress(0.03, msg)
+    else:
+        slices = json.loads(p["slices_json"])
+        if not isinstance(slices, list) or not slices:
+            raise StageUserError(
+                "slices_json must be a non-empty JSON list of slice specs",
+                hint=(
+                    "Provide a JSON list of plane specs — the field's default "
+                    "shows the format; 'extent': 'auto' fits the plane "
+                    "automatically."
+                ),
+            )
 
     # Resolve extent='auto' planes against a common data box (shared grid).
     if any(sl.get("extent") == "auto" for sl in slices):
@@ -1085,7 +1140,14 @@ def run(params: dict, progress: ProgressFn | None = None) -> SlicesResult:
         if float(sl["half_u"]) <= 0 or float(sl["half_v"]) <= 0:
             raise ValueError(f"slice {name!r}: half_u and half_v must be > 0")
 
-    out_h5 = os.path.join(out_dir, p["output_h5_name"])
+    h5_name = p["output_h5_name"]
+    if bool(p["use_pinned"]) and h5_name == STAGE.defaults()["output_h5_name"]:
+        h5_name = "oblique_slices_pinned.h5"
+        result.notes.append(
+            "pinned run: output filename switched to oblique_slices_pinned.h5 "
+            "so the sweep file profiles reads is not overwritten"
+        )
+    out_h5 = os.path.join(out_dir, h5_name)
     save_png = bool(p["save_png"])
     grids_by_slice: dict[str, list[tuple[str, tuple[int, int]]]] = {}
     fh = h5py.File(out_h5, "w")

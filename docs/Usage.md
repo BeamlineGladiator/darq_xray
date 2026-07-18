@@ -504,6 +504,8 @@ through the aligned volumes — all in one world frame so the slices co-register
 | Param | Meaning |
 |---|---|
 | `slices_json` | a JSON list of plane specs (see below) |
+| `use_pinned` | run only the planes in `pinned_slices_json` instead of the full sweep — see [[#Pinned planes (fast re-runs)]] |
+| `pinned_slices_json` | JSON list of pinned single-plane specs, normally written by **Pin planes…**; only used when `use_pinned` is ticked |
 | `include_*` | which volumes to slice (χ/μ CoM/FWHM, strain, raw rocking sum/specific, mosa-scan sum/specific) |
 | `aligned_mosa_file` | path to `aligned_raw_mosa_volumes.h5`; leave blank to skip the mosa raw fields |
 | `include_mosa_sum` | slice the mosa-scan summed intensity (mapped to the "raw" colour group) |
@@ -586,7 +588,35 @@ through the aligned volumes — all in one world frame so the slices co-register
 > [[#8. Line profiles (`profiles`)|profiles]] stage selects the same way — a job's
 > `offset_um` picks the nearest plane in the swept slice group (within
 > `offset_tol_um`), so you can also feed that offset straight to a profile job
-> without re-slicing.
+> without re-slicing. The **Pinned planes (fast re-runs)** feature below
+> supersedes hand-copying this JSON into `slices_json` — it stores the pinned
+> spec in its own field and re-runs without touching the sweep.
+
+#### Pinned planes (fast re-runs)
+
+Once you've swept a set of planes and found the ones worth keeping, re-rendering
+only those is much faster than re-running the full sweep, and it can't clobber
+the sweep's output file:
+
+1. Run the stage once with a sweep in `slices_json` (as above) — this produces
+   `oblique_slices.h5`.
+2. Open **Pin planes…** to build the pinned list: it reads the stored plane
+   geometry back out of `oblique_slices.h5` (exact `normal`/`origin`/`up`/
+   `half_u`/`half_v`, snapped to the nearest stored offset) and writes it into
+   the **Pinned planes (JSON)** field (`pinned_slices_json`), under the
+   "Pinned planes" advanced group.
+3. Tick **Run pinned planes only** (`use_pinned`) and **Run**. The sweep in
+   `slices_json` is left untouched and ignored — the run log and Results notes
+   show a loud `PINNED RUN: rendering N pinned plane(s)` line.
+4. While `use_pinned` is on and the output filename is still the stage default,
+   the run writes to `oblique_slices_pinned.h5` instead of `oblique_slices.h5`
+   — a clobber guard so a fast pinned re-run never overwrites the full sweep
+   file that [[#8. Line profiles (`profiles`)|profiles]] reads. Set an explicit
+   **Output filename** to override (an edited name is always respected).
+
+`pinned_slices_json` empty or invalid while `use_pinned` is ticked raises a
+clear error (with a hint to open **Pin planes…** or untick the toggle) rather
+than silently running the sweep or an empty output.
 
 #### Replotting slices without re-running
 
