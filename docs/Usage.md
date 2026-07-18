@@ -646,7 +646,7 @@ Profile a straight line (or a band of parallel lines) across one slice plane —
 strain and misorientation line up.
 
 - **Input:** `oblique_slices.h5`.
-- **Output:** one line-profile figure **per field** (`<fig_name>__trace__<field>.png`) + per-field CSVs + per-field overviews, plus (optionally) the stacked companion figure.
+- **Output:** one line-profile figure **per field** (`<fig_name>__trace__<field>.png`) + per-field CSVs + per-field overviews, plus (optionally) the stacked companion figure. The per-field overview PNGs honour the publication-style "Scale (µm/cm)" field once it's set — each overview map renders at a fixed physical scale instead of a fixed figure size, same as the slices stage; the stacked companion figure's map panel does **not** (see below).
 
 **Essentials:** slices file, mode, jobs JSON, output dir
 
@@ -734,10 +734,14 @@ The overview images (plane + line, per field) are still written by
 When a run (or the publication export) carries the global plot style, the trace
 figures also honour its **Show title** toggle and **Title scale** — so a
 paper-ready trace can drop its `kind | field | source` header entirely. The
-companion and overview figures keep their fixed layout, but their reference map
-panel draws the publication-style scale bar (length, thickness, colour,
-location, background box — all the Scale bar controls apply, exactly as on the
-map stages).
+companion's and the per-field overview figures' reference map panels both draw
+the publication-style scale bar (length, thickness, colour, location,
+background box — all the Scale bar controls apply, exactly as on the map
+stages). Only the **overview** honours the "Scale (µm/cm)" fixed-scale field,
+though — the map is fitted to a physical page size the way slices/strain/
+mosaicity/rocking/visualize/paraview maps are. The **companion**'s map panel is
+left alone by design: it keeps today's geometry byte-identically even when the
+knob is set, so a saved companion layout never shifts underfoot.
 
 ### 9. Rocking-matched layers (`matched`)
 

@@ -605,3 +605,35 @@ def test_companion_map_legacy_scale_bar_unchanged():
     ax_img = fig.axes[0]
     assert any(isinstance(p, Rectangle) for p in ax_img.patches)
     assert not _offsetbox_artists(ax_img)
+
+
+# -- fixed-scale overview vs. pinned companion --------------------------------
+def test_render_single_overview_fits_fixed_scale(tmp_path):
+    """The standalone overview map is fitted to the fixed physical scale."""
+    from dfxm.common.plotting import PlotStyle
+
+    ref, _fields, geom = _companion_inputs()
+    style = PlotStyle(scale_um_per_cm=50.0)
+    out = str(tmp_path / "ov.png")
+    PR.render_single(ref, geom, "red", out, "hdr", 100, style=style)
+    assert os.path.exists(out)
+
+
+def test_companion_map_panel_bar_geometry_unchanged_by_scale_knob():
+    """The multi-panel companion is NOT fitted: setting scale_um_per_cm must not
+    change the map panel's scale-bar geometry (it keeps today's data-fraction
+    thickness), because build_companion_figure never forwards
+    fixed_scale_um_per_cm to _draw_reference_image."""
+    from matplotlib.patches import Rectangle
+
+    from dfxm.common.plotting import PlotStyle
+
+    ref, fields, geom = _companion_inputs()
+    style = PlotStyle(scale_um_per_cm=50.0, scale_bar_thickness_pt=3.0)
+    fig = PR.build_companion_figure(ref, fields, geom, "cyan", style=style)
+    ax_img = fig.axes[0]
+    yr = ax_img.get_ylim()[1] - ax_img.get_ylim()[0]
+    box = _offsetbox_artists(ax_img)[0]
+    bar = next(p for p in _offsetbox_children(box) if isinstance(p, Rectangle))
+    # companion is NOT fitted: bar height stays the data-fraction geometry
+    assert bar.get_height() == pytest.approx(abs(yr) * 0.004 * 3.0)
