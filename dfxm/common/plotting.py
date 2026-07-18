@@ -295,6 +295,44 @@ def fixed_scale_box(
     return (w, h, s)
 
 
+def fit_axes_to_box(fig, ax, w_in: float, h_in: float, tol_in: float = 0.02, max_iter: int = 3):
+    """Resize *fig* until *ax*'s box is (w_in, h_in) inches, within *tol_in*.
+
+    Draws, measures ``ax.get_window_extent()``, and corrects the figure size
+    ADDITIVELY by the miss (decorations are constant in inches, so the first
+    correction is nearly exact; the loop is insurance). The target box must
+    have the data aspect so aspect="equal" does not fight the fit. Returns
+    True on convergence; non-convergence keeps the last size, logs, and
+    returns False — never fatal.
+    """
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+
+    if fig.canvas is None or not hasattr(fig.canvas, "get_renderer"):
+        FigureCanvasAgg(fig)
+    for _ in range(max(1, int(max_iter))):
+        fig.canvas.draw()
+        bb = ax.get_window_extent(fig.canvas.get_renderer())
+        cur_w, cur_h = bb.width / fig.dpi, bb.height / fig.dpi
+        dw, dh = w_in - cur_w, h_in - cur_h
+        if abs(dw) <= tol_in and abs(dh) <= tol_in:
+            return True
+        fw, fh = fig.get_size_inches()
+        fig.set_size_inches(max(fw + dw, 0.5), max(fh + dh, 0.5), forward=False)
+    _log.info(
+        "fit_axes_to_box: miss > %.3f in after %d iterations (kept last size)", tol_in, max_iter
+    )
+    return False
+
+
+def finalize_fixed_scale(
+    fig, ax, style: "PlotStyle | None", ext_x_um: float, ext_y_um: float
+) -> None:
+    """Fit *ax* to the fixed-scale target box when the knob is on; else no-op."""
+    box = fixed_scale_box(style, ext_x_um, ext_y_um)
+    if box is not None:
+        fit_axes_to_box(fig, ax, box[0], box[1])
+
+
 def symmetric_limits(data: np.ndarray, percentile: float | None = None) -> tuple[float, float]:
     """Colour limits symmetric about zero from *data*'s finite values.
 

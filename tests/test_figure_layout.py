@@ -78,3 +78,61 @@ def test_slice_figure_keeps_exact_single_column_width():
     prep, sl, data, u, v = _slice_fixture()
     fig = build_slice_figure(prep, sl, data, u, v, offset_um=194.0, style=_BIG)
     assert fig.get_size_inches()[0] == 3.5
+
+
+def _box_inches(fig, ax):
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+
+    if not hasattr(fig.canvas, "get_renderer"):
+        FigureCanvasAgg(fig)
+    fig.canvas.draw()
+    bb = ax.get_window_extent(fig.canvas.get_renderer())
+    return bb.width / fig.dpi, bb.height / fig.dpi
+
+
+def test_fit_axes_to_box_reaches_target_under_two_decoration_loads():
+    import numpy as np
+
+    from dfxm.common.plotting import fit_axes_to_box, styled_figure
+
+    for title, with_cbar in (
+        ("A long two-line title\nwith even more text on the second line", True),
+        ("t", False),
+    ):
+        fig = styled_figure((6.0, 5.0), styled=True)
+        ax = fig.add_subplot(111)
+        im = ax.imshow(
+            np.random.default_rng(0).random((10, 20)),
+            extent=[0, 200, 0, 100],
+            origin="lower",
+            aspect="equal",
+        )
+        ax.set_title(title)
+        if with_cbar:
+            fig.colorbar(im, ax=ax, fraction=0.07)
+        assert fit_axes_to_box(fig, ax, 3.0, 1.5) is True
+        w, h = _box_inches(fig, ax)
+        assert abs(w - 3.0) <= 0.05 and abs(h - 1.5) <= 0.05
+
+
+def test_fit_axes_to_box_nonconvergence_is_nonfatal():
+    import numpy as np
+
+    from dfxm.common.plotting import fit_axes_to_box, styled_figure
+
+    fig = styled_figure((2.0, 2.0), styled=True)
+    ax = fig.add_subplot(111)
+    ax.imshow([[0.0, 1.0]], extent=[0, 2, 0, 1], origin="lower", aspect="equal")
+    ok = fit_axes_to_box(fig, ax, 5.0, 2.5, tol_in=1e-9, max_iter=1)
+    assert ok is False  # kept the last size, did not raise
+    assert np.all(np.isfinite(fig.get_size_inches()))
+
+
+def test_finalize_fixed_scale_noop_when_knob_off():
+    from dfxm.common.plotting import PlotStyle, finalize_fixed_scale, styled_figure
+
+    fig = styled_figure((6.0, 5.0), styled=True)
+    ax = fig.add_subplot(111)
+    finalize_fixed_scale(fig, ax, PlotStyle(), 200.0, 100.0)
+    finalize_fixed_scale(fig, ax, None, 200.0, 100.0)
+    assert tuple(fig.get_size_inches()) == (6.0, 5.0)
