@@ -883,6 +883,74 @@ def write_volume_group(fh, prep, slice_records):
 
 
 # -----------------------------------------------------------------------------
+# Pinned planes (shared by tools/pin_slice.py, the Pin planes… dialog and run())
+# -----------------------------------------------------------------------------
+def _find_slice_group(f, slice_name, volume=None):
+    """Return (volume_id, slice_group) for the first volume holding *slice_name*.
+
+    Slice geometry is identical across volumes, so any volume that carries the
+    slice works; *volume* forces a specific one.
+    """
+    vids = [volume] if volume else list(f.keys())
+    for vid in vids:
+        if vid not in f:
+            continue
+        g = f[vid]
+        if slice_name in g and "offsets_um" in g[slice_name]:
+            return vid, g[slice_name]
+    raise StageUserError(
+        f"slice {slice_name!r} not found in any volume group of the file",
+        hint=f"volumes present: {', '.join(f.keys()) or '(none)'} — pick a slice "
+        "name from a swept oblique_slices.h5.",
+    )
+
+
+def build_pinned_spec(h5_path, slice_name, offsets, *, volume=None) -> list[dict]:
+    """Pinned single-plane spec dicts for *slice_name*, snapped to stored planes.
+
+    Geometry (normal/origin/up/half_u/half_v/du/dv) is read byte-exact off the
+    stored slice-group attrs, so each pinned plane reproduces the sweep's plane
+    exactly. Every requested offset snaps to the nearest stored plane; snaps
+    landing on the same plane are collapsed. Raises StageUserError for an
+    unreadable file or unknown slice name.
+    """
+    try:
+        fh = h5py.File(h5_path, "r")
+    except OSError as exc:
+        raise StageUserError(
+            f"cannot read {h5_path!r}: {exc}",
+            hint="Point at an oblique_slices.h5 written by a slices sweep run.",
+        ) from exc
+    with fh as f:
+        _vid, sg = _find_slice_group(f, slice_name, volume)
+        stored = sg["offsets_um"][:].astype(np.float64)
+        a = dict(sg.attrs)
+    specs, seen = [], set()
+    for off in offsets:
+        idx = int(np.argmin(np.abs(stored - float(off))))
+        if idx in seen:
+            continue
+        seen.add(idx)
+        matched = float(stored[idx])
+        specs.append(
+            {
+                "name": f"{slice_name}_pin_{matched:+.2f}um",
+                "normal": np.asarray(a["normal"], np.float64).tolist(),
+                "origin": np.asarray(a["origin"], np.float64).tolist(),
+                "up": np.asarray(a["up"], np.float64).tolist(),
+                "half_u": float(a["half_u"]),
+                "half_v": float(a["half_v"]),
+                "du": float(a["du"]),
+                "dv": float(a["dv"]),
+                "sweep_step_um": float(a.get("sweep_step_um") or 1.0) or 1.0,
+                "sweep_start_um": matched,
+                "sweep_stop_um": matched,
+            }
+        )
+    return specs
+
+
+# -----------------------------------------------------------------------------
 # Entry point
 # -----------------------------------------------------------------------------
 def _standard_volumes(p, roi_x, roi_y):
