@@ -963,8 +963,9 @@ form.
 
 > [!tip] Fixed physical scale across figures
 > Setting **Scale (µm/cm)** fits every map's data box (per-layer maps, slices,
-> the strain diagnostic, and the profiles reference/overview panels — not the
-> profiles companion or trace figures) so the printed scale, and the scale
+> the strain diagnostic, the matched stage's rocking-matched layer maps, and
+> the profiles reference/overview panels — not the profiles companion or
+> trace figures) so the printed scale, and the scale
 > bar, are identical across figures regardless of each crop's pixel extent.
 > While it is set, **Figure width is ignored for maps** (trace figures still
 > honour it). Requested sides are clamped to 30 in — a typo scale (e.g. a

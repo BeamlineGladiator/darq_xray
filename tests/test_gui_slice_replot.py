@@ -147,9 +147,9 @@ def test_slice_replot_dialog_shows_plane_pixel_size(tmp_path):
     _mini(str(h5))  # planes are (nv, nu) = (7, 9)
     _app = QApplication.instance() or QApplication([])
     dlg = SliceReplotDialog(str(h5), style=None, out_default=str(tmp_path))
-    # the planes-first panel no longer annotates a slice node inline (that hierarchy
-    # is gone); the shape is still available on the catalog entry, and visible in
-    # the Pick ROI… preview.
+    # the per-plane px hint moved from an inline slice-node annotation to the
+    # section headers (see test_panel_section_header_shows_uniform_shape_px_hint);
+    # the shape is still available on the catalog entry.
     assert dlg._catalog[0].shape == (7, 9)
 
 

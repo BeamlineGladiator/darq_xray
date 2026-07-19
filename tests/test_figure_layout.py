@@ -138,6 +138,28 @@ def test_finalize_fixed_scale_noop_when_knob_off():
     assert tuple(fig.get_size_inches()) == (6.0, 5.0)
 
 
+def test_finalize_fixed_scale_fits_axes_box_on_path():
+    from dfxm.common.plotting import PlotStyle, finalize_fixed_scale, styled_figure
+
+    # Asymmetric extents so a box[0]/box[1] (w/h) swap in finalize_fixed_scale's
+    # internal fit_axes_to_box call cannot land unseen.
+    ext_x, ext_y, scale = 300.0, 120.0, 20.0
+    style = PlotStyle(scale_um_per_cm=scale)
+    fig = styled_figure((6.0, 5.0), styled=True)
+    ax = fig.add_subplot(111)
+    ax.imshow(
+        np.random.default_rng(3).random((10, 20)),
+        extent=[0, ext_x, 0, ext_y],
+        origin="lower",
+        aspect="equal",
+    )
+    ax.set_title("asymmetric fixed-scale check")
+    finalize_fixed_scale(fig, ax, style, ext_x, ext_y)
+    w, h = _box_inches(fig, ax)
+    assert abs(w - ext_x / scale / 2.54) <= 0.05
+    assert abs(h - ext_y / scale / 2.54) <= 0.05
+
+
 def test_layer_figure_fixed_scale_equal_boxes_across_decoration_loads():
     import numpy as np
 
