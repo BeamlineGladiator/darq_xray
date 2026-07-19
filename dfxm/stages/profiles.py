@@ -33,7 +33,7 @@ from scipy.ndimage import map_coordinates
 
 from ..common import render as Rnd
 from ..common.errors import StageUserError
-from ..common.figures import FigureSpec, register
+from ..common.figures import FigureSpec, register, resolve_clim
 from ..common.plotting import (
     GROUP_BY_KIND,
     PlotStyle,
@@ -831,7 +831,28 @@ def _ordered_field_ids(present, ref_id, restrict):
     return [ref_id] + sorted(v for v in present if v != ref_id)
 
 
-def _collect(f, job, p, ref_pref, restrict):
+def _clim_attrs(attrs, vid, clim):
+    """Apply a per-quantity ``(vmin, vmax)`` override to a read_volume_attrs dict.
+
+    Key resolution matches the slices replot: exact field id first (e.g.
+    ``mosa_com_chi``), then the field kind's colormap group via GROUP_BY_KIND.
+    A half-open pair keeps the stored value on the blank side. ``clim=None``
+    (or no matching key) leaves *attrs* untouched.
+    """
+    pair = resolve_clim(clim, vid)
+    if pair is None:
+        pair = resolve_clim(clim, GROUP_BY_KIND.get(attrs.get("kind", ""), ""))
+    if pair is None:
+        return attrs
+    lo, hi = pair
+    if lo is not None:
+        attrs["vmin"] = float(lo)
+    if hi is not None:
+        attrs["vmax"] = float(hi)
+    return attrs
+
+
+def _collect(f, job, p, ref_pref, restrict, clim=None):
     name = job["name"]
     present = volume_ids_with_slice(f, name)
     if not present:
@@ -842,7 +863,7 @@ def _collect(f, job, p, ref_pref, restrict):
     ref_id = _pick_reference_id(present, job_ref)
     u_um, v_um, offsets = read_axes(f[f"{ref_id}/{name}"])
     idx, off_used = resolve_plane_index(offsets, job["offset_um"])
-    ref_attrs = read_volume_attrs(f, ref_id)
+    ref_attrs = _clim_attrs(read_volume_attrs(f, ref_id), ref_id, clim)
     ref_plane = f[f"{ref_id}/{name}"]["slices"][idx].astype(np.float64)
     geom = line_geometry(
         u_um,
@@ -880,7 +901,7 @@ def _collect(f, job, p, ref_pref, restrict):
         fields.append(
             {
                 "vid": vid,
-                "attrs": read_volume_attrs(f, vid),
+                "attrs": _clim_attrs(read_volume_attrs(f, vid), vid, clim),
                 "value_mean": vm,
                 "value_std": vs,
                 "n_valid": nv,

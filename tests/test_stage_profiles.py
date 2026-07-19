@@ -750,3 +750,35 @@ def test_companion_map_panel_bar_geometry_unchanged_by_scale_knob():
     bar = next(p for p in _offsetbox_children(box) if isinstance(p, Rectangle))
     # companion is NOT fitted: bar height stays the data-fraction geometry
     assert bar.get_height() == pytest.approx(abs(yr) * 0.004 * 3.0)
+
+
+def test_clim_attrs_field_id_beats_group_fallback():
+    attrs = {"kind": "strain", "vmin": -10.0, "vmax": 10.0}
+    out = PR._clim_attrs(dict(attrs), "strain", {"strain": (-1.0, 1.0)})
+    assert (out["vmin"], out["vmax"]) == (-1.0, 1.0)
+    # group fallback: vid not in mapping, kind's colormap group is
+    attrs2 = {"kind": "raw_sum", "vmin": 0.0, "vmax": 100.0}
+    out2 = PR._clim_attrs(dict(attrs2), "raw_sum", {"raw": (5.0, None)})
+    assert (out2["vmin"], out2["vmax"]) == (5.0, 100.0)  # half-open keeps stored vmax
+    # vid key wins over group key when both present
+    out3 = PR._clim_attrs(dict(attrs2), "raw_sum", {"raw": (5.0, 50.0), "raw_sum": (7.0, 70.0)})
+    assert (out3["vmin"], out3["vmax"]) == (7.0, 70.0)
+    # no matching key / clim None -> untouched
+    out4 = PR._clim_attrs(dict(attrs), "strain", {"mosa_com": (0.0, 1.0)})
+    assert (out4["vmin"], out4["vmax"]) == (-10.0, 10.0)
+    assert PR._clim_attrs(dict(attrs), "strain", None)["vmin"] == -10.0
+
+
+def test_collect_applies_clim_to_ref_and_fields(tmp_path):
+    h5 = tmp_path / "oblique_slices.h5"
+    _write_consolidated(str(h5))
+    job = {"name": "oblique_full", "offset_um": 0.0, "start_uv": [-5, -3], "end_uv": [5, 3]}
+    p = PR.STAGE.defaults()
+    with h5py.File(str(h5), "r") as f:
+        ref, fields, _geom, _off, _dropped = PR._collect(
+            f, job, p, "", None, clim={"strain": (-2.0, 2.0)}
+        )
+    by_vid = {fl["vid"]: fl["attrs"] for fl in fields}
+    assert (by_vid["strain"]["vmin"], by_vid["strain"]["vmax"]) == (-2.0, 2.0)
+    assert (by_vid["raw_sum"]["vmin"], by_vid["raw_sum"]["vmax"]) == (-10.0, 10.0)  # stored
+    assert (ref[3]["vmin"], ref[3]["vmax"]) == (-10.0, 10.0)  # ref is raw_sum -> stored
