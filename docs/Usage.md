@@ -635,19 +635,37 @@ the sweep's output file:
 
 1. Run the stage once with a sweep in `slices_json` (as above) — this produces
    `oblique_slices.h5`.
-2. Open **Pin planes…** to build the pinned list: it reads the stored plane
-   geometry back out of `oblique_slices.h5` (exact `normal`/`origin`/`up`/
-   `half_u`/`half_v`, snapped to the nearest stored offset) and writes it into
-   the **Pinned planes (JSON)** field (`pinned_slices_json`), under the
-   "Pinned planes" advanced group.
-3. Tick **Run pinned planes only** (`use_pinned`) and **Run**. The sweep in
-   `slices_json` is left untouched and ignored — the run log and Results notes
-   show a loud `PINNED RUN: rendering N pinned plane(s)` line.
-4. While `use_pinned` is on and the output filename is still the stage default,
-   the run writes to `oblique_slices_pinned.h5` instead of `oblique_slices.h5`
-   — a clobber guard so a fast pinned re-run never overwrites the full sweep
-   file that [[#8. Line profiles (`profiles`)|profiles]] reads. Set an explicit
+2. Click **Pin planes…** on the slices stage panel. The **Slices file** field
+   pre-fills from the current form (the same chained-output path the
+   **Replot…** button uses); **Browse…**/**Load** point it at a different file.
+   The dialog lists every plane found in the file, one row per `(slice group,
+   plane index)` — grouped under its slice-group name — using the same
+   integer/decimal **Filter** box as the Replot dialogs. Unlike Replot,
+   **planes start unchecked**: pinning means picking exactly the planes you
+   want, not "everything by default". Tick the planes to keep (or filter down
+   first, then **Check all visible**).
+3. Click **OK**. For each checked plane the dialog reads that plane's exact
+   stored geometry (`normal`/`origin`/`up`/`half_u`/`half_v`/`du`/`dv`,
+   snapped to the nearest stored offset) via `build_pinned_spec` and writes
+   the resulting JSON straight into the **Pinned planes (JSON)** field
+   (`pinned_slices_json`, under the "Pinned planes" advanced group) — and
+   ticks **Run pinned planes only** (`use_pinned`) for you. Nothing is
+   checked → **OK** shows an inline "no planes checked" status and the dialog
+   stays open; an unreadable file or unknown slice name shows the error
+   inline the same way — either case leaves the form untouched. **Cancel**
+   also leaves the form untouched.
+4. Click **Run**. The sweep in `slices_json` is left untouched and ignored —
+   the run log and Results notes show a loud `PINNED RUN: rendering N pinned
+   plane(s)` line.
+5. While `use_pinned` is on and the output filename is still the stage
+   default, the run writes to `oblique_slices_pinned.h5` instead of
+   `oblique_slices.h5` — a clobber guard so a fast pinned re-run never
+   overwrites the full sweep file that
+   [[#8. Line profiles (`profiles`)|profiles]] reads. Set an explicit
    **Output filename** to override (an edited name is always respected).
+
+Untick **Run pinned planes only** to go back to running the full sweep in
+`slices_json` — the pinned JSON stays in the field, ready to re-tick later.
 
 `pinned_slices_json` empty or invalid while `use_pinned` is ticked raises a
 clear error (with a hint to open **Pin planes…** or untick the toggle) rather

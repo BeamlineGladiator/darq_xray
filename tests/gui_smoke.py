@@ -823,6 +823,17 @@ def main() -> int:
         _sg26.create_dataset("u_um", data=_u26)
         _sg26.create_dataset("v_um", data=_v26)
         _sg26.create_dataset("offsets_um", data=_np26.array([0.0]))
+        _sg26.attrs["normal"] = [0.0, 0.0, 1.0]
+        _sg26.attrs["origin"] = [0.0, 0.0, 0.0]
+        _sg26.attrs["up"] = [0.0, 1.0, 0.0]
+        for _k26, _v26_attr in (
+            ("half_u", 4.0),
+            ("half_v", 3.0),
+            ("du", 1.0),
+            ("dv", 1.0),
+            ("sweep_step_um", 1.0),
+        ):
+            _sg26.attrs[_k26] = _v26_attr
 
     # verify the Replot… button is present on the slices view
     slices_view = win._views["slices"]
@@ -933,6 +944,21 @@ def main() -> int:
     _dlg31._panel._filter.setText("999")
     assert _dlg31._panel._no_match.isVisible()
     print("[31] generic replot dialog planes-first: product selection + filter")
+
+    # [32] Pin planes… dialog: reuses [26]'s file, checks one plane, emits a
+    # pinned spec; the button is wired on the slices stage view.
+    import json as _json32
+
+    from PySide6.QtCore import Qt as _Qt32
+
+    from gui.widgets.pin_planes import PinPlanesDialog as _PPD32
+
+    assert win._views["slices"]._pin_btn is not None, "slices view missing _pin_btn"
+    _dlg32 = _PPD32(_h5_path26)
+    _dlg32._panel._items[("oblique", 0)].setCheckState(0, _Qt32.CheckState.Checked)
+    _dlg32._on_ok()
+    assert _json32.loads(_dlg32.result_json)[0]["sweep_start_um"] == 0.0
+    print("[32] Pin planes… dialog emits pinned specs; button wired on slices view")
 
     print("\nGUI SMOKE PASSED")
     return 0
