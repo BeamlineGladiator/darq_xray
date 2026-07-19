@@ -260,7 +260,22 @@ def test_box_margin_is_real_points():
     draw_scale_bar(ax, 5.0, style=PlotStyle(scale_bar_box=True, scale_bar_box_margin_pt=4.0))
     abox = _scale_bar_artist(ax)
     assert np.isclose(abox.pad, 0.4)
-    assert np.isclose(abox.borderpad, 1.5)  # fixed corner inset, in font units
+    assert np.isclose(abox.borderpad, 1.5)  # default 15 pt inset / 10 pt label = 1.5 font units
+
+
+def test_scale_bar_edge_inset_is_real_points():
+    # Edge-inset semantics: real points from the axes corner. borderpad is in
+    # label-font units, so inset_pt must be divided by the label size — the
+    # inset must NOT grow with font scale (that pushed the bar into the data).
+    def borderpad(**style_kw):
+        fig, ax = _ax()
+        draw_scale_bar(ax, 5.0, style=PlotStyle(**style_kw))
+        return _scale_bar_artist(ax).borderpad
+
+    assert np.isclose(borderpad(scale_bar_inset_pt=5.0), 0.5)  # 5 pt / 10 pt label
+    assert np.isclose(borderpad(scale_bar_inset_pt=15.0, font_scale=2.0), 0.75)  # 15 / 20
+    assert borderpad(scale_bar_inset_pt=0.0) == 0.0  # flush with the corner
+    assert borderpad(scale_bar_inset_pt=-3.0) == 0.0  # negative clamps, never overhangs
 
 
 def test_box_margin_ignored_when_box_disabled():

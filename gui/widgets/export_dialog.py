@@ -109,6 +109,7 @@ class StyleControls(QWidget):
             s.scale_bar_color if s.scale_bar_color in _COLORS else _COLORS[0]
         )
         self._w_bar_loc.setCurrentText(s.scale_bar_loc)
+        self._w_bar_inset.setValue(s.scale_bar_inset_pt)
         self._w_bar_box.setChecked(s.scale_bar_box)
         self._w_box_color.setCurrentText(
             s.scale_bar_box_color if s.scale_bar_box_color in _COLORS else _COLORS[0]
@@ -168,6 +169,7 @@ class StyleControls(QWidget):
             self._w_bar_label_scale,
             self._w_bar_color,
             self._w_bar_loc,
+            self._w_bar_inset,
             self._w_bar_box,
             self._w_box_color,
             self._w_box_alpha,
@@ -281,6 +283,19 @@ class StyleControls(QWidget):
             lambda v: (setattr(self._style, "scale_bar_loc", v), self._emit())
         )
         form.addRow("Bar location", self._w_bar_loc)
+
+        self._w_bar_inset = QDoubleSpinBox()
+        self._w_bar_inset.setRange(0.0, 100.0)
+        self._w_bar_inset.setDecimals(1)
+        self._w_bar_inset.setSuffix(" pt")
+        self._w_bar_inset.setToolTip(
+            "Distance of the scale bar from the axes corner, in printed points (0 = flush)"
+        )
+        self._w_bar_inset.setValue(s.scale_bar_inset_pt)
+        self._w_bar_inset.valueChanged.connect(
+            lambda v: (setattr(self._style, "scale_bar_inset_pt", v), self._emit())
+        )
+        form.addRow("Edge inset", self._w_bar_inset)
 
         self._w_bar_color = QComboBox()
         self._w_bar_color.addItems(_COLORS)

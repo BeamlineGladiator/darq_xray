@@ -72,6 +72,9 @@ class PlotStyle:
     scale_bar_box_color: str = "black"
     scale_bar_box_alpha: float = 0.45
     scale_bar_box_margin_pt: float = 4.0
+    # distance from the axes corner in real printed points (does NOT grow with
+    # font_scale; 15 pt matches the pre-knob look at default fonts; 0 = flush)
+    scale_bar_inset_pt: float = 15.0
     # text
     font_scale: float = 1.0  # multiplies axis labels + ticks (NOT the title)
     title_scale: float = 1.0  # multiplies the title alone (independent of font_scale)
@@ -592,7 +595,7 @@ def draw_scale_bar(
         # so the Box-margin control cannot inset the bar by a phantom frame.
         prop=FontProperties(size=label_size),
         pad=(style.scale_bar_box_margin_pt / label_size) if style.scale_bar_box else 0.0,
-        borderpad=1.5,
+        borderpad=max(style.scale_bar_inset_pt, 0.0) / label_size,
         frameon=style.scale_bar_box,
     )
     if style.scale_bar_box:

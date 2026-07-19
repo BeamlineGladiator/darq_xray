@@ -921,6 +921,7 @@ form.
 | Bar thickness | Visual height in points (default 3 pt; use 4 pt for publication) |
 | Label scale | Multiplies the font size for the scale-bar label (relative to Font scale) |
 | Bar location | `lower right` / `lower left` / `upper right` / `upper left` |
+| Edge inset | Distance of the bar (with its box) from the axes corner, in printed points. Default 15 pt; lower it (e.g. 2–5 pt) to push the bar into the corner when it would otherwise sit on top of your data, `0` = flush with the edge. Unlike older versions the inset does **not** grow with Font scale |
 | Bar colour | Foreground colour of the bar and label |
 | Background box | Optionally draw a semi-transparent box behind the bar + label. The box sizes itself to the rendered label and bar at any font scale, with the label centred over the bar |
 | Box colour / alpha / margin | Control the background box appearance; margin is the padding inside the box, in points |
