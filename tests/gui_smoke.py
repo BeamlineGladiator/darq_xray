@@ -830,7 +830,7 @@ def main() -> int:
 
     _out26 = os.path.join(_slice_tmp, "replots")
     _dlg26 = _SRD(_h5_path26, style=None, out_default=_out26)
-    assert _dlg26._tree.topLevelItemCount() == 1
+    assert len(_dlg26._panel._rows) == 1
     _dlg26.select_all()
     _written26 = _dlg26.render_selection(_out26)
     assert len(_written26) == 1 and os.path.exists(_written26[0]), _written26
@@ -886,6 +886,21 @@ def main() -> int:
     _sc29._w_scale_umcm.setText("")
     assert _st29.scale_um_per_cm is None
     print("[29] StyleControls Scale (µm/cm) field mutates the style defensively")
+
+    # [30] Planes-first slices replot: filter narrows visibility; check-all-visible selects.
+    from gui.widgets.slice_replot import SliceReplotDialog as _SRD30
+
+    _dlg30 = _SRD30(_h5_path26, style=None, out_default=_out26)  # reuse [26]'s file
+    _dlg30.show()
+    app.processEvents()
+    _dlg30._panel.set_all_checked(False)
+    assert not _dlg30._panel.has_selection()
+    _dlg30._panel._filter.setText("0")
+    _dlg30._panel.check_all_visible()
+    assert _dlg30._panel.has_selection()
+    _dlg30._panel._filter.setText("999")
+    assert _dlg30._panel._no_match.isVisible()
+    print("[30] planes-first slices replot: filter + check-all-visible + no-match hint")
 
     print("\nGUI SMOKE PASSED")
     return 0

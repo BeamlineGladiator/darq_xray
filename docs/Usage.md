@@ -627,10 +627,31 @@ current session is not required. It works from a cold start or after a restart.
 1. Click **Replot…** on the slices stage panel.
 2. The file field pre-fills from the current form values; click **Browse…** or
    type a path and **Load** to use a different file.
-3. The tree opens with **everything checked**, so a plain **Render** remakes
-   every volume/slice/plane. **Untick** anything you don't want (or use
-   **Deselect all** then tick a subset). *(This all-checked default applies to
-   the strain/mosaicity/rocking Replot dialogs too.)*
+3. The left panel lists each **plane once** — one row per `(slice group, plane
+   index)`, e.g. `p001  +1.00 µm` — grouped under its slice-group name when the
+   file has more than one such group (a union across whichever volumes contain
+   that plane, not a per-volume duplicate). The right panel lists **quantities**
+   (one checkbox per distinct volume present in the file). Both open with
+   **everything checked**, so a plain **Render** remakes every plane × every
+   quantity. *(This all-checked default applies to the strain/mosaicity/rocking
+   Replot dialogs too.)*
+   - Type in the **Filter** box to narrow which plane rows are *visible* — it
+     never changes what's checked. Bare integers match a plane number (e.g.
+     `118`); signed or decimal values match the nearest plane by µm offset,
+     within half the sweep's step size (e.g. `-3.7`); comma-separate several
+     tokens to match more than one plane at once. A **no match** hint appears
+     when a non-blank filter hides every row.
+   - **Check all** / **Uncheck all** act on every plane row regardless of the
+     filter; **Check all visible** checks only the rows the current filter
+     shows (handy for "filter down to a subset, then select exactly that
+     subset"). Untick individual rows, or a quantity checkbox, to narrow
+     further.
+   - **Render** is disabled while nothing is selected (no checked planes, or —
+     since quantities matter here — no checked quantities).
+   - A checked plane that doesn't exist for a checked quantity (e.g. a
+     slice group present in one volume but not another) is silently skipped
+     rather than erroring; the status line reports `skipped N combo(s)` after
+     rendering.
 4. Optionally override the stored colour limits **per quantity**. The dialog
    shows one **vmin** / **vmax** row for each distinct volume present in the
    file, in first-seen order — χ and μ components of mosaicity are separate
@@ -638,14 +659,13 @@ current session is not required. It works from a cold start or after a restart.
    variant (`raw_sum`, `raw_specific`, `raw_mosa_sum`, `raw_mosa_specific`) is
    its own row. Leave a row's boxes blank to keep the limits stored in the HDF5.
 5. Optionally enter an **ROI crop** as four pixel-index integers (**r0**, **r1**,
-   **c0**, **c1**) to restrict each plane to a sub-region. Each slice node in the
-   tree is labelled with its stored plane pixel size, e.g. `7×9 px (Y×X)`, so the
-   valid range is visible: rows `r0:r1` ∈ `[0, nv]`, cols `c0:c1` ∈ `[0, nu]`.
-   Leave all four boxes blank for the full image. Partial fills (some boxes
-   filled, some blank) are ignored — all four must be provided together.
-   Click **Pick ROI…** (beside the four pixel boxes) to open a visual picker
-   that shows one preview per `(volume_id, slice_name)` pair in the loaded
-   file — the middle plane of each group is rendered at its stored µm pitch.
+   **c0**, **c1**) to restrict each plane to a sub-region. Leave all four boxes
+   blank for the full image. Partial fills (some boxes filled, some blank) are
+   ignored — all four must be provided together. Click **Pick ROI…** (beside the
+   four pixel boxes) to open a visual picker that shows one preview per
+   `(volume_id, slice_name)` pair in the loaded file — the middle plane of each
+   group is rendered at its stored µm pitch, so the valid pixel range (`r0:r1`
+   ∈ `[0, nv]`, `c0:c1` ∈ `[0, nu]`) is visible directly on the preview.
    Accepting the selection writes all four boxes at once. Because different
    volume/slice groups can have different plane dimensions, switching to a
    differently-shaped preview clears the current selection before you confirm.

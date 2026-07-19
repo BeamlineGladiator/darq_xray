@@ -12,7 +12,6 @@ from __future__ import annotations
 import os
 import time
 
-from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QDialog,
     QFileDialog,
@@ -20,14 +19,14 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QPushButton,
-    QTreeWidget,
-    QTreeWidgetItem,
     QVBoxLayout,
 )
 
 from dfxm.stages import slices as _sl
 
 from .clim_section import ClimGroupSection
+from .plane_selection import PlaneSelectionPanel
+from .plane_selection_model import build_slice_rows, slice_selections
 
 # Friendly labels for the per-quantity colour-limit rows, keyed by volume_id.
 # volume_id is f"{kind}{suffix}" where suffix is ""/"_chi"/"_mu" (slices.py:_axis_suffix).
@@ -77,20 +76,8 @@ class SliceReplotDialog(QDialog):
         file_row.addWidget(file_browse)
         file_row.addWidget(file_reload)
 
-        # volume → slice → plane tree (checkable)
-        self._tree = QTreeWidget()
-        self._tree.setHeaderLabels(["Volume / slice / plane"])
-        self._tree.setColumnCount(1)
-
-        # tree toolbar: Select all / Deselect all
-        select_all_btn = QPushButton("Select all")
-        select_all_btn.clicked.connect(self.select_all)
-        deselect_btn = QPushButton("Deselect all")
-        deselect_btn.clicked.connect(self._deselect_all)
-        tree_toolbar = QHBoxLayout()
-        tree_toolbar.addWidget(select_all_btn)
-        tree_toolbar.addWidget(deselect_btn)
-        tree_toolbar.addStretch(1)
+        # planes-first selection panel (left: planes, listed once; right: quantities)
+        self._panel = PlaneSelectionPanel(show_quantities=True)
 
         # per-kind clim override (one vmin/vmax row per kind present in the file)
         self._clim = ClimGroupSection()
@@ -120,26 +107,30 @@ class SliceReplotDialog(QDialog):
         out_row.addWidget(out_browse)
 
         self._status = QLabel("")
-        render_btn = QPushButton("Render")
-        render_btn.setProperty("role", "primary")
-        render_btn.clicked.connect(self._on_render)
+        self._render_btn = QPushButton("Render")
+        self._render_btn.setProperty("role", "primary")
+        self._render_btn.clicked.connect(self._on_render)
+        self._panel.selectionChanged.connect(
+            lambda: self._render_btn.setEnabled(self._panel.has_selection())
+        )
         close_btn = QPushButton("Close")
         close_btn.clicked.connect(self.reject)
         btn_row = QHBoxLayout()
         btn_row.addWidget(self._status, 1)
-        btn_row.addWidget(render_btn)
+        btn_row.addWidget(self._render_btn)
         btn_row.addWidget(close_btn)
 
         layout = QVBoxLayout(self)
         layout.addLayout(file_row)
-        layout.addWidget(self._tree, 1)
-        layout.addLayout(tree_toolbar)
+        layout.addWidget(self._panel, 1)
         layout.addWidget(clim_header)
         layout.addWidget(self._clim)
         layout.addLayout(roi_row)
         layout.addLayout(out_row)
         layout.addLayout(btn_row)
 
+        self._catalog: list = []
+        self._skipped: list[str] = []
         self._reload()
 
     def _default_out_for(self, h5_path: str) -> str:
@@ -154,83 +145,40 @@ class SliceReplotDialog(QDialog):
     # -- population -----------------------------------------------------------
     def _reload(self) -> None:
         self._h5_path = self._file_edit.text().strip()
-        self._tree.clear()
         if not self._out_pinned:
             self._out_edit.setText(self._default_out_for(self._h5_path))
         if not self._h5_path or not os.path.exists(self._h5_path):
+            self._catalog = []
+            self._panel.set_rows([])
+            self._panel.set_quantities([])
             self._clim.set_groups([])
             self._status.setText("no such file")
             return
         try:
-            catalog = _sl.replot_catalog(self._h5_path)
+            self._catalog = _sl.replot_catalog(self._h5_path)
         except Exception as exc:  # noqa: BLE001 — GUI reload: show status, never crash
+            self._catalog = []
+            self._panel.set_rows([])
+            self._panel.set_quantities([])
             self._clim.set_groups([])
             self._status.setText(f"cannot read: {exc}")
             return
-        self._clim.set_groups(self._clim_groups(catalog))
-        by_vid: dict[str, QTreeWidgetItem] = {}
-        for entry in catalog:
-            vtop = by_vid.get(entry.volume_id)
-            if vtop is None:
-                vtop = QTreeWidgetItem(self._tree, [entry.volume_id])
-                vtop.setFlags(
-                    vtop.flags() | Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsAutoTristate
-                )
-                vtop.setCheckState(0, Qt.CheckState.Unchecked)
-                by_vid[entry.volume_id] = vtop
-            snode_label = entry.slice_name
-            if entry.shape is not None:
-                snode_label = f"{entry.slice_name}   ·   {entry.shape[0]}×{entry.shape[1]} px (Y×X)"
-            snode = QTreeWidgetItem(vtop, [snode_label])
-            snode.setFlags(
-                snode.flags() | Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsAutoTristate
-            )
-            snode.setCheckState(0, Qt.CheckState.Unchecked)
-            snode.setData(0, Qt.ItemDataRole.UserRole, (entry.volume_id, entry.slice_name))
-            for k, off in enumerate(entry.offsets_um):
-                leaf = QTreeWidgetItem(snode, [f"plane {k}  ({off:+.2f} µm)"])
-                leaf.setFlags(leaf.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-                leaf.setCheckState(0, Qt.CheckState.Unchecked)
-                leaf.setData(0, Qt.ItemDataRole.UserRole, (entry.volume_id, entry.slice_name, k))
-        self._tree.expandAll()
-        self.select_all()  # default: remake everything; user unticks to subset
-        self._status.setText(f"{len(catalog)} slice group(s)")
+        self._clim.set_groups(self._clim_groups(self._catalog))
+        self._panel.set_rows(build_slice_rows(self._catalog))
+        vids = list(dict.fromkeys(e.volume_id for e in self._catalog))
+        self._panel.set_quantities([(vid, _volume_label(vid)) for vid in vids])
+        self._status.setText(f"{len(self._catalog)} slice group(s)")
 
-    # -- bulk selection -------------------------------------------------------
-    def select_all(self) -> None:
-        """Check every volume node; auto-tristate cascades to all slices + planes."""
-        for i in range(self._tree.topLevelItemCount()):
-            self._tree.topLevelItem(i).setCheckState(0, Qt.CheckState.Checked)
-
-    def _deselect_all(self) -> None:
-        for i in range(self._tree.topLevelItemCount()):
-            self._tree.topLevelItem(i).setCheckState(0, Qt.CheckState.Unchecked)
+    def select_all(self) -> None:  # kept for smoke/back-compat
+        self._panel.set_all_checked(True)
 
     # -- selection → core -----------------------------------------------------
     def _selections(self):
-        """Collect checked (vid, slice, plane_idxs|None) tuples from the tree.
-
-        Auto-tristate cascades a Checked parent down to all leaf (plane) children,
-        so checking a volume or slice checks every leaf beneath it. Leaf states are
-        read directly: all-checked → explicit index list; snode Checked with no
-        leaves (zero-plane edge case) → None (all planes). Partially-checked slices
-        yield only the checked leaf indices.
-        """
-        sels = []
-        for i in range(self._tree.topLevelItemCount()):
-            vtop = self._tree.topLevelItem(i)
-            for j in range(vtop.childCount()):
-                snode = vtop.child(j)
-                vid, sname = snode.data(0, Qt.ItemDataRole.UserRole)
-                checked = [
-                    snode.child(k).data(0, Qt.ItemDataRole.UserRole)[2]
-                    for k in range(snode.childCount())
-                    if snode.child(k).checkState(0) == Qt.CheckState.Checked
-                ]
-                if snode.checkState(0) == Qt.CheckState.Checked and not checked:
-                    sels.append((vid, sname, None))  # whole slice = all planes
-                elif checked:
-                    sels.append((vid, sname, checked))
+        sels, self._skipped = slice_selections(
+            self._catalog,
+            self._panel.checked_plane_keys(),
+            self._panel.checked_quantity_keys(),
+        )
         return sels
 
     @staticmethod
@@ -316,6 +264,8 @@ class SliceReplotDialog(QDialog):
             self._status.setText(f"render failed: {exc}")
             return
         self._status.setText(f"wrote {len(written)} PNG(s) → {out_dir}")
+        if self._skipped:
+            self._status.setText(self._status.text() + f"; skipped {len(self._skipped)} combo(s)")
 
     def _on_browse_h5(self) -> None:
         path, _ = QFileDialog.getOpenFileName(self, "Open oblique_slices.h5", "", "HDF5 (*.h5)")
