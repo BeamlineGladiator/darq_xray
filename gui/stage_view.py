@@ -543,8 +543,26 @@ class StageView(QWidget):
 
         from .widgets.profiles_replot import ProfilesReplotDialog  # imported on demand
 
+        # Appearance-only subset of the form's values: the replot always writes
+        # companion+overviews+traces (save_companion/save_traces/save_overview
+        # deliberately excluded), it just honours how they look.
+        appearance_keys = (
+            "trace_aspect",
+            "trace_file_aspect",
+            "trace_width_in",
+            "trace_linewidth",
+            "trace_color",
+            "trace_font_scale",
+            "line_color",
+            "reference_volume_id",
+            "fig_dpi",
+        )
+        params = {k: vals[k] for k in appearance_keys if k in vals}
+
         # out_default="" lets the dialog default the output beside the loaded h5.
-        dlg = ProfilesReplotDialog(h5, jobs, style=style, out_default="", parent=self)
+        dlg = ProfilesReplotDialog(
+            h5, jobs, style=style, out_default="", parent=self, params=params
+        )
         dlg.exec()
         if dlg.written:
             self._log.append(

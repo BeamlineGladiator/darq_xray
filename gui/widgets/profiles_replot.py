@@ -33,11 +33,12 @@ from .clim_section import ClimGroupSection, volume_label
 class ProfilesReplotDialog(QDialog):
     """Pick jobs/fields from the form's jobs list and re-render profile figures."""
 
-    def __init__(self, h5_path, jobs, style=None, out_default="", parent=None) -> None:
+    def __init__(self, h5_path, jobs, style=None, out_default="", parent=None, params=None) -> None:
         super().__init__(parent)
         self._h5_path = h5_path
         self._jobs = [j for j in (jobs or []) if isinstance(j, dict) and "name" in j]
         self._style = style
+        self._params = params
         self.written: list[str] = []
         self._ts = time.strftime("%Y%m%d-%H%M%S")
         self._out_pinned = bool(out_default)
@@ -69,7 +70,8 @@ class ProfilesReplotDialog(QDialog):
         out_browse.clicked.connect(self._on_browse_out)
         self._dpi = QSpinBox()
         self._dpi.setRange(50, 1200)
-        self._dpi.setValue(int(_pr.STAGE.defaults()["fig_dpi"]))
+        dpi_default = (self._params or {}).get("fig_dpi", _pr.STAGE.defaults()["fig_dpi"])
+        self._dpi.setValue(int(dpi_default))
         out_row = QHBoxLayout()
         out_row.addWidget(QLabel("Output dir:"))
         out_row.addWidget(self._out_edit, 1)
@@ -100,6 +102,12 @@ class ProfilesReplotDialog(QDialog):
         self._catalog: list = []
         self._reload()
 
+    @staticmethod
+    def _fmt_error(exc: Exception) -> str:
+        """Render *exc* for a single status line, appending a StageUserError hint if present."""
+        hint = getattr(exc, "hint", None)
+        return f"{exc} — {hint}" if hint else str(exc)
+
     def _default_out_for(self, h5_path: str) -> str:
         if not h5_path:
             return ""
@@ -126,7 +134,7 @@ class ProfilesReplotDialog(QDialog):
             self._catalog = _pr.replot_catalog(self._h5_path, self._jobs)
         except Exception as exc:  # noqa: BLE001 — GUI reload: show status, never crash
             self._clim.set_groups([])
-            self._status.setText(f"cannot read: {exc}")
+            self._status.setText(f"cannot read: {self._fmt_error(exc)}")
             self._update_render_enabled()
             return
         vids = list(dict.fromkeys(v for e in self._catalog for v in e.fields))
@@ -171,19 +179,33 @@ class ProfilesReplotDialog(QDialog):
 
     # -- selection → core -----------------------------------------------------
     def _checked_jobs(self) -> list[dict]:
-        """Jobs to render: checked fields become the job's 'fields' override."""
+        """Jobs to render: checked fields become the job's 'fields' override.
+
+        Exception: a job whose original spec had no 'fields' key and whose
+        every child is checked is passed through unchanged (no 'fields' key
+        added), so render_replot's run-default ordering (``[ref] + sorted
+        others``) applies instead of tree order.
+        """
         out = []
         for i in range(self._tree.topLevelItemCount()):
             top = self._tree.topLevelItem(i)
-            vids = [
-                top.child(j).text(0)
-                for j in range(top.childCount())
-                if top.child(j).checkState(0) == Qt.CheckState.Checked
-            ]
-            if not vids:
+            n_children = top.childCount()
+            n_checked = sum(
+                1 for j in range(n_children) if top.child(j).checkState(0) == Qt.CheckState.Checked
+            )
+            if n_checked == 0:
                 continue
             ji = top.data(0, Qt.ItemDataRole.UserRole)
-            out.append({**self._jobs[ji], "fields": vids})
+            job = self._jobs[ji]
+            if "fields" not in job and n_checked == n_children:
+                out.append(job)
+                continue
+            vids = [
+                top.child(j).text(0)
+                for j in range(n_children)
+                if top.child(j).checkState(0) == Qt.CheckState.Checked
+            ]
+            out.append({**job, "fields": vids})
         return out
 
     def render_selection(self, out_dir):
@@ -195,6 +217,7 @@ class ProfilesReplotDialog(QDialog):
             self._clim.clim_by_group(),
             out_dir,
             dpi=int(self._dpi.value()),
+            params=self._params,
         )
         self.written = [
             p
@@ -217,7 +240,7 @@ class ProfilesReplotDialog(QDialog):
         try:
             written = self.render_selection(out_dir)
         except Exception as exc:  # noqa: BLE001 — surface render errors in the status bar
-            self._status.setText(f"render failed: {exc}")
+            self._status.setText(f"render failed: {self._fmt_error(exc)}")
             return
         res = self._last_result
         msg = f"wrote {len(written)} PNG(s) → {out_dir}"

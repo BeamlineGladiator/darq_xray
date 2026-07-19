@@ -1010,6 +1010,11 @@ def main() -> int:
     _dlg33 = _PRD33(_h5_33, _jobs33, style=None, out_default="")
     assert _dlg33._tree.topLevelItemCount() == 1
     assert _dlg33._render_btn.isEnabled()  # opens with fields checked
+    # F2: no "fields" key on the original job + all children checked -> pass
+    # the job through unchanged so run-default [ref] + sorted(others) ordering
+    # applies, instead of pinning tree order via an added "fields" key.
+    _checked33 = _dlg33._checked_jobs()
+    assert len(_checked33) == 1 and "fields" not in _checked33[0]
     _out33 = os.path.join(_tmp33, "replots")
     _written33 = _dlg33.render_selection(_out33)
     assert _written33 and all(os.path.exists(p) for p in _written33)

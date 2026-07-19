@@ -508,14 +508,18 @@ def replot_catalog(h5_path: str, jobs: list[dict]) -> list[ReplotJobEntry]:
     return entries
 
 
-def render_replot(h5_path, jobs, style, clim, out_dir, *, dpi=None):
+def render_replot(h5_path, jobs, style, clim, out_dir, *, dpi=None, params=None):
     """Re-render profile jobs cold with optional per-quantity colour limits.
 
     Appearance-only twin of a parameter-mode run: writes companion, overview
     and trace figures for *jobs* into *out_dir* — never CSVs. ``clim`` is a
     ``{key: (vmin, vmax)}`` mapping (field id first, colormap group fallback;
-    ``None``/missing keeps stored limits). ``dpi=None`` uses the stage's
-    ``fig_dpi`` default. Returns a ProfilesResult (jobs/skipped/notes).
+    ``None``/missing keeps stored limits). ``params`` (optional) is a dict of
+    stage param overrides (e.g. the form's current values) layered on top of
+    the stage defaults — this is how a replot honours the form's appearance
+    knobs (trace styling, line colour, reference field, DPI, ...); ``save_csv``
+    is always forced off regardless of what's in *params*. ``dpi``, if given,
+    wins over ``params["fig_dpi"]``. Returns a ProfilesResult (jobs/skipped/notes).
     """
     if not h5_path or not os.path.exists(h5_path):
         raise StageUserError(
@@ -527,7 +531,7 @@ def render_replot(h5_path, jobs, style, clim, out_dir, *, dpi=None):
             "no jobs to replot",
             hint="Check at least one job in the tree (jobs come from the form's Jobs JSON).",
         )
-    p = {**STAGE.defaults(), "save_csv": False}
+    p = {**STAGE.defaults(), **(params or {}), "save_csv": False}
     if dpi is not None:
         p["fig_dpi"] = int(dpi)
     os.makedirs(out_dir, exist_ok=True)
@@ -535,6 +539,9 @@ def render_replot(h5_path, jobs, style, clim, out_dir, *, dpi=None):
     used_stems: dict[str, int] = {}
     with h5py.File(h5_path, "r") as f:
         for ji, job in enumerate(jobs):
+            if not isinstance(job, dict) or "name" not in job:
+                result.skipped.append(f"job {ji}: malformed job spec")
+                continue
             name, pin_note = resolve_job_slice_name(f, job["name"], job.get("offset_um", 0.0))
             if pin_note:
                 result.notes.append(pin_note)

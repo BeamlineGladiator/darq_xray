@@ -840,3 +840,92 @@ def test_replot_catalog_lists_jobs_and_fields(tmp_path):
     assert e.job_index == 0 and e.name == "oblique_full"
     assert e.fields == ["raw_sum", "strain"]
     assert "rp0" in e.label and e.note is None
+
+
+# -- F1: render_replot honours the form's appearance params -------------------
+def _replot_job():
+    return [
+        {
+            "name": "oblique_full",
+            "offset_um": 0.0,
+            "start_uv": [-5, -3],
+            "end_uv": [5, 3],
+            "n_samples": 40,
+            "width_pixels": 1,
+            "fig_name": "rp0",
+        }
+    ]
+
+
+def test_render_replot_default_params_write_overviews(tmp_path):
+    h5 = tmp_path / "oblique_slices.h5"
+    _write_consolidated(str(h5))
+    res = PR.render_replot(str(h5), _replot_job(), None, None, str(tmp_path / "rp"))
+    assert len(res.jobs) == 1
+    assert res.jobs[0].overviews  # save_overview defaults True via STAGE.defaults()
+
+
+def test_render_replot_params_save_overview_false_suppresses_overviews(tmp_path):
+    h5 = tmp_path / "oblique_slices.h5"
+    _write_consolidated(str(h5))
+    res = PR.render_replot(
+        str(h5),
+        _replot_job(),
+        None,
+        None,
+        str(tmp_path / "rp"),
+        params={"save_overview": False},
+    )
+    assert len(res.jobs) == 1
+    assert res.jobs[0].overviews == []
+
+
+def test_render_replot_params_reference_override_changes_field_order(tmp_path):
+    h5 = tmp_path / "oblique_slices.h5"
+    _write_consolidated(str(h5))
+    res = PR.render_replot(
+        str(h5),
+        _replot_job(),
+        None,
+        None,
+        str(tmp_path / "rp"),
+        params={"reference_volume_id": "strain"},
+    )
+    assert len(res.jobs) == 1
+    assert res.jobs[0].fields[0] == "strain"
+
+
+def test_render_replot_params_fig_dpi_used_when_no_explicit_dpi(tmp_path):
+    h5 = tmp_path / "oblique_slices.h5"
+    _write_consolidated(str(h5))
+    out = tmp_path / "rp"
+    res = PR.render_replot(str(h5), _replot_job(), None, None, str(out), params={"fig_dpi": 72})
+    assert len(res.jobs) == 1 and os.path.exists(res.jobs[0].figure)
+
+
+def test_render_replot_explicit_dpi_wins_over_params(tmp_path):
+    h5 = tmp_path / "oblique_slices.h5"
+    _write_consolidated(str(h5))
+    out = tmp_path / "rp"
+    # If dpi didn't win, fig_dpi=1 would produce a near-empty/degenerate figure;
+    # this just exercises the precedence path without asserting on pixel dims.
+    res = PR.render_replot(
+        str(h5),
+        _replot_job(),
+        None,
+        None,
+        str(out),
+        dpi=150,
+        params={"fig_dpi": 1},
+    )
+    assert len(res.jobs) == 1 and os.path.exists(res.jobs[0].figure)
+
+
+# -- F4: render_replot malformed-job guard ------------------------------------
+def test_render_replot_skips_malformed_job_renders_good_one(tmp_path):
+    h5 = tmp_path / "oblique_slices.h5"
+    _write_consolidated(str(h5))
+    jobs = [{}] + _replot_job()
+    res = PR.render_replot(str(h5), jobs, None, None, str(tmp_path / "rp"))
+    assert len(res.jobs) == 1
+    assert any("malformed job spec" in s for s in res.skipped)

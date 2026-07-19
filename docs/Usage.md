@@ -903,6 +903,20 @@ profiles run in the current session is not required (cold-start).
    does — see [Pinned planes (fast re-runs)](#pinned-planes-fast-re-runs); the
    substitution is reported in the dialog's status line after rendering.
 
+The dialog honours the form's current **appearance** knobs — trace styling
+(aspect, width, line width/colour, font scale), the overview **line colour**,
+the **reference field**, and **DPI** — so a replot looks like the form is set
+up, not like the stage defaults; the **save-toggles**
+(`save_companion`/`save_traces`/`save_overview`) are deliberately not passed
+through, since a replot always writes all three figure kinds regardless of
+what the form's Output group is set to.
+
+A job whose `"fields"` override names only ids **absent** from this file (a
+reference-only job in a run — see
+[[#Jobs JSON: per-job `fields` and `reference`]]) opens with every child
+unchecked and is skipped if left that way; there is nothing to re-render for
+it here — run the stage itself to reproduce that job's reference-only output.
+
 ### 9. Rocking-matched layers (`matched`)
 
 For each strain layer, find the nearest rocking scan by `(samy, samz)`, load a
