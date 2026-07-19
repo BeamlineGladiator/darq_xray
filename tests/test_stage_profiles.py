@@ -605,3 +605,70 @@ def test_companion_map_legacy_scale_bar_unchanged():
     ax_img = fig.axes[0]
     assert any(isinstance(p, Rectangle) for p in ax_img.patches)
     assert not _offsetbox_artists(ax_img)
+
+
+# -- fixed-scale overview vs. pinned companion --------------------------------
+def test_render_single_overview_fits_fixed_scale(tmp_path, monkeypatch):
+    """The standalone overview map is fitted to the fixed physical scale.
+
+    A PNG-existence check alone can't fail if the fit call is later deleted, so
+    this spies on profiles.fit_axes_to_box (patched where profiles.py looks it
+    up, i.e. dfxm.stages.profiles.fit_axes_to_box) to assert it is called
+    exactly once with the expected target box when the knob is set, and not at
+    all when it's unset — pinning the companion-path fidelity from the run side
+    too.
+    """
+    from dfxm.common.plotting import PlotStyle
+
+    ref, _fields, geom = _companion_inputs()
+    u_um, v_um = ref[1], ref[2]
+    ext_u = float(u_um[-1] - u_um[0])
+    ext_v = float(v_um[-1] - v_um[0])
+    scale = 50.0
+    expected_w = ext_u / scale / 2.54
+    expected_h = ext_v / scale / 2.54
+
+    calls = []
+    real_fit = PR.fit_axes_to_box
+
+    def spy(fig, ax, w_in, h_in, *args, **kwargs):
+        calls.append((w_in, h_in))
+        return real_fit(fig, ax, w_in, h_in, *args, **kwargs)
+
+    monkeypatch.setattr(PR, "fit_axes_to_box", spy)
+
+    style = PlotStyle(scale_um_per_cm=scale)
+    out = str(tmp_path / "ov.png")
+    PR.render_single(ref, geom, "red", out, "hdr", 100, style=style)
+    assert os.path.exists(out)
+    assert len(calls) == 1
+    w_in, h_in = calls[0]
+    assert w_in == pytest.approx(expected_w, abs=1e-6)
+    assert h_in == pytest.approx(expected_h, abs=1e-6)
+
+    # knob off: fit_axes_to_box must NOT be called (legacy path stays unfitted)
+    calls.clear()
+    out2 = str(tmp_path / "ov_unfit.png")
+    PR.render_single(ref, geom, "red", out2, "hdr", 100, style=PlotStyle())
+    assert os.path.exists(out2)
+    assert calls == []
+
+
+def test_companion_map_panel_bar_geometry_unchanged_by_scale_knob():
+    """The multi-panel companion is NOT fitted: setting scale_um_per_cm must not
+    change the map panel's scale-bar geometry (it keeps today's data-fraction
+    thickness), because build_companion_figure never forwards
+    fixed_scale_um_per_cm to _draw_reference_image."""
+    from matplotlib.patches import Rectangle
+
+    from dfxm.common.plotting import PlotStyle
+
+    ref, fields, geom = _companion_inputs()
+    style = PlotStyle(scale_um_per_cm=50.0, scale_bar_thickness_pt=3.0)
+    fig = PR.build_companion_figure(ref, fields, geom, "cyan", style=style)
+    ax_img = fig.axes[0]
+    yr = ax_img.get_ylim()[1] - ax_img.get_ylim()[0]
+    box = _offsetbox_artists(ax_img)[0]
+    bar = next(p for p in _offsetbox_children(box) if isinstance(p, Rectangle))
+    # companion is NOT fitted: bar height stays the data-fraction geometry
+    assert bar.get_height() == pytest.approx(abs(yr) * 0.004 * 3.0)

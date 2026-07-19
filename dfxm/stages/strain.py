@@ -39,6 +39,8 @@ from ..common.plotting import (
     build_histogram,
     draw_scale_bar,
     figure_size,
+    fit_axes_to_box,
+    fixed_scale_box,
     physical_extent,
     resolve_cmap,
     style_from_params,
@@ -377,12 +379,16 @@ def build_strain_map(
         vmin, vmax, _ = apply_round_clim(vmin, vmax, style)
 
     ny, nx = strain.shape
+    box = fixed_scale_box(style, nx * px, ny * py) if style is not None else None
     legacy_figsize = (7, 7 * (ny * py) / (nx * px) + 1.5)
-    figsize = (
-        (figure_size(style, nx * px, ny * py) or legacy_figsize)
-        if style is not None
-        else legacy_figsize
-    )
+    if box is not None:
+        figsize = (box[0] + 1.5, box[1] + 1.5)  # headroom; fit_axes_to_box converges regardless
+    else:
+        figsize = (
+            (figure_size(style, nx * px, ny * py) or legacy_figsize)
+            if style is not None
+            else legacy_figsize
+        )
 
     fig = styled_figure(figsize, styled=style is not None)
     ax = fig.add_subplot(111)
@@ -407,8 +413,15 @@ def build_strain_map(
         add_colorbar(fig, im, ax, "Strain (ε)", style, group="strain")
         apply_text_scale(ax, style)
         if style.scale_bar:
-            draw_scale_bar(ax, style.scale_bar_length_um, style=style)
+            draw_scale_bar(
+                ax,
+                style.scale_bar_length_um,
+                style=style,
+                fixed_scale_um_per_cm=(box[2] if box is not None else None),
+            )
 
+    if box is not None:
+        fit_axes_to_box(fig, ax, box[0], box[1])
     return fig
 
 

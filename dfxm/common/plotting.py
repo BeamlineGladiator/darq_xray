@@ -10,6 +10,7 @@ explicit :class:`~matplotlib.figure.Figure` API instead and save via
 from __future__ import annotations
 
 import json
+import logging
 import math
 from dataclasses import dataclass, fields
 
@@ -21,6 +22,8 @@ from matplotlib.ticker import FuncFormatter
 from .cmaps import register as _register_fast_cmap
 
 _register_fast_cmap()
+
+_log = logging.getLogger(__name__)
 
 # Colormap quantity groups + the curated dropdown list (shared by the GUI).
 CMAP_GROUPS: tuple[str, ...] = ("mosa_com", "mosa_fwhm", "strain", "raw")
@@ -96,6 +99,9 @@ class PlotStyle:
     round_clim: bool = False  # round auto colour limits outward to nice values
     # figure
     figure_width: str | float = "auto"  # "single" | "double" | "auto" | width in inches
+    # fixed physical scale for MAP figures: µm of data per cm of page. None/blank = off.
+    # When set (>0), figure_width is ignored for maps (trace figures keep it).
+    scale_um_per_cm: float | None = None
     # output
     formats: tuple[str, ...] = ("png",)
     dpi: int = 300
@@ -239,6 +245,92 @@ def figure_size(style: PlotStyle, ext_x: float, ext_y: float) -> tuple[float, fl
         return None
     aspect = (ext_y / ext_x) if ext_x else 1.0
     return (float(w), float(w) * aspect + 1.0)
+
+
+_MAX_FIXED_SIDE_IN = 30.0  # sanity cap: a typo scale must not request a 47k-pixel render
+
+
+def fixed_scale(style: "PlotStyle | None") -> float | None:
+    """Defensively read ``style.scale_um_per_cm``: a positive finite float, else None.
+
+    Stale persisted styles may carry strings or nonsense — degrade to None
+    (today's behaviour), matching the other style-field guards. Never raises.
+    """
+    if style is None:
+        return None
+    v = getattr(style, "scale_um_per_cm", None)
+    if v is None or v == "":
+        return None
+    try:
+        v = float(v)
+    except (TypeError, ValueError):
+        return None
+    return v if (v > 0 and math.isfinite(v)) else None
+
+
+def fixed_scale_box(
+    style: "PlotStyle | None", ext_x_um: float, ext_y_um: float
+) -> tuple[float, float, float] | None:
+    """Target axes-box (w_in, h_in, effective_um_per_cm) for fixed-scale mode.
+
+    Returns None when the knob is off or the extents are degenerate (skip
+    fitting). Sides are clamped to 30 in preserving aspect — the scale is
+    effectively raised and a warning logged, never an exception.
+    """
+    s = fixed_scale(style)
+    if s is None:
+        return None
+    if not (math.isfinite(ext_x_um) and math.isfinite(ext_y_um)) or ext_x_um <= 0 or ext_y_um <= 0:
+        return None
+    w, h = ext_x_um / s / 2.54, ext_y_um / s / 2.54
+    m = max(w, h)
+    if m > _MAX_FIXED_SIDE_IN:
+        f = _MAX_FIXED_SIDE_IN / m
+        w, h, s = w * f, h * f, s / f
+        _log.warning(
+            "fixed-scale box clamped to %.0f in per side; effective scale raised to %.4g um/cm",
+            _MAX_FIXED_SIDE_IN,
+            s,
+        )
+    return (w, h, s)
+
+
+def fit_axes_to_box(fig, ax, w_in: float, h_in: float, tol_in: float = 0.02, max_iter: int = 3):
+    """Resize *fig* until *ax*'s box is (w_in, h_in) inches, within *tol_in*.
+
+    Draws, measures ``ax.get_window_extent()``, and corrects the figure size
+    ADDITIVELY by the miss (decorations are constant in inches, so the first
+    correction is nearly exact; the loop is insurance). The target box must
+    have the data aspect so aspect="equal" does not fight the fit. Returns
+    True on convergence; non-convergence keeps the last size, logs, and
+    returns False — never fatal.
+    """
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+
+    if fig.canvas is None or not hasattr(fig.canvas, "get_renderer"):
+        FigureCanvasAgg(fig)
+    for _ in range(max(1, int(max_iter))):
+        fig.canvas.draw()
+        bb = ax.get_window_extent(fig.canvas.get_renderer())
+        cur_w, cur_h = bb.width / fig.dpi, bb.height / fig.dpi
+        dw, dh = w_in - cur_w, h_in - cur_h
+        if abs(dw) <= tol_in and abs(dh) <= tol_in:
+            return True
+        fw, fh = fig.get_size_inches()
+        fig.set_size_inches(max(fw + dw, 0.5), max(fh + dh, 0.5), forward=False)
+    _log.info(
+        "fit_axes_to_box: miss > %.3f in after %d iterations (kept last size)", tol_in, max_iter
+    )
+    return False
+
+
+def finalize_fixed_scale(
+    fig, ax, style: "PlotStyle | None", ext_x_um: float, ext_y_um: float
+) -> None:
+    """Fit *ax* to the fixed-scale target box when the knob is on; else no-op."""
+    box = fixed_scale_box(style, ext_x_um, ext_y_um)
+    if box is not None:
+        fit_axes_to_box(fig, ax, box[0], box[1])
 
 
 def symmetric_limits(data: np.ndarray, percentile: float | None = None) -> tuple[float, float]:
@@ -416,7 +508,13 @@ def apply_text_scale(ax, style: "PlotStyle") -> None:
         )
 
 
-def draw_scale_bar(ax, length_um: float | None = None, *, style: "PlotStyle") -> None:
+def draw_scale_bar(
+    ax,
+    length_um: float | None = None,
+    *,
+    style: "PlotStyle",
+    fixed_scale_um_per_cm: float | None = None,
+) -> None:
     """Draw a µm scale bar (label centred over the bar, optional background box).
 
     *ax* must use data coordinates in microns. ``length_um=None`` auto-sizes.
@@ -426,6 +524,14 @@ def draw_scale_bar(ax, length_um: float | None = None, *, style: "PlotStyle") ->
     background box hugs its content at any ``font_scale`` (exact even under
     constrained layout, whose axes positions are only final at first draw),
     and the ``VPacker`` centres label and bar on each other by construction.
+
+    ``fixed_scale_um_per_cm`` is opt-in per call: when given a positive value,
+    the bar height is pinned to ``scale_bar_thickness_pt`` in TRUE printed
+    points at that known µm-per-cm scale, instead of a fraction of the axes'
+    Y extent. Only callers that have actually fit the axes to a physical page
+    size (so the axes' data-to-page scale really is that value) may pass it —
+    passing it for an un-fitted axes draws a bar with the wrong thickness.
+    Leave it ``None`` (the default) for the legacy auto-scaled geometry.
     """
     from matplotlib.font_manager import FontProperties
     from matplotlib.offsetbox import AnchoredOffsetbox, AuxTransformBox, TextArea, VPacker
@@ -435,11 +541,16 @@ def draw_scale_bar(ax, length_um: float | None = None, *, style: "PlotStyle") ->
     y0, y1 = ax.get_ylim()
     xr, yr = (x1 - x0), (y1 - y0)
     sl = length_um if length_um is not None else auto_scale_bar_length_um(abs(xr))
-    # Bar height in data coords: 0.004·thickness_pt·|yr| (≈0.012·|yr| at the
-    # default thickness_pt=3.0) — unchanged from the previous hand-rolled
-    # geometry; close to, but NOT byte-identical to, the pre-export legacy bar
-    # (which used 0.01·|yr| and 50/10/1 length rounding).
-    bh = abs(yr) * 0.004 * style.scale_bar_thickness_pt
+    if fixed_scale_um_per_cm is not None and fixed_scale_um_per_cm > 0:
+        # Fixed-scale mode: bar height = thickness in TRUE points at the known scale
+        # (1 pt = 2.54/72 cm of page = that many cm x um-per-cm of data).
+        bh = style.scale_bar_thickness_pt * (2.54 / 72.0) * float(fixed_scale_um_per_cm)
+    else:
+        # Bar height in data coords: 0.004·thickness_pt·|yr| (≈0.012·|yr| at the
+        # default thickness_pt=3.0) — unchanged from the previous hand-rolled
+        # geometry; close to, but NOT byte-identical to, the pre-export legacy bar
+        # (which used 0.01·|yr| and 50/10/1 length rounding).
+        bh = abs(yr) * 0.004 * style.scale_bar_thickness_pt
     # Floor guards the pad division below (and FontProperties) against
     # font_scale/label_scale = 0 from hand-written or stale persisted styles.
     label_size = max(10.0 * style.font_scale * style.scale_bar_label_scale, 0.1)

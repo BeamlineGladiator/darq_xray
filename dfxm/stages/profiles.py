@@ -40,6 +40,8 @@ from ..common.plotting import (
     add_colorbar,
     apply_text_scale,
     draw_scale_bar,
+    fit_axes_to_box,
+    fixed_scale_box,
     style_from_params,
     styled_figure,
 )
@@ -521,7 +523,16 @@ def _scale_bar(ax, color="black"):
 
 
 def _draw_reference_image(
-    ax, plane2d, u_um, v_um, attrs, line_color, geom=None, title=None, style=None
+    ax,
+    plane2d,
+    u_um,
+    v_um,
+    attrs,
+    line_color,
+    geom=None,
+    title=None,
+    style=None,
+    fixed_scale_um_per_cm=None,
 ):
     extent = [float(u_um[0]), float(u_um[-1]), float(v_um[0]), float(v_um[-1])]
     vmin, vmax = attrs["vmin"], attrs["vmax"]
@@ -561,7 +572,12 @@ def _draw_reference_image(
     if style is None:
         _scale_bar(ax)  # legacy look, pinned
     elif style.scale_bar:
-        draw_scale_bar(ax, style.scale_bar_length_um, style=style)
+        draw_scale_bar(
+            ax,
+            style.scale_bar_length_um,
+            style=style,
+            fixed_scale_um_per_cm=fixed_scale_um_per_cm,
+        )
     return im
 
 
@@ -715,7 +731,11 @@ def build_trace_figure(
 
 def render_single(ref, geom, line_color, out_png, header, dpi, style=None):
     plane, u_um, v_um, attrs, label = ref
-    fig = styled_figure((11, 9), styled=style is not None)
+    ext_u = float(u_um[-1] - u_um[0])
+    ext_v = float(v_um[-1] - v_um[0])
+    box = fixed_scale_box(style, ext_u, ext_v)
+    figsize = (box[0] + 1.5, box[1] + 1.5) if box is not None else (11, 9)
+    fig = styled_figure(figsize, styled=style is not None)
     ax = fig.add_subplot(111)
     im = _draw_reference_image(
         ax,
@@ -727,6 +747,7 @@ def render_single(ref, geom, line_color, out_png, header, dpi, style=None):
         geom=geom,
         title=f"{header}\nreference: {label}",
         style=style,
+        fixed_scale_um_per_cm=(box[2] if box is not None else None),
     )
     if style is None:
         fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04).set_label(attrs["cbar_label"])
@@ -736,6 +757,8 @@ def render_single(ref, geom, line_color, out_png, header, dpi, style=None):
                 fig, im, ax, attrs["cbar_label"], style, group=GROUP_BY_KIND.get(attrs.get("kind"))
             )
         apply_text_scale(ax, style)
+    if box is not None:
+        fit_axes_to_box(fig, ax, box[0], box[1])
     fig.savefig(out_png, dpi=dpi, facecolor="white", edgecolor="none", bbox_inches="tight")
 
 

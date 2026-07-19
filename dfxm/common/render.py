@@ -23,6 +23,8 @@ from .plotting import (
     apply_text_scale,
     draw_scale_bar,
     figure_size,
+    fit_axes_to_box,
+    fixed_scale_box,
     get_cmap,
     styled_figure,
 )
@@ -47,7 +49,11 @@ def layer_figure(
     font differ slightly); see ``draw_scale_bar``/``add_colorbar``.
     """
     st = style if style is not None else PlotStyle(scale_bar_color="black", colorbar_fraction=0.046)
-    figsize = (figure_size(st, ext_x, ext_y) or (12, 10)) if style is not None else (12, 10)
+    box = fixed_scale_box(st, ext_x, ext_y) if style is not None else None
+    if box is not None:
+        figsize = (box[0] + 1.5, box[1] + 1.5)  # headroom; fit_axes_to_box converges regardless
+    else:
+        figsize = (figure_size(st, ext_x, ext_y) or (12, 10)) if style is not None else (12, 10)
     fig = styled_figure(figsize, styled=style is not None)
     ax = fig.add_subplot(111)
     im = ax.imshow(
@@ -64,8 +70,15 @@ def layer_figure(
     if st.colorbar:
         add_colorbar(fig, im, ax, cbar_label, st, group=group)
     if st.scale_bar:
-        draw_scale_bar(ax, st.scale_bar_length_um, style=st)
+        draw_scale_bar(
+            ax,
+            st.scale_bar_length_um,
+            style=st,
+            fixed_scale_um_per_cm=(box[2] if box is not None else None),
+        )
     apply_text_scale(ax, st)
+    if box is not None:
+        fit_axes_to_box(fig, ax, box[0], box[1])
     return fig, ax, im
 
 

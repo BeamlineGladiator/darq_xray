@@ -279,6 +279,21 @@ selected layers directly from a `stacked_strain_volumes.h5` — a prior run in
 the current session is not required (cold-start). Use **Browse…** / **Load** to
 point at a different file.
 
+The dialog is **planes-first**, same panel as the slices stage's Replot dialog
+(see [Replotting slices without re-running](#replotting-slices-without-re-running)
+for the full filter/check-all mechanics): the left panel lists each layer
+**once** (there are no slice-group sections here — strain/mosaicity/rocking
+layers are a flat list); the right panel lists **quantities**, one checkbox per
+`ReplotGroup` returned by `replot_catalog` (strain has a single quantity, so one
+checkbox). Both open **everything checked**, so a plain **Render** remakes every
+layer × every quantity; type in the **Filter** box (bare integers match a layer
+number, signed/decimal values match the nearest `Z=…` offset when the layer
+labels carry one) to narrow which rows are *visible* — it never changes what's
+checked — then **Check all visible** to select exactly that subset. **Render**
+is disabled while nothing is selected. A checked layer that doesn't exist for a
+checked quantity is silently skipped rather than erroring; the status line
+reports `skipped N combo(s)` after rendering.
+
 `strain.replot_catalog(h5_path)` reads a `stacked_strain_volumes.h5` and returns
 a single `ReplotGroup` (key `"strain"`) with one item per stored layer (names
 come from `source_folders` in the file's attributes).
@@ -306,12 +321,12 @@ is passed to the core as a `{kind: (vmin, vmax)}` mapping.
 > re-applied here unless you pass `params={"roi": "r0,r1,c0,c1", …}`. For exact
 > axis reproduction, pass the original `params` dict rather than a pixel crop.
 > The ROI crop is bounded by the stored data dimensions — values outside the
-> array shape are clamped silently. To make those bounds visible, each group /
-> slice node in the replot tree is labelled with its stored pixel size,
-> e.g. `120×256 px (Y×X)`, so you can read off the valid range: rows `r0:r1` ∈
-> `[0, Y]`, cols `c0:c1` ∈ `[0, X]`. (For strain and rocking that size is the
-> run's already-ROI-cropped layer — i.e. the largest region a replot crop can
-> reach; a wider frame needs a re-run.)
+> array shape are clamped silently. To make those bounds visible, each
+> **quantity** row in the right-hand panel is labelled with its stored pixel
+> size, e.g. `120×256 px (Y×X)`, so you can read off the valid range: rows
+> `r0:r1` ∈ `[0, Y]`, cols `c0:c1` ∈ `[0, X]`. (For strain and rocking that size
+> is the run's already-ROI-cropped layer — i.e. the largest region a replot crop
+> can reach; a wider frame needs a re-run.)
 
 > [!tip] Picking an ROI interactively
 > Click **Pick ROI…** (beside the four pixel boxes) to open a visual picker that
@@ -341,15 +356,25 @@ re-renders selected layers directly from a `stacked_volumes.h5` — a prior run
 in the current session is not required (cold-start). Use **Browse…** / **Load**
 to point at a different file.
 
+The dialog is the same **planes-first** panel described under
+[Replotting strain layers without re-running](#replotting-strain-layers-without-re-running):
+layers are listed **once** on the left (flat, no sections); each dataset (χ/μ
+CoM and FWHM) is a **quantity** checkbox on the right. Both open **everything
+checked**; the **Filter** box narrows which layer rows are visible without
+changing what's checked, and **Check all visible** selects exactly the filtered
+subset. **Render** is disabled while nothing is selected, and a checked layer
+missing from one dataset is skipped (reported, not an error).
+
 `mosaicity.replot_catalog(h5_path)` enumerates the 3-D datasets present in a
 `stacked_volumes.h5` and returns one `ReplotGroup` per dataset (χ/μ CoM and
 FWHM). `mosaicity.render_replot(h5_path, selections, style, clim, out_dir, roi=None, params=None)`
 re-renders selected layers cold from disk. PNGs are written under
 `{out_dir}/{stem}/` (e.g. `chi_com/chi_com_layer_0000.png`). An optional
-pixel-bounds ROI crops each layer (bounded by the stored data dimensions — the
-tree labels each group with its stored pixel size, e.g. `120×256 px (Y×X)`, as
-the crop bound); the colour limits are set **per dataset** — the dialog shows a
-separate vmin/vmax row for χ/μ **Center of mass** and for **FWHM**, so the two
+pixel-bounds ROI crops each layer (bounded by the stored data dimensions — each
+quantity row on the right is labelled with its stored pixel size, e.g.
+`120×256 px (Y×X)`, as the crop bound); the colour limits are set **per dataset**
+— the dialog shows a separate vmin/vmax row for χ/μ **Center of mass** and for
+**FWHM**, so the two
 (which live on very different scales) get independent limits. `clim` reaches the
 core as a `{dataset_key: (vmin, vmax)}` mapping (either entry may be `None`; a
 dataset with both blank keeps its auto limits). When an ROI crop is applied the
@@ -412,14 +437,24 @@ selected layers directly from an `aligned_raw_rocking_volumes.h5` (or
 `aligned_raw_mosa_volumes.h5`) — a prior run in the current session is not
 required (cold-start). Use **Browse…** / **Load** to point at a different file.
 
+The dialog is the same **planes-first** panel described under
+[Replotting strain layers without re-running](#replotting-strain-layers-without-re-running):
+layers are listed **once** on the left (flat, no sections); `sum_intensity` and
+`specific_frame` are separate **quantity** checkboxes on the right. Both open
+**everything checked**; the **Filter** box narrows which layer rows are visible
+without changing what's checked, and **Check all visible** selects exactly the
+filtered subset. **Render** is disabled while nothing is selected, and a
+checked layer missing from one product is skipped (reported, not an error).
+
 `rocking.replot_catalog(h5_path)` enumerates the 3-D datasets present and returns
 one `ReplotGroup` per dataset (`sum_intensity` and `specific_frame`).
 `rocking.render_replot(h5_path, selections, style, clim, out_dir, roi=None, params=None)`
 re-renders selected layers cold from disk. PNGs are written under
 `{out_dir}/{key}/` (e.g. `sum_intensity/sum_intensity_layer_0000.png`). An
 optional pixel-bounds ROI crops each layer (bounded by the stored data
-dimensions — the tree labels each product with its stored pixel size, e.g.
-`120×256 px (Y×X)`, as the crop bound); the colour limits are set **per product**
+dimensions — each quantity row on the right is labelled with its stored pixel
+size, e.g. `120×256 px (Y×X)`, as the crop bound); the colour limits are set
+**per product**
 — the dialog shows a separate vmin/vmax row for `sum_intensity` and for
 `specific_frame`. `clim` reaches the core as a `{product_key: (vmin, vmax)}`
 mapping (either entry may be `None`; a product with both blank keeps its
@@ -497,13 +532,15 @@ Cut arbitrary planes (defined in physical µm, optionally swept along the normal
 through the aligned volumes — all in one world frame so the slices co-register.
 
 - **Input:** stacked volumes + the aligned rocking volume + (optionally) the aligned mosa volume (`aligned_raw_mosa_volumes.h5` from the rocking stage run with Source scan = mosaicity).
-- **Output:** `oblique_slices.h5` (consumed by [[#8. Line profiles (`profiles`)|profiles]]) + a PNG per plane. Per-plane PNGs are written into one subfolder per slice direction: `<output_dir>/<slice name>/`. For example, a slice named `oblique` produces `<output_dir>/oblique/mosa_com_chi.png`, etc.
+- **Output:** `oblique_slices.h5` (consumed by [[#8. Line profiles (`profiles`)|profiles]]) + a PNG per plane. Per-plane PNGs are written into one subfolder per slice direction: `<output_dir>/<slice name>/`. For example, a slice named `oblique` produces `<output_dir>/oblique/mosa_com_chi.png`, etc. Slice PNGs honour the publication-style "Scale (µm/cm)" field once it's set — the map renders at a fixed physical scale instead of a fixed figure size (full knob documentation lands with the GUI field).
 
 **Essentials:** three volume files, raw root, slices JSON, output dir
 
 | Param | Meaning |
 |---|---|
 | `slices_json` | a JSON list of plane specs (see below) |
+| `use_pinned` | run only the planes in `pinned_slices_json` instead of the full sweep — see [[#Pinned planes (fast re-runs)]] |
+| `pinned_slices_json` | JSON list of pinned single-plane specs, normally written by **Pin planes…**; only used when `use_pinned` is ticked |
 | `include_*` | which volumes to slice (χ/μ CoM/FWHM, strain, raw rocking sum/specific, mosa-scan sum/specific) |
 | `aligned_mosa_file` | path to `aligned_raw_mosa_volumes.h5`; leave blank to skip the mosa raw fields |
 | `include_mosa_sum` | slice the mosa-scan summed intensity (mapped to the "raw" colour group) |
@@ -586,7 +623,53 @@ through the aligned volumes — all in one world frame so the slices co-register
 > [[#8. Line profiles (`profiles`)|profiles]] stage selects the same way — a job's
 > `offset_um` picks the nearest plane in the swept slice group (within
 > `offset_tol_um`), so you can also feed that offset straight to a profile job
-> without re-slicing.
+> without re-slicing. The **Pinned planes (fast re-runs)** feature below
+> supersedes hand-copying this JSON into `slices_json` — it stores the pinned
+> spec in its own field and re-runs without touching the sweep.
+
+#### Pinned planes (fast re-runs)
+
+Once you've swept a set of planes and found the ones worth keeping, re-rendering
+only those is much faster than re-running the full sweep, and it can't clobber
+the sweep's output file:
+
+1. Run the stage once with a sweep in `slices_json` (as above) — this produces
+   `oblique_slices.h5`.
+2. Click **Pin planes…** on the slices stage panel. The **Slices file** field
+   pre-fills from the current form (the same chained-output path the
+   **Replot…** button uses); **Browse…**/**Load** point it at a different file.
+   The dialog lists every plane found in the file, one row per `(slice group,
+   plane index)` — grouped under its slice-group name — using the same
+   integer/decimal **Filter** box as the Replot dialogs. Unlike Replot,
+   **planes start unchecked**: pinning means picking exactly the planes you
+   want, not "everything by default". Tick the planes to keep (or filter down
+   first, then **Check all visible**).
+3. Click **OK**. For each checked plane the dialog reads that plane's exact
+   stored geometry (`normal`/`origin`/`up`/`half_u`/`half_v`/`du`/`dv`,
+   snapped to the nearest stored offset) via `build_pinned_spec` and writes
+   the resulting JSON straight into the **Pinned planes (JSON)** field
+   (`pinned_slices_json`, under the "Pinned planes" advanced group) — and
+   ticks **Run pinned planes only** (`use_pinned`) for you. Nothing is
+   checked → **OK** shows an inline "no planes checked" status and the dialog
+   stays open; an unreadable file or unknown slice name shows the error
+   inline the same way — either case leaves the form untouched. **Cancel**
+   also leaves the form untouched.
+4. Click **Run**. The sweep in `slices_json` is left untouched and ignored —
+   the run log and Results notes show a loud `PINNED RUN: rendering N pinned
+   plane(s)` line.
+5. While `use_pinned` is on and the output filename is still the stage
+   default, the run writes to `oblique_slices_pinned.h5` instead of
+   `oblique_slices.h5` — a clobber guard so a fast pinned re-run never
+   overwrites the full sweep file that
+   [[#8. Line profiles (`profiles`)|profiles]] reads. Set an explicit
+   **Output filename** to override (an edited name is always respected).
+
+Untick **Run pinned planes only** to go back to running the full sweep in
+`slices_json` — the pinned JSON stays in the field, ready to re-tick later.
+
+`pinned_slices_json` empty or invalid while `use_pinned` is ticked raises a
+clear error (with a hint to open **Pin planes…** or untick the toggle) rather
+than silently running the sweep or an empty output.
 
 #### Replotting slices without re-running
 
@@ -597,10 +680,31 @@ current session is not required. It works from a cold start or after a restart.
 1. Click **Replot…** on the slices stage panel.
 2. The file field pre-fills from the current form values; click **Browse…** or
    type a path and **Load** to use a different file.
-3. The tree opens with **everything checked**, so a plain **Render** remakes
-   every volume/slice/plane. **Untick** anything you don't want (or use
-   **Deselect all** then tick a subset). *(This all-checked default applies to
-   the strain/mosaicity/rocking Replot dialogs too.)*
+3. The left panel lists each **plane once** — one row per `(slice group, plane
+   index)`, e.g. `p001  +1.00 µm` — grouped under its slice-group name when the
+   file has more than one such group (a union across whichever volumes contain
+   that plane, not a per-volume duplicate). The right panel lists **quantities**
+   (one checkbox per distinct volume present in the file). Both open with
+   **everything checked**, so a plain **Render** remakes every plane × every
+   quantity. *(This all-checked default applies to the strain/mosaicity/rocking
+   Replot dialogs too.)*
+   - Type in the **Filter** box to narrow which plane rows are *visible* — it
+     never changes what's checked. Bare integers match a plane number (e.g.
+     `118`); signed or decimal values match the nearest plane by µm offset,
+     within half the sweep's step size (e.g. `-3.7`); comma-separate several
+     tokens to match more than one plane at once. A **no match** hint appears
+     when a non-blank filter hides every row.
+   - **Check all** / **Uncheck all** act on every plane row regardless of the
+     filter; **Check all visible** checks only the rows the current filter
+     shows (handy for "filter down to a subset, then select exactly that
+     subset"). Untick individual rows, or a quantity checkbox, to narrow
+     further.
+   - **Render** is disabled while nothing is selected (no checked planes, or —
+     since quantities matter here — no checked quantities).
+   - A checked plane that doesn't exist for a checked quantity (e.g. a
+     slice group present in one volume but not another) is silently skipped
+     rather than erroring; the status line reports `skipped N combo(s)` after
+     rendering.
 4. Optionally override the stored colour limits **per quantity**. The dialog
    shows one **vmin** / **vmax** row for each distinct volume present in the
    file, in first-seen order — χ and μ components of mosaicity are separate
@@ -608,14 +712,19 @@ current session is not required. It works from a cold start or after a restart.
    variant (`raw_sum`, `raw_specific`, `raw_mosa_sum`, `raw_mosa_specific`) is
    its own row. Leave a row's boxes blank to keep the limits stored in the HDF5.
 5. Optionally enter an **ROI crop** as four pixel-index integers (**r0**, **r1**,
-   **c0**, **c1**) to restrict each plane to a sub-region. Each slice node in the
-   tree is labelled with its stored plane pixel size, e.g. `7×9 px (Y×X)`, so the
-   valid range is visible: rows `r0:r1` ∈ `[0, nv]`, cols `c0:c1` ∈ `[0, nu]`.
-   Leave all four boxes blank for the full image. Partial fills (some boxes
-   filled, some blank) are ignored — all four must be provided together.
-   Click **Pick ROI…** (beside the four pixel boxes) to open a visual picker
-   that shows one preview per `(volume_id, slice_name)` pair in the loaded
-   file — the middle plane of each group is rendered at its stored µm pitch.
+   **c0**, **c1**) to restrict each plane to a sub-region. Each slice-group
+   header in the left panel is labelled with its stored plane pixel size, e.g.
+   `plane_a   ·   7×9 px (Y×X)`, so the valid range is visible without opening
+   the picker: rows `r0:r1` ∈ `[0, nv]`, cols `c0:c1` ∈ `[0, nu]`. If the same
+   slice-group name stores a different pixel shape per volume (a mixed-grid
+   file), the header instead reads `mixed grids — see Pick ROI…` and you should
+   use the picker below to see each volume's actual bound. Leave all four boxes
+   blank for the full image. Partial fills (some boxes filled, some blank) are
+   ignored — all four must be provided together. Click **Pick ROI…** (beside the
+   four pixel boxes) to open a visual picker that shows one preview per
+   `(volume_id, slice_name)` pair in the loaded file — the middle plane of each
+   group is rendered at its stored µm pitch, so the valid pixel range (`r0:r1`
+   ∈ `[0, nv]`, `c0:c1` ∈ `[0, nu]`) is visible directly on the preview.
    Accepting the selection writes all four boxes at once. Because different
    volume/slice groups can have different plane dimensions, switching to a
    differently-shaped preview clears the current selection before you confirm.
@@ -646,7 +755,7 @@ Profile a straight line (or a band of parallel lines) across one slice plane —
 strain and misorientation line up.
 
 - **Input:** `oblique_slices.h5`.
-- **Output:** one line-profile figure **per field** (`<fig_name>__trace__<field>.png`) + per-field CSVs + per-field overviews, plus (optionally) the stacked companion figure.
+- **Output:** one line-profile figure **per field** (`<fig_name>__trace__<field>.png`) + per-field CSVs + per-field overviews, plus (optionally) the stacked companion figure. The per-field overview PNGs honour the publication-style "Scale (µm/cm)" field once it's set — each overview map renders at a fixed physical scale instead of a fixed figure size, same as the slices stage; the stacked companion figure's map panel does **not** (see below).
 
 **Essentials:** slices file, mode, jobs JSON, output dir
 
@@ -734,10 +843,14 @@ The overview images (plane + line, per field) are still written by
 When a run (or the publication export) carries the global plot style, the trace
 figures also honour its **Show title** toggle and **Title scale** — so a
 paper-ready trace can drop its `kind | field | source` header entirely. The
-companion and overview figures keep their fixed layout, but their reference map
-panel draws the publication-style scale bar (length, thickness, colour,
-location, background box — all the Scale bar controls apply, exactly as on the
-map stages).
+companion's and the per-field overview figures' reference map panels both draw
+the publication-style scale bar (length, thickness, colour, location,
+background box — all the Scale bar controls apply, exactly as on the map
+stages). Only the **overview** honours the "Scale (µm/cm)" fixed-scale field,
+though — the map is fitted to a physical page size the way slices/strain/
+mosaicity/rocking/visualize/paraview maps are. The **companion**'s map panel is
+left alone by design: it keeps today's geometry byte-identically even when the
+knob is set, so a saved companion layout never shifts underfoot.
 
 ### 9. Rocking-matched layers (`matched`)
 
@@ -846,6 +959,21 @@ form.
 | Control | Meaning |
 |---|---|
 | Figure width | `single` (3.5 in), `double` (7.0 in), or `auto` (keeps the stage's own figsize) |
+| Scale (µm/cm) | Fixed physical scale for **map** figures: µm of data per cm of page. Blank = off (default). |
+
+> [!tip] Fixed physical scale across figures
+> Setting **Scale (µm/cm)** fits every map's data box (per-layer maps, slices,
+> the strain diagnostic, the matched stage's rocking-matched layer maps, and
+> the profiles reference/overview panels — not the profiles companion or
+> trace figures) so the printed scale, and the scale
+> bar, are identical across figures regardless of each crop's pixel extent.
+> While it is set, **Figure width is ignored for maps** (trace figures still
+> honour it). Requested sides are clamped to 30 in — a typo scale (e.g. a
+> stray `0.001`) raises the effective scale instead of rendering a
+> 47000-pixel image. **Identical bars across different crops:** auto Bar
+> length still picks ~15 % of each crop's own extent, so it differs crop to
+> crop even at a fixed scale — set an explicit **Bar length** (e.g. 50 µm) as
+> well to get bars that match pixel-for-pixel across figures.
 
 **Output**
 

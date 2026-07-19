@@ -10,7 +10,6 @@ from __future__ import annotations
 import os
 import time
 
-from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QDialog,
     QFileDialog,
@@ -18,12 +17,12 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QPushButton,
-    QTreeWidget,
-    QTreeWidgetItem,
     QVBoxLayout,
 )
 
 from .clim_section import ClimGroupSection
+from .plane_selection import PlaneSelectionPanel
+from .plane_selection_model import build_layer_rows, layer_selections
 
 
 class ReplotDialog(QDialog):
@@ -62,16 +61,8 @@ class ReplotDialog(QDialog):
         file_row.addWidget(file_browse)
         file_row.addWidget(file_reload)
 
-        self._tree = QTreeWidget()
-        self._tree.setHeaderLabels(["Group / layer"])
-        select_all_btn = QPushButton("Select all")
-        select_all_btn.clicked.connect(self.select_all)
-        deselect_btn = QPushButton("Deselect all")
-        deselect_btn.clicked.connect(self._deselect_all)
-        toolbar = QHBoxLayout()
-        toolbar.addWidget(select_all_btn)
-        toolbar.addWidget(deselect_btn)
-        toolbar.addStretch(1)
+        # planes-first selection panel (left: layers, listed once; right: quantities)
+        self._panel = PlaneSelectionPanel(show_quantities=True)
 
         self._clim = ClimGroupSection()
         clim_header = QLabel("Colour limits (per plot kind; blank = stored):")
@@ -98,25 +89,30 @@ class ReplotDialog(QDialog):
         out_row.addWidget(out_browse)
 
         self._status = QLabel("")
-        render_btn = QPushButton("Render")
-        render_btn.setProperty("role", "primary")
-        render_btn.clicked.connect(self._on_render)
+        self._render_btn = QPushButton("Render")
+        self._render_btn.setProperty("role", "primary")
+        self._render_btn.clicked.connect(self._on_render)
+        self._panel.selectionChanged.connect(
+            lambda: self._render_btn.setEnabled(self._panel.has_selection())
+        )
         close_btn = QPushButton("Close")
         close_btn.clicked.connect(self.reject)
         btn_row = QHBoxLayout()
         btn_row.addWidget(self._status, 1)
-        btn_row.addWidget(render_btn)
+        btn_row.addWidget(self._render_btn)
         btn_row.addWidget(close_btn)
 
         layout = QVBoxLayout(self)
         layout.addLayout(file_row)
-        layout.addWidget(self._tree, 1)
-        layout.addLayout(toolbar)
+        layout.addWidget(self._panel, 1)
         layout.addWidget(clim_header)
         layout.addWidget(self._clim)
         layout.addLayout(roi_row)
         layout.addLayout(out_row)
         layout.addLayout(btn_row)
+
+        self._catalog: list = []
+        self._skipped: list[str] = []
         self._reload()
 
     def _default_out_for(self, h5_path: str) -> str:
@@ -130,61 +126,48 @@ class ReplotDialog(QDialog):
 
     def _reload(self) -> None:
         self._h5_path = self._file_edit.text().strip()
-        self._tree.clear()
         if not self._out_pinned:
             self._out_edit.setText(self._default_out_for(self._h5_path))
         if not self._h5_path or not os.path.exists(self._h5_path):
+            self._catalog = []
+            self._panel.set_rows([])
+            self._panel.set_quantities([])
             self._clim.set_groups([])
             self._status.setText("no such file")
             return
         try:
-            catalog = self._catalog_fn(self._h5_path)
+            self._catalog = self._catalog_fn(self._h5_path)
         except Exception as exc:  # noqa: BLE001 — GUI reload: show status, never crash
+            self._catalog = []
+            self._panel.set_rows([])
+            self._panel.set_quantities([])
             self._clim.set_groups([])
             self._status.setText(f"cannot read: {exc}")
             return
-        self._clim.set_groups([(grp.key, grp.label) for grp in catalog])
-        for grp in catalog:
-            label = grp.label
-            if grp.shape is not None:
-                label = f"{grp.label}   ·   {grp.shape[0]}×{grp.shape[1]} px (Y×X)"
-            top = QTreeWidgetItem(self._tree, [label])
-            top.setFlags(
-                top.flags() | Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsAutoTristate
-            )
-            top.setCheckState(0, Qt.CheckState.Unchecked)
-            top.setData(0, Qt.ItemDataRole.UserRole, grp.key)
-            for z, lab in enumerate(grp.item_labels):
-                leaf = QTreeWidgetItem(top, [lab])
-                leaf.setFlags(leaf.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-                leaf.setCheckState(0, Qt.CheckState.Unchecked)
-                leaf.setData(0, Qt.ItemDataRole.UserRole, z)
-        self._tree.expandAll()
-        self.select_all()  # default: remake everything; user unticks to subset
-        self._status.setText(f"{self._tree.topLevelItemCount()} group(s)")
+        self._clim.set_groups([(grp.key, grp.label) for grp in self._catalog])
+        self._panel.set_rows(build_layer_rows(self._catalog))
+        self._panel.set_quantities(
+            [
+                (
+                    grp.key,
+                    grp.label
+                    if grp.shape is None
+                    else f"{grp.label}   ·   {grp.shape[0]}×{grp.shape[1]} px (Y×X)",
+                )
+                for grp in self._catalog
+            ]
+        )
+        self._status.setText(f"{len(self._catalog)} group(s)")
 
-    def select_all(self) -> None:
-        for i in range(self._tree.topLevelItemCount()):
-            self._tree.topLevelItem(i).setCheckState(0, Qt.CheckState.Checked)
-
-    def _deselect_all(self) -> None:
-        for i in range(self._tree.topLevelItemCount()):
-            self._tree.topLevelItem(i).setCheckState(0, Qt.CheckState.Unchecked)
+    def select_all(self) -> None:  # kept for smoke/back-compat
+        self._panel.set_all_checked(True)
 
     def _selections(self):
-        sels = []
-        for i in range(self._tree.topLevelItemCount()):
-            top = self._tree.topLevelItem(i)
-            key = top.data(0, Qt.ItemDataRole.UserRole)
-            checked = [
-                top.child(k).data(0, Qt.ItemDataRole.UserRole)
-                for k in range(top.childCount())
-                if top.child(k).checkState(0) == Qt.CheckState.Checked
-            ]
-            if top.checkState(0) == Qt.CheckState.Checked and len(checked) == top.childCount():
-                sels.append((key, None))  # whole group = all layers
-            elif checked:
-                sels.append((key, checked))
+        sels, self._skipped = layer_selections(
+            self._catalog,
+            self._panel.checked_plane_keys(),
+            self._panel.checked_quantity_keys(),
+        )
         return sels
 
     @staticmethod
@@ -253,6 +236,8 @@ class ReplotDialog(QDialog):
             self._status.setText(f"render failed: {exc}")
             return
         self._status.setText(f"wrote {len(written)} PNG(s) → {out_dir}")
+        if self._skipped:
+            self._status.setText(self._status.text() + f"; skipped {len(self._skipped)} combo(s)")
 
     def _on_browse_h5(self) -> None:
         path, _ = QFileDialog.getOpenFileName(self, "Open volume h5", "", "HDF5 (*.h5)")

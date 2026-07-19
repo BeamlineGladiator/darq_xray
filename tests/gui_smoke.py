@@ -823,6 +823,17 @@ def main() -> int:
         _sg26.create_dataset("u_um", data=_u26)
         _sg26.create_dataset("v_um", data=_v26)
         _sg26.create_dataset("offsets_um", data=_np26.array([0.0]))
+        _sg26.attrs["normal"] = [0.0, 0.0, 1.0]
+        _sg26.attrs["origin"] = [0.0, 0.0, 0.0]
+        _sg26.attrs["up"] = [0.0, 1.0, 0.0]
+        for _k26, _v26_attr in (
+            ("half_u", 4.0),
+            ("half_v", 3.0),
+            ("du", 1.0),
+            ("dv", 1.0),
+            ("sweep_step_um", 1.0),
+        ):
+            _sg26.attrs[_k26] = _v26_attr
 
     # verify the Replot… button is present on the slices view
     slices_view = win._views["slices"]
@@ -830,7 +841,7 @@ def main() -> int:
 
     _out26 = os.path.join(_slice_tmp, "replots")
     _dlg26 = _SRD(_h5_path26, style=None, out_default=_out26)
-    assert _dlg26._tree.topLevelItemCount() == 1
+    assert len(_dlg26._panel._rows) == 1
     _dlg26.select_all()
     _written26 = _dlg26.render_selection(_out26)
     assert len(_written26) == 1 and os.path.exists(_written26[0]), _written26
@@ -870,6 +881,84 @@ def main() -> int:
         "concat StageView should have no ROI buttons"
     )
     print("[28] schema-driven Pick ROI… buttons present on roi-grouped stages (visualize, strain)")
+
+    # [29] StyleControls: Scale (µm/cm) field parses defensively and mutates the style.
+    from dfxm.common.plotting import PlotStyle as _PS29
+    from gui.widgets.export_dialog import StyleControls as _SC29
+
+    _st29 = _PS29()
+    _sc29 = _SC29(_st29)
+    _sc29._w_scale_umcm.setText("50")
+    assert _st29.scale_um_per_cm == 50.0
+    _sc29._w_scale_umcm.setText("junk")
+    assert _st29.scale_um_per_cm is None
+    _sc29._w_scale_umcm.setText("-2")
+    assert _st29.scale_um_per_cm is None
+    _sc29._w_scale_umcm.setText("")
+    assert _st29.scale_um_per_cm is None
+    print("[29] StyleControls Scale (µm/cm) field mutates the style defensively")
+
+    # [30] Planes-first slices replot: filter narrows visibility; check-all-visible selects.
+    from gui.widgets.slice_replot import SliceReplotDialog as _SRD30
+
+    _dlg30 = _SRD30(_h5_path26, style=None, out_default=_out26)  # reuse [26]'s file
+    _dlg30.show()
+    app.processEvents()
+    _dlg30._panel.set_all_checked(False)
+    assert not _dlg30._panel.has_selection()
+    _dlg30._panel._filter.setText("0")
+    _dlg30._panel.check_all_visible()
+    assert _dlg30._panel.has_selection()
+    _dlg30._panel._filter.setText("999")
+    assert _dlg30._panel._no_match.isVisible()
+    print("[30] planes-first slices replot: filter + check-all-visible + no-match hint")
+
+    # [31] Planes-first generic replot dialog (strain/mosaicity/rocking): product
+    # selection across checked layers x checked quantity groups + filter hint.
+    from gui.widgets.replot_dialog import ReplotDialog as _RD31
+
+    class _G31:
+        def __init__(self, key, labels):
+            self.key, self.label, self.item_labels, self.shape = key, key, labels, None
+
+    _calls31: list = []
+
+    def _catalog_fn31(_path):
+        return [_G31("sum_intensity", ["layer 0", "layer 1"]), _G31("specific_frame", ["layer 0"])]
+
+    def _render_fn31(h5, selections, st, clim, roi, out):
+        _calls31.append(selections)
+        return ["x.png"]
+
+    _h5_31 = os.path.join(tempfile.mkdtemp(), "a.h5")
+    with open(_h5_31, "wb"):
+        pass
+    _dlg31 = _RD31(_h5_31, _catalog_fn31, _render_fn31, out_default=tempfile.mkdtemp())
+    _dlg31.show()
+    app.processEvents()
+    _dlg31.select_all()
+    _dlg31.render_selection(_dlg31._out_edit.text())
+    _sels31 = dict(_calls31[-1])
+    assert _sels31["sum_intensity"] == [0, 1]
+    assert _sels31["specific_frame"] == [0]  # layer 1 skipped for this product, no error
+    _dlg31._panel._filter.setText("999")
+    assert _dlg31._panel._no_match.isVisible()
+    print("[31] generic replot dialog planes-first: product selection + filter")
+
+    # [32] Pin planes… dialog: reuses [26]'s file, checks one plane, emits a
+    # pinned spec; the button is wired on the slices stage view.
+    import json as _json32
+
+    from PySide6.QtCore import Qt as _Qt32
+
+    from gui.widgets.pin_planes import PinPlanesDialog as _PPD32
+
+    assert win._views["slices"]._pin_btn is not None, "slices view missing _pin_btn"
+    _dlg32 = _PPD32(_h5_path26)
+    _dlg32._panel._items[("oblique", 0)].setCheckState(0, _Qt32.CheckState.Checked)
+    _dlg32._on_ok()
+    assert _json32.loads(_dlg32.result_json)[0]["sweep_start_um"] == 0.0
+    print("[32] Pin planes… dialog emits pinned specs; button wired on slices view")
 
     print("\nGUI SMOKE PASSED")
     return 0

@@ -42,8 +42,11 @@ def test_dialog_populates_tree_and_renders(tmp_path):
     _app = QApplication.instance() or QApplication([])
     out = tmp_path / "replots"
     dlg = SliceReplotDialog(str(h5), style=None, out_default=str(out))
-    # two volume groups at the top level
-    assert dlg._tree.topLevelItemCount() == 2
+    # planes-first panel: one row per (slice_name, plane_idx), union across volumes;
+    # both raw_sum + strain share slice "plane_a" with 2 offsets -> 2 plane rows.
+    assert len(dlg._panel._rows) == 2
+    # and one quantity checkbox per volume_id
+    assert set(dlg._panel.checked_quantity_keys()) == {"raw_sum", "strain"}
     # select everything and render straight through the core
     dlg.select_all()
     assert dlg._selections(), "select_all() left the selection empty"
@@ -144,8 +147,10 @@ def test_slice_replot_dialog_shows_plane_pixel_size(tmp_path):
     _mini(str(h5))  # planes are (nv, nu) = (7, 9)
     _app = QApplication.instance() or QApplication([])
     dlg = SliceReplotDialog(str(h5), style=None, out_default=str(tmp_path))
-    snode = dlg._tree.topLevelItem(0).child(0)  # volume → slice node
-    assert "7×9 px" in snode.text(0)  # ROI hint annotated on the slice node
+    # the per-plane px hint moved from an inline slice-node annotation to the
+    # section headers (see test_panel_section_header_shows_uniform_shape_px_hint);
+    # the shape is still available on the catalog entry.
+    assert dlg._catalog[0].shape == (7, 9)
 
 
 def test_clim_rows_are_per_volume_id(tmp_path):
@@ -196,3 +201,68 @@ def test_slice_pick_roi_fills_boxes(tmp_path, monkeypatch):
     dlg._on_pick_roi()
     assert (dlg._r0.text(), dlg._r1.text(), dlg._c0.text(), dlg._c1.text()) == ("2", "6", "1", "8")
     dlg.deleteLater()
+
+
+def test_panel_default_all_checked_renders_everything(tmp_path):
+    from gui.widgets.slice_replot import SliceReplotDialog
+
+    h5 = tmp_path / "oblique_slices.h5"
+    _mini(str(h5))  # 2 volumes (raw_sum, strain) x slice "plane_a" x 2 planes
+    _app = QApplication.instance() or QApplication([])
+    dlg = SliceReplotDialog(str(h5), style=None, out_default=str(tmp_path / "out"))
+    assert dlg._panel.has_selection()
+    written = dlg.render_selection(str(tmp_path / "out"))
+    assert len(written) == 4  # 2 volumes x 2 planes
+
+
+def test_panel_filter_and_check_all_visible_subsets(tmp_path):
+    from gui.widgets.slice_replot import SliceReplotDialog
+
+    h5 = tmp_path / "oblique_slices.h5"
+    _mini(str(h5))
+    _app = QApplication.instance() or QApplication([])
+    dlg = SliceReplotDialog(str(h5), style=None, out_default=str(tmp_path / "out"))
+    dlg._panel.set_all_checked(False)
+    dlg._panel._filter.setText("1")  # narrows to plane 1 only
+    dlg._panel.check_all_visible()
+    written = dlg.render_selection(str(tmp_path / "out"))
+    assert len(written) == 2  # plane 1 in both volumes
+
+
+def test_panel_section_header_shows_uniform_shape_px_hint(tmp_path):
+    from gui.widgets.slice_replot import SliceReplotDialog
+
+    h5 = tmp_path / "oblique_slices.h5"
+    _mini(str(h5))  # raw_sum + strain both store plane_a at (7, 9) px (Y×X)
+    _app = QApplication.instance() or QApplication([])
+    dlg = SliceReplotDialog(str(h5), style=None, out_default=str(tmp_path / "out"))
+    top = dlg._panel._tree.topLevelItem(0)  # single section: "plane_a"
+    assert "7×9 px (Y×X)" in top.text(0)
+
+
+def test_panel_section_header_shows_mixed_grids_hint(tmp_path):
+    from gui.widgets.slice_replot import SliceReplotDialog
+
+    h5 = tmp_path / "oblique_slices.h5"
+    u9 = np.linspace(-4.0, 4.0, 9)
+    v7 = np.linspace(-3.0, 3.0, 7)
+    u5 = np.linspace(-2.0, 2.0, 5)
+    v3 = np.linspace(-1.0, 1.0, 3)
+    with h5py.File(h5, "w") as f:
+        for vid, u, v in (("raw_sum", u9, v7), ("strain", u5, v3)):
+            g = f.create_group(vid)
+            g.attrs["kind"] = vid
+            g.attrs["cmap"] = "gray"
+            g.attrs["title"] = vid
+            g.attrs["cbar_label"] = "v"
+            g.attrs["vmin"] = -1.0
+            g.attrs["vmax"] = 1.0
+            sg = g.create_group("plane_a")  # same slice_name, different pixel shape
+            sg.create_dataset("slices", data=np.zeros((2, v.size, u.size), dtype=np.float32))
+            sg.create_dataset("u_um", data=u)
+            sg.create_dataset("v_um", data=v)
+            sg.create_dataset("offsets_um", data=np.array([0.0, 1.0]))
+    _app = QApplication.instance() or QApplication([])
+    dlg = SliceReplotDialog(str(h5), style=None, out_default=str(tmp_path / "out"))
+    top = dlg._panel._tree.topLevelItem(0)  # single section: "plane_a"
+    assert "mixed grids — see Pick ROI…" in top.text(0)

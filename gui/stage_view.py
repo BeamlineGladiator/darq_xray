@@ -143,6 +143,12 @@ class StageView(QWidget):
             self._replot_btn = QPushButton("Replot…")
             self._replot_btn.clicked.connect(self._on_replot)
             btn_row.addWidget(self._replot_btn)
+        # slices: pin sweep planes into pinned_slices_json (built lazily on click)
+        self._pin_btn: QPushButton | None = None
+        if stage_name == "slices":
+            self._pin_btn = QPushButton("Pin planes…")
+            self._pin_btn.clicked.connect(self._on_pin_planes)
+            btn_row.addWidget(self._pin_btn)
         # ROI-grouped stages: one "Pick ROI…" button per distinct roi_group
         self._roi_buttons: dict[str, QPushButton] = {}
         _seen_groups: list[str] = []
@@ -516,6 +522,28 @@ class StageView(QWidget):
         if dlg.written:
             self._log.append(
                 f"Replotted {len(dlg.written)} PNG(s) → {os.path.dirname(dlg.written[0])}"
+            )
+            self._tabs.setCurrentWidget(self._log)
+
+    def _on_pin_planes(self) -> None:
+        """Open Pin planes… and write pinned_slices_json + use_pinned into the form."""
+        vals = self._form.values()
+        out_dir = vals.get("output_dir", "") or os.path.join(
+            os.path.dirname(
+                vals.get("mosa_volume_file", "") or vals.get("strain_volume_file", "") or "."
+            ),
+            "oblique_slices",
+        )
+        h5 = os.path.join(out_dir, vals.get("output_h5_name", "") or "oblique_slices.h5")
+
+        from .widgets.pin_planes import PinPlanesDialog  # imported on demand
+
+        dlg = PinPlanesDialog(h5, parent=self)
+        if dlg.exec() and dlg.result_json:
+            self._form.set_values({"pinned_slices_json": dlg.result_json, "use_pinned": True})
+            self._log.append(
+                "Pinned planes written; 'Run pinned planes only' ticked. Run to render "
+                "(output goes to oblique_slices_pinned.h5 unless you set a name)."
             )
             self._tabs.setCurrentWidget(self._log)
 

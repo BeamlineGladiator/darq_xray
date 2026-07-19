@@ -47,6 +47,8 @@ from ..common.plotting import (
     apply_text_scale,
     draw_scale_bar,
     figure_size,
+    fit_axes_to_box,
+    fixed_scale_box,
     resolve_cmap,
     style_from_params,
     styled_figure,
@@ -404,6 +406,32 @@ STAGE = StageSpec(
             ),
         ),
         Param(
+            "use_pinned",
+            ParamType.BOOL,
+            "Run pinned planes only",
+            default=False,
+            help=(
+                "Render only the planes in 'Pinned planes (JSON)' instead of the full sweep — "
+                "fast re-computation of a few interesting planes. The sweep in 'Slices (JSON)' "
+                "is kept untouched and ignored while this is on; while on, the default output "
+                "filename becomes oblique_slices_pinned.h5 so the sweep file is never "
+                "overwritten. Untick to run the full sweep again."
+            ),
+        ),
+        Param(
+            "pinned_slices_json",
+            ParamType.TEXT,
+            "Pinned planes (JSON)",
+            default="",
+            advanced=True,
+            group="Pinned planes",
+            help=(
+                "JSON list of pinned single-plane specs, normally written by the Pin planes… "
+                "dialog (exact stored sweep geometry, snapped to stored planes). Only used "
+                "when 'Run pinned planes only' is ticked."
+            ),
+        ),
+        Param(
             "output_dir",
             ParamType.DIR,
             "Output dir",
@@ -418,7 +446,9 @@ STAGE = StageSpec(
             group="Output",
             help=(
                 "Filename of the consolidated slices file. "
-                "The profiles stage expects oblique_slices.h5."
+                "The profiles stage expects oblique_slices.h5. "
+                "While 'Run pinned planes only' is on, this default is replaced by "
+                "oblique_slices_pinned.h5 (an edited name is respected)."
             ),
         ),
         Param(
@@ -799,10 +829,15 @@ def build_slice_figure(
 
     if use_legacy:
         figsize = (12, 10)
+        box = None
     else:
         ext_u = float(u_um[-1] - u_um[0])
         ext_v = float(v_um[-1] - v_um[0])
-        figsize = figure_size(st, ext_u, ext_v) or (12, 10)
+        box = fixed_scale_box(st, ext_u, ext_v)
+        if box is not None:
+            figsize = (box[0] + 1.5, box[1] + 1.5)
+        else:
+            figsize = figure_size(st, ext_u, ext_v) or (12, 10)
 
     fig = styled_figure(figsize, styled=not use_legacy)
     ax = fig.add_subplot(111)
@@ -823,9 +858,16 @@ def build_slice_figure(
     if st.colorbar:
         add_colorbar(fig, im, ax, prep["cbar_label"], st, group=prep.get("group"))
     if st.scale_bar:
-        draw_scale_bar(ax, st.scale_bar_length_um, style=st)
+        draw_scale_bar(
+            ax,
+            st.scale_bar_length_um,
+            style=st,
+            fixed_scale_um_per_cm=(box[2] if box is not None else None),
+        )
     if not use_legacy:
         apply_text_scale(ax, st)
+    if box is not None:
+        fit_axes_to_box(fig, ax, box[0], box[1])
 
     return fig
 
@@ -866,6 +908,74 @@ def write_volume_group(fh, prep, slice_records):
         for key in ("half_u", "half_v", "du", "dv", "sweep_step_um"):
             sg.attrs[key] = float(rec[key])
         sg.attrs["n_planes"] = int(rec["stack"].shape[0])
+
+
+# -----------------------------------------------------------------------------
+# Pinned planes (shared by tools/pin_slice.py, the Pin planes… dialog and run())
+# -----------------------------------------------------------------------------
+def _find_slice_group(f, slice_name, volume=None):
+    """Return (volume_id, slice_group) for the first volume holding *slice_name*.
+
+    Slice geometry is identical across volumes, so any volume that carries the
+    slice works; *volume* forces a specific one.
+    """
+    vids = [volume] if volume else list(f.keys())
+    for vid in vids:
+        if vid not in f:
+            continue
+        g = f[vid]
+        if slice_name in g and "offsets_um" in g[slice_name]:
+            return vid, g[slice_name]
+    raise StageUserError(
+        f"slice {slice_name!r} not found in any volume group of the file",
+        hint=f"volumes present: {', '.join(f.keys()) or '(none)'} — pick a slice "
+        "name from a swept oblique_slices.h5.",
+    )
+
+
+def build_pinned_spec(h5_path, slice_name, offsets, *, volume=None) -> list[dict]:
+    """Pinned single-plane spec dicts for *slice_name*, snapped to stored planes.
+
+    Geometry (normal/origin/up/half_u/half_v/du/dv) is read byte-exact off the
+    stored slice-group attrs, so each pinned plane reproduces the sweep's plane
+    exactly. Every requested offset snaps to the nearest stored plane; snaps
+    landing on the same plane are collapsed. Raises StageUserError for an
+    unreadable file or unknown slice name.
+    """
+    try:
+        fh = h5py.File(h5_path, "r")
+    except OSError as exc:
+        raise StageUserError(
+            f"cannot read {h5_path!r}: {exc}",
+            hint="Point at an oblique_slices.h5 written by a slices sweep run.",
+        ) from exc
+    with fh as f:
+        _vid, sg = _find_slice_group(f, slice_name, volume)
+        stored = sg["offsets_um"][:].astype(np.float64)
+        a = dict(sg.attrs)
+    specs, seen = [], set()
+    for off in offsets:
+        idx = int(np.argmin(np.abs(stored - float(off))))
+        if idx in seen:
+            continue
+        seen.add(idx)
+        matched = float(stored[idx])
+        specs.append(
+            {
+                "name": f"{slice_name}_pin_{matched:+.2f}um",
+                "normal": np.asarray(a["normal"], np.float64).tolist(),
+                "origin": np.asarray(a["origin"], np.float64).tolist(),
+                "up": np.asarray(a["up"], np.float64).tolist(),
+                "half_u": float(a["half_u"]),
+                "half_v": float(a["half_v"]),
+                "du": float(a["du"]),
+                "dv": float(a["dv"]),
+                "sweep_step_um": float(a.get("sweep_step_um") or 1.0) or 1.0,
+                "sweep_start_um": matched,
+                "sweep_stop_um": matched,
+            }
+        )
+    return specs
 
 
 # -----------------------------------------------------------------------------
@@ -973,16 +1083,43 @@ def run(params: dict, progress: ProgressFn | None = None) -> SlicesResult:
     for msg in _y_height_notes(volumes, roi_y, scale_y):
         result.notes.append(msg)
         progress(0.02, msg)
-    slices = json.loads(p["slices_json"])
-    if not isinstance(slices, list) or not slices:
-        raise StageUserError(
-            "slices_json must be a non-empty JSON list of slice specs",
-            hint=(
-                "Provide a JSON list of plane specs — the field's default "
-                "shows the format; 'extent': 'auto' fits the plane "
-                "automatically."
-            ),
+    if bool(p["use_pinned"]):
+        raw_pinned = (p["pinned_slices_json"] or "").strip()
+        try:
+            slices = json.loads(raw_pinned) if raw_pinned else []
+        except json.JSONDecodeError as exc:
+            raise StageUserError(
+                f"Pinned planes JSON is not valid JSON: {exc}",
+                hint=(
+                    "Open Pin planes… to regenerate the pinned list, or untick "
+                    "'Run pinned planes only' to run the full sweep."
+                ),
+            ) from exc
+        if not isinstance(slices, list) or not slices:
+            raise StageUserError(
+                "'Run pinned planes only' is on but the pinned planes list is empty",
+                hint=(
+                    "Open Pin planes… to pick planes, or untick "
+                    "'Run pinned planes only' to run the full sweep."
+                ),
+            )
+        msg = (
+            f"PINNED RUN: rendering {len(slices)} pinned plane(s); "
+            "the sweep in slices_json is ignored"
         )
+        result.notes.append(msg)
+        progress(0.03, msg)
+    else:
+        slices = json.loads(p["slices_json"])
+        if not isinstance(slices, list) or not slices:
+            raise StageUserError(
+                "slices_json must be a non-empty JSON list of slice specs",
+                hint=(
+                    "Provide a JSON list of plane specs — the field's default "
+                    "shows the format; 'extent': 'auto' fits the plane "
+                    "automatically."
+                ),
+            )
 
     # Resolve extent='auto' planes against a common data box (shared grid).
     if any(sl.get("extent") == "auto" for sl in slices):
@@ -1003,7 +1140,14 @@ def run(params: dict, progress: ProgressFn | None = None) -> SlicesResult:
         if float(sl["half_u"]) <= 0 or float(sl["half_v"]) <= 0:
             raise ValueError(f"slice {name!r}: half_u and half_v must be > 0")
 
-    out_h5 = os.path.join(out_dir, p["output_h5_name"])
+    h5_name = p["output_h5_name"]
+    if bool(p["use_pinned"]) and h5_name == STAGE.defaults()["output_h5_name"]:
+        h5_name = "oblique_slices_pinned.h5"
+        result.notes.append(
+            "pinned run: output filename switched to oblique_slices_pinned.h5 "
+            "so the sweep file profiles reads is not overwritten"
+        )
+    out_h5 = os.path.join(out_dir, h5_name)
     save_png = bool(p["save_png"])
     grids_by_slice: dict[str, list[tuple[str, tuple[int, int]]]] = {}
     fh = h5py.File(out_h5, "w")

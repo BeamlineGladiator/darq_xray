@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
+import sys
 
 import h5py
 import numpy as np
 import pytest
 from matplotlib.offsetbox import AnchoredOffsetbox
 
+from dfxm.common.errors import StageUserError
 from dfxm.common.plotting import PlotStyle
 from dfxm.stages import slices as SL
 
@@ -272,6 +275,31 @@ def test_build_slice_figure_offset_annotation_in_title():
     )
     title = fig.axes[0].get_title()
     assert "3.50" in title  # the offset annotation appears as "+3.50" in the title
+
+
+def _box_inches(fig, ax):
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+
+    if not hasattr(fig.canvas, "get_renderer"):
+        FigureCanvasAgg(fig)
+    fig.canvas.draw()
+    bb = ax.get_window_extent(fig.canvas.get_renderer())
+    return bb.width / fig.dpi, bb.height / fig.dpi
+
+
+def test_build_slice_figure_fixed_scale_equal_boxes_across_colorbar_text():
+    u = np.linspace(0.0, 200.0, 21)
+    v = np.linspace(0.0, 100.0, 11)
+    s2d = np.random.default_rng(3).random((11, 21))
+    style = PlotStyle(scale_um_per_cm=50.0, figure_width="single", tickfmt_strain="scientific")
+    boxes = []
+    for vmin, vmax, group in ((-1.0e-4, 1.0e-4, "strain"), (-1.0, 1.0, None)):
+        prep = dict(_prep(), vmin=vmin, vmax=vmax, group=group)
+        fig = SL.build_slice_figure(prep, {"name": "p"}, s2d, u, v, offset_um=None, style=style)
+        boxes.append(_box_inches(fig, fig.axes[0]))
+    tw, th = 200.0 / 50.0 / 2.54, 100.0 / 50.0 / 2.54
+    for w, h in boxes:
+        assert abs(w - tw) <= 0.05 and abs(h - th) <= 0.05
 
 
 def _minimal_params(proc, raw, out):
@@ -709,3 +737,125 @@ def test_plane_preview_du_dv_not_swapped(tmp_path):
     assert arr.shape == (7, 5)  # (nv, nu) = (Y rows, X cols)
     assert sx == pytest.approx(2.0)  # du / X / cols
     assert sy == pytest.approx(1.0)  # dv / Y / rows
+
+
+# -- pinned planes ------------------------------------------------------------
+def test_build_pinned_spec_snaps_and_reproduces_sweep_plane(tmp_path):
+    proc, raw = _setup(tmp_path)
+    params = {
+        "mosa_volume_file": str(proc / "stacked_volumes.h5"),
+        "strain_volume_file": str(proc / "stacked_strain_volumes.h5"),
+        "raw_root": str(raw),
+        "mosa_pattern": "mosa__*",
+        "strain_pattern": "strain__*",
+        "slices_json": (
+            '[{"name":"zsweep","normal":[0,0,1],"origin":[0,0,0],'
+            '"extent":"auto","sweep_step_um":1.0}]'
+        ),
+        "output_dir": str(tmp_path / "sl"),
+        "save_png": False,
+    }
+    res = SL.run(dict(params))
+    with h5py.File(res.output_h5, "r") as f:
+        sweep_offsets = f["strain/zsweep/offsets_um"][:]
+        sweep_stack = f["strain/zsweep/slices"][:]
+        attrs = dict(f["strain/zsweep"].attrs)
+    target = float(sweep_offsets[1]) + 0.2  # off-grid: must snap to plane 1
+    specs = SL.build_pinned_spec(res.output_h5, "zsweep", [target, target])
+    assert len(specs) == 1  # duplicate snap collapsed
+    spec = specs[0]
+    assert spec["sweep_start_um"] == spec["sweep_stop_um"]
+    assert spec["sweep_start_um"] == pytest.approx(float(sweep_offsets[1]))
+    for key in ("normal", "origin", "up"):
+        np.testing.assert_allclose(spec[key], np.asarray(attrs[key], float))
+    for key in ("half_u", "half_v", "du", "dv"):
+        assert spec[key] == pytest.approx(float(attrs[key]))
+    # golden: a run on the pinned spec reproduces the sweep's plane 1 exactly
+    res2 = SL.run({**params, "slices_json": json.dumps(specs), "output_dir": str(tmp_path / "pin")})
+    with h5py.File(res2.output_h5, "r") as f:
+        pinned = f[f"strain/{spec['name']}/slices"][:]
+    np.testing.assert_array_equal(pinned[0], sweep_stack[1])
+
+
+def test_build_pinned_spec_unknown_slice_raises_user_error(tmp_path):
+    p = str(tmp_path / "s.h5")
+    with h5py.File(p, "w") as f:
+        f.create_group("strain")
+    with pytest.raises(StageUserError):
+        SL.build_pinned_spec(p, "nope", [0.0])
+
+
+def test_pin_slice_cli_delegates_to_core(tmp_path):
+    p = str(tmp_path / "s.h5")
+    with h5py.File(p, "w") as f:
+        sg = f.create_group("strain").create_group("oblique")
+        sg.create_dataset("offsets_um", data=np.array([0.0, 1.0, 2.0]))
+        sg.attrs["normal"] = [0.0, 0.0, 1.0]
+        sg.attrs["origin"] = [0.0, 0.0, 0.0]
+        sg.attrs["up"] = [0.0, 1.0, 0.0]
+        for k, v in (
+            ("half_u", 4.0),
+            ("half_v", 3.0),
+            ("du", 0.2),
+            ("dv", 0.2),
+            ("sweep_step_um", 1.0),
+        ):
+            sg.attrs[k] = v
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    r = subprocess.run(
+        [
+            sys.executable,
+            os.path.join(root, "tools", "pin_slice.py"),
+            p,
+            "oblique",
+            "--offset",
+            "1.4",
+        ],
+        capture_output=True,
+        text=True,
+        cwd=root,
+    )
+    assert r.returncode == 0, r.stderr
+    out = json.loads(r.stdout)
+    assert len(out) == 1 and out[0]["sweep_start_um"] == pytest.approx(1.0)
+
+
+def _pinned_params(proc, raw, out):
+    return {
+        "mosa_volume_file": str(proc / "stacked_volumes.h5"),
+        "raw_root": str(raw),
+        "mosa_pattern": "mosa__*",
+        "slices_json": "[]",  # would raise on the sweep path — proves routing skips it
+        "use_pinned": True,
+        "pinned_slices_json": (
+            '[{"name":"pin","normal":[0,0,1],"origin":[0.5,0.5,1.5],'
+            '"half_u":0.4,"half_v":0.4,"du":0.2,"dv":0.2,"sweep_step_um":null}]'
+        ),
+        "output_dir": str(out),
+        "save_png": False,
+    }
+
+
+def test_run_use_pinned_routes_and_renames_output(tmp_path):
+    proc, raw = _setup(tmp_path)
+    res = SL.run(_pinned_params(proc, raw, tmp_path / "sl"))
+    assert res.output_h5 and res.output_h5.endswith("oblique_slices_pinned.h5")
+    assert any("PINNED RUN" in n for n in res.notes)
+    assert res.slice_names == ["pin"]
+
+
+def test_run_use_pinned_respects_user_edited_name(tmp_path):
+    proc, raw = _setup(tmp_path)
+    p = _pinned_params(proc, raw, tmp_path / "sl")
+    p["output_h5_name"] = "custom.h5"
+    res = SL.run(p)
+    assert res.output_h5.endswith("custom.h5")
+
+
+def test_run_use_pinned_empty_or_invalid_raises_user_error(tmp_path):
+    proc, raw = _setup(tmp_path)
+    for bad in ("", "   ", "{not json", "[]"):
+        p = _pinned_params(proc, raw, tmp_path / "sl")
+        p["pinned_slices_json"] = bad
+        with pytest.raises(StageUserError, match="[Pp]inned"):
+            SL.run(p)
