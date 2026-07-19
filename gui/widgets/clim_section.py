@@ -20,6 +20,27 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+# Friendly labels for the per-quantity colour-limit rows, keyed by volume_id.
+# volume_id is f"{kind}{suffix}" where suffix is ""/"_chi"/"_mu" (slices.py:_axis_suffix).
+KIND_LABELS = {
+    "mosa_com": "Mosaicity COM",
+    "mosa_fwhm": "Mosaicity FWHM",
+    "strain": "Strain",
+    "raw_sum": "Raw sum intensity",
+    "raw_specific": "Raw frame",
+    "raw_mosa_sum": "Raw mosa-sum intensity",
+    "raw_mosa_specific": "Raw mosa frame",
+}
+
+
+def volume_label(volume_id: str) -> str:
+    """Human label for a clim row, e.g. 'mosa_com_chi' -> 'Mosaicity COM (χ)'."""
+    for comp, sym in (("_chi", "χ"), ("_mu", "μ")):
+        if volume_id.endswith(comp):
+            base = volume_id[: -len(comp)]
+            return f"{KIND_LABELS.get(base, base)} ({sym})"
+    return KIND_LABELS.get(volume_id, volume_id)
+
 
 class ClimGroupSection(QWidget):
     """One vmin/vmax row per replot group; yields a per-group clim mapping."""
