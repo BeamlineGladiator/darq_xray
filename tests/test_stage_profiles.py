@@ -495,6 +495,84 @@ def test_run_absent_only_fields_job_runs_reference_only(tmp_path):
     assert res.skipped == []
 
 
+def _write_pinned(path):
+    """Minimal oblique_slices_pinned.h5 as a pinned slices run writes it: each
+    plane is its own single-offset group named {slice}_pin_{offset:+.2f}um."""
+    u = np.linspace(-10.0, 10.0, 81)
+    v = np.linspace(-8.0, 8.0, 65)
+    uu, vv = np.meshgrid(u, v)
+    with h5py.File(path, "w") as f:
+        for vid, kind, cmap in (("raw_sum", "raw_sum", "gray"), ("strain", "strain", "RdBu_r")):
+            g = f.create_group(vid)
+            g.attrs["kind"] = kind
+            g.attrs["cbar_label"] = "value"
+            g.attrs["cmap"] = cmap
+            g.attrs["title"] = vid
+            g.attrs["vmin"] = -10.0
+            g.attrs["vmax"] = 10.0
+            for off in (-1.0, 1.0):
+                sg = g.create_group(f"oblique_full_pin_{off:+.2f}um")
+                sg.create_dataset(
+                    "slices", data=(A * uu + B * vv + off)[None, ...].astype(np.float32)
+                )
+                sg.create_dataset("u_um", data=u)
+                sg.create_dataset("v_um", data=v)
+                sg.create_dataset("offsets_um", data=np.array([off]))
+
+
+def test_run_resolves_pinned_slice_names(tmp_path):
+    """Sweep-era jobs must run against a pinned file: the job's slice name falls
+    back to the {name}_pin_* group nearest the job's offset_um (the same
+    nearest-plane snap a sweep applies), with the substitution surfaced in notes."""
+    h5 = tmp_path / "oblique_slices_pinned.h5"
+    _write_pinned(str(h5))
+    out = tmp_path / "prof"
+    jobs = (
+        '[{"name":"oblique_full","offset_um":0.8,"start_uv":[-5,-3],"end_uv":[5,3],'
+        '"n_samples":40,"width_pixels":1,"fig_name":"prof0"}]'
+    )
+    res = PR.run(_base_params(h5, out, jobs_json=jobs))
+    assert len(res.jobs) == 1
+    jr = res.jobs[0]
+    assert jr.name == "oblique_full_pin_+1.00um"  # nearest pin to offset 0.8
+    assert jr.offset_used_um == 1.0
+    assert set(jr.fields) == {"raw_sum", "strain"}
+    assert jr.figure and os.path.exists(jr.figure)
+    assert any("oblique_full_pin_+1.00um" in n for n in res.notes)
+    assert res.skipped == []
+
+
+def test_run_preview_resolves_pinned_slice_names(tmp_path):
+    h5 = tmp_path / "oblique_slices_pinned.h5"
+    _write_pinned(str(h5))
+    jobs = '[{"name":"oblique_full","offset_um":-0.7,"start_uv":[-5,-3],"end_uv":[5,3]}]'
+    res = PR.run(_base_params(h5, tmp_path / "prev", jobs_json=jobs, mode="preview"))
+    assert len(res.jobs) == 1
+    assert res.jobs[0].name == "oblique_full_pin_-1.00um"
+    assert os.path.exists(res.jobs[0].figure)
+
+
+def test_run_exact_slice_name_wins_over_pins(tmp_path):
+    """When the plain slice group exists, pinned groups must not hijack the job."""
+    h5 = tmp_path / "oblique_slices.h5"
+    _write_consolidated(str(h5))
+    with h5py.File(str(h5), "a") as f:
+        for vid in ("raw_sum", "strain"):
+            src = f[f"{vid}/oblique_full"]
+            f.copy(src, f[vid], name="oblique_full_pin_+1.00um")
+    res = PR.run(_base_params(h5, tmp_path / "prof"))
+    assert len(res.jobs) == 1 and res.jobs[0].name == "oblique_full"
+    assert res.notes == []
+
+
+def test_run_unknown_slice_still_skips_with_pins_absent(tmp_path):
+    h5 = tmp_path / "oblique_slices_pinned.h5"
+    _write_pinned(str(h5))
+    jobs = '[{"name":"no_such_slice","offset_um":0.0,"start_uv":[-5,-3],"end_uv":[5,3]}]'
+    res = PR.run(_base_params(h5, tmp_path / "prof", jobs_json=jobs))
+    assert res.jobs == [] and any("no_such_slice" in s for s in res.skipped)
+
+
 def test_run_drops_field_with_shorter_sweep(tmp_path):
     """A field whose slice stores fewer planes than the reference is dropped
     with a note — never an uncaught IndexError."""

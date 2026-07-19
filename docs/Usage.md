@@ -667,6 +667,14 @@ the sweep's output file:
 Untick **Run pinned planes only** to go back to running the full sweep in
 `slices_json` — the pinned JSON stays in the field, ready to re-tick later.
 
+> [!tip] Profiling a pinned file
+> Point the profiles stage's **Slices file** at `oblique_slices_pinned.h5`
+> (browse to it — the pre-fill defaults to the sweep file) and run your
+> existing jobs unchanged: a job whose slice name (e.g. `oblique_full`) is
+> absent automatically falls back to the pinned group
+> (`oblique_full_pin_…um`) nearest the job's `offset_um`, and the
+> substitution is listed in the run's Results notes.
+
 `pinned_slices_json` empty or invalid while `use_pinned` is ticked raises a
 clear error (with a hint to open **Pin planes…** or untick the toggle) rather
 than silently running the sweep or an empty output.
@@ -814,6 +822,14 @@ function where the override is applied.
   either give it its own job with a matching `"reference"`, or re-run slices
   with explicit `du`/`dv` so every volume shares one grid (the slices stage
   warns when its volumes land on different grids).
+- **Pinned files resolve by base name.** On a pinned slices file
+  (`oblique_slices_pinned.h5`, where every plane is its own
+  `<slice>_pin_<offset>um` group), a job may keep its sweep-era slice name:
+  when the exact name is absent, the job falls back to the pinned group whose
+  stored offset is nearest the job's `offset_um` (the same nearest-plane snap
+  used inside a sweep), and the substitution is listed in the Results notes.
+  An exact-name match always wins; a name with no plain or pinned match still
+  skips as before.
 - **Two jobs may share a slice name.** Each job keeps its own outputs: when the
   default file stems would collide (same slice, same offset, no distinct
   `fig_name`), later jobs get a `_2`, `_3`, … suffix instead of overwriting the

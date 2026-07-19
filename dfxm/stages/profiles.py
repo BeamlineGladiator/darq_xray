@@ -434,6 +434,40 @@ def volume_ids_with_slice(f, slice_name):
     return sorted(out)
 
 
+def resolve_job_slice_name(f, name, offset_um):
+    """Effective slice-group name for a job: *name* when present, else the
+    nearest single-plane group of a pinned slices run.
+
+    A pinned run (slices ``use_pinned``) renames each plane to
+    ``{name}_pin_{offset:+.2f}um``, so sweep-era jobs would otherwise miss
+    every group. Among the pinned groups sharing the base name, the one whose
+    stored offset is nearest ``offset_um`` wins — the same nearest-plane snap
+    ``resolve_plane_index`` applies within a sweep. Returns
+    ``(resolved_name, note)``; *note* is ``None`` unless a pin was substituted.
+    """
+    if volume_ids_with_slice(f, name):
+        return name, None
+    prefix = f"{name}_pin_"
+    best = None
+    for vid in list_volume_ids(f):
+        g = f[vid]
+        for key in g:
+            sg = g[key]
+            if not (
+                key.startswith(prefix)
+                and isinstance(sg, h5py.Group)
+                and "slices" in sg
+                and "offsets_um" in sg
+            ):
+                continue
+            d = abs(float(sg["offsets_um"][0]) - float(offset_um))
+            if best is None or d < best[0]:
+                best = (d, key)
+    if best is None:
+        return name, None
+    return best[1], f"job slice {name!r}: using pinned plane group {best[1]!r}"
+
+
 def read_volume_attrs(f, vid):
     a = dict(f[vid].attrs)
     return {
@@ -1003,7 +1037,10 @@ def run(params: dict, progress: ProgressFn | None = None) -> ProfilesResult:
     with h5py.File(h5_path, "r") as f:
         for ji, job in enumerate(jobs):
             progress((ji + 0.5) / len(jobs), f"{mode}: {job.get('name')}")
-            name = job["name"]
+            name, pin_note = resolve_job_slice_name(f, job["name"], job.get("offset_um", 0.0))
+            if pin_note:
+                result.notes.append(pin_note)
+                job = {**job, "name": name}
             present = volume_ids_with_slice(f, name)
             if not present:
                 result.skipped.append(f"slice {name!r} not present")
