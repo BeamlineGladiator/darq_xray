@@ -227,3 +227,42 @@ def test_panel_filter_and_check_all_visible_subsets(tmp_path):
     dlg._panel.check_all_visible()
     written = dlg.render_selection(str(tmp_path / "out"))
     assert len(written) == 2  # plane 1 in both volumes
+
+
+def test_panel_section_header_shows_uniform_shape_px_hint(tmp_path):
+    from gui.widgets.slice_replot import SliceReplotDialog
+
+    h5 = tmp_path / "oblique_slices.h5"
+    _mini(str(h5))  # raw_sum + strain both store plane_a at (7, 9) px (Y×X)
+    _app = QApplication.instance() or QApplication([])
+    dlg = SliceReplotDialog(str(h5), style=None, out_default=str(tmp_path / "out"))
+    top = dlg._panel._tree.topLevelItem(0)  # single section: "plane_a"
+    assert "7×9 px (Y×X)" in top.text(0)
+
+
+def test_panel_section_header_shows_mixed_grids_hint(tmp_path):
+    from gui.widgets.slice_replot import SliceReplotDialog
+
+    h5 = tmp_path / "oblique_slices.h5"
+    u9 = np.linspace(-4.0, 4.0, 9)
+    v7 = np.linspace(-3.0, 3.0, 7)
+    u5 = np.linspace(-2.0, 2.0, 5)
+    v3 = np.linspace(-1.0, 1.0, 3)
+    with h5py.File(h5, "w") as f:
+        for vid, u, v in (("raw_sum", u9, v7), ("strain", u5, v3)):
+            g = f.create_group(vid)
+            g.attrs["kind"] = vid
+            g.attrs["cmap"] = "gray"
+            g.attrs["title"] = vid
+            g.attrs["cbar_label"] = "v"
+            g.attrs["vmin"] = -1.0
+            g.attrs["vmax"] = 1.0
+            sg = g.create_group("plane_a")  # same slice_name, different pixel shape
+            sg.create_dataset("slices", data=np.zeros((2, v.size, u.size), dtype=np.float32))
+            sg.create_dataset("u_um", data=u)
+            sg.create_dataset("v_um", data=v)
+            sg.create_dataset("offsets_um", data=np.array([0.0, 1.0]))
+    _app = QApplication.instance() or QApplication([])
+    dlg = SliceReplotDialog(str(h5), style=None, out_default=str(tmp_path / "out"))
+    top = dlg._panel._tree.topLevelItem(0)  # single section: "plane_a"
+    assert "mixed grids — see Pick ROI…" in top.text(0)

@@ -164,13 +164,36 @@ class SliceReplotDialog(QDialog):
             self._status.setText(f"cannot read: {exc}")
             return
         self._clim.set_groups(self._clim_groups(self._catalog))
-        self._panel.set_rows(build_slice_rows(self._catalog))
+        self._panel.set_rows(
+            build_slice_rows(self._catalog), section_labels=self._section_labels(self._catalog)
+        )
         vids = list(dict.fromkeys(e.volume_id for e in self._catalog))
         self._panel.set_quantities([(vid, _volume_label(vid)) for vid in vids])
         self._status.setText(f"{len(self._catalog)} slice group(s)")
 
     def select_all(self) -> None:  # kept for smoke/back-compat
         self._panel.set_all_checked(True)
+
+    @staticmethod
+    def _section_labels(catalog) -> dict[str, str]:
+        """Annotate each slice-group section with its stored plane pixel size.
+
+        A slice_name shared by several volumes normally stores the same (nv, nu)
+        shape everywhere; when it doesn't (a mixed-grid file), the ROI-crop bound
+        isn't a single number, so the picker is the source of truth instead.
+        """
+        shapes_by_sname: dict[str, set] = {}
+        for e in catalog:
+            if e.shape is not None:
+                shapes_by_sname.setdefault(e.slice_name, set()).add(tuple(e.shape))
+        labels: dict[str, str] = {}
+        for sname, shapes in shapes_by_sname.items():
+            if len(shapes) == 1:
+                (nv, nu) = next(iter(shapes))
+                labels[sname] = f"{sname}   ·   {nv}×{nu} px (Y×X)"
+            else:
+                labels[sname] = f"{sname}   ·   mixed grids — see Pick ROI…"
+        return labels
 
     # -- selection → core -----------------------------------------------------
     def _selections(self):

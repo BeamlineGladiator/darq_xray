@@ -659,7 +659,13 @@ current session is not required. It works from a cold start or after a restart.
    variant (`raw_sum`, `raw_specific`, `raw_mosa_sum`, `raw_mosa_specific`) is
    its own row. Leave a row's boxes blank to keep the limits stored in the HDF5.
 5. Optionally enter an **ROI crop** as four pixel-index integers (**r0**, **r1**,
-   **c0**, **c1**) to restrict each plane to a sub-region. Leave all four boxes
+   **c0**, **c1**) to restrict each plane to a sub-region. Each slice-group
+   header in the left panel is labelled with its stored plane pixel size, e.g.
+   `plane_a   ·   7×9 px (Y×X)`, so the valid range is visible without opening
+   the picker: rows `r0:r1` ∈ `[0, nv]`, cols `c0:c1` ∈ `[0, nu]`. If the same
+   slice-group name stores a different pixel shape per volume (a mixed-grid
+   file), the header instead reads `mixed grids — see Pick ROI…` and you should
+   use the picker below to see each volume's actual bound. Leave all four boxes
    blank for the full image. Partial fills (some boxes filled, some blank) are
    ignored — all four must be provided together. Click **Pick ROI…** (beside the
    four pixel boxes) to open a visual picker that shows one preview per

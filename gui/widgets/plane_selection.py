@@ -81,8 +81,14 @@ class PlaneSelectionPanel(QWidget):
             root.addWidget(rw, 1)
 
     # -- population -------------------------------------------------------
-    def set_rows(self, rows: list[PlaneRow]) -> None:
-        """Rebuild the plane list; everything checked (a plain Render remakes all)."""
+    def set_rows(self, rows: list[PlaneRow], section_labels: dict[str, str] | None = None) -> None:
+        """Rebuild the plane list; everything checked (a plain Render remakes all).
+
+        *section_labels* optionally overrides a section header's displayed text
+        (keyed by ``PlaneRow.section``) — e.g. to annotate it with a stored pixel
+        size. Missing entries fall back to the bare section string; default None
+        preserves the exact prior behaviour.
+        """
         self._rows = list(rows)
         self._tree.blockSignals(True)
         self._tree.clear()
@@ -92,7 +98,8 @@ class PlaneSelectionPanel(QWidget):
             if r.section:
                 parent = sections.get(r.section)
                 if parent is None:
-                    parent = QTreeWidgetItem(self._tree, [r.section])
+                    label = (section_labels or {}).get(r.section, r.section)
+                    parent = QTreeWidgetItem(self._tree, [label])
                     parent.setFlags(parent.flags() & ~Qt.ItemFlag.ItemIsUserCheckable)
                     sections[r.section] = parent
                 item = QTreeWidgetItem(parent, [r.label])
