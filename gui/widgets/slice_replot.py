@@ -25,29 +25,9 @@ from PySide6.QtWidgets import (
 from dfxm.stages import slices as _sl
 
 from .clim_section import ClimGroupSection
+from .clim_section import volume_label as _volume_label
 from .plane_selection import PlaneSelectionPanel
 from .plane_selection_model import build_slice_rows, slice_selections
-
-# Friendly labels for the per-quantity colour-limit rows, keyed by volume_id.
-# volume_id is f"{kind}{suffix}" where suffix is ""/"_chi"/"_mu" (slices.py:_axis_suffix).
-_KIND_LABELS = {
-    "mosa_com": "Mosaicity COM",
-    "mosa_fwhm": "Mosaicity FWHM",
-    "strain": "Strain",
-    "raw_sum": "Raw sum intensity",
-    "raw_specific": "Raw frame",
-    "raw_mosa_sum": "Raw mosa-sum intensity",
-    "raw_mosa_specific": "Raw mosa frame",
-}
-
-
-def _volume_label(volume_id: str) -> str:
-    """Human label for a clim row, e.g. 'mosa_com_chi' -> 'Mosaicity COM (χ)'."""
-    for comp, sym in (("_chi", "χ"), ("_mu", "μ")):
-        if volume_id.endswith(comp):
-            base = volume_id[: -len(comp)]
-            return f"{_KIND_LABELS.get(base, base)} ({sym})"
-    return _KIND_LABELS.get(volume_id, volume_id)
 
 
 class SliceReplotDialog(QDialog):

@@ -33,7 +33,7 @@ from scipy.ndimage import map_coordinates
 
 from ..common import render as Rnd
 from ..common.errors import StageUserError
-from ..common.figures import FigureSpec, register
+from ..common.figures import FigureSpec, register, resolve_clim
 from ..common.plotting import (
     GROUP_BY_KIND,
     PlotStyle,
@@ -468,6 +468,103 @@ def resolve_job_slice_name(f, name, offset_um):
     return best[1], f"job slice {name!r}: using pinned plane group {best[1]!r}"
 
 
+@dataclass
+class ReplotJobEntry:
+    """One profile job as the replot dialog sees it: resolved slice + fields."""
+
+    job_index: int
+    name: str  # resolved (possibly pinned) slice-group name
+    label: str  # display label: fig_name/name @ offset
+    fields: list[str]  # volume ids carrying this slice, sorted
+    note: str | None  # pin-substitution note, if any
+
+
+def replot_catalog(h5_path: str, jobs: list[dict]) -> list[ReplotJobEntry]:
+    """List each job's resolved slice group and the fields present for it.
+
+    Jobs whose slice has no plain or pinned match are omitted (the dialog
+    shows what will actually render; render_replot re-reports the skip).
+    Raises StageUserError for an unreadable file.
+    """
+    try:
+        fh = h5py.File(h5_path, "r")
+    except OSError as exc:
+        raise StageUserError(
+            f"cannot read {h5_path!r}: {exc}",
+            hint="Point at an oblique_slices.h5 written by the slices stage.",
+        ) from exc
+    entries: list[ReplotJobEntry] = []
+    with fh as f:
+        for ji, job in enumerate(jobs):
+            if not isinstance(job, dict) or "name" not in job:
+                continue
+            name, note = resolve_job_slice_name(f, job["name"], job.get("offset_um", 0.0))
+            present = volume_ids_with_slice(f, name)
+            if not present:
+                continue
+            off = float(job.get("offset_um", 0.0))
+            base = job.get("fig_name") or job["name"]
+            entries.append(ReplotJobEntry(ji, name, f"{base}  @ {off:+.2f} µm", present, note))
+    return entries
+
+
+def render_replot(h5_path, jobs, style, clim, out_dir, *, dpi=None, params=None):
+    """Re-render profile jobs cold with optional per-quantity colour limits.
+
+    Appearance-only twin of a parameter-mode run: writes companion, overview
+    and trace figures for *jobs* into *out_dir* — never CSVs. ``clim`` is a
+    ``{key: (vmin, vmax)}`` mapping (field id first, colormap group fallback;
+    ``None``/missing keeps stored limits). ``params`` (optional) is a dict of
+    stage param overrides (e.g. the form's current values) layered on top of
+    the stage defaults — this is how a replot honours the form's appearance
+    knobs (trace styling, line colour, reference field, DPI, ...); ``save_csv``
+    is always forced off regardless of what's in *params*. ``dpi``, if given,
+    wins over ``params["fig_dpi"]``. Returns a ProfilesResult (jobs/skipped/notes).
+    """
+    if not h5_path or not os.path.exists(h5_path):
+        raise StageUserError(
+            f"consolidated slice file not found: {h5_path!r}",
+            hint="Run the slices stage first, or Browse to an oblique_slices.h5.",
+        )
+    if not isinstance(jobs, list) or not jobs:
+        raise StageUserError(
+            "no jobs to replot",
+            hint="Check at least one job in the tree (jobs come from the form's Jobs JSON).",
+        )
+    p = {**STAGE.defaults(), **(params or {}), "save_csv": False}
+    if dpi is not None:
+        p["fig_dpi"] = int(dpi)
+    os.makedirs(out_dir, exist_ok=True)
+    result = ProfilesResult(output_dir=out_dir, mode="parameter")
+    used_stems: dict[str, int] = {}
+    with h5py.File(h5_path, "r") as f:
+        for ji, job in enumerate(jobs):
+            if not isinstance(job, dict) or "name" not in job:
+                result.skipped.append(f"job {ji}: malformed job spec")
+                continue
+            name, pin_note = resolve_job_slice_name(f, job["name"], job.get("offset_um", 0.0))
+            if pin_note:
+                result.notes.append(pin_note)
+                job = {**job, "name": name}
+            if not volume_ids_with_slice(f, name):
+                result.skipped.append(f"slice {name!r} not present")
+                continue
+            _render_parameter_job(
+                f,
+                job,
+                ji,
+                (ji + 0.5) / len(jobs),
+                p,
+                result,
+                used_stems,
+                out_dir,
+                style,
+                _noop,
+                clim=clim,
+            )
+    return result
+
+
 def read_volume_attrs(f, vid):
     a = dict(f[vid].attrs)
     return {
@@ -831,7 +928,28 @@ def _ordered_field_ids(present, ref_id, restrict):
     return [ref_id] + sorted(v for v in present if v != ref_id)
 
 
-def _collect(f, job, p, ref_pref, restrict):
+def _clim_attrs(attrs, vid, clim):
+    """Apply a per-quantity ``(vmin, vmax)`` override to a read_volume_attrs dict.
+
+    Key resolution matches the slices replot: exact field id first (e.g.
+    ``mosa_com_chi``), then the field kind's colormap group via GROUP_BY_KIND.
+    A half-open pair keeps the stored value on the blank side. ``clim=None``
+    (or no matching key) leaves *attrs* untouched.
+    """
+    pair = resolve_clim(clim, vid)
+    if pair is None:
+        pair = resolve_clim(clim, GROUP_BY_KIND.get(attrs.get("kind", ""), ""))
+    if pair is None:
+        return attrs
+    lo, hi = pair
+    if lo is not None:
+        attrs["vmin"] = float(lo)
+    if hi is not None:
+        attrs["vmax"] = float(hi)
+    return attrs
+
+
+def _collect(f, job, p, ref_pref, restrict, clim=None):
     name = job["name"]
     present = volume_ids_with_slice(f, name)
     if not present:
@@ -842,7 +960,7 @@ def _collect(f, job, p, ref_pref, restrict):
     ref_id = _pick_reference_id(present, job_ref)
     u_um, v_um, offsets = read_axes(f[f"{ref_id}/{name}"])
     idx, off_used = resolve_plane_index(offsets, job["offset_um"])
-    ref_attrs = read_volume_attrs(f, ref_id)
+    ref_attrs = _clim_attrs(read_volume_attrs(f, ref_id), ref_id, clim)
     ref_plane = f[f"{ref_id}/{name}"]["slices"][idx].astype(np.float64)
     geom = line_geometry(
         u_um,
@@ -880,7 +998,7 @@ def _collect(f, job, p, ref_pref, restrict):
         fields.append(
             {
                 "vid": vid,
-                "attrs": read_volume_attrs(f, vid),
+                "attrs": _clim_attrs(read_volume_attrs(f, vid), vid, clim),
                 "value_mean": vm,
                 "value_std": vs,
                 "n_valid": nv,
@@ -976,6 +1094,76 @@ def _save_traces(
 # -----------------------------------------------------------------------------
 # Entry point
 # -----------------------------------------------------------------------------
+def _render_parameter_job(
+    f, job, ji, frac, p, result, used_stems, out_dir, style, progress, clim=None
+):
+    """Render one parameter-mode job into *out_dir* (companion/traces/CSVs/
+    overviews per the p-flags), appending to *result*. Shared verbatim by
+    run() and render_replot() so the two paths cannot drift; *frac* is the
+    precomputed progress fraction for this job's drop notes and *clim* is the
+    per-quantity override mapping threaded to _collect."""
+    ref_pref = p["reference_volume_id"] or ""
+    restrict = [v.strip() for v in p["volume_ids"].split(",") if v.strip()] or None
+    line_override = p["line_color"] or None
+    dpi = int(p["fig_dpi"])
+    save_traces = bool(p["save_traces"])
+    save_companion = bool(p["save_companion"])
+    trace_aspect = p["trace_aspect"]
+    trace_width_in = float(p["trace_width_in"])
+    trace_linewidth = float(p["trace_linewidth"])
+    trace_color = p["trace_color"] or None
+    trace_font_scale = float(p["trace_font_scale"])
+    trace_file_aspect = p["trace_file_aspect"] or ""
+    name = job["name"]
+    try:
+        ref, fields, geom, off_used, dropped = _collect(f, job, p, ref_pref, restrict, clim=clim)
+    except (KeyError, ValueError) as exc:
+        result.skipped.append(f"{name}: {exc}")
+        return
+    for reason in dropped:
+        msg = f"{name}: {reason}"
+        result.notes.append(msg)
+        progress(frac, msg)
+    color = auto_line_color(ref[3]["cmap"], line_override)
+    stem = _unique_name(
+        used_stems,
+        job.get("fig_name")
+        or f"profile_{name}_{off_used:+.2f}um".replace("+", "p").replace("-", "m"),
+    )
+    jr = ProfileJobResult(
+        name=name,
+        offset_used_um=off_used,
+        fields=[fl["vid"] for fl in fields],
+        job_index=ji,
+    )
+    if save_companion:
+        out_png = os.path.join(out_dir, f"{stem}.png")
+        save_companion_figure(ref, fields, geom, color, out_png, dpi, style=style)
+        jr.figure = out_png
+    if save_traces:
+        jr.traces = _save_traces(
+            out_dir,
+            stem,
+            fields,
+            geom,
+            aspect=trace_aspect,
+            file_aspect=trace_file_aspect,
+            width_in=trace_width_in,
+            linewidth=trace_linewidth,
+            color=trace_color,
+            font_scale=trace_font_scale,
+            dpi=dpi,
+            style=style,
+        )
+    if bool(p["save_csv"]):
+        jr.csvs = _write_csvs(out_dir, stem, geom["distance"], fields)
+    if bool(p["save_overview"]):
+        jr.overviews = _save_overviews(
+            out_dir, stem, ref, fields, geom, off_used, line_override, dpi, style=style
+        )
+    result.jobs.append(jr)
+
+
 def run(params: dict, progress: ProgressFn | None = None) -> ProfilesResult:
     progress = progress or _noop
     p = {**STAGE.defaults(), **params}
@@ -1003,15 +1191,12 @@ def run(params: dict, progress: ProgressFn | None = None) -> ProfilesResult:
             hint="Define at least one job, or use 'Pick line…' to click a line on a slice plane.",
         )
     ref_pref = p["reference_volume_id"] or ""
-    restrict = [v.strip() for v in p["volume_ids"].split(",") if v.strip()] or None
     line_override = p["line_color"] or None
     dpi = int(p["fig_dpi"])
     save_traces = bool(p["save_traces"])
-    save_companion = bool(p["save_companion"])
     trace_aspect = p["trace_aspect"]
     trace_width_in = float(p["trace_width_in"])
     trace_linewidth = float(p["trace_linewidth"])
-    trace_color = p["trace_color"] or None
     trace_font_scale = float(p["trace_font_scale"])
     trace_file_aspect = p["trace_file_aspect"] or ""
     if save_traces:
@@ -1078,53 +1263,9 @@ def run(params: dict, progress: ProgressFn | None = None) -> ProfilesResult:
                 continue
 
             # parameter mode
-            try:
-                ref, fields, geom, off_used, dropped = _collect(f, job, p, ref_pref, restrict)
-            except (KeyError, ValueError) as exc:
-                result.skipped.append(f"{name}: {exc}")
-                continue
-            for reason in dropped:
-                msg = f"{name}: {reason}"
-                result.notes.append(msg)
-                progress((ji + 0.5) / len(jobs), msg)
-            color = auto_line_color(ref[3]["cmap"], line_override)
-            stem = _unique_name(
-                used_stems,
-                job.get("fig_name")
-                or f"profile_{name}_{off_used:+.2f}um".replace("+", "p").replace("-", "m"),
+            _render_parameter_job(
+                f, job, ji, (ji + 0.5) / len(jobs), p, result, used_stems, out_dir, style, progress
             )
-            jr = ProfileJobResult(
-                name=name,
-                offset_used_um=off_used,
-                fields=[fl["vid"] for fl in fields],
-                job_index=ji,
-            )
-            if save_companion:
-                out_png = os.path.join(out_dir, f"{stem}.png")
-                save_companion_figure(ref, fields, geom, color, out_png, dpi, style=style)
-                jr.figure = out_png
-            if save_traces:
-                jr.traces = _save_traces(
-                    out_dir,
-                    stem,
-                    fields,
-                    geom,
-                    aspect=trace_aspect,
-                    file_aspect=trace_file_aspect,
-                    width_in=trace_width_in,
-                    linewidth=trace_linewidth,
-                    color=trace_color,
-                    font_scale=trace_font_scale,
-                    dpi=dpi,
-                    style=style,
-                )
-            if bool(p["save_csv"]):
-                jr.csvs = _write_csvs(out_dir, stem, geom["distance"], fields)
-            if bool(p["save_overview"]):
-                jr.overviews = _save_overviews(
-                    out_dir, stem, ref, fields, geom, off_used, line_override, dpi, style=style
-                )
-            result.jobs.append(jr)
 
     progress(1.0, f"{mode}: {len(result.jobs)} job(s) -> {out_dir}")
     return result

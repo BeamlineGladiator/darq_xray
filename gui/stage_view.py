@@ -137,9 +137,9 @@ class StageView(QWidget):
             self._pick_btn = QPushButton("Pick line…")
             self._pick_btn.clicked.connect(self._on_pick_line)
             btn_row.addWidget(self._pick_btn)
-        # slices/strain/mosaicity/rocking: re-render layers from an existing h5
+        # slices/strain/mosaicity/rocking/profiles: re-render layers from an existing h5
         self._replot_btn: QPushButton | None = None
-        if stage_name in ("slices", "strain", "mosaicity", "rocking"):
+        if stage_name in ("slices", "strain", "mosaicity", "rocking", "profiles"):
             self._replot_btn = QPushButton("Replot…")
             self._replot_btn.clicked.connect(self._on_replot)
             btn_row.addWidget(self._replot_btn)
@@ -455,6 +455,10 @@ class StageView(QWidget):
             self._replot_slices(vals, style)
             return
 
+        if self._stage_name == "profiles":
+            self._replot_profiles(vals, style)
+            return
+
         from dfxm.stages import mosaicity as _mo
         from dfxm.stages import rocking as _ro
         from dfxm.stages import strain as _st
@@ -517,6 +521,47 @@ class StageView(QWidget):
             style=style,
             out_default="",
             parent=self,
+        )
+        dlg.exec()
+        if dlg.written:
+            self._log.append(
+                f"Replotted {len(dlg.written)} PNG(s) → {os.path.dirname(dlg.written[0])}"
+            )
+            self._tabs.setCurrentWidget(self._log)
+
+    def _replot_profiles(self, vals: dict, style) -> None:
+        """Open the profiles replot dialog (jobs from the form's Jobs JSON)."""
+        import json as _json
+
+        h5 = vals.get("consolidated_h5", "") or ""
+        try:
+            jobs = _json.loads(vals.get("jobs_json", "") or "[]")
+        except (ValueError, TypeError):
+            jobs = []
+        if not isinstance(jobs, list):
+            jobs = []
+
+        from .widgets.profiles_replot import ProfilesReplotDialog  # imported on demand
+
+        # Appearance-only subset of the form's values: the replot always writes
+        # companion+overviews+traces (save_companion/save_traces/save_overview
+        # deliberately excluded), it just honours how they look.
+        appearance_keys = (
+            "trace_aspect",
+            "trace_file_aspect",
+            "trace_width_in",
+            "trace_linewidth",
+            "trace_color",
+            "trace_font_scale",
+            "line_color",
+            "reference_volume_id",
+            "fig_dpi",
+        )
+        params = {k: vals[k] for k in appearance_keys if k in vals}
+
+        # out_default="" lets the dialog default the output beside the loaded h5.
+        dlg = ProfilesReplotDialog(
+            h5, jobs, style=style, out_default="", parent=self, params=params
         )
         dlg.exec()
         if dlg.written:

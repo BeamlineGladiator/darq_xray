@@ -868,6 +868,55 @@ mosaicity/rocking/visualize/paraview maps are. The **companion**'s map panel is
 left alone by design: it keeps today's geometry byte-identically even when the
 knob is set, so a saved companion layout never shifts underfoot.
 
+#### Replotting line profiles
+
+The **Replot…** button (always enabled, even before any run) opens a dialog
+that re-renders profile jobs directly from an `oblique_slices.h5` — a prior
+profiles run in the current session is not required (cold-start).
+
+1. Click **Replot…** on the profiles stage panel. The dialog reads the file at
+   the form's **Slices file** (`consolidated_h5`) and the jobs currently in
+   **Jobs (JSON)** (`jobs_json`) — whatever is in those two fields at the
+   moment you click, so fill them in (or use **Pick line…**) first.
+2. The tree lists each **job once**, expandable into a checkbox per **field**
+   the job can profile. A job's own `"fields"` list (see
+   [[#Jobs JSON: per-job `fields` and `reference`]]) seeds which children start
+   checked; when a job has no `"fields"` override, every field present for
+   that slice opens checked. Uncheck individual fields, or a whole job, to
+   narrow the batch — **Render** is disabled while nothing is checked.
+3. Optionally override the stored colour limits **per quantity** — one
+   **vmin** / **vmax** row per distinct field present in the file, same
+   semantics as [Replotting slices without re-running](#replotting-slices-without-re-running):
+   leave a row's boxes blank to keep the limits stored in the HDF5.
+4. The **Output dir** pre-fills to a timestamped `replots/<stamp>/` subfolder
+   **beside the loaded slices file**; it re-derives automatically on
+   Browse/Load until you edit it by hand. Set **DPI** alongside it if you want
+   a different resolution than the stage default.
+5. Click **Render** — each checked job writes its companion figure, per-field
+   overviews and per-field trace figures into `<out_dir>`, using the current
+   session publication style. **CSVs are never rewritten** by a replot (unlike
+   a live `parameter`-mode run). The trace figures are re-rendered on every
+   replot but are **unaffected by the colour-limit overrides** — a line trace
+   has no colour scale to clamp, only the map overview does.
+6. Jobs that reference a sweep-era slice name still resolve against a
+   **pinned** file (`oblique_slices_pinned.h5`) the same way a normal run
+   does — see [Pinned planes (fast re-runs)](#pinned-planes-fast-re-runs); the
+   substitution is reported in the dialog's status line after rendering.
+
+The dialog honours the form's current **appearance** knobs — trace styling
+(aspect, width, line width/colour, font scale), the overview **line colour**,
+the **reference field**, and **DPI** — so a replot looks like the form is set
+up, not like the stage defaults; the **save-toggles**
+(`save_companion`/`save_traces`/`save_overview`) are deliberately not passed
+through, since a replot always writes all three figure kinds regardless of
+what the form's Output group is set to.
+
+A job whose `"fields"` override names only ids **absent** from this file (a
+reference-only job in a run — see
+[[#Jobs JSON: per-job `fields` and `reference`]]) opens with every child
+unchecked and is skipped if left that way; there is nothing to re-render for
+it here — run the stage itself to reproduce that job's reference-only output.
+
 ### 9. Rocking-matched layers (`matched`)
 
 For each strain layer, find the nearest rocking scan by `(samy, samz)`, load a
