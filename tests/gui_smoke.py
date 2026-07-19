@@ -960,6 +960,62 @@ def main() -> int:
     assert _json32.loads(_dlg32.result_json)[0]["sweep_start_um"] == 0.0
     print("[32] Pin planes… dialog emits pinned specs; button wired on slices view")
 
+    # [33] ProfilesReplotDialog: opens from the profiles view, renders checked jobs.
+    import h5py as _h5py33
+    import numpy as _np33
+
+    from gui.widgets.profiles_replot import ProfilesReplotDialog as _PRD33
+
+    profiles_view = win._views["profiles"]
+    assert profiles_view._replot_btn is not None, "profiles view missing _replot_btn"
+
+    _tmp33 = tempfile.mkdtemp()
+    _h5_33 = os.path.join(_tmp33, "oblique_slices.h5")
+    _u33 = _np33.linspace(-10.0, 10.0, 81)
+    _v33 = _np33.linspace(-8.0, 8.0, 65)
+    _uu33, _vv33 = _np33.meshgrid(_u33, _v33)
+    _offsets33 = _np33.array([-1.0, 0.0, 1.0])
+    with _h5py33.File(_h5_33, "w") as _f33:
+        for _vid33, _kind33, _cmap33 in (
+            ("raw_sum", "raw_sum", "gray"),
+            ("strain", "strain", "RdBu_r"),
+        ):
+            _g33 = _f33.create_group(_vid33)
+            _g33.attrs["kind"] = _kind33
+            _g33.attrs["cbar_label"] = "value"
+            _g33.attrs["cmap"] = _cmap33
+            _g33.attrs["title"] = _vid33
+            _g33.attrs["vmin"] = -10.0
+            _g33.attrs["vmax"] = 10.0
+            _sg33 = _g33.create_group("oblique_full")
+            _stack33 = _np33.stack(
+                [0.7 * _uu33 - 1.3 * _vv33 + _o for _o in _offsets33], axis=0
+            ).astype(_np33.float32)
+            _sg33.create_dataset("slices", data=_stack33)
+            _sg33.create_dataset("u_um", data=_u33)
+            _sg33.create_dataset("v_um", data=_v33)
+            _sg33.create_dataset("offsets_um", data=_offsets33)
+
+    _jobs33 = [
+        {
+            "name": "oblique_full",
+            "offset_um": 0.0,
+            "start_uv": [-5, -3],
+            "end_uv": [5, 3],
+            "n_samples": 20,
+            "width_pixels": 1,
+            "fig_name": "smoke33",
+        }
+    ]
+    _dlg33 = _PRD33(_h5_33, _jobs33, style=None, out_default="")
+    assert _dlg33._tree.topLevelItemCount() == 1
+    assert _dlg33._render_btn.isEnabled()  # opens with fields checked
+    _out33 = os.path.join(_tmp33, "replots")
+    _written33 = _dlg33.render_selection(_out33)
+    assert _written33 and all(os.path.exists(p) for p in _written33)
+    assert not any(p.endswith(".csv") for p in os.listdir(_out33))
+    print("[33] ProfilesReplotDialog: Replot… button wired; tree + render writes PNGs, no CSVs")
+
     print("\nGUI SMOKE PASSED")
     return 0
 

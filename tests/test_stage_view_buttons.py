@@ -17,7 +17,7 @@ from gui.stage_view import StageView  # noqa: E402
 
 _app = QApplication.instance() or QApplication([])
 
-_REPLOT_STAGES = {"slices", "strain", "mosaicity", "rocking"}
+_REPLOT_STAGES = {"slices", "strain", "mosaicity", "rocking", "profiles"}
 _PIN_STAGES = {"slices"}
 
 
