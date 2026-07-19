@@ -279,6 +279,21 @@ selected layers directly from a `stacked_strain_volumes.h5` — a prior run in
 the current session is not required (cold-start). Use **Browse…** / **Load** to
 point at a different file.
 
+The dialog is **planes-first**, same panel as the slices stage's Replot dialog
+(see [Replotting slices without re-running](#replotting-slices-without-re-running)
+for the full filter/check-all mechanics): the left panel lists each layer
+**once** (there are no slice-group sections here — strain/mosaicity/rocking
+layers are a flat list); the right panel lists **quantities**, one checkbox per
+`ReplotGroup` returned by `replot_catalog` (strain has a single quantity, so one
+checkbox). Both open **everything checked**, so a plain **Render** remakes every
+layer × every quantity; type in the **Filter** box (bare integers match a layer
+number, signed/decimal values match the nearest `Z=…` offset when the layer
+labels carry one) to narrow which rows are *visible* — it never changes what's
+checked — then **Check all visible** to select exactly that subset. **Render**
+is disabled while nothing is selected. A checked layer that doesn't exist for a
+checked quantity is silently skipped rather than erroring; the status line
+reports `skipped N combo(s)` after rendering.
+
 `strain.replot_catalog(h5_path)` reads a `stacked_strain_volumes.h5` and returns
 a single `ReplotGroup` (key `"strain"`) with one item per stored layer (names
 come from `source_folders` in the file's attributes).
@@ -306,12 +321,12 @@ is passed to the core as a `{kind: (vmin, vmax)}` mapping.
 > re-applied here unless you pass `params={"roi": "r0,r1,c0,c1", …}`. For exact
 > axis reproduction, pass the original `params` dict rather than a pixel crop.
 > The ROI crop is bounded by the stored data dimensions — values outside the
-> array shape are clamped silently. To make those bounds visible, each group /
-> slice node in the replot tree is labelled with its stored pixel size,
-> e.g. `120×256 px (Y×X)`, so you can read off the valid range: rows `r0:r1` ∈
-> `[0, Y]`, cols `c0:c1` ∈ `[0, X]`. (For strain and rocking that size is the
-> run's already-ROI-cropped layer — i.e. the largest region a replot crop can
-> reach; a wider frame needs a re-run.)
+> array shape are clamped silently. To make those bounds visible, each
+> **quantity** row in the right-hand panel is labelled with its stored pixel
+> size, e.g. `120×256 px (Y×X)`, so you can read off the valid range: rows
+> `r0:r1` ∈ `[0, Y]`, cols `c0:c1` ∈ `[0, X]`. (For strain and rocking that size
+> is the run's already-ROI-cropped layer — i.e. the largest region a replot crop
+> can reach; a wider frame needs a re-run.)
 
 > [!tip] Picking an ROI interactively
 > Click **Pick ROI…** (beside the four pixel boxes) to open a visual picker that
@@ -341,15 +356,25 @@ re-renders selected layers directly from a `stacked_volumes.h5` — a prior run
 in the current session is not required (cold-start). Use **Browse…** / **Load**
 to point at a different file.
 
+The dialog is the same **planes-first** panel described under
+[Replotting strain layers without re-running](#replotting-strain-layers-without-re-running):
+layers are listed **once** on the left (flat, no sections); each dataset (χ/μ
+CoM and FWHM) is a **quantity** checkbox on the right. Both open **everything
+checked**; the **Filter** box narrows which layer rows are visible without
+changing what's checked, and **Check all visible** selects exactly the filtered
+subset. **Render** is disabled while nothing is selected, and a checked layer
+missing from one dataset is skipped (reported, not an error).
+
 `mosaicity.replot_catalog(h5_path)` enumerates the 3-D datasets present in a
 `stacked_volumes.h5` and returns one `ReplotGroup` per dataset (χ/μ CoM and
 FWHM). `mosaicity.render_replot(h5_path, selections, style, clim, out_dir, roi=None, params=None)`
 re-renders selected layers cold from disk. PNGs are written under
 `{out_dir}/{stem}/` (e.g. `chi_com/chi_com_layer_0000.png`). An optional
-pixel-bounds ROI crops each layer (bounded by the stored data dimensions — the
-tree labels each group with its stored pixel size, e.g. `120×256 px (Y×X)`, as
-the crop bound); the colour limits are set **per dataset** — the dialog shows a
-separate vmin/vmax row for χ/μ **Center of mass** and for **FWHM**, so the two
+pixel-bounds ROI crops each layer (bounded by the stored data dimensions — each
+quantity row on the right is labelled with its stored pixel size, e.g.
+`120×256 px (Y×X)`, as the crop bound); the colour limits are set **per dataset**
+— the dialog shows a separate vmin/vmax row for χ/μ **Center of mass** and for
+**FWHM**, so the two
 (which live on very different scales) get independent limits. `clim` reaches the
 core as a `{dataset_key: (vmin, vmax)}` mapping (either entry may be `None`; a
 dataset with both blank keeps its auto limits). When an ROI crop is applied the
@@ -412,14 +437,24 @@ selected layers directly from an `aligned_raw_rocking_volumes.h5` (or
 `aligned_raw_mosa_volumes.h5`) — a prior run in the current session is not
 required (cold-start). Use **Browse…** / **Load** to point at a different file.
 
+The dialog is the same **planes-first** panel described under
+[Replotting strain layers without re-running](#replotting-strain-layers-without-re-running):
+layers are listed **once** on the left (flat, no sections); `sum_intensity` and
+`specific_frame` are separate **quantity** checkboxes on the right. Both open
+**everything checked**; the **Filter** box narrows which layer rows are visible
+without changing what's checked, and **Check all visible** selects exactly the
+filtered subset. **Render** is disabled while nothing is selected, and a
+checked layer missing from one product is skipped (reported, not an error).
+
 `rocking.replot_catalog(h5_path)` enumerates the 3-D datasets present and returns
 one `ReplotGroup` per dataset (`sum_intensity` and `specific_frame`).
 `rocking.render_replot(h5_path, selections, style, clim, out_dir, roi=None, params=None)`
 re-renders selected layers cold from disk. PNGs are written under
 `{out_dir}/{key}/` (e.g. `sum_intensity/sum_intensity_layer_0000.png`). An
 optional pixel-bounds ROI crops each layer (bounded by the stored data
-dimensions — the tree labels each product with its stored pixel size, e.g.
-`120×256 px (Y×X)`, as the crop bound); the colour limits are set **per product**
+dimensions — each quantity row on the right is labelled with its stored pixel
+size, e.g. `120×256 px (Y×X)`, as the crop bound); the colour limits are set
+**per product**
 — the dialog shows a separate vmin/vmax row for `sum_intensity` and for
 `specific_frame`. `clim` reaches the core as a `{product_key: (vmin, vmax)}`
 mapping (either entry may be `None`; a product with both blank keeps its

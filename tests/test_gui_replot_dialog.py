@@ -35,7 +35,7 @@ def test_replot_dialog_collects_selection_clim_roi(tmp_path):
     dlg._c0.setText("0")
     dlg._c1.setText("3")
     written = dlg.render_selection(str(tmp_path))
-    assert captured["selections"] == [("A", None)]
+    assert captured["selections"] == [("A", [0, 1])]
     assert captured["clim"] == {"A": (0.5, None)}  # per-group mapping keyed by ReplotGroup.key
     assert captured["roi"] == (0, 2, 0, 3)
     assert written == [os.path.join(str(tmp_path), "x.png")]
@@ -110,8 +110,54 @@ def test_replot_dialog_shows_group_pixel_size(tmp_path):
         return [ReplotGroup(key="A", label="chi", item_labels=["l0"], shape=(4, 5))]
 
     dlg = ReplotDialog(str(h5), catalog_fn, lambda *a: [], out_default=str(tmp_path))
-    node_text = dlg._tree.topLevelItem(0).text(0)
-    assert "4×5 px" in node_text  # ROI hint annotated on the group node
+    qty_text = dlg._panel._qty.item(0).text()
+    assert "4×5 px" in qty_text  # ROI hint annotated on the quantity row
+
+
+def test_generic_dialog_planes_first_product(tmp_path):
+    class _G:
+        def __init__(self, key, labels):
+            self.key, self.label, self.item_labels, self.shape = key, key, labels, None
+
+    calls = []
+
+    def catalog_fn(_path):
+        return [_G("sum_intensity", ["layer 0", "layer 1"]), _G("specific_frame", ["layer 0"])]
+
+    def render_fn(h5, selections, st, clim, roi, out):
+        calls.append(selections)
+        return ["x.png"]
+
+    h5 = tmp_path / "a.h5"
+    h5.write_bytes(b"")
+    dlg = ReplotDialog(str(h5), catalog_fn, render_fn, out_default=str(tmp_path))
+    dlg.render_selection(str(tmp_path))
+    sels = dict(calls[-1])
+    assert sels["sum_intensity"] == [0, 1]
+    assert sels["specific_frame"] == [0]  # layer 1 skipped for this product, no error
+
+
+def test_generic_dialog_filter_and_check_all_visible(tmp_path):
+    class _G:
+        def __init__(self, key, labels):
+            self.key, self.label, self.item_labels, self.shape = key, key, labels, None
+
+    def catalog_fn(_path):
+        return [_G("A", ["layer 0", "layer 1", "layer 2"])]
+
+    h5 = tmp_path / "a.h5"
+    h5.write_bytes(b"")
+    dlg = ReplotDialog(str(h5), catalog_fn, lambda *a: [], out_default=str(tmp_path))
+    dlg.show()
+    _app.processEvents()
+    dlg._panel.set_all_checked(False)
+    assert not dlg._panel.has_selection()
+    dlg._panel._filter.setText("0")
+    dlg._panel.check_all_visible()
+    assert dlg._panel.has_selection()
+    assert dlg._panel.checked_plane_keys() == [0]
+    dlg._panel._filter.setText("999")
+    assert dlg._panel._no_match.isVisible()
 
 
 def test_pick_roi_fills_boxes(tmp_path, monkeypatch):

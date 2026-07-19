@@ -902,6 +902,38 @@ def main() -> int:
     assert _dlg30._panel._no_match.isVisible()
     print("[30] planes-first slices replot: filter + check-all-visible + no-match hint")
 
+    # [31] Planes-first generic replot dialog (strain/mosaicity/rocking): product
+    # selection across checked layers x checked quantity groups + filter hint.
+    from gui.widgets.replot_dialog import ReplotDialog as _RD31
+
+    class _G31:
+        def __init__(self, key, labels):
+            self.key, self.label, self.item_labels, self.shape = key, key, labels, None
+
+    _calls31: list = []
+
+    def _catalog_fn31(_path):
+        return [_G31("sum_intensity", ["layer 0", "layer 1"]), _G31("specific_frame", ["layer 0"])]
+
+    def _render_fn31(h5, selections, st, clim, roi, out):
+        _calls31.append(selections)
+        return ["x.png"]
+
+    _h5_31 = os.path.join(tempfile.mkdtemp(), "a.h5")
+    with open(_h5_31, "wb"):
+        pass
+    _dlg31 = _RD31(_h5_31, _catalog_fn31, _render_fn31, out_default=tempfile.mkdtemp())
+    _dlg31.show()
+    app.processEvents()
+    _dlg31.select_all()
+    _dlg31.render_selection(_dlg31._out_edit.text())
+    _sels31 = dict(_calls31[-1])
+    assert _sels31["sum_intensity"] == [0, 1]
+    assert _sels31["specific_frame"] == [0]  # layer 1 skipped for this product, no error
+    _dlg31._panel._filter.setText("999")
+    assert _dlg31._panel._no_match.isVisible()
+    print("[31] generic replot dialog planes-first: product selection + filter")
+
     print("\nGUI SMOKE PASSED")
     return 0
 
