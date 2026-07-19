@@ -782,3 +782,61 @@ def test_collect_applies_clim_to_ref_and_fields(tmp_path):
     assert (by_vid["strain"]["vmin"], by_vid["strain"]["vmax"]) == (-2.0, 2.0)
     assert (by_vid["raw_sum"]["vmin"], by_vid["raw_sum"]["vmax"]) == (-10.0, 10.0)  # stored
     assert (ref[3]["vmin"], ref[3]["vmax"]) == (-10.0, 10.0)  # ref is raw_sum -> stored
+
+
+def test_render_replot_writes_figures_no_csvs(tmp_path):
+    h5 = tmp_path / "oblique_slices.h5"
+    _write_consolidated(str(h5))
+    out = tmp_path / "replots"
+    jobs = [
+        {
+            "name": "oblique_full",
+            "offset_um": 0.0,
+            "start_uv": [-5, -3],
+            "end_uv": [5, 3],
+            "n_samples": 40,
+            "width_pixels": 1,
+            "fig_name": "rp0",
+        }
+    ]
+    res = PR.render_replot(str(h5), jobs, None, {"strain": (-2.0, 2.0)}, str(out))
+    assert len(res.jobs) == 1
+    jr = res.jobs[0]
+    assert jr.figure and os.path.exists(jr.figure)  # companion
+    assert len(jr.overviews) == 2 and all(os.path.exists(p) for p in jr.overviews)
+    assert len(jr.traces) == 2 and all(os.path.exists(p) for p in jr.traces)
+    assert jr.csvs == []  # replots never write CSVs
+    assert not any(fn.endswith(".csv") for fn in os.listdir(out))
+
+
+def test_render_replot_resolves_pinned_names(tmp_path):
+    h5 = tmp_path / "oblique_slices_pinned.h5"
+    _write_pinned(str(h5))
+    jobs = [{"name": "oblique_full", "offset_um": 0.8, "start_uv": [-5, -3], "end_uv": [5, 3]}]
+    res = PR.render_replot(str(h5), jobs, None, None, str(tmp_path / "rp"))
+    assert len(res.jobs) == 1 and res.jobs[0].name == "oblique_full_pin_+1.00um"
+    assert any("pinned" in n for n in res.notes)
+
+
+def test_render_replot_bad_inputs_raise_stageusererror(tmp_path):
+    with pytest.raises(PR.StageUserError):
+        PR.render_replot(str(tmp_path / "missing.h5"), [{"name": "x"}], None, None, str(tmp_path))
+    h5 = tmp_path / "oblique_slices.h5"
+    _write_consolidated(str(h5))
+    with pytest.raises(PR.StageUserError):
+        PR.render_replot(str(h5), [], None, None, str(tmp_path))
+
+
+def test_replot_catalog_lists_jobs_and_fields(tmp_path):
+    h5 = tmp_path / "oblique_slices.h5"
+    _write_consolidated(str(h5))
+    jobs = [
+        {"name": "oblique_full", "offset_um": 0.0, "fig_name": "rp0"},
+        {"name": "no_such_slice", "offset_um": 0.0},
+    ]
+    cat = PR.replot_catalog(str(h5), jobs)
+    assert len(cat) == 1  # jobs whose slice is absent (plain or pinned) are omitted
+    e = cat[0]
+    assert e.job_index == 0 and e.name == "oblique_full"
+    assert e.fields == ["raw_sum", "strain"]
+    assert "rp0" in e.label and e.note is None
