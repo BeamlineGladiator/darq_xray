@@ -97,7 +97,7 @@ class PinPlanesDialog(QDialog):
             for sname, offs in by_slice.items():
                 specs.extend(_sl.build_pinned_spec(self._h5_path, sname, offs))
         except StageUserError as exc:
-            self._status.setText(str(exc))
+            self._status.setText(f"{exc}\n\n{exc.hint}" if exc.hint else str(exc))
             return
         self.result_json = json.dumps(specs, indent=2)
         self.accept()

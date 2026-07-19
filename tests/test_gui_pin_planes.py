@@ -60,3 +60,23 @@ def test_pin_dialog_empty_selection_or_bad_file_writes_nothing(tmp_path):
     assert dlg.result_json is None
     bad = PinPlanesDialog(str(tmp_path / "missing.h5"))
     assert bad._panel._rows == [] and bad.result_json is None
+
+
+def test_pin_dialog_shows_stage_user_error_hint(tmp_path, monkeypatch):
+    from dfxm.common.errors import StageUserError
+    from dfxm.stages import slices as sl
+
+    dlg = PinPlanesDialog(_sweep_h5(tmp_path))
+    dlg._panel._items[("oblique", 0)].setCheckState(0, Qt.CheckState.Checked)
+
+    def _raise(*_a, **_kw):
+        raise StageUserError(
+            "slice 'oblique' not found in any volume group of the file",
+            hint="volumes present: strain — pick a slice name from a swept oblique_slices.h5.",
+        )
+
+    monkeypatch.setattr(sl, "build_pinned_spec", _raise)
+    dlg._on_ok()
+    assert dlg.result_json is None  # dialog stayed open, nothing written
+    assert "slice 'oblique' not found" in dlg._status.text()
+    assert "volumes present: strain" in dlg._status.text()
