@@ -678,6 +678,39 @@ def test_fixed_scale_defensive_parse():
     assert fixed_scale(PlotStyle(scale_um_per_cm=0)) is None
 
 
+def test_trace_fixed_scale_precedence_and_fallback():
+    from dfxm.common.plotting import trace_fixed_scale
+
+    assert trace_fixed_scale(None) is None
+    assert trace_fixed_scale(PlotStyle()) is None
+    # blank trace field inherits the map scale
+    assert trace_fixed_scale(PlotStyle(scale_um_per_cm=50.0)) == 50.0
+    # a valid trace value wins over the map scale
+    assert trace_fixed_scale(PlotStyle(scale_um_per_cm=50.0, trace_scale_um_per_cm=25.0)) == 25.0
+    # trace value alone works without a map scale
+    assert trace_fixed_scale(PlotStyle(trace_scale_um_per_cm=25.0)) == 25.0
+    assert trace_fixed_scale(PlotStyle(trace_scale_um_per_cm="25")) == 25.0  # persisted string
+    # junk / non-positive trace values degrade to the map-scale fallback
+    assert trace_fixed_scale(PlotStyle(scale_um_per_cm=50.0, trace_scale_um_per_cm="junk")) == 50.0
+    assert trace_fixed_scale(PlotStyle(scale_um_per_cm=50.0, trace_scale_um_per_cm=-3)) == 50.0
+    assert trace_fixed_scale(PlotStyle(trace_scale_um_per_cm=0)) is None
+
+
+def test_fixed_scale_box_explicit_scale_override():
+    from dfxm.common.plotting import fixed_scale_box
+
+    # explicit scale wins over the style's own scale_um_per_cm
+    box = fixed_scale_box(PlotStyle(scale_um_per_cm=50.0), 100.0, 50.0, scale=25.0)
+    assert abs(box[0] - 100.0 / 25.0 / 2.54) < 1e-9
+    assert abs(box[1] - 50.0 / 25.0 / 2.54) < 1e-9
+    # scale=None keeps the style read (backward compatible)
+    box2 = fixed_scale_box(PlotStyle(scale_um_per_cm=50.0), 100.0, 50.0)
+    assert abs(box2[0] - 100.0 / 50.0 / 2.54) < 1e-9
+    # explicit scale with no style scale still works
+    assert fixed_scale_box(PlotStyle(), 100.0, 50.0, scale=25.0) is not None
+    assert fixed_scale_box(PlotStyle(), 100.0, 50.0) is None
+
+
 def test_fixed_scale_box_geometry_clamp_and_degenerate():
     box = fixed_scale_box(PlotStyle(scale_um_per_cm=50.0), 200.0, 100.0)
     assert box is not None

@@ -425,6 +425,26 @@ def test_build_trace_figure_fixed_scale_clamps_like_maps():
     assert w_in <= 30.5
 
 
+def test_build_trace_figure_trace_scale_overrides_map_scale():
+    # trace_scale_um_per_cm wins over scale_um_per_cm for the trace box width;
+    # a smaller µm/cm value prints the same line physically larger.
+    from dfxm.common.plotting import PlotStyle
+
+    fld, geom = _fake_field()  # geom["L"] == 10.0
+    fig = PR.build_trace_figure(
+        fld,
+        geom,
+        aspect_wh=(2.0, 1.0),
+        width_in=6.0,
+        linewidth=1.5,
+        color="",
+        font_scale=1.0,
+        style=PlotStyle(scale_um_per_cm=2.0, trace_scale_um_per_cm=1.0),
+    )
+    w_in, _ = _trace_box_inches(fig)
+    assert abs(w_in - (10.0 / 1.0) / 2.54) < 0.03  # 10 cm, from the TRACE scale
+
+
 def test_run_tolerates_stale_trace_file_aspect_param(tmp_path):
     # trace_file_aspect was removed; persisted forms may still carry it — the
     # stray key must ride along ignored, not crash the run.

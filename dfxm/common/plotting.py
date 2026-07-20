@@ -106,6 +106,9 @@ class PlotStyle:
     # When set (>0), figure_width is ignored for maps and the profiles trace
     # figures ignore trace_width_in (their box width comes from the line length).
     scale_um_per_cm: float | None = None
+    # separate scale for the profiles TRACE figures only; None/blank = follow
+    # scale_um_per_cm (traces typically want ~half the map value or less)
+    trace_scale_um_per_cm: float | None = None
     # output
     formats: tuple[str, ...] = ("png",)
     dpi: int = 300
@@ -272,16 +275,38 @@ def fixed_scale(style: "PlotStyle | None") -> float | None:
     return v if (v > 0 and math.isfinite(v)) else None
 
 
+def trace_fixed_scale(style: "PlotStyle | None") -> float | None:
+    """Effective µm-per-cm for the profiles TRACE figures.
+
+    ``trace_scale_um_per_cm`` when it holds a positive finite value, else the
+    map scale via :func:`fixed_scale` (blank trace field = traces follow the
+    map scale). Same defensive parsing as ``fixed_scale`` — never raises.
+    """
+    if style is None:
+        return None
+    v = getattr(style, "trace_scale_um_per_cm", None)
+    if v is not None and v != "":
+        try:
+            v = float(v)
+        except (TypeError, ValueError):
+            v = None
+        if v is not None and v > 0 and math.isfinite(v):
+            return v
+    return fixed_scale(style)
+
+
 def fixed_scale_box(
-    style: "PlotStyle | None", ext_x_um: float, ext_y_um: float
+    style: "PlotStyle | None", ext_x_um: float, ext_y_um: float, scale: float | None = None
 ) -> tuple[float, float, float] | None:
     """Target axes-box (w_in, h_in, effective_um_per_cm) for fixed-scale mode.
 
     Returns None when the knob is off or the extents are degenerate (skip
     fitting). Sides are clamped to 30 in preserving aspect — the scale is
-    effectively raised and a warning logged, never an exception.
+    effectively raised and a warning logged, never an exception. ``scale``
+    (already-validated, e.g. from :func:`trace_fixed_scale`) overrides the
+    style's own ``scale_um_per_cm``; ``None`` keeps the style read.
     """
-    s = fixed_scale(style)
+    s = scale if scale is not None else fixed_scale(style)
     if s is None:
         return None
     if not (math.isfinite(ext_x_um) and math.isfinite(ext_y_um)) or ext_x_um <= 0 or ext_y_um <= 0:

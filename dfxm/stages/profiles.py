@@ -44,6 +44,7 @@ from ..common.plotting import (
     fixed_scale_box,
     style_from_params,
     styled_figure,
+    trace_fixed_scale,
 )
 from ..config.models import Param, ParamType, StageSpec
 
@@ -818,8 +819,13 @@ def build_trace_figure(
     curve_color = color or "C0"
     # Fixed-scale mode: ext_y = L·h/w keeps fixed_scale_box's aspect-preserving
     # clamp aligned with the trace aspect, so h_in/w_in == h/w survives clamping.
+    # The scale is the TRACE-effective one: trace_scale_um_per_cm when set,
+    # else the map scale (traces typically want ~half the map value or less).
     box = fixed_scale_box(
-        style, float(geom["L"]), float(geom["L"]) * float(h_ratio) / float(w_ratio)
+        style,
+        float(geom["L"]),
+        float(geom["L"]) * float(h_ratio) / float(w_ratio),
+        scale=trace_fixed_scale(style),
     )
     if box is not None:
         figsize = (box[0] + 1.5, box[1] + 1.5)

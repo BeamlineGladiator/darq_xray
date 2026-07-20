@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import os
 import re
 from dataclasses import replace
@@ -29,6 +30,23 @@ from dfxm.common.figures import FigureSpec
 from dfxm.common.plotting import CMAP_CHOICES, PlotStyle, fixed_scale
 
 from .mpl_canvas import MplCanvas
+
+
+def _own_trace_scale(s: PlotStyle) -> float | None:
+    """The trace-scale FIELD's own validated value, for display.
+
+    Deliberately NOT ``plotting.trace_fixed_scale`` — that falls back to the
+    map scale, which must render as a blank (inheriting) trace field here.
+    """
+    v = getattr(s, "trace_scale_um_per_cm", None)
+    if v is None or v == "":
+        return None
+    try:
+        v = float(v)
+    except (TypeError, ValueError):
+        return None
+    return v if (v > 0 and math.isfinite(v)) else None
+
 
 # Module-level constants for option lists — shared by StyleControls so the
 # two places can never drift apart.
@@ -139,6 +157,8 @@ class StyleControls(QWidget):
         )
         _sv = fixed_scale(s)
         self._w_scale_umcm.setText(f"{_sv:g}" if _sv is not None else "")
+        _tsv = _own_trace_scale(s)
+        self._w_trace_scale_umcm.setText(f"{_tsv:g}" if _tsv is not None else "")
         for cb, name in zip(self._format_checkboxes, self._format_names):
             cb.setChecked(name in s.formats)
         self._w_dpi.setValue(s.dpi)
@@ -185,6 +205,7 @@ class StyleControls(QWidget):
             self._w_round_clim,
             self._w_fig_width,
             self._w_scale_umcm,
+            self._w_trace_scale_umcm,
             self._w_fmt_png,
             self._w_fmt_pdf,
             self._w_fmt_svg,
@@ -509,12 +530,26 @@ class StyleControls(QWidget):
         self._w_scale_umcm.setToolTip(
             "Fixed physical scale for map figures: µm of data per cm of page. When set, every "
             "map's data box is fitted so the printed scale (and the scale bar) is identical "
-            "across figures; Figure width is ignored for maps (trace figures keep it). "
-            "Blank turns it off. For identical bars across different crops also set an "
-            "explicit Bar length."
+            "across figures; Figure width is ignored for maps. Trace figures follow this too "
+            "unless Trace scale below overrides it. Blank turns it off. For identical bars "
+            "across different crops also set an explicit Bar length."
         )
         self._w_scale_umcm.textChanged.connect(self._on_scale_umcm)
         form.addRow("Scale (µm/cm)", self._w_scale_umcm)
+
+        self._w_trace_scale_umcm = QLineEdit()
+        self._w_trace_scale_umcm.setPlaceholderText("(blank = follow Scale)")
+        _tsv = _own_trace_scale(s)
+        if _tsv is not None:
+            self._w_trace_scale_umcm.setText(f"{_tsv:g}")
+        self._w_trace_scale_umcm.setToolTip(
+            "Fixed physical scale for the profiles trace (line-profile) figures only: µm of "
+            "distance per cm of page. Blank = traces follow Scale (µm/cm) above. Hint: traces "
+            "usually need a smaller value than the maps — start at about half the map scale or "
+            "less; at the map's own scale the trace box tends to come out too small."
+        )
+        self._w_trace_scale_umcm.textChanged.connect(self._on_trace_scale_umcm)
+        form.addRow("Trace scale (µm/cm)", self._w_trace_scale_umcm)
 
         # --- Output section ---
         form.addRow(QLabel("<b>Output</b>"))
@@ -566,6 +601,20 @@ class StyleControls(QWidget):
                 if val <= 0:
                     val = None
         self._style.scale_um_per_cm = val
+        self._emit()
+
+    def _on_trace_scale_umcm(self, text: str) -> None:
+        t = text.strip()
+        val: float | None = None
+        if t:
+            try:
+                val = float(t)
+            except ValueError:
+                val = None
+            else:
+                if val <= 0:
+                    val = None
+        self._style.trace_scale_um_per_cm = val
         self._emit()
 
     def _on_formats_changed(self) -> None:

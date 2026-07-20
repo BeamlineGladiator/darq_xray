@@ -1024,7 +1024,8 @@ form.
 | Control | Meaning |
 |---|---|
 | Figure width | `single` (3.5 in), `double` (7.0 in), or `auto` (keeps the stage's own figsize) |
-| Scale (µm/cm) | Fixed physical scale for **map** figures: µm of data per cm of page. Blank = off (default). |
+| Scale (µm/cm) | Fixed physical scale for **map** figures: µm of data per cm of page. Blank = off (default). Trace figures follow it too unless Trace scale overrides. |
+| Trace scale (µm/cm) | Separate fixed scale for the profiles **trace** figures only. Blank = follow Scale (µm/cm). **Hint:** traces usually need a *smaller* value than the maps — start at about half the map scale or less; at the map's own scale the trace box tends to come out too small. |
 
 > [!tip] Fixed physical scale across figures
 > Setting **Scale (µm/cm)** fits every map's data box (per-layer maps, slices,
@@ -1032,10 +1033,12 @@ form.
 > the profiles reference/overview panels — not the profiles companion) so the
 > printed scale, and the scale bar, are identical across figures regardless of
 > each crop's pixel extent. The profiles **trace figures** follow the same
-> scale on their distance axis: the plot box prints `line length ÷ scale` cm
-> wide (so horizontal axes line up across traces and against the maps), with
-> the box height set by `trace_aspect`. While the scale is set, **Figure
-> width is ignored for maps and Trace width is ignored for traces**. Requested sides are clamped to 30 in — a typo scale (e.g. a
+> scale on their distance axis — or their own **Trace scale (µm/cm)** when
+> that field is set (traces usually want ~half the map value or less): the
+> plot box prints `line length ÷ scale` cm wide (so horizontal axes line up
+> across traces and against the maps), with the box height set by
+> `trace_aspect`. While a scale is set, **Figure width is ignored for maps
+> and Trace width is ignored for traces**. Requested sides are clamped to 30 in — a typo scale (e.g. a
 > stray `0.001`) raises the effective scale instead of rendering a
 > 47000-pixel image. **Identical bars across different crops:** auto Bar
 > length still picks ~15 % of each crop's own extent, so it differs crop to
