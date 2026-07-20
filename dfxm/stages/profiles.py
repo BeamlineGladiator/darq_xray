@@ -245,21 +245,6 @@ STAGE = StageSpec(
             ),
         ),
         Param(
-            "trace_file_aspect",
-            ParamType.STR,
-            "Trace file aspect",
-            default="",
-            advanced=True,
-            group="Appearance",
-            help=(
-                "Aspect ratio (width:height) of the saved trace PNG file, e.g. 4:3 — blank = the "
-                "file is tight-cropped to fit the plot and its labels (its shape follows the text "
-                "sizes). When set, the PNG is exactly this ratio and the plot box keeps its own "
-                "'Trace aspect', centred with padding. (Applies to this stage's PNG output; the "
-                "publication export always tight-crops.)"
-            ),
-        ),
-        Param(
             "trace_width_in",
             ParamType.FLOAT,
             "Trace width",
@@ -809,10 +794,16 @@ def build_trace_figure(
     requested ratio regardless of how much room the labels/title consume or how
     large ``font_scale`` is. The figure canvas is created at
     ``(width_in, width_in * h / w)`` so it roughly matches the box (minimal
-    whitespace); on save the PNG is tight-cropped by default (its file
-    dimensions hug box+labels), unless the caller's ``trace_file_aspect`` knob
-    pins the file to a fixed ratio in ``_save_traces``. The box itself stays
-    exactly ``w:h`` either way.
+    whitespace); on save the PNG is tight-cropped (its file dimensions hug
+    box+labels). The box itself stays exactly ``w:h`` either way.
+
+    When the style's fixed physical scale (``scale_um_per_cm``) is set, the box
+    WIDTH comes from the line length instead: ``geom["L"] / scale`` cm, so the
+    distance axis prints at the same µm-per-cm as the map figures. ``width_in``
+    is ignored in that mode (the same rule as ``figure_width`` for maps);
+    ``aspect_wh`` still governs the box height. Uses the shared primitives
+    (``fixed_scale_box`` → 30-in clamp preserved, ``fit_axes_to_box`` run last)
+    so the box is point-exact regardless of label sizes.
 
     All trace text is multiplied by ``font_scale`` — this is the trace figures'
     own scale, independent of the map figures' ``style.font_scale``. The curve
@@ -825,10 +816,16 @@ def build_trace_figure(
     w_ratio, h_ratio = aspect_wh
     fs = float(font_scale)
     curve_color = color or "C0"
-    fig = styled_figure(
-        (float(width_in), float(width_in) * float(h_ratio) / float(w_ratio)),
-        styled=style is not None,
+    # Fixed-scale mode: ext_y = L·h/w keeps fixed_scale_box's aspect-preserving
+    # clamp aligned with the trace aspect, so h_in/w_in == h/w survives clamping.
+    box = fixed_scale_box(
+        style, float(geom["L"]), float(geom["L"]) * float(h_ratio) / float(w_ratio)
     )
+    if box is not None:
+        figsize = (box[0] + 1.5, box[1] + 1.5)
+    else:
+        figsize = (float(width_in), float(width_in) * float(h_ratio) / float(w_ratio))
+    fig = styled_figure(figsize, styled=style is not None)
     ax = fig.add_subplot(111)
     ax.set_box_aspect(float(h_ratio) / float(w_ratio))  # pin the DATA box to exactly w:h
     distance = geom["distance"]
@@ -857,6 +854,8 @@ def build_trace_figure(
     # "all trace text" honours font_scale even when an axis uses an offset.
     ax.yaxis.get_offset_text().set_fontsize(10 * fs)
     ax.xaxis.get_offset_text().set_fontsize(10 * fs)
+    if box is not None:
+        fit_axes_to_box(fig, ax, box[0], box[1])
     return fig
 
 
@@ -1054,7 +1053,6 @@ def _save_traces(
     geom,
     *,
     aspect,
-    file_aspect,
     width_in,
     linewidth,
     color,
@@ -1062,12 +1060,10 @@ def _save_traces(
     dpi,
     style=None,
 ):
+    # The PNG is always tight-cropped around box+labels; the plot box keeps
+    # `aspect` exactly (and, in fixed-scale mode, its physical width — a tight
+    # crop trims the canvas without rescaling the fitted box).
     aspect_wh = parse_aspect(aspect)
-    # file_aspect (blank -> None) pins the saved PNG's outer dimensions; the plot
-    # box keeps `aspect` regardless. When set we size the canvas to the file ratio
-    # and skip bbox_inches="tight" so the file is exactly that ratio (the box sits
-    # centred with padding). Blank keeps the tight-cropped "fit the text" default.
-    file_wh = parse_aspect(file_aspect) if file_aspect else None
     paths = []
     for fld in fields:
         tr_png = os.path.join(out_dir, f"{stem}__trace__{fld['vid']}.png")
@@ -1081,12 +1077,7 @@ def _save_traces(
             font_scale=font_scale,
             style=style,
         )
-        if file_wh is not None:
-            fw, fh = file_wh
-            fig.set_size_inches(float(width_in), float(width_in) * fh / fw)
-            fig.savefig(tr_png, dpi=dpi, facecolor="white", edgecolor="none")
-        else:
-            fig.savefig(tr_png, dpi=dpi, facecolor="white", edgecolor="none", bbox_inches="tight")
+        fig.savefig(tr_png, dpi=dpi, facecolor="white", edgecolor="none", bbox_inches="tight")
         paths.append(tr_png)
     return paths
 
@@ -1113,7 +1104,6 @@ def _render_parameter_job(
     trace_linewidth = float(p["trace_linewidth"])
     trace_color = p["trace_color"] or None
     trace_font_scale = float(p["trace_font_scale"])
-    trace_file_aspect = p["trace_file_aspect"] or ""
     name = job["name"]
     try:
         ref, fields, geom, off_used, dropped = _collect(f, job, p, ref_pref, restrict, clim=clim)
@@ -1147,7 +1137,6 @@ def _render_parameter_job(
             fields,
             geom,
             aspect=trace_aspect,
-            file_aspect=trace_file_aspect,
             width_in=trace_width_in,
             linewidth=trace_linewidth,
             color=trace_color,
@@ -1198,11 +1187,8 @@ def run(params: dict, progress: ProgressFn | None = None) -> ProfilesResult:
     trace_width_in = float(p["trace_width_in"])
     trace_linewidth = float(p["trace_linewidth"])
     trace_font_scale = float(p["trace_font_scale"])
-    trace_file_aspect = p["trace_file_aspect"] or ""
     if save_traces:
         parse_aspect(trace_aspect)  # fail fast on a bad aspect before the h5 loop
-        if trace_file_aspect:
-            parse_aspect(trace_file_aspect)  # same for the optional file aspect
         for _label, _val in (
             ("trace_width_in", trace_width_in),
             ("trace_linewidth", trace_linewidth),

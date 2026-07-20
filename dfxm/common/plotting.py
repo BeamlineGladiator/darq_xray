@@ -103,7 +103,8 @@ class PlotStyle:
     # figure
     figure_width: str | float = "auto"  # "single" | "double" | "auto" | width in inches
     # fixed physical scale for MAP figures: µm of data per cm of page. None/blank = off.
-    # When set (>0), figure_width is ignored for maps (trace figures keep it).
+    # When set (>0), figure_width is ignored for maps and the profiles trace
+    # figures ignore trace_width_in (their box width comes from the line length).
     scale_um_per_cm: float | None = None
     # output
     formats: tuple[str, ...] = ("png",)

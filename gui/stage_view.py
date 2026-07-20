@@ -548,7 +548,6 @@ class StageView(QWidget):
         # deliberately excluded), it just honours how they look.
         appearance_keys = (
             "trace_aspect",
-            "trace_file_aspect",
             "trace_width_in",
             "trace_linewidth",
             "trace_color",
