@@ -355,40 +355,83 @@ def test_run_bad_trace_dimensions_raise(tmp_path, bad):
         PR.run(_base_params(h5, out, **bad))
 
 
-def test_run_trace_file_aspect_sets_exact_file_ratio(tmp_path):
-    # trace_file_aspect pins the SAVED FILE to exactly W:H, independent of the box
-    import matplotlib.image as mpimg
+def _trace_box_inches(fig):
+    """Draw *fig* on Agg and return the axes-box (w_in, h_in)."""
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
 
-    h5 = tmp_path / "oblique_slices.h5"
-    _write_consolidated(str(h5))
-    # square file even though the plot box is 4:3
-    sq = PR.run(
-        _base_params(
-            h5,
-            tmp_path / "sq",
-            trace_aspect="4:3",
-            trace_file_aspect="1:1",
-            trace_width_in=4.0,
-            fig_dpi=60,
+    FigureCanvasAgg(fig)
+    fig.canvas.draw()
+    bbox = fig.axes[0].get_window_extent()
+    return bbox.width / fig.dpi, bbox.height / fig.dpi
+
+
+def test_build_trace_figure_fixed_scale_pins_box_width():
+    # Scale 2 µm/cm on a 10 µm line -> box exactly 5 cm wide; height from aspect.
+    from dfxm.common.plotting import PlotStyle
+
+    fld, geom = _fake_field()  # geom["L"] == 10.0
+    fig = PR.build_trace_figure(
+        fld,
+        geom,
+        aspect_wh=(2.0, 1.0),
+        width_in=6.0,
+        linewidth=1.5,
+        color="",
+        font_scale=1.0,
+        style=PlotStyle(scale_um_per_cm=2.0),
+    )
+    w_in, h_in = _trace_box_inches(fig)
+    assert abs(w_in - (10.0 / 2.0) / 2.54) < 0.03  # 5 cm
+    assert abs(h_in - w_in / 2.0) < 0.03  # trace_aspect 2:1 governs box height
+
+
+def test_build_trace_figure_fixed_scale_ignores_width_in():
+    from dfxm.common.plotting import PlotStyle
+
+    fld, geom = _fake_field()
+    widths = []
+    for width_in in (4.0, 9.0):
+        fig = PR.build_trace_figure(
+            fld,
+            geom,
+            aspect_wh=(4.0, 3.0),
+            width_in=width_in,
+            linewidth=1.5,
+            color="",
+            font_scale=1.0,
+            style=PlotStyle(scale_um_per_cm=2.0),
         )
-    )
-    for t in sq.jobs[0].traces:
-        a = mpimg.imread(t)
-        assert abs(a.shape[0] - a.shape[1]) <= 2  # square PNG
-    # 2:1 wide file
-    wide = PR.run(
-        _base_params(h5, tmp_path / "wide", trace_file_aspect="2:1", trace_width_in=4.0, fig_dpi=60)
-    )
-    for t in wide.jobs[0].traces:
-        a = mpimg.imread(t)
-        assert abs(a.shape[1] - 2 * a.shape[0]) <= 3  # width ≈ 2×height
+        widths.append(_trace_box_inches(fig)[0])
+    assert abs(widths[0] - widths[1]) < 0.03  # width_in is a no-op in fixed mode
 
 
-def test_run_bad_trace_file_aspect_raises(tmp_path):
+def test_build_trace_figure_fixed_scale_clamps_like_maps():
+    # A pathological scale would give a metres-wide box; the shared 30-in clamp
+    # applies (aspect preserved), never an exception.
+    from dfxm.common.plotting import PlotStyle
+
+    fld, geom = _fake_field()
+    fig = PR.build_trace_figure(
+        fld,
+        geom,
+        aspect_wh=(2.0, 1.0),
+        width_in=6.0,
+        linewidth=1.5,
+        color="",
+        font_scale=1.0,
+        style=PlotStyle(scale_um_per_cm=0.01),
+    )
+    w_in, _ = _trace_box_inches(fig)
+    assert w_in <= 30.5
+
+
+def test_run_tolerates_stale_trace_file_aspect_param(tmp_path):
+    # trace_file_aspect was removed; persisted forms may still carry it — the
+    # stray key must ride along ignored, not crash the run.
     h5 = tmp_path / "oblique_slices.h5"
     _write_consolidated(str(h5))
-    with pytest.raises(StageUserError):
-        PR.run(_base_params(h5, tmp_path / "o", trace_file_aspect="nope"))
+    res = PR.run(_base_params(h5, tmp_path / "o", trace_file_aspect="1:1"))
+    assert len(res.jobs) == 1 and res.jobs[0].traces
 
 
 # -- two jobs on the same slice -----------------------------------------------

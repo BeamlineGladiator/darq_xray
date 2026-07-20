@@ -763,7 +763,7 @@ Profile a straight line (or a band of parallel lines) across one slice plane —
 strain and misorientation line up.
 
 - **Input:** `oblique_slices.h5`.
-- **Output:** one line-profile figure **per field** (`<fig_name>__trace__<field>.png`) + per-field CSVs + per-field overviews, plus (optionally) the stacked companion figure. The per-field overview PNGs honour the publication-style "Scale (µm/cm)" field once it's set — each overview map renders at a fixed physical scale instead of a fixed figure size, same as the slices stage; the stacked companion figure's map panel does **not** (see below).
+- **Output:** one line-profile figure **per field** (`<fig_name>__trace__<field>.png`) + per-field CSVs + per-field overviews, plus (optionally) the stacked companion figure. The per-field overview PNGs honour the publication-style "Scale (µm/cm)" field once it's set — each overview map renders at a fixed physical scale instead of a fixed figure size, same as the slices stage — and so do the per-field **trace figures** (the distance axis prints at that same µm-per-cm; see the trace table below); the stacked companion figure's map panel does **not** (see below).
 
 **Essentials:** slices file, mode, jobs JSON, output dir
 
@@ -846,9 +846,8 @@ distance — reads clearly as a paper subfigure. Shape and style them with:
 |---|---|
 | `save_traces` | Write the separate per-field trace figures (default on). |
 | `save_companion` | Also write the old stacked companion figure (overview + all traces in one). Turn off for traces-only. |
-| `trace_aspect` | Aspect ratio `width:height` of the **plot box** (data area) — `4:3`, `1:1`, `16:9`, …; the plotted rectangle keeps this ratio exactly, regardless of label/title margins. |
-| `trace_file_aspect` | Aspect ratio `width:height` of the **saved PNG file** — blank (default) = tight-crop to fit the plot + labels (file shape follows the text sizes); set (e.g. `4:3`) = the PNG is exactly this ratio with the plot box centred and padded. Applies to this stage's PNG output only — the publication export always tight-crops. |
-| `trace_width_in` | Width of the trace figure canvas in inches (sets the overall scale; the plot box is inset from it by the label/title margins). |
+| `trace_aspect` | Aspect ratio `width:height` of the **plot box** (data area) — `4:3`, `1:1`, `16:9`, …; the plotted rectangle keeps this ratio exactly, regardless of label/title margins. The saved PNG is always tight-cropped around the box + labels. |
+| `trace_width_in` | Width of the trace figure canvas in inches (sets the overall scale; the plot box is inset from it by the label/title margins). **Ignored while the publication style's Scale (µm/cm) is set** — the box width then comes from the line length at that scale, so the distance axis prints at the same µm-per-cm as the maps. |
 | `trace_linewidth` | Thickness (pt) of the plotted profile curve. |
 | `trace_color` | Colour of the curve and its std band (blank = default matplotlib blue). |
 | `trace_font_scale` | Multiplies the trace figures' label/tick/title fonts, independent of the map figures' font scale. |
@@ -1030,11 +1029,13 @@ form.
 > [!tip] Fixed physical scale across figures
 > Setting **Scale (µm/cm)** fits every map's data box (per-layer maps, slices,
 > the strain diagnostic, the matched stage's rocking-matched layer maps, and
-> the profiles reference/overview panels — not the profiles companion or
-> trace figures) so the printed scale, and the scale
-> bar, are identical across figures regardless of each crop's pixel extent.
-> While it is set, **Figure width is ignored for maps** (trace figures still
-> honour it). Requested sides are clamped to 30 in — a typo scale (e.g. a
+> the profiles reference/overview panels — not the profiles companion) so the
+> printed scale, and the scale bar, are identical across figures regardless of
+> each crop's pixel extent. The profiles **trace figures** follow the same
+> scale on their distance axis: the plot box prints `line length ÷ scale` cm
+> wide (so horizontal axes line up across traces and against the maps), with
+> the box height set by `trace_aspect`. While the scale is set, **Figure
+> width is ignored for maps and Trace width is ignored for traces**. Requested sides are clamped to 30 in — a typo scale (e.g. a
 > stray `0.001`) raises the effective scale instead of rendering a
 > 47000-pixel image. **Identical bars across different crops:** auto Bar
 > length still picks ~15 % of each crop's own extent, so it differs crop to
