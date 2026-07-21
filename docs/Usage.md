@@ -118,6 +118,13 @@ in — raises an error instead of filling a wrong value. The calculator cannot
 tell a mis-read motor from a real one, so sanity-check the reported
 magnification and 2θ against your setup before saving the preset.
 
+The experiment also carries three ROI fields. **Darfix ROI** is the detector
+crop darfix used, copied verbatim as darfix's own ROI widget shows it —
+`x,y,w,h` origin then size, no conversion. **Analysis window X/Y** are the
+part of the darfix map you actually want to study, as map-frame `c0,c1` /
+`r0,r1` start,end pixels (blank means the full width/height). Together these
+pre-fill the stages' own ROI fields.
+
 ### Shared project state & auto-chaining
 
 Each stage's form is pre-filled from the experiment, and **an upstream stage's

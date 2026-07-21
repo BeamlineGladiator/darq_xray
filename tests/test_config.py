@@ -34,6 +34,17 @@ def test_sto2_preset_ships_expected_values():
     assert exp.ccmth_ref_deg == 7.144
     # pixel-size calculator values, confirmed against real data 2026-07-18
     assert exp.pixel_size_x_um == 0.151733 and exp.pixel_size_y_um == 0.387584
+    # regions of interest (confirmed on real data 2026-07-18/19)
+    assert exp.darfix_roi == "105,230,1832,1266"
+    assert exp.analysis_roi_x == "0,1832"
+    assert exp.analysis_roi_y == "400,1100"
+
+
+def test_experiment_roi_fields_default_blank():
+    exp = Experiment()
+    assert exp.darfix_roi == ""
+    assert exp.analysis_roi_x == ""
+    assert exp.analysis_roi_y == ""
 
 
 def test_preset_round_trip(tmp_path):
