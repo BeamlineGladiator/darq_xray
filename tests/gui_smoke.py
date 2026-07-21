@@ -135,6 +135,10 @@ def main() -> int:
             "input_folder": sfolder,
             "ccmth_ref_deg": 7.144,
             "output_dir": os.path.join(sfolder, "out"),
+            # STO2's analysis window (map-frame y 400,1100) pre-fills "roi" and is
+            # sized for real ~700x1832 maps; clear it for this tiny 24x30 synthetic
+            # fixture so the crop doesn't fall entirely outside the array.
+            "roi": "",
         }
     )
     sdone: list[tuple[str, bool]] = []
@@ -1020,6 +1024,22 @@ def main() -> int:
     assert _written33 and all(os.path.exists(p) for p in _written33)
     assert not any(p.endswith(".csv") for p in os.listdir(_out33))
     print("[33] ProfilesReplotDialog: Replot… button wired; tree + render writes PNGs, no CSVs")
+
+    # [34] Experiment editor ROI: derived read-out translates map -> detector px
+    # and validation catches an inverted analysis pair.
+    from dfxm.config.models import Experiment as _Exp34
+    from gui.experiment_panel import ExperimentDialog as _ED34
+
+    _dlg34 = _ED34(
+        _Exp34(darfix_roi="105,230,1832,1266", analysis_roi_x="0,1832", analysis_roi_y="400,1100")
+    )
+    assert "y 630→1330" in _dlg34._roi_note.text()
+    _dlg34._form.set_values({"analysis_roi_y": "0,700"})
+    assert "y 230→930" in _dlg34._roi_note.text()  # read-out is live
+    assert not _dlg34._roi_problems()
+    _dlg34._form.set_values({"analysis_roi_y": "1100,400"})
+    assert _dlg34._roi_problems()  # end <= start is unsaveable
+    print("[34] experiment editor ROI: derived read-out live + validation blocks bad pairs")
 
     print("\nGUI SMOKE PASSED")
     return 0

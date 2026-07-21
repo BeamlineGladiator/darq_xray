@@ -23,6 +23,7 @@ aliases: [DFXM Pipeline Usage, Pipeline Guide, How to use the pipeline]
 
 - [[#Quick start]]
 - [[#Core concepts]]
+  - [[#Regions of interest — two windows, two frames]]
 - [[#The pipeline at a glance]]
 - [[#Stage reference]]
 - [[#Interactive viewers]]
@@ -144,6 +145,53 @@ at least once first, or use the picker's Browse fallback to point at any
 stacked `.h5`). The rectangle you draw is already in the map frame, so it
 writes straight into **Analysis window X** and **Analysis window Y** with no
 conversion, and the read-out line above updates immediately.
+
+### Regions of interest — two windows, two frames
+
+Every DFXM dataset carries **two** regions of interest, and they are not the
+same kind of thing:
+
+- The **darfix window** (`105,230,1832,1266` for STO2, `x,y,w,h` = origin then
+  size) is a **fact**. It is the detector crop darfix used when it fitted
+  `maps.h5` — you don't choose it here, you copy it verbatim from darfix's own
+  ROI widget. Map pixel `(0, 0)` sits at detector pixel `(x, y)`.
+- The **analysis window** (STO2's Y is `400,1100`, map-frame `start,end`) is a
+  **choice**. It is the sub-region of that map you actually want to study —
+  blank means the full width/height. Because map pixel 0 is the darfix
+  origin, translating it to an absolute detector row/column is just
+  `detector = darfix_origin + map`.
+
+**Worked STO2 example.** darfix window origin `(105, 230)`, size `(1832,
+1266)` → covers detector columns `105→1937` and rows `230→1496`. Analysis
+window Y `400,1100` (map-frame) → detector rows `230 + 400 = 630` to
+`230 + 1100 = 1330`, i.e. `630→1330`. That single pair of experiment fields
+feeds every stage's own ROI, each in the frame that stage actually crops in:
+
+| Stage | Field(s) | Frame | Value for this example |
+|---|---|---|---|
+| Rocking | `roi_x` / `roi_y` | absolute detector pixels | Y: `630,1330` |
+| Visualize, ParaView | `roi_x` / `roi_y` (Map ROI) | map pixels | Y: `400,1100` |
+| Slices | `align_roi_x` / `align_roi_y` (Align ROI) | map pixels | Y: `400,1100` |
+| Strain | `roi` (`r0,r1,c0,c1`) | map pixels | rows: `400,1100` |
+
+Enter the darfix window and the analysis window **once**, in the experiment
+editor — every stage form pre-fills its own ROI field(s) in its own frame from
+those two, so you never hand-convert map pixels to detector pixels again. If
+you then edit a stage's ROI so it no longer matches what the experiment would
+derive, the field's label grows a **⚠** (see [[#ROI deviation markers]]) —
+that's fine for a deliberate one-off, but treat an unexpected ⚠ as a prompt to
+re-check which frame you typed in. The slices stage's Y-height check remains
+the last-line guard: if the volumes it's about to combine disagree on physical
+Y height by more than ~5%, it warns before you go further.
+
+> [!warning] The classic mistake
+> On 2026-07-18 a real STO2 run had darfix's origin+size numbers (`230,1266`)
+> typed directly into rocking's `roi_y`, which expects **start,end** — instead
+> of the correct `630,1330`. The result was a ~154 µm Y-misregistration between
+> the raw rocking volume and the map volumes. That conversion is exactly what
+> the experiment's two ROI fields plus the per-stage pre-fill now do for you:
+> the detector-pixel numbers are **displayed** in the read-out and written into
+> each stage's form automatically — you should never need to type them by hand.
 
 ### Shared project state & auto-chaining
 
