@@ -264,7 +264,7 @@ Per-pixel axial strain (cot method) from darfix `maps.h5`, then stacked into a
 | Param | Meaning |
 |---|---|
 | `ccmth reference` | calibration angle (deg) ⚠ — strain is `cot(ccmth_ref)·Δccmth` |
-| `roi` | `r0,r1,c0,c1` (blank = full image) |
+| `roi` | `r0,r1,c0,c1` in map pixels, relative to the darfix window (blank = full image); pre-filled from the experiment's analysis window |
 | `vmin` / `vmax` | colour limits (blank = symmetric auto) |
 
 > [!important] Detrend before ROI
@@ -411,7 +411,7 @@ frame**, anchored to the mosaicity reference so they overlay the other volumes.
 |---|---|
 | `source_scan` | `rocking` (default) — use the rocking scan folders; `mosaicity` — use every matched mosa folder as a layer (DFXM topograph) |
 | `rocking_pattern` / `mosa_pattern` / `strain_pattern` | which raw folders to use |
-| `roi_x` / `roi_y` | detector crop applied at read time — **start,end** pixels on the raw detector (darfix shows its ROI as origin+size: end = origin + size). Must cover the same detector window as the other volumes, or the slices stage flags a Y-height mismatch |
+| `roi_x` / `roi_y` | detector-frame crop applied at read time — **start,end** pixels on the raw detector (darfix shows its ROI as origin+size: end = origin + size). Must cover the same detector window as the other volumes, or the slices stage flags a Y-height mismatch. Pre-filled from the experiment's darfix + analysis ROIs — normally leave as-is |
 | `specific_frame_idx` | which frame to extract (blank = central) |
 | `normalize_sum` | divide the summed intensity by frame count |
 | `subtract_background` | subtract per-pixel median background before summing (default on; turn off for a plain intensity sum, e.g. a mosa-scan topograph) |
@@ -483,12 +483,12 @@ Align the stacked mosaicity/strain volumes and render them.
 - **Output:** per-layer PNGs, a layer animation (MP4→GIF fallback), a 3-D
   top-view, and an interactive [[#3-D volume viewer|3-D view]].
 
-**Essentials:** both volume files, raw root, ROI X/Y, output dir
+**Essentials:** both volume files, raw root, Map ROI X/Y, output dir
 
 | Param | Meaning |
 |---|---|
 | `center_method` | `midrange` / `mean` / `median` (CoM colour centring only) |
-| `roi_x` / `roi_y` | crop in pixels |
+| `roi_x` / `roi_y` | map-frame crop in map pixels (`c0,c1` / `r0,r1`), relative to the darfix window, NOT absolute detector pixels; pre-filled from the experiment's analysis window |
 | `output_format` | `mp4` / `gif` / `both` |
 
 > [!tip] Picking the run-time ROI interactively
@@ -512,10 +512,11 @@ rendering, with a `valid_mask` and NaN sentinels.
 - **Output:** `mosaicity_volume.pvti` + `strain_volume.pvti` (each with a
   `*_pieces/` folder) + `export_info.txt`.
 
-**Essentials:** both volume files, raw root, ROI X/Y, output dir
+**Essentials:** both volume files, raw root, Map ROI X/Y, output dir
 
 | Param | Meaning |
 |---|---|
+| `roi_x` / `roi_y` | map-frame crop in map pixels (`c0,c1` / `r0,r1`), relative to the darfix window, NOT absolute detector pixels; pre-filled from the experiment's analysis window |
 | `num_pieces_z` | Z pieces — match your `pvserver` MPI rank count |
 | `anchor_origin_to_reference` | place the world origin in the raw-detector frame so all volumes co-register |
 
@@ -553,7 +554,7 @@ through the aligned volumes — all in one world frame so the slices co-register
 | `include_mosa_sum` | slice the mosa-scan summed intensity (mapped to the "raw" colour group) |
 | `include_mosa_specific` | slice the mosa-scan specific-frame intensity (mapped to the "raw" colour group) |
 | `center_method` / `range_pct` | CoM colour centring |
-| `align_roi_x` / `align_roi_y` | detector crop used during alignment (must match the crop from visualize/paraview runs) |
+| `align_roi_x` / `align_roi_y` | map-frame crop (`c0,c1` / `r0,r1` map pixels, relative to the darfix window) used during alignment — must match the crop from visualize/paraview runs; pre-filled from the experiment's analysis window |
 
 > [!tip] Picking the alignment ROI interactively
 > Click **Pick ROI…** (in the button row alongside Run/Cancel) to open a visual

@@ -174,10 +174,12 @@ STAGE = StageSpec(
             default="",
             roi_group="crop",
             roi_axis="both",
+            roi_frame="map",
             help=(
-                "Region of interest as 'r0,r1,c0,c1' in pixels (blank = full image). Cropped "
-                "after detrending, so the trend fit always uses the full map — that order is a "
-                "physics constraint."
+                "Region of interest as 'r0,r1,c0,c1' in map pixels (rows then columns, "
+                "relative to the darfix window; blank = full image). Pre-filled from the "
+                "experiment's analysis window. Cropped after detrending, so the trend fit "
+                "always uses the full map — that order is a physics constraint."
             ),
         ),
         Param(

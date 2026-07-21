@@ -207,11 +207,13 @@ STAGE = StageSpec(
             ParamType.STR,
             "ROI X",
             default="",
+            roi_frame="detector",
             help=(
                 "Detector crop 'x0,x1' — START and END pixel columns on the raw detector, "
                 "applied while reading frames (blank = full). Careful: darfix shows its ROI "
                 "as origin+size — end = origin + size, not the size itself. Must cover the "
-                "same detector window as the other volumes or they misregister."
+                "same detector window as the other volumes or they misregister. "
+                "Pre-filled from the experiment's darfix + analysis ROIs — normally leave as-is."
             ),
         ),
         Param(
@@ -219,11 +221,13 @@ STAGE = StageSpec(
             ParamType.STR,
             "ROI Y",
             default="",
+            roi_frame="detector",
             help=(
                 "Detector crop 'y0,y1' — START and END pixel rows on the raw detector, "
                 "applied while reading frames (blank = full). Careful: darfix shows its ROI "
                 "as origin+size — end = origin + size, not the size itself. Must cover the "
-                "same detector window as the other volumes or they misregister along Y."
+                "same detector window as the other volumes or they misregister along Y. "
+                "Pre-filled from the experiment's darfix + analysis ROIs — normally leave as-is."
             ),
         ),
         Param(

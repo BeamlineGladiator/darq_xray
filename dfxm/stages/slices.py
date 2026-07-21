@@ -260,9 +260,11 @@ STAGE = StageSpec(
             group="Alignment",
             roi_group="crop",
             roi_axis="x",
+            roi_frame="map",
             help=(
-                "Detector crop 'x0,x1' used during alignment — must match the crop used "
-                "when the volumes were rendered/exported."
+                "Map-frame crop 'c0,c1' (map pixels, relative to the darfix window) used "
+                "during alignment — must match the crop used when the volumes were "
+                "rendered/exported. Pre-filled from the experiment's analysis window."
             ),
         ),
         Param(
@@ -274,9 +276,11 @@ STAGE = StageSpec(
             group="Alignment",
             roi_group="crop",
             roi_axis="y",
+            roi_frame="map",
             help=(
-                "Detector crop 'y0,y1' used during alignment — must match the crop used "
-                "when the volumes were rendered/exported."
+                "Map-frame crop 'r0,r1' (map pixels, relative to the darfix window) used "
+                "during alignment — must match the crop used when the volumes were "
+                "rendered/exported. Pre-filled from the experiment's analysis window."
             ),
         ),
         Param(

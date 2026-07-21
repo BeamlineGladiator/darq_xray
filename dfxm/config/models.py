@@ -62,6 +62,7 @@ class Param:
     must_exist: bool = False  # input path/dir: GUI checks existence before a run
     roi_group: str = ""  # params sharing a roi_group are one ROI-picker target
     roi_axis: str = ""  # "" | "x" | "y" | "both" ("both" = one 4-int "r0,r1,c0,c1" field)
+    roi_frame: str = ""  # "" | "detector" | "map" — the coordinate frame of a ROI param
 
     def __post_init__(self) -> None:
         if self.type is ParamType.ENUM and not self.choices:
@@ -70,6 +71,8 @@ class Param:
             raise ValueError(f"roi param {self.name!r}: roi_axis set but roi_group is empty")
         if self.roi_axis not in ("", "x", "y", "both"):
             raise ValueError(f"roi param {self.name!r}: bad roi_axis {self.roi_axis!r}")
+        if self.roi_frame not in ("", "detector", "map"):
+            raise ValueError(f"roi param {self.name!r}: bad roi_frame {self.roi_frame!r}")
 
     def coerce(self, value: Any) -> Any:
         """Convert a raw value (e.g. a string from a form field) to its type."""

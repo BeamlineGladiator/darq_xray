@@ -170,25 +170,31 @@ STAGE = StageSpec(
         Param(
             "roi_x",
             ParamType.STR,
-            "ROI X",
+            "Map ROI X",
             default="",
             roi_group="crop",
             roi_axis="x",
+            roi_frame="map",
             help=(
-                "Crop along detector X as 'x0,x1' in pixels (blank = full width). "
-                "All volumes must share the same crop to stay co-registered."
+                "Crop along map X as 'c0,c1' map pixels — columns of the darfix map, relative "
+                "to the darfix window, NOT absolute detector pixels (blank = full width). "
+                "Pre-filled from the experiment's analysis window. All volumes must share the "
+                "same crop to stay co-registered."
             ),
         ),
         Param(
             "roi_y",
             ParamType.STR,
-            "ROI Y",
+            "Map ROI Y",
             default="",
             roi_group="crop",
             roi_axis="y",
+            roi_frame="map",
             help=(
-                "Crop along detector Y as 'y0,y1' in pixels (blank = full height). "
-                "All volumes must share the same crop to stay co-registered."
+                "Crop along map Y as 'r0,r1' map pixels — rows of the darfix map, relative to "
+                "the darfix window, NOT absolute detector pixels (blank = full height). "
+                "Pre-filled from the experiment's analysis window. All volumes must share the "
+                "same crop to stay co-registered."
             ),
         ),
         Param(
