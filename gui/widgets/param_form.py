@@ -73,6 +73,8 @@ class ParamForm(QWidget):
         self._param_by_name: dict[str, Param] = {p.name: p for p in self._params}
         self._adv_toggle: QToolButton | None = None
         self._adv_box: QWidget | None = None
+        self._labels: dict[str, QLabel] = {}
+        self._base_label: dict[str, str] = {}
 
         initial = values or {}
         outer = QVBoxLayout(self)
@@ -185,6 +187,16 @@ class ParamForm(QWidget):
             val = values.get(p.name)
             setter(self._empty_value(p) if val is None else val)
 
+    def set_field_marker(self, name: str, marked: bool, tooltip: str = "") -> None:
+        """Toggle a '⚠' suffix on *name*'s row label (deviates-from-experiment)."""
+        lbl = self._labels.get(name)
+        p = self._param_by_name.get(name)
+        if lbl is None or p is None:
+            return
+        base = self._base_label[name]
+        lbl.setText(f"{base}  ⚠" if marked else base)
+        lbl.setToolTip(tooltip if (marked and tooltip) else param_help_html(p))
+
     @staticmethod
     def _empty_value(p: Param) -> Any:
         """The cleared value for *p*, matching how its editor renders a ``None``."""
@@ -209,6 +221,8 @@ class ParamForm(QWidget):
         if p.calibration:
             lbl.setProperty("role", "calib")
         lbl.setToolTip(param_help_html(p))
+        self._labels[p.name] = lbl
+        self._base_label[p.name] = text
         return lbl
 
     # -- editors ----------------------------------------------------------

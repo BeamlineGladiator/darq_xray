@@ -214,6 +214,17 @@ entered manually to match the mechanical geometry.
 If no preview can be loaded (the required volume/map file is not set yet), the
 picker button logs a message and opens the Log tab instead of opening the picker.
 
+#### ROI deviation markers
+
+ROI fields (the crop boxes above, plus rocking's detector-frame `roi_x`/`roi_y`)
+pre-fill from the experiment. If you then edit one so it no longer matches the
+experiment-derived value, its label grows a **⚠** suffix and the tooltip names
+the expected value. That is fine for a deliberate one-off override — nothing is
+blocked — but treat an unexpected ⚠ as a prompt to double-check you typed the
+crop in the right frame (map pixels vs. detector pixels are the classic mix-up).
+The marker clears itself as soon as the field matches the experiment again, and
+it only appears when the experiment actually has ROIs configured.
+
 ---
 
 ## The pipeline at a glance
