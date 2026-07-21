@@ -68,6 +68,12 @@ class ExperimentDialog(QDialog):
         )
         compute_btn.clicked.connect(self._on_compute_pixel_size)
         buttons.addButton(compute_btn, QDialogButtonBox.ButtonRole.ActionRole)
+        roi_btn = QPushButton("Pick analysis ROI…")
+        roi_btn.setToolTip(
+            "Draw the analysis window on a stacked-volume layer — fills Analysis window X/Y"
+        )
+        roi_btn.clicked.connect(self._on_pick_analysis_roi)
+        buttons.addButton(roi_btn, QDialogButtonBox.ButtonRole.ActionRole)
         buttons.accepted.connect(self._on_accept)
         buttons.rejected.connect(self.reject)
 
@@ -196,6 +202,57 @@ class ExperimentDialog(QDialog):
             f"Pixel size X = {res.pixel_size_x_um:.4f} µm\n"
             f"Pixel size Y = {res.pixel_size_y_um:.4f} µm",
         )
+
+    def _roi_preview_params(self, vals: dict) -> dict:
+        proc = (vals.get("processed_root") or "").rstrip("/")
+        return {
+            "mosa_volume_file": os.path.join(proc, "stacked_volumes.h5") if proc else "",
+            "strain_volume_file": os.path.join(proc, "stacked_strain_volumes.h5") if proc else "",
+            "pixel_size_x_um": vals.get("pixel_size_x_um") or 1.0,
+            "pixel_size_y_um": vals.get("pixel_size_y_um") or 1.0,
+        }
+
+    def _on_pick_analysis_roi(self) -> None:
+        from dfxm.common.figures import stacked_volume_previews
+        from dfxm.common.roi import parse_pair
+
+        from .widgets.roi_picker import ROIPickerDialog
+
+        vals = self._form.values()
+        previews = stacked_volume_previews(self._roi_preview_params(vals))
+        if not previews:
+            path, _ = QFileDialog.getOpenFileName(
+                self,
+                "Pick a stacked volume .h5 (map preview)",
+                vals.get("processed_root") or "",
+                "HDF5 (*.h5 *.hdf5)",
+            )
+            if not path:
+                return
+            params = self._roi_preview_params(vals)
+            params["mosa_volume_file"] = path
+            params["strain_volume_file"] = path
+            previews = stacked_volume_previews(params)
+        if not previews:
+            QMessageBox.warning(
+                self,
+                "Pick analysis ROI",
+                "No map preview available — run the mosaicity or strain stage first "
+                "(needs stacked_volumes.h5 or stacked_strain_volumes.h5).",
+            )
+            return
+        initial = None
+        try:
+            ax = parse_pair(vals.get("analysis_roi_x", ""))
+            ay = parse_pair(vals.get("analysis_roi_y", ""))
+            if ax and ay:
+                initial = (ay[0], ay[1], ax[0], ax[1])  # picker wants r0, r1, c0, c1
+        except ValueError:
+            pass
+        dlg = ROIPickerDialog(previews, initial=initial, parent=self)
+        if dlg.exec() and dlg.result:
+            r0, r1, c0, c1 = dlg.result
+            self._form.set_values({"analysis_roi_x": f"{c0},{c1}", "analysis_roi_y": f"{r0},{r1}"})
 
 
 class ExperimentPanel(QWidget):

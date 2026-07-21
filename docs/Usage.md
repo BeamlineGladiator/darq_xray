@@ -136,6 +136,15 @@ darfix size, analysis windows within the darfix window's bounds) and blocks
 with a message dialog if any are wrong — a bad experiment ROI can never be
 saved or applied.
 
+Typing the analysis window by hand is optional: **Pick analysis ROI…** opens
+the same drag-a-rectangle picker used elsewhere in the app, previewing a
+mid-Z layer of the stacked mosaicity/strain volumes next to `processed_root`
+(`stacked_volumes.h5` / `stacked_strain_volumes.h5` — run mosaicity or strain
+at least once first, or use the picker's Browse fallback to point at any
+stacked `.h5`). The rectangle you draw is already in the map frame, so it
+writes straight into **Analysis window X** and **Analysis window Y** with no
+conversion, and the read-out line above updates immediately.
+
 ### Shared project state & auto-chaining
 
 Each stage's form is pre-filled from the experiment, and **an upstream stage's

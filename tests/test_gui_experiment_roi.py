@@ -58,3 +58,27 @@ def test_accept_passes_when_valid():
     dlg = _dlg(**STO2)
     dlg._on_accept()
     assert dlg.result() == QDialog.DialogCode.Accepted
+
+
+def test_pick_analysis_roi_writes_map_pairs(monkeypatch):
+    import dfxm.common.figures as F
+    import gui.widgets.roi_picker as RP
+
+    dlg = _dlg(darfix_roi="105,230,1832,1266")
+    monkeypatch.setattr(
+        F, "stacked_volume_previews", lambda params: [("mosa", lambda: (None, 1.0, 1.0))]
+    )
+
+    class _FakePicker:
+        def __init__(self, *a, **k):
+            self.result = (400, 1100, 0, 1832)  # r0, r1, c0, c1
+
+        def exec(self):
+            return 1
+
+    monkeypatch.setattr(RP, "ROIPickerDialog", _FakePicker)
+    dlg._on_pick_analysis_roi()
+    vals = dlg._form.values()
+    assert vals["analysis_roi_x"] == "0,1832"
+    assert vals["analysis_roi_y"] == "400,1100"
+    assert "y 630→1330" in dlg._roi_note.text()  # read-out updated by the write-back
