@@ -130,7 +130,12 @@ pre-fill the stages' own ROI fields.
 Each stage's form is pre-filled from the experiment, and **an upstream stage's
 output auto-fills the next stage's input** (e.g. the strain/mosaicity volumes
 flow into `visualize`, `paraview` and `slices`; the slices file flows into
-`profiles`). You can still point any stage at files manually.
+`profiles`). You can still point any stage at files manually. If the
+experiment has ROIs set, they also pre-fill every stage's crop in that
+stage's own frame — rocking gets the absolute detector window, while
+visualize/paraview/slices/strain get the map-frame window — so the same two
+experiment fields (darfix window + analysis window) crop consistently
+everywhere without hand conversion.
 
 ### Resuming a session (per-experiment form memory)
 
