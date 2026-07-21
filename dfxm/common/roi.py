@@ -92,8 +92,11 @@ def analysis_detector_window(
     """The analysis window in absolute detector pixels (what rocking crops).
 
     A blank analysis axis falls back to the full darfix window; without a
-    darfix window nothing is derivable -> (None, None). Malformed input raises
-    ValueError (use :func:`validate_rois` for user-facing messages).
+    darfix window nothing is derivable -> (None, None), and in that case the
+    analysis strings are never parsed (so a malformed analysis axis alongside
+    a blank darfix window does not raise). Once a darfix window is present,
+    malformed analysis input raises ValueError (use :func:`validate_rois` for
+    user-facing messages).
     """
     win = parse_darfix_roi(darfix_roi)
     if win is None:

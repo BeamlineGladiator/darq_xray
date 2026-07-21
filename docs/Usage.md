@@ -256,8 +256,9 @@ layer; drag a rectangle and click **OK** to fill the ROI field(s) automatically.
 The picker is **per-stage** — accepting a rectangle writes only into the current
 stage's form and does not propagate to sibling stages. If you want the same crop
 on multiple stages you pick separately on each. Rocking does not have a picker
-because its detector crop is set in the raw-frame (before alignment) and must be
-entered manually to match the mechanical geometry.
+because its detector crop is in the raw frame (before alignment); it is instead
+pre-filled automatically from the experiment's darfix window + analysis window,
+converted to absolute detector pixels — normally leave it as-is.
 
 If no preview can be loaded (the required volume/map file is not set yet), the
 picker button logs a message and opens the Log tab instead of opening the picker.
@@ -354,6 +355,13 @@ Per-pixel axial strain (cot method) from darfix `maps.h5`, then stacked into a
 > [!important] Detrend before ROI
 > The full map is **detrended first** (separable 2-D arctan fit), then the ROI
 > is cropped. This order is a physics constraint and is not configurable.
+
+> [!warning] ROI must fit the map
+> If `roi` does not fit inside the loaded map (e.g. the experiment's analysis
+> window was set up for a different dataset), the run stops with an error
+> naming the ROI values and the map's actual shape — rather than silently
+> cropping to an empty or unexpected array. Blank the ROI or fix the
+> experiment's analysis window.
 
 > [!tip] Picking the run-time ROI interactively
 > Click **Pick ROI…** (in the button row alongside Run/Cancel) to open a visual

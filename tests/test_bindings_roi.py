@@ -54,6 +54,28 @@ def test_malformed_preset_prefills_nothing():
     assert not any(k in ov for k in ROI_KEYS)
 
 
+def test_malformed_analysis_string_prefills_nothing_for_verbatim_stages():
+    """visualize/paraview/slices pass ax/ay through verbatim; a malformed analysis
+    string (e.g. hand-edited preset YAML) must be omitted, not passed through to
+    crash the stage later with a bare ValueError."""
+    exp = Experiment(analysis_roi_x="bad,pair,x", analysis_roi_y="also,bad,3")
+    for stage in ("visualize", "paraview", "slices"):
+        ov = experiment_overrides(stage, exp)
+        assert not any(k in ov for k in ROI_KEYS), (stage, ov)
+
+
+def test_malformed_analysis_axis_omits_only_that_axis():
+    """A malformed X with a well-formed Y still pre-fills Y (omit, don't blank)."""
+    exp = Experiment(analysis_roi_x="bad,pair,x", analysis_roi_y="400,1100")
+    for stage in ("visualize", "paraview"):
+        ov = experiment_overrides(stage, exp)
+        assert "roi_x" not in ov
+        assert ov["roi_y"] == "400,1100"
+    ov = experiment_overrides("slices", exp)
+    assert "align_roi_x" not in ov
+    assert ov["align_roi_y"] == "400,1100"
+
+
 def test_existing_overrides_untouched():
     ov = experiment_overrides("rocking", Experiment(**STO2_ROIS, raw_root="/r"))
     assert ov["raw_root"] == "/r"  # ROI merge does not clobber the base dict

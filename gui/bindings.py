@@ -168,6 +168,14 @@ def _base_overrides(stage_name: str, exp: Experiment) -> dict:
     return {}
 
 
+def _parses(text: str) -> bool:
+    """True if *text* is a well-formed 'start,end' pair (blank/malformed -> False)."""
+    try:
+        return parse_pair(text) is not None
+    except ValueError:
+        return False
+
+
 def _roi_overrides(stage_name: str, exp: Experiment) -> dict:
     """ROI pre-fill for *stage_name*, each stage in its native frame.
 
@@ -188,14 +196,14 @@ def _roi_overrides(stage_name: str, exp: Experiment) -> dict:
         if det_y:
             out["roi_y"] = format_pair(det_y)
     elif stage_name in ("visualize", "paraview"):
-        if ax:
+        if _parses(ax):
             out["roi_x"] = ax
-        if ay:
+        if _parses(ay):
             out["roi_y"] = ay
     elif stage_name == "slices":
-        if ax:
+        if _parses(ax):
             out["align_roi_x"] = ax
-        if ay:
+        if _parses(ay):
             out["align_roi_y"] = ay
     elif stage_name == "strain" and ax and ay:
         try:

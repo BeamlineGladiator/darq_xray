@@ -328,6 +328,18 @@ def apply_roi(map_2d: np.ndarray, roi: list | None) -> np.ndarray:
     if roi is None:
         return map_2d
     r0, r1, c0, c1 = roi
+    rows, cols = map_2d.shape
+    out_of_bounds = r0 < 0 or c0 < 0 or r0 >= rows or c0 >= cols or r1 > rows or c1 > cols
+    empty = r1 <= r0 or c1 <= c0
+    if out_of_bounds or empty:
+        raise StageUserError(
+            f"ROI rows {r0},{r1} / cols {c0},{c1} do not fit this map (shape {rows}x{cols} px)",
+            hint=(
+                f"this map is {rows}x{cols} px but ROI rows are {r0},{r1} and columns "
+                f"{c0},{c1} — the experiment's analysis window may describe a different "
+                "dataset; blank the ROI or fix the experiment"
+            ),
+        )
     return map_2d[r0:r1, c0:c1]
 
 
@@ -837,6 +849,10 @@ def run(params: dict, progress: ProgressFn | None = None) -> StrainResult:
                 save_plots=bool(p["save_plots"]),
                 style=style,
             )
+        except StageUserError:
+            # Out-of-bounds ROI etc. is an input problem affecting every layer the
+            # same way — stop the run with a clear message rather than skip-and-continue.
+            raise
         except (KeyError, OSError, ValueError) as exc:
             result.skipped.append(f"{name}: {exc}")
             continue
