@@ -68,18 +68,79 @@ class ExperimentDialog(QDialog):
         )
         compute_btn.clicked.connect(self._on_compute_pixel_size)
         buttons.addButton(compute_btn, QDialogButtonBox.ButtonRole.ActionRole)
-        buttons.accepted.connect(self.accept)
+        buttons.accepted.connect(self._on_accept)
         buttons.rejected.connect(self.reject)
+
+        self._roi_note = QLabel("")
+        self._roi_note.setProperty("role", "muted")
+        self._roi_note.setWordWrap(True)
+        self._form.changed.connect(self._update_roi_note)
+        self._update_roi_note()
 
         layout = QVBoxLayout(self)
         layout.addWidget(scroll, 1)
+        layout.addWidget(self._roi_note)
         layout.addWidget(help_panel)
         layout.addWidget(buttons)
 
     def experiment(self) -> Experiment:
         return Experiment.from_dict(self._form.values())
 
+    def _update_roi_note(self) -> None:
+        """Live ROI read-out: darfix window + analysis window in detector px."""
+        from dfxm.common import roi as R
+
+        vals = self._form.values()
+        try:
+            win = R.parse_darfix_roi(vals.get("darfix_roi", ""))
+            det_x, det_y = R.analysis_detector_window(
+                vals.get("darfix_roi", ""),
+                vals.get("analysis_roi_x", ""),
+                vals.get("analysis_roi_y", ""),
+            )
+        except ValueError as exc:
+            self._roi_note.setText(f"ROI: {exc}")
+            return
+        if win is None or det_x is None or det_y is None:
+            self._roi_note.setText("")
+            return
+        self._roi_note.setText(
+            f"Detector window: x {win.x0}→{win.x1}, y {win.y0}→{win.y1} · analysis in "
+            f"detector px: x {det_x[0]}→{det_x[1]}, y {det_y[0]}→{det_y[1]}"
+        )
+
+    def _roi_problems(self) -> list[str]:
+        from dfxm.common.roi import validate_rois
+
+        vals = self._form.values()
+        return validate_rois(
+            vals.get("darfix_roi", ""),
+            vals.get("analysis_roi_x", ""),
+            vals.get("analysis_roi_y", ""),
+        )
+
+    def _warn_roi_problems(self) -> bool:
+        """True (and a dialog shown) when the ROI fields are unsaveable."""
+        problems = self._roi_problems()
+        if not problems:
+            return False
+        QMessageBox.warning(
+            self,
+            "Regions of interest",
+            "\n".join(problems)
+            + "\n\nDarfix ROI is 'x,y,w,h' exactly as darfix shows it (origin+size); "
+            "analysis windows are map-frame 'start,end' relative to that window.",
+        )
+        return True
+
+    def _on_accept(self) -> None:
+        if self._warn_roi_problems():
+            return
+        self.accept()
+
     def _on_save_as(self) -> None:
+        if self._warn_roi_problems():
+            return
         exp = self.experiment()
         start = os.fspath(presets.experiments_dir() / f"{exp.name or 'experiment'}.yaml")
         path, _ = QFileDialog.getSaveFileName(self, "Save preset", start, "YAML (*.yaml)")

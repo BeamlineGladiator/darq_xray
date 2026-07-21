@@ -125,6 +125,17 @@ part of the darfix map you actually want to study, as map-frame `c0,c1` /
 `r0,r1` start,end pixels (blank means the full width/height). Together these
 pre-fill the stages' own ROI fields.
 
+Below the form, a live read-out line translates both ROI fields into detector
+pixels as you type — the numbers you'd previously derive by hand are
+displayed, never typed: the darfix window's own detector-pixel span, plus the
+analysis window translated into absolute detector pixels. It goes blank when
+Darfix ROI is empty, and shows the parse error in place of numbers while a
+field is mid-edit (e.g. an incomplete `x,y,w,h`) rather than raising. Clicking
+**OK** or **Save as…** validates all three ROI fields (well-formed, positive
+darfix size, analysis windows within the darfix window's bounds) and blocks
+with a message dialog if any are wrong — a bad experiment ROI can never be
+saved or applied.
+
 ### Shared project state & auto-chaining
 
 Each stage's form is pre-filled from the experiment, and **an upstream stage's
