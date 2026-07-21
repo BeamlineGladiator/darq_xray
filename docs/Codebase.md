@@ -175,6 +175,24 @@ so a sign-flipped motor errors out instead of writing a negative pixel size.
 `PixelSizeResult` carries both pixel sizes plus `magnification`,
 `two_theta_deg`, `objective`, `condenser_in`, and the raw (signed) motor values.
 
+#### `roi.py` (new)
+Darfix-window / map-frame ROI conversions and validation. Pure module — no Qt,
+no I/O. Two frames describe every DFXM dataset: the **darfix window** (the
+detector crop darfix used when fitting the maps, given as *origin + size*
+`x,y,w,h` — map pixel (0, 0) sits at detector pixel `(x, y)`) and the
+**analysis window** (the sub-region chosen for study, in *map-frame* start,end
+pairs). The rule tying them together is `detector = darfix_origin + map`.
+
+| Function / type | What it does |
+|---|---|
+| `DarfixWindow(origin_x, origin_y, width, height)` | Frozen dataclass for the darfix crop; properties `.x0`/`.x1`/`.y0`/`.y1` give the absolute detector bounds (`x1 = origin_x + width`, etc.). |
+| `parse_pair(text)` | `"start,end"` → `(start, end)`; blank/`None` → `None`; malformed → `ValueError`. |
+| `parse_darfix_roi(text)` | `"x,y,w,h"` (origin+size, darfix's own display) → `DarfixWindow`; blank → `None`; malformed → `ValueError`. |
+| `map_to_detector(pair, origin)` / `detector_to_map(pair, origin)` | Convert a `(start, end)` pair along one axis between map-frame and absolute detector pixels; inverses of each other. |
+| `format_pair(pair)` | `(start, end)` → `"start,end"`. |
+| `analysis_detector_window(darfix_roi, analysis_roi_x, analysis_roi_y)` | The analysis window in absolute detector pixels (what rocking crops) → `(det_x, det_y)`, each `(start, end) \| None`. A blank analysis axis falls back to the full darfix window; no darfix window at all → `(None, None)`. Malformed input raises `ValueError` — use `validate_rois` for user-facing messages instead. |
+| `validate_rois(darfix_roi, analysis_roi_x, analysis_roi_y)` | Human-readable problems with the three experiment ROI fields (`[]` = all fine): malformed text, a non-positive darfix width/height, `end <= start` or `start < 0` on an analysis pair, or an analysis end past the darfix window's own size. |
+
 #### `alignment.py`
 The **single source of truth** for putting volumes into the shared world frame.
 The fixed order is `abs(FWHM) → ROI → samy X-shift → uniform-Z interp → centre`.
