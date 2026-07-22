@@ -83,6 +83,7 @@ def test_roi_fields_default_empty():
     p = Param("x", ParamType.STR, "X")
     assert p.roi_group == ""
     assert p.roi_axis == ""
+    assert p.roi_frame == ""
 
 
 def test_roi_axis_requires_group_and_valid_value():
@@ -93,3 +94,30 @@ def test_roi_axis_requires_group_and_valid_value():
         Param("roi_x", ParamType.STR, "ROI x", roi_axis="x")  # axis without group
     with pytest.raises(ValueError):
         Param("roi_x", ParamType.STR, "ROI x", roi_group="align", roi_axis="diagonal")  # bad value
+
+
+def test_roi_frame_validated():
+    Param("roi_x", ParamType.STR, "ROI x", roi_frame="detector")  # ok, no group needed
+    with pytest.raises(ValueError):
+        Param("roi_x", ParamType.STR, "ROI x", roi_frame="galactic")
+
+
+def test_roi_params_declare_frame():
+    """Every ROI param states its coordinate frame — and says so in its help."""
+    from gui.bindings import STAGE_SPECS
+
+    for stage_name, spec in STAGE_SPECS.items():
+        for p in spec.params:
+            if not (p.roi_group or p.roi_frame):
+                continue
+            assert p.roi_frame in ("detector", "map"), f"{stage_name}.{p.name}: no roi_frame"
+            assert p.roi_frame in (p.help or "").lower(), (
+                f"{stage_name}.{p.name}: help must state its '{p.roi_frame}' frame"
+            )
+
+
+def test_rocking_roi_params_are_detector_frame():
+    from dfxm.stages import rocking
+
+    assert rocking.STAGE.get("roi_x").roi_frame == "detector"
+    assert rocking.STAGE.get("roi_y").roi_frame == "detector"

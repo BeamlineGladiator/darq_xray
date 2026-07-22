@@ -10,6 +10,9 @@ entry_suffix: '.1'
 ccmth_ref_deg: 7.144
 pixel_size_x_um: 0.151733
 pixel_size_y_um: 0.387584
+darfix_roi: 105,230,1832,1266
+analysis_roi_x: 0,1832
+analysis_roi_y: 400,1100
 maps_filename: maps.h5
 positioners_path: instrument/positioners
 detector_read_path: instrument/pco_ff/image

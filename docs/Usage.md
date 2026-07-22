@@ -23,6 +23,7 @@ aliases: [DFXM Pipeline Usage, Pipeline Guide, How to use the pipeline]
 
 - [[#Quick start]]
 - [[#Core concepts]]
+  - [[#Regions of interest — two windows, two frames]]
 - [[#The pipeline at a glance]]
 - [[#Stage reference]]
 - [[#Interactive viewers]]
@@ -118,12 +119,91 @@ in — raises an error instead of filling a wrong value. The calculator cannot
 tell a mis-read motor from a real one, so sanity-check the reported
 magnification and 2θ against your setup before saving the preset.
 
+The experiment also carries three ROI fields. **Darfix ROI** is the detector
+crop darfix used, copied verbatim as darfix's own ROI widget shows it —
+`x,y,w,h` origin then size, no conversion. **Analysis window X/Y** are the
+part of the darfix map you actually want to study, as map-frame `c0,c1` /
+`r0,r1` start,end pixels (blank means the full width/height). Together these
+pre-fill the stages' own ROI fields.
+
+Below the form, a live read-out line translates both ROI fields into detector
+pixels as you type — the numbers you'd previously derive by hand are
+displayed, never typed: the darfix window's own detector-pixel span, plus the
+analysis window translated into absolute detector pixels. It goes blank when
+Darfix ROI is empty, and shows the parse error in place of numbers while a
+field is mid-edit (e.g. an incomplete `x,y,w,h`) rather than raising. Clicking
+**OK** or **Save as…** validates all three ROI fields (well-formed, positive
+darfix size, analysis windows within the darfix window's bounds) and blocks
+with a message dialog if any are wrong — a bad experiment ROI can never be
+saved or applied.
+
+Typing the analysis window by hand is optional: **Pick analysis ROI…** opens
+the same drag-a-rectangle picker used elsewhere in the app, previewing a
+mid-Z layer of the stacked mosaicity/strain volumes next to `processed_root`
+(`stacked_volumes.h5` / `stacked_strain_volumes.h5` — run mosaicity or strain
+at least once first, or use the picker's Browse fallback to point at any
+stacked `.h5`). The rectangle you draw is already in the map frame, so it
+writes straight into **Analysis window X** and **Analysis window Y** with no
+conversion, and the read-out line above updates immediately.
+
+### Regions of interest — two windows, two frames
+
+Every DFXM dataset carries **two** regions of interest, and they are not the
+same kind of thing:
+
+- The **darfix window** (`105,230,1832,1266` for STO2, `x,y,w,h` = origin then
+  size) is a **fact**. It is the detector crop darfix used when it fitted
+  `maps.h5` — you don't choose it here, you copy it verbatim from darfix's own
+  ROI widget. Map pixel `(0, 0)` sits at detector pixel `(x, y)`.
+- The **analysis window** (STO2's Y is `400,1100`, map-frame `start,end`) is a
+  **choice**. It is the sub-region of that map you actually want to study —
+  blank means the full width/height. Because map pixel 0 is the darfix
+  origin, translating it to an absolute detector row/column is just
+  `detector = darfix_origin + map`.
+
+**Worked STO2 example.** darfix window origin `(105, 230)`, size `(1832,
+1266)` → covers detector columns `105→1937` and rows `230→1496`. Analysis
+window Y `400,1100` (map-frame) → detector rows `230 + 400 = 630` to
+`230 + 1100 = 1330`, i.e. `630→1330`. That single pair of experiment fields
+feeds every stage's own ROI, each in the frame that stage actually crops in:
+
+| Stage | Field(s) | Frame | Value for this example |
+|---|---|---|---|
+| Rocking | `roi_x` / `roi_y` | absolute detector pixels | Y: `630,1330` |
+| Visualize, ParaView | `roi_x` / `roi_y` (Map ROI) | map pixels | Y: `400,1100` |
+| Slices | `align_roi_x` / `align_roi_y` (Align ROI) | map pixels | Y: `400,1100` |
+| Strain | `roi` (`r0,r1,c0,c1`) | map pixels | rows: `400,1100` |
+
+Enter the darfix window and the analysis window **once**, in the experiment
+editor — every stage form pre-fills its own ROI field(s) in its own frame from
+those two, so you never hand-convert map pixels to detector pixels again. If
+you then edit a stage's ROI so it no longer matches what the experiment would
+derive, the field's label grows a **⚠** (see [[#ROI deviation markers]]) —
+that's fine for a deliberate one-off, but treat an unexpected ⚠ as a prompt to
+re-check which frame you typed in. The slices stage's Y-height check remains
+the last-line guard: if the volumes it's about to combine disagree on physical
+Y height by more than ~5%, it warns before you go further.
+
+> [!warning] The classic mistake
+> On 2026-07-18 a real STO2 run had darfix's origin+size numbers (`230,1266`)
+> typed directly into rocking's `roi_y`, which expects **start,end** — instead
+> of the correct `630,1330`. The result was a ~154 µm Y-misregistration between
+> the raw rocking volume and the map volumes. That conversion is exactly what
+> the experiment's two ROI fields plus the per-stage pre-fill now do for you:
+> the detector-pixel numbers are **displayed** in the read-out and written into
+> each stage's form automatically — you should never need to type them by hand.
+
 ### Shared project state & auto-chaining
 
 Each stage's form is pre-filled from the experiment, and **an upstream stage's
 output auto-fills the next stage's input** (e.g. the strain/mosaicity volumes
 flow into `visualize`, `paraview` and `slices`; the slices file flows into
-`profiles`). You can still point any stage at files manually.
+`profiles`). You can still point any stage at files manually. If the
+experiment has ROIs set, they also pre-fill every stage's crop in that
+stage's own frame — rocking gets the absolute detector window, while
+visualize/paraview/slices/strain get the map-frame window — so the same two
+experiment fields (darfix window + analysis window) crop consistently
+everywhere without hand conversion.
 
 ### Resuming a session (per-experiment form memory)
 
@@ -176,11 +256,23 @@ layer; drag a rectangle and click **OK** to fill the ROI field(s) automatically.
 The picker is **per-stage** — accepting a rectangle writes only into the current
 stage's form and does not propagate to sibling stages. If you want the same crop
 on multiple stages you pick separately on each. Rocking does not have a picker
-because its detector crop is set in the raw-frame (before alignment) and must be
-entered manually to match the mechanical geometry.
+because its detector crop is in the raw frame (before alignment); it is instead
+pre-filled automatically from the experiment's darfix window + analysis window,
+converted to absolute detector pixels — normally leave it as-is.
 
 If no preview can be loaded (the required volume/map file is not set yet), the
 picker button logs a message and opens the Log tab instead of opening the picker.
+
+#### ROI deviation markers
+
+ROI fields (the crop boxes above, plus rocking's detector-frame `roi_x`/`roi_y`)
+pre-fill from the experiment. If you then edit one so it no longer matches the
+experiment-derived value, its label grows a **⚠** suffix and the tooltip names
+the expected value. That is fine for a deliberate one-off override — nothing is
+blocked — but treat an unexpected ⚠ as a prompt to double-check you typed the
+crop in the right frame (map pixels vs. detector pixels are the classic mix-up).
+The marker clears itself as soon as the field matches the experiment again, and
+it only appears when the experiment actually has ROIs configured.
 
 ---
 
@@ -257,12 +349,19 @@ Per-pixel axial strain (cot method) from darfix `maps.h5`, then stacked into a
 | Param | Meaning |
 |---|---|
 | `ccmth reference` | calibration angle (deg) ⚠ — strain is `cot(ccmth_ref)·Δccmth` |
-| `roi` | `r0,r1,c0,c1` (blank = full image) |
+| `roi` | `r0,r1,c0,c1` in map pixels, relative to the darfix window (blank = full image); pre-filled from the experiment's analysis window |
 | `vmin` / `vmax` | colour limits (blank = symmetric auto) |
 
 > [!important] Detrend before ROI
 > The full map is **detrended first** (separable 2-D arctan fit), then the ROI
 > is cropped. This order is a physics constraint and is not configurable.
+
+> [!warning] ROI must fit the map
+> If `roi` does not fit inside the loaded map (e.g. the experiment's analysis
+> window was set up for a different dataset), the run stops with an error
+> naming the ROI values and the map's actual shape — rather than silently
+> cropping to an empty or unexpected array. Blank the ROI or fix the
+> experiment's analysis window.
 
 > [!tip] Picking the run-time ROI interactively
 > Click **Pick ROI…** (in the button row alongside Run/Cancel) to open a visual
@@ -404,7 +503,7 @@ frame**, anchored to the mosaicity reference so they overlay the other volumes.
 |---|---|
 | `source_scan` | `rocking` (default) — use the rocking scan folders; `mosaicity` — use every matched mosa folder as a layer (DFXM topograph) |
 | `rocking_pattern` / `mosa_pattern` / `strain_pattern` | which raw folders to use |
-| `roi_x` / `roi_y` | detector crop applied at read time — **start,end** pixels on the raw detector (darfix shows its ROI as origin+size: end = origin + size). Must cover the same detector window as the other volumes, or the slices stage flags a Y-height mismatch |
+| `roi_x` / `roi_y` | detector-frame crop applied at read time — **start,end** pixels on the raw detector (darfix shows its ROI as origin+size: end = origin + size). Must cover the same detector window as the other volumes, or the slices stage flags a Y-height mismatch. Pre-filled from the experiment's darfix + analysis ROIs — normally leave as-is |
 | `specific_frame_idx` | which frame to extract (blank = central) |
 | `normalize_sum` | divide the summed intensity by frame count |
 | `subtract_background` | subtract per-pixel median background before summing (default on; turn off for a plain intensity sum, e.g. a mosa-scan topograph) |
@@ -476,12 +575,12 @@ Align the stacked mosaicity/strain volumes and render them.
 - **Output:** per-layer PNGs, a layer animation (MP4→GIF fallback), a 3-D
   top-view, and an interactive [[#3-D volume viewer|3-D view]].
 
-**Essentials:** both volume files, raw root, ROI X/Y, output dir
+**Essentials:** both volume files, raw root, Map ROI X/Y, output dir
 
 | Param | Meaning |
 |---|---|
 | `center_method` | `midrange` / `mean` / `median` (CoM colour centring only) |
-| `roi_x` / `roi_y` | crop in pixels |
+| `roi_x` / `roi_y` | map-frame crop in map pixels (`c0,c1` / `r0,r1`), relative to the darfix window, NOT absolute detector pixels; pre-filled from the experiment's analysis window |
 | `output_format` | `mp4` / `gif` / `both` |
 
 > [!tip] Picking the run-time ROI interactively
@@ -505,10 +604,11 @@ rendering, with a `valid_mask` and NaN sentinels.
 - **Output:** `mosaicity_volume.pvti` + `strain_volume.pvti` (each with a
   `*_pieces/` folder) + `export_info.txt`.
 
-**Essentials:** both volume files, raw root, ROI X/Y, output dir
+**Essentials:** both volume files, raw root, Map ROI X/Y, output dir
 
 | Param | Meaning |
 |---|---|
+| `roi_x` / `roi_y` | map-frame crop in map pixels (`c0,c1` / `r0,r1`), relative to the darfix window, NOT absolute detector pixels; pre-filled from the experiment's analysis window |
 | `num_pieces_z` | Z pieces — match your `pvserver` MPI rank count |
 | `anchor_origin_to_reference` | place the world origin in the raw-detector frame so all volumes co-register |
 
@@ -546,7 +646,7 @@ through the aligned volumes — all in one world frame so the slices co-register
 | `include_mosa_sum` | slice the mosa-scan summed intensity (mapped to the "raw" colour group) |
 | `include_mosa_specific` | slice the mosa-scan specific-frame intensity (mapped to the "raw" colour group) |
 | `center_method` / `range_pct` | CoM colour centring |
-| `align_roi_x` / `align_roi_y` | detector crop used during alignment (must match the crop from visualize/paraview runs) |
+| `align_roi_x` / `align_roi_y` | map-frame crop (`c0,c1` / `r0,r1` map pixels, relative to the darfix window) used during alignment — must match the crop from visualize/paraview runs; pre-filled from the experiment's analysis window |
 
 > [!tip] Picking the alignment ROI interactively
 > Click **Pick ROI…** (in the button row alongside Run/Cancel) to open a visual

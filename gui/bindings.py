@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import os
 
+from dfxm.common.roi import analysis_detector_window, format_pair, parse_pair
 from dfxm.config.models import Experiment, StageSpec
 from dfxm.stages import (
     concat,
@@ -62,7 +63,7 @@ _SLICES_SUBDIR = "oblique_slices"
 _SLICES_H5 = "oblique_slices.h5"
 
 
-def experiment_overrides(stage_name: str, exp: Experiment) -> dict:
+def _base_overrides(stage_name: str, exp: Experiment) -> dict:
     """Experiment-derived defaults that pre-fill *stage_name*'s form."""
     if stage_name == "concat":
         return dict(
@@ -165,3 +166,56 @@ def experiment_overrides(stage_name: str, exp: Experiment) -> dict:
             pixel_size_y_um=exp.pixel_size_y_um,
         )
     return {}
+
+
+def _parses(text: str) -> bool:
+    """True if *text* is a well-formed 'start,end' pair (blank/malformed -> False)."""
+    try:
+        return parse_pair(text) is not None
+    except ValueError:
+        return False
+
+
+def _roi_overrides(stage_name: str, exp: Experiment) -> dict:
+    """ROI pre-fill for *stage_name*, each stage in its native frame.
+
+    Only derivable values are returned (keys omitted otherwise), so a preset
+    without ROIs — or a malformed one, which the experiment editor flags —
+    leaves every stage form exactly as before.
+    """
+    ax = (exp.analysis_roi_x or "").strip()
+    ay = (exp.analysis_roi_y or "").strip()
+    out: dict = {}
+    if stage_name == "rocking":
+        try:
+            det_x, det_y = analysis_detector_window(exp.darfix_roi, ax, ay)
+        except ValueError:
+            return {}
+        if det_x:
+            out["roi_x"] = format_pair(det_x)
+        if det_y:
+            out["roi_y"] = format_pair(det_y)
+    elif stage_name in ("visualize", "paraview"):
+        if _parses(ax):
+            out["roi_x"] = ax
+        if _parses(ay):
+            out["roi_y"] = ay
+    elif stage_name == "slices":
+        if _parses(ax):
+            out["align_roi_x"] = ax
+        if _parses(ay):
+            out["align_roi_y"] = ay
+    elif stage_name == "strain" and ax and ay:
+        try:
+            (c0, c1), (r0, r1) = parse_pair(ax), parse_pair(ay)
+        except ValueError:
+            return {}
+        out["roi"] = f"{r0},{r1},{c0},{c1}"
+    return out
+
+
+def experiment_overrides(stage_name: str, exp: Experiment) -> dict:
+    """Experiment-derived defaults that pre-fill *stage_name*'s form."""
+    out = _base_overrides(stage_name, exp)
+    out.update(_roi_overrides(stage_name, exp))
+    return out

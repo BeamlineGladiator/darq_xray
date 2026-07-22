@@ -100,6 +100,12 @@ The Edit-experiment dialog gains a **"Regions of interest"** section:
   `maps_filename`; Browse fallback). The picker works natively in the map
   frame, so the dragged box fills `analysis_roi_x/y` directly. Lazy import;
   nothing built until clicked (house rule).
+  Implementation deviation (Task 6): the preview source is the *stacked
+  volumes* beside `processed_root` (`stacked_volumes.h5` /
+  `stacked_strain_volumes.h5`, via the existing
+  `dfxm.common.figures.stacked_volume_previews`) rather than a per-layer
+  `maps.h5` — same map frame, and it reuses that helper unchanged instead of
+  teaching the dialog a new HDF5 layout.
 - **Validation on OK/Save** — `validate_rois` runs; problems shown inline with
   a hint (StageUserError-banner pattern). Malformed ROIs block saving; blank
   ROIs are fine.

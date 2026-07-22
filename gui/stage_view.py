@@ -162,6 +162,12 @@ class StageView(QWidget):
             self._roi_buttons[_grp] = _btn
         btn_row.addStretch(1)
 
+        # ROI fields: mark any value that deviates from the experiment-derived one
+        self._roi_param_names = tuple(p.name for p in spec.params if p.roi_group or p.roi_frame)
+        if self._roi_param_names:
+            self._form.changed.connect(self._update_roi_markers)
+            self._update_roi_markers()
+
         self._progress = QProgressBar()
         self._progress.setRange(0, 100)
         self._progress_text = QLabel("")
@@ -269,6 +275,8 @@ class StageView(QWidget):
         if self._store is None:
             self._experiment = experiment
             self._form.set_values(experiment_overrides(self._stage_name, experiment))
+            if self._roi_param_names:
+                self._update_roi_markers()
             return
         self.flush()  # snapshot the outgoing experiment before switching
         self._experiment = experiment
@@ -282,6 +290,8 @@ class StageView(QWidget):
         finally:
             self._loading = False
         self._dirty = False  # a freshly loaded experiment is not user-dirty
+        if self._roi_param_names:
+            self._update_roi_markers()
 
     # -- form-state persistence (per experiment) ---------------------------
     def _on_form_changed(self) -> None:
@@ -590,6 +600,18 @@ class StageView(QWidget):
                 "(output goes to oblique_slices_pinned.h5 unless you set a name)."
             )
             self._tabs.setCurrentWidget(self._log)
+
+    def _update_roi_markers(self) -> None:
+        """Flag ROI fields whose value differs from the experiment-derived one."""
+        expected = experiment_overrides(self._stage_name, self._experiment)
+        vals = self._form.values()
+        for name in self._roi_param_names:
+            want = str(expected.get(name, "") or "")
+            have = str(vals.get(name, "") or "")
+            deviates = bool(want) and have != want
+            self._form.set_field_marker(
+                name, deviates, f"differs from experiment: {want}" if deviates else ""
+            )
 
     # -- interactive ROI picker (lazy, schema-driven) ---------------------
     def _on_pick_roi_group(self, roi_group: str) -> None:

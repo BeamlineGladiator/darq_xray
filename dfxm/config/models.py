@@ -62,6 +62,7 @@ class Param:
     must_exist: bool = False  # input path/dir: GUI checks existence before a run
     roi_group: str = ""  # params sharing a roi_group are one ROI-picker target
     roi_axis: str = ""  # "" | "x" | "y" | "both" ("both" = one 4-int "r0,r1,c0,c1" field)
+    roi_frame: str = ""  # "" | "detector" | "map" — the coordinate frame of a ROI param
 
     def __post_init__(self) -> None:
         if self.type is ParamType.ENUM and not self.choices:
@@ -70,6 +71,8 @@ class Param:
             raise ValueError(f"roi param {self.name!r}: roi_axis set but roi_group is empty")
         if self.roi_axis not in ("", "x", "y", "both"):
             raise ValueError(f"roi param {self.name!r}: bad roi_axis {self.roi_axis!r}")
+        if self.roi_frame not in ("", "detector", "map"):
+            raise ValueError(f"roi param {self.name!r}: bad roi_frame {self.roi_frame!r}")
 
     def coerce(self, value: Any) -> Any:
         """Convert a raw value (e.g. a string from a form field) to its type."""
@@ -144,6 +147,11 @@ class Experiment:
     ccmth_ref_deg: float = 0.0  # reference ccmth / monochromator Bragg angle
     pixel_size_x_um: float = 1.0  # detector pixel scale, X
     pixel_size_y_um: float = 1.0  # detector pixel scale, Y
+
+    # --- regions of interest (frames + conversions: dfxm/common/roi.py) ------
+    darfix_roi: str = ""  # darfix detector crop as darfix displays it: "x,y,w,h" origin+size
+    analysis_roi_x: str = ""  # analysis window columns, map-frame "c0,c1" (blank = full)
+    analysis_roi_y: str = ""  # analysis window rows, map-frame "r0,r1" (blank = full)
 
     # --- beamline HDF5 / motor paths (overridable constants) -----------------
     maps_filename: str = "maps.h5"  # darfix output filename inside each folder
@@ -275,6 +283,39 @@ EXPERIMENT_SCHEMA: tuple[Param, ...] = (
         help=(
             "Detector pixel size along Y in µm, from the beamline optics calibration. "
             "Sets the physical scale of every map."
+        ),
+    ),
+    Param(
+        "darfix_roi",
+        ParamType.STR,
+        "Darfix ROI (origin+size)",
+        help=(
+            "The detector crop used in darfix, exactly as darfix's ROI widget shows it: "
+            "'x,y,w,h' — origin then size (e.g. 105,230,1832,1266). Copy the four numbers "
+            "verbatim, no conversion. Map pixel (0,0) sits at detector pixel (x,y); stages "
+            "derive their detector-frame crops from this. Leave blank if darfix ran uncropped."
+        ),
+    ),
+    Param(
+        "analysis_roi_x",
+        ParamType.STR,
+        "Analysis window X (map px)",
+        help=(
+            "Columns of the darfix map to study, as 'c0,c1' start,end map pixels — relative "
+            "to the darfix window, NOT absolute detector pixels. Pre-fills every stage's "
+            "map-frame ROI X and (with the darfix ROI) rocking's detector crop. "
+            "Blank = full width."
+        ),
+    ),
+    Param(
+        "analysis_roi_y",
+        ParamType.STR,
+        "Analysis window Y (map px)",
+        help=(
+            "Rows of the darfix map to study, as 'r0,r1' start,end map pixels — relative "
+            "to the darfix window, NOT absolute detector pixels. Pre-fills every stage's "
+            "map-frame ROI Y and (with the darfix ROI) rocking's detector crop. "
+            "Blank = full height."
         ),
     ),
     Param(

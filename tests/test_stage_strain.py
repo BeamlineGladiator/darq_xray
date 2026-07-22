@@ -164,6 +164,41 @@ def test_detrend_runs_before_roi(tmp_path):
         assert f["strain"].shape == (1, 20, 30)
 
 
+def test_roi_out_of_bounds_raises_stage_user_error(tmp_path):
+    """A ROI larger than the map (e.g. pre-filled from a different experiment's
+    analysis window) must fail loudly with a StageUserError naming the ROI and
+    the actual map shape, not silently crop to an empty/mismatched array."""
+    from dfxm.common.errors import StageUserError
+
+    ccmth = _synthetic_ccmth(ny=40, nx=60)
+    folder = tmp_path / "layer__1"
+    _write_maps(str(folder), ccmth)
+    with pytest.raises(StageUserError) as excinfo:
+        S.run(
+            {
+                "mode": "single",
+                "input_folder": str(folder),
+                "ccmth_ref_deg": 7.144,
+                "roi": "0,100,0,30",  # rows 0,100 exceed the 40-row map
+                "save_plots": False,
+                "output_dir": str(tmp_path / "out"),
+            }
+        )
+    message = str(excinfo.value)
+    assert "0,100" in message  # the offending ROI rows
+    assert "40" in message and "60" in message  # the actual map shape (40x60)
+
+
+def test_apply_roi_out_of_bounds_raises_stage_user_error():
+    from dfxm.common.errors import StageUserError
+
+    map_2d = np.zeros((40, 60))
+    with pytest.raises(StageUserError):
+        S.apply_roi(map_2d, [0, 100, 0, 30])
+    with pytest.raises(StageUserError):
+        S.apply_roi(map_2d, [10, 10, 0, 30])  # empty rows (r1 <= r0)
+
+
 def test_parse_helpers():
     assert S._parse_roi("") is None
     assert S._parse_roi("1,2,3,4") == [1, 2, 3, 4]
