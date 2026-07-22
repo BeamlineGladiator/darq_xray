@@ -313,3 +313,17 @@ def test_strain_render_replot_writes_pngs_with_crop(tmp_path):
         h5, [("strain", [0])], style=None, clim=None, out_dir=out, roi=(0, 2, 0, 3)
     )
     assert len(written) == 1 and os.path.exists(written[0])
+
+
+def test_build_strain_map_axes_mode_none_map_only():
+    from dfxm.common.plotting import PlotStyle
+
+    strain = np.linspace(-1e-4, 1e-4, 400).reshape(20, 20)
+    fig = S.build_strain_map(
+        strain, 0.5, 0.5, None, (None, None), style=PlotStyle(axes_mode="none")
+    )
+    assert not fig.axes[0].axison  # the map
+    assert fig.axes[1].axison  # its colorbar
+
+    diag = S.build_detrend_diag(strain, strain, strain, style=PlotStyle(axes_mode="none"))
+    assert all(a.axison for a in diag.axes)  # diagnostic excluded by design

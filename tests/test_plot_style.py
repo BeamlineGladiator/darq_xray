@@ -826,3 +826,13 @@ def test_axes_mode_json_roundtrip_and_legacy_snapshot_default():
     assert style_from_json(style_to_json(PlotStyle(axes_mode="none"))).axes_mode == "none"
     # a persisted snapshot from before this feature has no axes_mode key
     assert style_from_json(json.dumps({"font_scale": 2.0})).axes_mode == "full"
+
+
+def test_histogram_keeps_axes_under_axes_mode_none():
+    fig = build_histogram(
+        np.linspace(-1.0, 1.0, 100),
+        title="t",
+        xlabel="x",
+        style=PlotStyle(axes_mode="none"),
+    )
+    assert fig.axes[0].axison

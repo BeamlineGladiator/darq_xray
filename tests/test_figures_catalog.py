@@ -1632,3 +1632,38 @@ def test_save_layer_pngs_forwards_group(tmp_path, monkeypatch):
         group="raw",
     )
     assert captured["group"] == "raw"
+
+
+def test_layer_figure_axes_mode_no_frame_hides_spines():
+    fig, ax, _ = render.layer_figure(
+        _layer(), -1, 1, "viridis", 40.0, 20.0, "t", "cb", style=PlotStyle(axes_mode="no_frame")
+    )
+    assert all(not sp.get_visible() for sp in ax.spines.values())
+    assert ax.axison
+
+
+def test_layer_figure_axes_mode_none_removes_axes_but_not_colorbar():
+    fig, ax, _ = render.layer_figure(
+        _layer(), -1, 1, "viridis", 40.0, 20.0, "t", "cb", style=PlotStyle(axes_mode="none")
+    )
+    assert not ax.axison
+    cax = [a for a in fig.axes if a is not ax][0]
+    assert cax.axison  # colorbar untouched
+
+
+def test_layer_figure_legacy_and_full_keep_axes():
+    for style in (None, PlotStyle()):
+        fig, ax, _ = render.layer_figure(
+            _layer(), -1, 1, "viridis", 40.0, 20.0, "t", "cb", style=style
+        )
+        assert ax.axison
+        assert all(sp.get_visible() for sp in ax.spines.values())
+
+
+def test_companion_figure_keeps_axes_under_axes_mode_none():
+    """The companion (map panel + traces) is excluded from axes_mode by design."""
+    ref, fields, geom = _companion_fixture()
+    fig = Profiles.build_companion_figure(
+        ref, fields, geom, "cyan", style=PlotStyle(axes_mode="none")
+    )
+    assert all(a.axison for a in fig.axes)

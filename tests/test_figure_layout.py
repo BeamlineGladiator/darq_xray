@@ -200,3 +200,27 @@ def test_build_strain_map_fixed_scale_box():
     w, h = _box_inches(fig, fig.axes[0])
     assert abs(w - 100.0 / 10.0 / 2.54) <= 0.05
     assert abs(h - 50.0 / 10.0 / 2.54) <= 0.05
+
+
+def test_slice_figure_axes_mode_none_removes_axes():
+    prep, sl, data, u, v = _slice_fixture()
+    fig = build_slice_figure(prep, sl, data, u, v, offset_um=None, style=PlotStyle(axes_mode="none"))
+    assert not fig.axes[0].axison
+
+
+def test_layer_figure_fixed_scale_box_unchanged_by_axes_mode():
+    import numpy as np
+
+    from dfxm.common import render
+
+    layer = np.random.default_rng(3).random((10, 20))
+    boxes = []
+    for mode in ("full", "no_frame", "none"):
+        style = PlotStyle(scale_um_per_cm=50.0, axes_mode=mode)
+        fig, ax, _ = render.layer_figure(
+            layer, 0.0, 1.0, "gray", 200.0, 100.0, "t", "I (a.u.)", style=style, group="raw"
+        )
+        boxes.append(_box_inches(fig, ax))
+    target_w, target_h = 200.0 / 50.0 / 2.54, 100.0 / 50.0 / 2.54
+    for w, h in boxes:
+        assert abs(w - target_w) <= 0.05 and abs(h - target_h) <= 0.05
