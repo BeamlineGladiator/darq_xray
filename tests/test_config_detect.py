@@ -278,3 +278,75 @@ def test_detect_darfix_roi_malformed_dataset(tmp_path):
         f.create_dataset(CCMTH_COM, data=np.arange(3.0))  # 1-D -> shape[:2] unpack fails
     d = detect_darfix_roi(str(p), "s__0", CCMTH_COM, "")
     assert d.value is None and d.error
+
+
+# -- orchestrator + CLI -------------------------------------------------------
+
+from dfxm.config.detect import detect_experiment, main  # noqa: E402
+from dfxm.config.models import Experiment  # noqa: E402
+
+
+def _make_tree(tmp_path, *, with_maps=True):
+    """Full synthetic experiment: raw families + scan, optional processed maps."""
+    raw = tmp_path / "RAW"
+    _mkdirs(raw, "s_strain__0", "s_strain__1", "s_mosa__0", "s_rocking__0")
+    _write_scan(raw / "s_strain__0" / "s_strain__0.h5", ccmth=7.10)
+    proc = tmp_path / "PROC"
+    if with_maps:
+        d = proc / "s_strain__0"
+        d.mkdir(parents=True)
+        _write_maps(d / "maps.h5", shape=(1266, 1832), fill=7.1442)
+    else:
+        proc.mkdir()
+    return str(raw), str(proc)
+
+
+def test_detect_experiment_full_pass(tmp_path):
+    raw, proc = _make_tree(tmp_path)
+    rows = _by_field(detect_experiment(Experiment(raw_root=raw, processed_root=proc)))
+    assert rows["folder_pattern"].value == "s_strain__*"
+    assert rows["entry_suffix"].value == ".1"
+    assert rows["pixel_size_x_um"].value and rows["pixel_size_x_um"].error is None
+    assert rows["ccmth_ref_deg"].value == 7.1442  # maps median wins over positioner 7.10
+    assert "median" in rows["ccmth_ref_deg"].note
+    assert rows["darfix_roi"].value == "?,?,1832,1266"
+
+
+def test_detect_experiment_pre_darfix_falls_back(tmp_path):
+    raw, proc = _make_tree(tmp_path, with_maps=False)
+    rows = _by_field(detect_experiment(Experiment(raw_root=raw, processed_root=proc)))
+    assert rows["ccmth_ref_deg"].value == 7.1  # positioner snapshot fallback
+    assert "confirm" in rows["ccmth_ref_deg"].note
+    assert rows["darfix_roi"].error and "re-run" in rows["darfix_roi"].error
+
+
+def test_detect_experiment_explicit_pattern_wins(tmp_path):
+    raw, proc = _make_tree(tmp_path)
+    # user set a pattern that matches nothing -> scan-dependent rows skip
+    exp = Experiment(raw_root=raw, processed_root=proc, folder_pattern="zzz__*")
+    rows = _by_field(detect_experiment(exp))
+    assert rows["folder_pattern"].value == "s_strain__*"  # suggestion still shown
+    assert rows["pixel_size_x_um"].error  # but zzz__* found no scan
+
+
+def test_detect_experiment_no_raw_root():
+    rows = detect_experiment(Experiment(raw_root=""))
+    assert len(rows) == 1 and rows[0].field == "raw_root" and rows[0].error
+
+
+def test_detect_experiment_survives_bad_scan_file(tmp_path):
+    raw = tmp_path / "RAW"
+    _mkdirs(raw, "s_strain__0")
+    (raw / "s_strain__0" / "s_strain__0.h5").write_text("not hdf5")
+    rows = _by_field(detect_experiment(Experiment(raw_root=str(raw))))
+    assert rows["folder_pattern"].value == "s_strain__*"  # patterns still detected
+    assert rows["entry_suffix"].error and rows["pixel_size_x_um"].error
+
+
+def test_cli_main_prints_table(tmp_path, capsys):
+    raw, proc = _make_tree(tmp_path)
+    assert main([raw, "--processed-root", proc]) == 0
+    out = capsys.readouterr().out
+    assert "folder_pattern" in out and "s_strain__*" in out
+    assert "ccmth_ref_deg" in out and "7.1442" in out
+    assert "SKIP" not in out.split("darfix_roi")[0]  # detected rows are not skips

@@ -131,6 +131,25 @@ Load/save/discover experiment presets (YAML in `experiments/`).
 | `save_experiment(exp, path)` | Write an `Experiment` to YAML (field order preserved; comments not emitted). |
 | `load_experiment_by_name(name, dir=None)` | Discover + load by name. |
 
+**`detect.py` — data-driven experiment initialization.** Qt-free detectors that
+suggest experiment values from the trees on disk; each returns `Detection`
+rows (`field`, `value`, `note`, `error` — `error` set = skip-with-reason;
+`value` and `error` both `None` = info-only row). `folder_families` /
+`detect_patterns` classify `<stem>__<N>` raw subfolders into
+folder/mosa/rocking globs; `select_scan_file` picks the raw scan .h5 (concat
+output excluded); `detect_entry_suffix` reads the majority BLISS suffix;
+`detect_pixel_sizes` wraps `common.pixel_size.compute_pixel_size`;
+`find_strain_maps` + `detect_ccmth_from_maps` take the nanmedian of the ccmth
+COM map (mosa maps are skipped — chi/mu only), with
+`detect_ccmth_from_positioners` as the pre-darfix fallback;
+`detect_darfix_roi` recovers the crop *size* from the map shape (darfix
+records no origin — blank current → partial `?,?,w,h`, filled current →
+consistency check). `detect_experiment(current)` orchestrates all of the
+above (re-runnable, never overwrites); `main` is the
+`python3 -m dfxm.config.detect` CLI. GUI consumer:
+`gui/widgets/detect_review.py` + the Edit dialog's "Initialize from data…"
+button.
+
 ### `dfxm/common` — shared primitives
 
 `common/__init__.py` is just a package marker. The rest are the de-duplicated

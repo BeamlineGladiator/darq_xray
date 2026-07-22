@@ -270,3 +270,106 @@ def detect_darfix_roi(
         f"{win.origin_x},{win.origin_y},{w},{h}",
         f"size in maps.h5 is {w}×{h}, not {win.width}×{win.height} — origin kept",
     )
+
+
+# -- orchestrator -------------------------------------------------------------
+
+
+def detect_experiment(current) -> list[Detection]:
+    """Run every detector against *current* (an :class:`Experiment`).
+
+    Re-runnable: rows for data that does not exist yet come back as
+    skip-with-reason, so a pre-darfix pass already shows what a later pass
+    will add. Never overwrites anything — callers decide what to apply.
+    """
+    from dfxm.common.sort import find_matching_folders
+
+    raw_root = (current.raw_root or "").rstrip("/")
+    if not raw_root or not os.path.isdir(raw_root):
+        return [Detection("raw_root", error="set Raw data root to an existing folder first")]
+
+    out = detect_patterns(raw_root)
+    detected = {d.field: d.value for d in out if d.value}
+    pattern = (
+        current.folder_pattern
+        if current.folder_pattern not in ("", "*")
+        else detected.get("folder_pattern", "")
+    )
+
+    scan = None
+    if pattern:
+        folders = find_matching_folders(raw_root, pattern)
+        scan = select_scan_file(folders[0]) if folders else None
+    suffix = current.entry_suffix or ".1"
+    if scan is None:
+        out.append(
+            Detection("entry_suffix", error=f"no layer folder matching {pattern!r} has a scan .h5")
+        )
+        out.extend(
+            Detection(f, error="pixel sizes need a raw scan — none found")
+            for f in ("pixel_size_x_um", "pixel_size_y_um")
+        )
+    else:
+        suffix_row = detect_entry_suffix(scan)
+        out.append(suffix_row)
+        suffix = suffix_row.value or suffix
+        out.extend(detect_pixel_sizes(scan, current.positioners_path, suffix))
+
+    found = (
+        find_strain_maps(
+            current.processed_root, pattern, current.maps_filename, current.ccmth_com_path
+        )
+        if pattern
+        else None
+    )
+    if found:
+        maps_path, folder_name = found
+        out.append(detect_ccmth_from_maps(maps_path, folder_name, current.ccmth_com_path))
+        out.append(
+            detect_darfix_roi(maps_path, folder_name, current.ccmth_com_path, current.darfix_roi)
+        )
+    else:
+        if scan is not None:
+            out.append(detect_ccmth_from_positioners(scan, current.positioners_path, suffix))
+        out.append(
+            Detection(
+                "darfix_roi",
+                error="no darfix maps.h5 under the processed root yet — re-run after darfix",
+            )
+        )
+    return out
+
+
+# -- CLI ----------------------------------------------------------------------
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Print the detection table for a raw (and optionally processed) tree."""
+    import argparse
+
+    from dfxm.config.models import Experiment
+
+    ap = argparse.ArgumentParser(description=main.__doc__)
+    ap.add_argument("raw_root", help="RAW_DATA root (the folder holding the layer subfolders)")
+    ap.add_argument(
+        "--processed-root", default="", help="PROCESSED_DATA root (enables the maps.h5 rows)"
+    )
+    ap.add_argument("--maps-filename", default="maps.h5")
+    args = ap.parse_args(argv)
+    exp = Experiment(
+        raw_root=args.raw_root,
+        processed_root=args.processed_root,
+        maps_filename=args.maps_filename,
+    )
+    for d in detect_experiment(exp):
+        if d.error:
+            print(f"{d.field:18} SKIP  {d.error}")
+        elif d.value is None:
+            print(f"{d.field:18} INFO  {d.note}")
+        else:
+            print(f"{d.field:18} {d.value!s:26} {d.note}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
