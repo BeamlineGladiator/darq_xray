@@ -38,6 +38,7 @@ from ..common.plotting import (
     GROUP_BY_KIND,
     PlotStyle,
     add_colorbar,
+    apply_axes_mode,
     apply_text_scale,
     draw_scale_bar,
     fit_axes_to_box,
@@ -893,6 +894,7 @@ def render_single(ref, geom, line_color, out_png, header, dpi, style=None):
                 fig, im, ax, attrs["cbar_label"], style, group=GROUP_BY_KIND.get(attrs.get("kind"))
             )
         apply_text_scale(ax, style)
+        apply_axes_mode(ax, style)
     if box is not None:
         fit_axes_to_box(fig, ax, box[0], box[1])
     fig.savefig(out_png, dpi=dpi, facecolor="white", edgecolor="none", bbox_inches="tight")

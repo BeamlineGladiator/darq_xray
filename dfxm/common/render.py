@@ -20,6 +20,7 @@ from matplotlib.animation import FFMpegWriter, FuncAnimation, PillowWriter
 from .plotting import (
     PlotStyle,
     add_colorbar,
+    apply_axes_mode,
     apply_text_scale,
     draw_scale_bar,
     figure_size,
@@ -77,6 +78,7 @@ def layer_figure(
             fixed_scale_um_per_cm=(box[2] if box is not None else None),
         )
     apply_text_scale(ax, st)
+    apply_axes_mode(ax, st)
     if box is not None:
         fit_axes_to_box(fig, ax, box[0], box[1])
     return fig, ax, im

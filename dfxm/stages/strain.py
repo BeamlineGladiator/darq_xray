@@ -34,6 +34,7 @@ from ..common.figures import FigureSpec, ReplotGroup, crop_roi_2d, register, res
 from ..common.plotting import (
     PlotStyle,
     add_colorbar,
+    apply_axes_mode,
     apply_round_clim,
     apply_text_scale,
     build_histogram,
@@ -426,6 +427,7 @@ def build_strain_map(
     else:
         add_colorbar(fig, im, ax, "Strain (ε)", style, group="strain")
         apply_text_scale(ax, style)
+        apply_axes_mode(ax, style)
         if style.scale_bar:
             draw_scale_bar(
                 ax,

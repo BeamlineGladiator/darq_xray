@@ -43,6 +43,7 @@ from ..common.plotting import (
     GROUP_BY_KIND,
     PlotStyle,
     add_colorbar,
+    apply_axes_mode,
     apply_round_clim,
     apply_text_scale,
     draw_scale_bar,
@@ -870,6 +871,7 @@ def build_slice_figure(
         )
     if not use_legacy:
         apply_text_scale(ax, st)
+        apply_axes_mode(ax, st)
     if box is not None:
         fit_axes_to_box(fig, ax, box[0], box[1])
 
