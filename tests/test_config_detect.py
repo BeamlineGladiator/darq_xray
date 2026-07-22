@@ -134,3 +134,131 @@ def test_detect_entry_suffix_unreadable_file(tmp_path):
     p.write_text("this is not hdf5")
     d = detect_entry_suffix(str(p))
     assert d.value is None and d.error
+
+
+# -- calibration detectors ----------------------------------------------------
+
+import numpy as np  # noqa: E402  (test-section import, keeps diffs local)
+
+from dfxm.config.detect import (  # noqa: E402
+    detect_ccmth_from_maps,
+    detect_ccmth_from_positioners,
+    detect_darfix_roi,
+    detect_pixel_sizes,
+    find_strain_maps,
+)
+
+CCMTH_COM = "/entry/ccmth/Center of mass/Center of mass"
+
+
+def _write_scan(path, *, entry="1.1", ccmth=7.1, **extra):
+    """Minimal BLISS scan: the five pixel-size motors + ccmth."""
+    motors = dict(mainx=-5000.0, obx=273.0, ffsel=-60.0, ffz=2100.0, lenssel=0.0)
+    motors.update(extra)
+    if ccmth is not None:
+        motors["ccmth"] = ccmth
+    with h5py.File(path, "w") as f:
+        pos = f.create_group(f"{entry}/instrument/positioners")
+        for name, val in motors.items():
+            pos.create_dataset(name, data=val)
+    return str(path)
+
+
+def _write_maps(path, *, with_ccmth=True, shape=(6, 8), fill=7.5):
+    with h5py.File(path, "w") as f:
+        if with_ccmth:
+            data = np.full(shape, fill)
+            data[0, 0] = np.nan  # nanmedian must survive NaNs
+            f.create_dataset(CCMTH_COM, data=data)
+        else:
+            f.create_dataset("/entry/chi/Center of mass/Center of mass", data=np.zeros(shape))
+    return str(path)
+
+
+def test_detect_pixel_sizes_success(tmp_path):
+    p = _write_scan(tmp_path / "s.h5")
+    rows = detect_pixel_sizes(p, "instrument/positioners", ".1")
+    by = _by_field(rows)
+    m = 5000.0 / 273.0 - 1.0
+    assert by["pixel_size_x_um"].value == round(3.25 / m, 6)
+    assert by["pixel_size_y_um"].value > by["pixel_size_x_um"].value  # sin(2θ) division
+    assert "2x" in by["pixel_size_x_um"].note and "M=" in by["pixel_size_x_um"].note
+
+
+def test_detect_pixel_sizes_user_error_becomes_rows(tmp_path):
+    p = _write_scan(tmp_path / "s.h5", ffsel=-30.0)  # unrecognized objective
+    rows = detect_pixel_sizes(p, "instrument/positioners", ".1")
+    assert len(rows) == 2
+    assert all(d.value is None and d.error for d in rows)
+    assert "ffsel" in rows[0].error
+
+
+def test_detect_pixel_sizes_unreadable_file(tmp_path):
+    p = tmp_path / "junk.h5"
+    p.write_text("nope")
+    rows = detect_pixel_sizes(str(p), "instrument/positioners", ".1")
+    assert all(d.error for d in rows)
+
+
+def test_find_strain_maps_skips_mosa_style(tmp_path):
+    proc = tmp_path / "proc"
+    for name, ccm in (("s__0", False), ("s__1", True)):
+        d = proc / name
+        d.mkdir(parents=True)
+        _write_maps(d / "maps.h5", with_ccmth=ccm)
+    found = find_strain_maps(str(proc), "s__*", "maps.h5", CCMTH_COM)
+    assert found is not None
+    maps_path, folder = found
+    assert folder == "s__1" and maps_path.endswith("s__1/maps.h5")
+
+
+def test_find_strain_maps_none_when_absent(tmp_path):
+    assert find_strain_maps(str(tmp_path), "s__*", "maps.h5", CCMTH_COM) is None
+    assert find_strain_maps("", "s__*", "maps.h5", CCMTH_COM) is None
+
+
+def test_detect_ccmth_from_maps_nanmedian(tmp_path):
+    p = _write_maps(tmp_path / "maps.h5", fill=7.1442)
+    d = detect_ccmth_from_maps(p, "s__0", CCMTH_COM)
+    assert d.field == "ccmth_ref_deg" and d.value == 7.1442
+    assert "median" in d.note and "s__0" in d.note
+
+
+def test_detect_ccmth_from_positioners(tmp_path):
+    p = _write_scan(tmp_path / "s.h5", ccmth=7.144236)
+    d = detect_ccmth_from_positioners(p, "instrument/positioners", ".1")
+    assert d.value == 7.1442
+    assert "confirm" in d.note  # flags itself as a snapshot needing confirmation
+
+
+def test_detect_ccmth_from_positioners_missing_motor(tmp_path):
+    p = _write_scan(tmp_path / "s.h5", ccmth=None)
+    d = detect_ccmth_from_positioners(p, "instrument/positioners", ".1")
+    assert d.value is None and "ccmth" in d.error
+
+
+def test_detect_darfix_roi_blank_current_gives_partial(tmp_path):
+    p = _write_maps(tmp_path / "maps.h5", shape=(1266, 1832))
+    d = detect_darfix_roi(p, "s__0", CCMTH_COM, "")
+    assert d.value == "?,?,1832,1266"
+    assert "origin" in d.note
+
+
+def test_detect_darfix_roi_consistent_is_info_row(tmp_path):
+    p = _write_maps(tmp_path / "maps.h5", shape=(1266, 1832))
+    d = detect_darfix_roi(p, "s__0", CCMTH_COM, "105,230,1832,1266")
+    assert d.value is None and d.error is None
+    assert "matches" in d.note
+
+
+def test_detect_darfix_roi_mismatch_keeps_origin(tmp_path):
+    p = _write_maps(tmp_path / "maps.h5", shape=(1266, 1832))
+    d = detect_darfix_roi(p, "s__0", CCMTH_COM, "105,230,999,999")
+    assert d.value == "105,230,1832,1266"
+    assert "not 999×999" in d.note
+
+
+def test_detect_darfix_roi_malformed_current_treated_as_blank(tmp_path):
+    p = _write_maps(tmp_path / "maps.h5", shape=(6, 8))
+    d = detect_darfix_roi(p, "s__0", CCMTH_COM, "banana")
+    assert d.value == "?,?,8,6"
