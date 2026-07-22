@@ -62,6 +62,10 @@ class ExperimentDialog(QDialog):
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
         buttons.addButton(save_btn, QDialogButtonBox.ButtonRole.ActionRole)
+        init_btn = QPushButton("Initialize from data…")
+        init_btn.setToolTip("Scan the data roots and suggest patterns, calibration and ROI values")
+        init_btn.clicked.connect(self._on_initialize_from_data)
+        buttons.addButton(init_btn, QDialogButtonBox.ButtonRole.ActionRole)
         compute_btn = QPushButton("Compute pixel size from scan…")
         compute_btn.setToolTip(
             "Read a raw (pre-darfix) scan .h5 and fill Pixel size X/Y from its motors"
@@ -88,6 +92,8 @@ class ExperimentDialog(QDialog):
         layout.addWidget(self._roi_note)
         layout.addWidget(help_panel)
         layout.addWidget(buttons)
+
+        self._applied_detections = False
 
     def experiment(self) -> Experiment:
         return Experiment.from_dict(self._form.values())
@@ -142,6 +148,17 @@ class ExperimentDialog(QDialog):
     def _on_accept(self) -> None:
         if self._warn_roi_problems():
             return
+        if self._applied_detections:
+            self._applied_detections = False  # ask once per apply
+            ret = QMessageBox.question(
+                self,
+                "Initialize from data",
+                "Save the preset to a YAML now? The applied values otherwise "
+                "live only in this session.",
+                QMessageBox.StandardButton.Save | QMessageBox.StandardButton.No,
+            )
+            if ret == QMessageBox.StandardButton.Save:
+                self._on_save_as()
         self.accept()
 
     def _on_save_as(self) -> None:
@@ -152,6 +169,7 @@ class ExperimentDialog(QDialog):
         path, _ = QFileDialog.getSaveFileName(self, "Save preset", start, "YAML (*.yaml)")
         if path:
             presets.save_experiment(exp, path)
+            self._applied_detections = False  # just saved manually -> no need to re-prompt on OK
 
     def _apply_pixel_size(self, path: str):
         """Compute pixel sizes from *path* and write them into the form.
@@ -202,6 +220,46 @@ class ExperimentDialog(QDialog):
             f"Pixel size X = {res.pixel_size_x_um:.4f} µm\n"
             f"Pixel size Y = {res.pixel_size_y_um:.4f} µm",
         )
+
+    def _detect(self, vals: dict) -> list:
+        """Run detection on the current form values (no dialogs — test seam)."""
+        from dfxm.config.detect import detect_experiment
+
+        return detect_experiment(Experiment.from_dict(vals))
+
+    def _on_initialize_from_data(self) -> None:
+        from PySide6.QtCore import Qt
+        from PySide6.QtWidgets import QApplication
+
+        vals = self._form.values()
+        raw = (vals.get("raw_root") or "").strip()
+        if not raw or not os.path.isdir(raw):
+            QMessageBox.warning(
+                self,
+                "Initialize from data",
+                "Set 'Raw data root' to an existing folder first — detection "
+                "starts from the raw scan tree.",
+            )
+            return
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            detections = self._detect(vals)
+        finally:
+            QApplication.restoreOverrideCursor()
+
+        from .widgets.detect_review import DetectReviewDialog
+
+        dlg = DetectReviewDialog(
+            detections, current=vals, defaults=Experiment().to_dict(), parent=self
+        )
+        try:
+            if dlg.exec():
+                applied = dlg.applied_values()
+                if applied:
+                    self._form.set_values(applied)
+                    self._applied_detections = True
+        finally:
+            dlg.deleteLater()
 
     def _roi_preview_params(self, vals: dict) -> dict:
         proc = (vals.get("processed_root") or "").rstrip("/")

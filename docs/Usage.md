@@ -146,6 +146,42 @@ stacked `.h5`). The rectangle you draw is already in the map frame, so it
 writes straight into **Analysis window X** and **Analysis window Y** with no
 conversion, and the read-out line above updates immediately.
 
+#### Initializing an experiment from data
+
+Instead of hand-filling the editor, click **Initialize from data…** (in
+*Edit…*). It scans the roots currently typed in the form and suggests values,
+shown in a review table — current value vs detected, with a per-row *Apply*
+checkbox (pre-checked only where it would not overwrite something you set):
+
+- **Folder patterns** and **entry suffix**, from the `<name>__<N>` layer
+  folders under the raw root.
+- **Pixel sizes X/Y**, computed from the far-field motors of the first raw
+  scan (same physics as *Compute pixel size from scan…*).
+- **ccmth reference**, preferably the median of a strain-layer ccmth
+  centre-of-mass map under the processed root; before darfix has run it
+  falls back to the raw `ccmth` motor snapshot — confirm either against the
+  beamline alignment before trusting strain maps.
+- **Darfix ROI size**: darfix does not record its crop anywhere, so only the
+  window *size* can be read back (from the map shape). The row shows
+  `?,?,w,h` — type the origin from darfix's ROI widget to enable applying
+  it. If your Darfix ROI is already filled and its size matches `maps.h5`,
+  the row is an info-only "✓ size matches" line; if the size instead
+  mismatches, the row offers the corrected `w,h` with your existing origin
+  kept, ready to apply.
+
+A row whose detected value already **equals** the current one (same field,
+same value) shows as an info-only "✓ matches current" row too — nothing to
+apply, just confirmation that the data agrees with what's already in the
+form.
+
+The flow is **re-runnable**: run it on day one for the raw-data facts (the
+maps rows appear greyed with the reason), then again after darfix to add the
+maps-derived rows. On *OK*, if you applied anything, the dialog offers to
+save the preset YAML — otherwise the values live only in this session.
+
+The same detection runs headless:
+`python3 -m dfxm.config.detect RAW_ROOT --processed-root PROC_ROOT`.
+
 ### Regions of interest — two windows, two frames
 
 Every DFXM dataset carries **two** regions of interest, and they are not the

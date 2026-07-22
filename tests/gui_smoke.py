@@ -1041,6 +1041,35 @@ def main() -> int:
     assert _dlg34._roi_problems()  # end <= start is unsaveable
     print("[34] experiment editor ROI: derived read-out live + validation blocks bad pairs")
 
+    # [35] Initialize from data: detect on a synthetic raw tree -> review dialog
+    # pre-checks blank fields -> apply lands in the experiment form.
+    import h5py as _h535
+
+    _raw35 = os.path.join(tempfile.mkdtemp(prefix="smoke_detect_"), "RAW")
+    for _fam35, _n35 in (("s1_strain", 2), ("s1_mosa", 1), ("s1_rocking", 1)):
+        for _i35 in range(_n35):
+            os.makedirs(os.path.join(_raw35, f"{_fam35}__{_i35}"))
+    with _h535.File(os.path.join(_raw35, "s1_strain__0", "s1_strain__0.h5"), "w") as _f35:
+        _pos35 = _f35.create_group("1.1/instrument/positioners")
+        for _k35, _v35 in dict(
+            mainx=-5000.0, obx=273.0, ffsel=-60.0, ffz=2100.0, lenssel=0.0, ccmth=7.1
+        ).items():
+            _pos35.create_dataset(_k35, data=_v35)
+    from gui.widgets.detect_review import DetectReviewDialog as _DRD35
+
+    _dlg35 = _ED34(_Exp34(raw_root=_raw35))
+    _rows35 = _dlg35._detect(_dlg35._form.values())
+    assert {d.field: d.value for d in _rows35 if d.value}["folder_pattern"] == "s1_strain__*"
+    _rev35 = _DRD35(_rows35, current=_dlg35._form.values(), defaults=_Exp34().to_dict())
+    _applied35 = _rev35.applied_values()  # pre-checked = blank/default fields
+    assert _applied35["folder_pattern"] == "s1_strain__*"
+    assert _applied35["mosa_pattern"] == "s1_mosa__*"
+    assert 0 < _applied35["pixel_size_x_um"] < _applied35["pixel_size_y_um"]
+    assert "darfix_roi" not in _applied35  # skip row pre-darfix — never auto-applied
+    _dlg35._form.set_values(_applied35)
+    assert _dlg35.experiment().folder_pattern == "s1_strain__*"
+    print("[35] initialize-from-data: detectors → review pre-checks → applied into the form")
+
     print("\nGUI SMOKE PASSED")
     return 0
 
