@@ -164,8 +164,15 @@ checkbox (pre-checked only where it would not overwrite something you set):
 - **Darfix ROI size**: darfix does not record its crop anywhere, so only the
   window *size* can be read back (from the map shape). The row shows
   `?,?,w,h` — type the origin from darfix's ROI widget to enable applying
-  it. If your Darfix ROI is already filled, the row instead verifies the
-  size against `maps.h5`.
+  it. If your Darfix ROI is already filled and its size matches `maps.h5`,
+  the row is an info-only "✓ size matches" line; if the size instead
+  mismatches, the row offers the corrected `w,h` with your existing origin
+  kept, ready to apply.
+
+A row whose detected value already **equals** the current one (same field,
+same value) shows as an info-only "✓ matches current" row too — nothing to
+apply, just confirmation that the data agrees with what's already in the
+form.
 
 The flow is **re-runnable**: run it on day one for the raw-data facts (the
 maps rows appear greyed with the reason), then again after darfix to add the

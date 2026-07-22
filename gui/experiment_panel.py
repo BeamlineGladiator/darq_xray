@@ -169,6 +169,7 @@ class ExperimentDialog(QDialog):
         path, _ = QFileDialog.getSaveFileName(self, "Save preset", start, "YAML (*.yaml)")
         if path:
             presets.save_experiment(exp, path)
+            self._applied_detections = False  # just saved manually -> no need to re-prompt on OK
 
     def _apply_pixel_size(self, path: str):
         """Compute pixel sizes from *path* and write them into the form.

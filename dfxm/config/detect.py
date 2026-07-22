@@ -302,13 +302,22 @@ def detect_experiment(current) -> list[Detection]:
         scan = select_scan_file(folders[0]) if folders else None
     suffix = current.entry_suffix or ".1"
     if scan is None:
-        out.append(
-            Detection("entry_suffix", error=f"no layer folder matching {pattern!r} has a scan .h5")
-        )
-        out.extend(
-            Detection(f, error="pixel sizes need a raw scan — none found")
-            for f in ("pixel_size_x_um", "pixel_size_y_um")
-        )
+        if pattern:
+            out.append(
+                Detection(
+                    "entry_suffix", error=f"no layer folder matching {pattern!r} has a scan .h5"
+                )
+            )
+            out.extend(
+                Detection(f, error="pixel sizes need a raw scan — none found")
+                for f in ("pixel_size_x_um", "pixel_size_y_um")
+            )
+        else:
+            no_pattern = "no folder pattern — detect or set Folder pattern first"
+            out.append(Detection("entry_suffix", error=no_pattern))
+            out.extend(
+                Detection(f, error=no_pattern) for f in ("pixel_size_x_um", "pixel_size_y_um")
+            )
     else:
         suffix_row = detect_entry_suffix(scan)
         out.append(suffix_row)
@@ -331,12 +340,13 @@ def detect_experiment(current) -> list[Detection]:
     else:
         if scan is not None:
             out.append(detect_ccmth_from_positioners(scan, current.positioners_path, suffix))
-        out.append(
-            Detection(
-                "darfix_roi",
-                error="no darfix maps.h5 under the processed root yet — re-run after darfix",
+        if pattern:
+            darfix_error = "no darfix maps.h5 under the processed root yet — re-run after darfix"
+        else:
+            darfix_error = (
+                "no folder pattern to locate maps.h5 — detect or set Folder pattern first"
             )
-        )
+        out.append(Detection("darfix_roi", error=darfix_error))
     return out
 
 

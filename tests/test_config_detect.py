@@ -329,6 +329,15 @@ def test_detect_experiment_explicit_pattern_wins(tmp_path):
     assert rows["pixel_size_x_um"].error  # but zzz__* found no scan
 
 
+def test_detect_experiment_no_families_reasons(tmp_path):
+    raw = tmp_path / "RAW"
+    _mkdirs(raw, "loose")
+    rows = _by_field(detect_experiment(Experiment(raw_root=str(raw))))
+    for field in ("entry_suffix", "pixel_size_x_um", "pixel_size_y_um", "darfix_roi"):
+        assert "folder pattern" in rows[field].error.lower()
+    assert not any("re-run after darfix" in (d.error or "") for d in rows.values())
+
+
 def test_detect_experiment_no_raw_root():
     rows = detect_experiment(Experiment(raw_root=""))
     assert len(rows) == 1 and rows[0].field == "raw_root" and rows[0].error

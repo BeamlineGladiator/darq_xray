@@ -91,13 +91,29 @@ def test_unchecking_excludes_from_applied():
     dlg = _dlg(
         [
             Detection("folder_pattern", "s__*", ""),
-            Detection("entry_suffix", ".1", ""),
+            Detection("entry_suffix", ".2", ""),  # differs from the ".1" default -> pre-checked
         ]
     )
     _check_item(dlg, 0).setCheckState(Qt.CheckState.Unchecked)
-    assert dlg.applied_values() == {"entry_suffix": ".1"}
+    assert dlg.applied_values() == {"entry_suffix": ".2"}
 
 
 def test_field_column_shows_schema_label():
     dlg = _dlg([Detection("pixel_size_x_um", 0.15, "")])
     assert dlg._table.item(0, 0).text() == "Pixel size X"
+
+
+def test_detected_equal_to_current_is_info_row():
+    dlg = _dlg([Detection("ccmth_ref_deg", 7.1442, "median")], current={"ccmth_ref_deg": 7.1442})
+    item = _check_item(dlg, 0)
+    assert item is None or not (item.flags() & Qt.ItemFlag.ItemIsEnabled)
+    assert "matches current" in dlg._table.item(0, 3).text()
+    assert dlg.applied_values() == {}
+
+
+def test_detected_equal_string_is_info_row():
+    dlg = _dlg([Detection("folder_pattern", "s__*", "")], current={"folder_pattern": "s__*"})
+    item = _check_item(dlg, 0)
+    assert item is None or not (item.flags() & Qt.ItemFlag.ItemIsEnabled)
+    assert "matches current" in dlg._table.item(0, 3).text()
+    assert dlg.applied_values() == {}

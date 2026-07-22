@@ -98,3 +98,24 @@ def test_save_choice_routes_to_save_as(monkeypatch):
     monkeypatch.setattr(dlg, "_on_save_as", lambda: saved.append(True))
     dlg._on_accept()
     assert saved
+
+
+def test_manual_save_clears_prompt_flag(tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QFileDialog
+
+    dlg = _dlg()
+    dlg._applied_detections = True
+    save_path = str(tmp_path / "x.yaml")
+    monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *a, **k: (save_path, ""))
+    dlg._on_save_as()
+    assert dlg._applied_detections is False
+    assert os.path.exists(save_path)
+
+    asked = []
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda *a, **k: (asked.append(a), QMessageBox.StandardButton.No)[1],
+    )
+    dlg._on_accept()
+    assert not asked  # a manual save just happened -> no need to ask again

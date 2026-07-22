@@ -3,9 +3,11 @@
 One row per :class:`~dfxm.config.detect.Detection` — current vs detected,
 with a per-row Apply checkbox. Pre-check rules: checked when the current
 value is blank or still the schema default; unchecked (and marked "differs
-from current") when applying would overwrite something the user set.
-Skipped and info-only detections render as greyed, uncheckable rows, so a
-pre-darfix pass already shows what a later re-run will add.
+from current") when applying would overwrite something the user set; when
+the detected value already equals the current value the row renders as a
+greyed, uncheckable "✓ matches current" info row instead. Skipped and
+info-only detections render as greyed, uncheckable rows, so a pre-darfix
+pass already shows what a later re-run will add.
 
 The darfix-ROI row is special: detection recovers only the crop size, so
 its Detected cell is editable (``?,?,w,h``) and its checkbox stays disabled
@@ -85,6 +87,7 @@ class DetectReviewDialog(QDialog):
                 self._table.setItem(row, 4, check)
                 continue
             partial = isinstance(d.value, str) and d.value.startswith("?,?")
+            equal_to_current = not partial and _fmt(cur) == _fmt(d.value)
             cell = QTableWidgetItem(_fmt(d.value))
             if not partial:
                 cell.setFlags(cell.flags() & ~Qt.ItemFlag.ItemIsEditable)
@@ -94,6 +97,11 @@ class DetectReviewDialog(QDialog):
             if partial:
                 check.setFlags(Qt.ItemFlag.ItemIsUserCheckable)  # gated: greyed until valid
                 check.setCheckState(Qt.CheckState.Unchecked)
+            elif equal_to_current:
+                # detected matches current already: info row, nothing to apply
+                check.setFlags(Qt.ItemFlag.ItemIsSelectable)
+                check.setCheckState(Qt.CheckState.Unchecked)
+                note = f"✓ matches current — {note}" if note else "✓ matches current"
             elif _is_unset(d.field, cur, defaults):
                 check.setFlags(_CHECKABLE)
                 check.setCheckState(Qt.CheckState.Checked)
@@ -103,6 +111,9 @@ class DetectReviewDialog(QDialog):
                 note = f"{note} · differs from current" if note else "differs from current"
             self._set_text(row, 3, note)
             self._table.setItem(row, 4, check)
+            if equal_to_current:
+                for col in range(len(_COLS) - 1):
+                    self._table.item(row, col).setFlags(Qt.ItemFlag.ItemIsSelectable)
         self._table.itemChanged.connect(self._on_item_changed)
 
         hint = QLabel(
