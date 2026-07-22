@@ -204,7 +204,9 @@ def test_build_strain_map_fixed_scale_box():
 
 def test_slice_figure_axes_mode_none_removes_axes():
     prep, sl, data, u, v = _slice_fixture()
-    fig = build_slice_figure(prep, sl, data, u, v, offset_um=None, style=PlotStyle(axes_mode="none"))
+    fig = build_slice_figure(
+        prep, sl, data, u, v, offset_um=None, style=PlotStyle(axes_mode="none")
+    )
     assert not fig.axes[0].axison
 
 

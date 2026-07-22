@@ -64,6 +64,7 @@ _TICK_FMT_LABELS = {
     "3": "3 decimals (plain numbers)",
 }
 _OFFSET_POS = ["top", "bottom"]
+_AXES_MODES = ("full", "no_frame", "none")
 # (group field-suffix, friendly label) — drives the per-group colourbar rows.
 _CBAR_GROUPS = (
     ("mosa_com", "Mosa misorientation"),
@@ -138,6 +139,9 @@ class StyleControls(QWidget):
         self._w_title_scale.setValue(s.title_scale)
         self._w_show_title.setChecked(s.show_title)
         self._w_center_labels.setChecked(s.center_axis_labels)
+        self._w_axes_mode.setCurrentIndex(
+            self._w_axes_mode.findData(s.axes_mode if s.axes_mode in _AXES_MODES else "full")
+        )
         self._w_colorbar.setChecked(s.colorbar)
         self._w_cbar_label.setText(s.colorbar_label or "")
         self._w_cbar_frac.setValue(s.colorbar_fraction)
@@ -198,6 +202,7 @@ class StyleControls(QWidget):
             self._w_title_scale,
             self._w_show_title,
             self._w_center_labels,
+            self._w_axes_mode,
             self._w_colorbar,
             self._w_cbar_label,
             self._w_cbar_frac,
@@ -405,6 +410,26 @@ class StyleControls(QWidget):
             lambda v: (setattr(self._style, "center_axis_labels", v), self._emit())
         )
         form.addRow("Centre axis labels", self._w_center_labels)
+
+        self._w_axes_mode = QComboBox()
+        for label, value in (("Full", "full"), ("No frame", "no_frame"), ("None", "none")):
+            self._w_axes_mode.addItem(label, value)
+        self._w_axes_mode.setCurrentIndex(
+            self._w_axes_mode.findData(s.axes_mode if s.axes_mode in _AXES_MODES else "full")
+        )
+        self._w_axes_mode.setToolTip(
+            "Axis decoration on map figures: 'No frame' hides the box around the plot "
+            "(ticks and numbers stay); 'None' removes ticks, numbers and axis labels too — "
+            "the scale bar and colourbar then carry the physical context. Trace, companion "
+            "and diagnostic figures always keep their axes."
+        )
+        self._w_axes_mode.currentIndexChanged.connect(
+            lambda i: (
+                setattr(self._style, "axes_mode", self._w_axes_mode.itemData(i)),
+                self._emit(),
+            )
+        )
+        form.addRow("Axes", self._w_axes_mode)
 
         # --- Colourbar section ---
         form.addRow(QLabel("<b>Colourbar</b>"))

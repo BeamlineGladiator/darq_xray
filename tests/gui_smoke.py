@@ -1070,6 +1070,23 @@ def main() -> int:
     assert _dlg35.experiment().folder_pattern == "s1_strain__*"
     print("[35] initialize-from-data: detectors → review pre-checks → applied into the form")
 
+    # [36] Axes mode: StyleControls dropdown mutates axes_mode; sync restores; JSON round-trips
+    from dfxm.common.plotting import PlotStyle as _PS36
+    from dfxm.common.plotting import style_from_json as _sfj36
+    from dfxm.common.plotting import style_to_json as _stj36
+
+    s36 = _PS36()
+    sc36 = _StyleControls(s36)
+    idx36 = sc36._w_axes_mode.findData("none")
+    assert idx36 >= 0, "Axes combo missing the 'none' entry"
+    sc36._w_axes_mode.setCurrentIndex(idx36)
+    assert s36.axes_mode == "none", "Axes combo did not mutate style.axes_mode"
+    assert _sfj36(_stj36(s36)).axes_mode == "none", "axes_mode lost in JSON round-trip"
+    s36.axes_mode = "no_frame"
+    sc36.sync_from_style()
+    assert sc36._w_axes_mode.currentData() == "no_frame", "sync_from_style did not restore combo"
+    print("[36] axes-mode: dropdown mutates style + sync restores + JSON round-trip")
+
     print("\nGUI SMOKE PASSED")
     return 0
 

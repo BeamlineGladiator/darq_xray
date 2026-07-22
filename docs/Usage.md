@@ -1137,6 +1137,7 @@ form.
 | Title scale | Multiplies the title font size **independently** of Font scale. Set it small (e.g. 0.3) when the title is only needed to identify the plot while composing figures elsewhere, without enlarging the axes text. |
 | Show title | Uncheck to suppress the figure title |
 | Centre axis labels | Horizontally centre the x/y axis labels |
+| Axes | Axis decoration on map figures: **Full** (default, today's look), **No frame** (hides the box/spines around the plot; ticks and numbers stay), or **None** (removes ticks, numbers and axis labels entirely — an axis-free map where the scale bar and colourbar carry the physical context, so consider keeping **Show scale bar** on). Applies to every styled map figure and all Replot… dialogs; profiles trace figures, the companion figure and diagnostic images always keep their axes. Headless CLI runs (no injected style) are unaffected. |
 
 **Colourbar**
 
