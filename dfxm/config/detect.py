@@ -200,7 +200,7 @@ def detect_ccmth_from_maps(maps_path: str, folder_name: str, ccmth_com_path: str
         with h5py.File(maps_path, "r") as f:
             com = f[ccmth_com_path][()]
         value = float(np.nanmedian(com))
-    except (OSError, KeyError) as exc:
+    except (OSError, KeyError, ValueError, TypeError) as exc:
         return Detection(
             "ccmth_ref_deg", error=f"could not read ccmth COM from {folder_name}: {exc}"
         )
@@ -251,7 +251,7 @@ def detect_darfix_roi(
     try:
         with h5py.File(maps_path, "r") as f:
             h, w = f[ccmth_com_path].shape[:2]
-    except (OSError, KeyError) as exc:
+    except (OSError, KeyError, ValueError) as exc:
         return Detection("darfix_roi", error=f"could not read map shape from {folder_name}: {exc}")
     try:
         win = parse_darfix_roi(current_roi)

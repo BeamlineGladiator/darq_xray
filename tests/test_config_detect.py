@@ -224,6 +224,14 @@ def test_detect_ccmth_from_maps_nanmedian(tmp_path):
     assert "median" in d.note and "s__0" in d.note
 
 
+def test_detect_ccmth_from_maps_malformed_dataset(tmp_path):
+    p = tmp_path / "maps.h5"
+    with h5py.File(p, "w") as f:
+        f.create_dataset(CCMTH_COM, data="oops")  # non-numeric -> nanmedian TypeErrors
+    d = detect_ccmth_from_maps(str(p), "s__0", CCMTH_COM)
+    assert d.value is None and d.error
+
+
 def test_detect_ccmth_from_positioners(tmp_path):
     p = _write_scan(tmp_path / "s.h5", ccmth=7.144236)
     d = detect_ccmth_from_positioners(p, "instrument/positioners", ".1")
@@ -262,3 +270,11 @@ def test_detect_darfix_roi_malformed_current_treated_as_blank(tmp_path):
     p = _write_maps(tmp_path / "maps.h5", shape=(6, 8))
     d = detect_darfix_roi(p, "s__0", CCMTH_COM, "banana")
     assert d.value == "?,?,8,6"
+
+
+def test_detect_darfix_roi_malformed_dataset(tmp_path):
+    p = tmp_path / "maps.h5"
+    with h5py.File(p, "w") as f:
+        f.create_dataset(CCMTH_COM, data=np.arange(3.0))  # 1-D -> shape[:2] unpack fails
+    d = detect_darfix_roi(str(p), "s__0", CCMTH_COM, "")
+    assert d.value is None and d.error
