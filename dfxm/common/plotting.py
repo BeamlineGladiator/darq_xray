@@ -42,6 +42,10 @@ CMAP_CHOICES: tuple[str, ...] = (
     "turbo",
 )
 
+# Axes-decoration modes for map figures (canonical order — the GUI combo and
+# its stale-value guard derive from this, like CMAP_CHOICES above).
+AXES_MODES: tuple[str, ...] = ("full", "no_frame", "none")
+
 # Volume "kind" (as stored in HDF5 attrs by the map stages) -> quantity group.
 # Shared by slices and profiles so the kind->group mapping lives in one place.
 GROUP_BY_KIND: dict[str, str] = {
