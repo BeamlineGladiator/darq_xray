@@ -80,6 +80,10 @@ class PlotStyle:
     title_scale: float = 1.0  # multiplies the title alone (independent of font_scale)
     show_title: bool = True
     center_axis_labels: bool = True
+    # axes decoration on MAP figures only: "full" (today's look) | "no_frame"
+    # (spines hidden; ticks and labels stay) | "none" (spines, ticks and
+    # labels all removed — scale bar + colorbar carry the context)
+    axes_mode: str = "full"
     # colourbar
     colorbar: bool = True
     colorbar_label: str | None = None  # None -> the figure's own label
@@ -535,6 +539,23 @@ def apply_text_scale(ax, style: "PlotStyle") -> None:
             fontsize=title.get_fontsize() * style.title_scale,
             pad=pad,
         )
+
+
+def apply_axes_mode(ax, style: "PlotStyle") -> None:
+    """Hide map-axes decoration per ``style.axes_mode``.
+
+    ``"no_frame"`` hides the four spines (ticks and labels stay); ``"none"``
+    removes spines, ticks and labels entirely; ``"full"`` — or any
+    stale/unknown persisted value — is a no-op (defensive, like
+    :func:`fixed_scale`; never raises). Map axes only: callers must not apply
+    this to trace/companion/histogram/diagnostic axes.
+    """
+    mode = getattr(style, "axes_mode", "full")
+    if mode == "no_frame":
+        for spine in ax.spines.values():
+            spine.set_visible(False)
+    elif mode == "none":
+        ax.set_axis_off()
 
 
 def draw_scale_bar(

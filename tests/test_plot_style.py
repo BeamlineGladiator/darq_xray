@@ -1,3 +1,4 @@
+import json
 from dataclasses import replace
 
 import numpy as np
@@ -11,6 +12,7 @@ from dfxm.common.plotting import (
     PlotStyle,
     _tick_formatter,
     add_colorbar,
+    apply_axes_mode,
     apply_text_scale,
     auto_scale_bar_length_um,
     build_histogram,
@@ -787,3 +789,40 @@ def test_draw_scale_bar_fixed_mode_rejects_non_positive_scale():
     ax2 = _bar_axes(yr=100.0)
     draw_scale_bar(ax2, 50.0, style=style, fixed_scale_um_per_cm=-5.0)
     assert _bar_rect(ax2).get_height() == pytest.approx(legacy)
+
+
+def _bare_ax():
+    fig = Figure()
+    return fig.add_subplot(111)
+
+
+def test_axes_mode_default_is_full():
+    assert PlotStyle().axes_mode == "full"
+    assert PUBLICATION_STYLE.axes_mode == "full"
+
+
+def test_apply_axes_mode_no_frame_hides_spines_keeps_ticks():
+    ax = _bare_ax()
+    apply_axes_mode(ax, PlotStyle(axes_mode="no_frame"))
+    assert all(not sp.get_visible() for sp in ax.spines.values())
+    assert ax.axison  # ticks and labels survive
+
+
+def test_apply_axes_mode_none_removes_axes():
+    ax = _bare_ax()
+    apply_axes_mode(ax, PlotStyle(axes_mode="none"))
+    assert not ax.axison
+
+
+def test_apply_axes_mode_full_and_stale_values_are_noops():
+    for mode in ("full", "boxless", "", 0, None):
+        ax = _bare_ax()
+        apply_axes_mode(ax, replace(PlotStyle(), axes_mode=mode))
+        assert ax.axison
+        assert all(sp.get_visible() for sp in ax.spines.values())
+
+
+def test_axes_mode_json_roundtrip_and_legacy_snapshot_default():
+    assert style_from_json(style_to_json(PlotStyle(axes_mode="none"))).axes_mode == "none"
+    # a persisted snapshot from before this feature has no axes_mode key
+    assert style_from_json(json.dumps({"font_scale": 2.0})).axes_mode == "full"
