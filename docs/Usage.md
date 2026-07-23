@@ -982,8 +982,8 @@ distance — reads clearly as a paper subfigure. Shape and style them with:
 |---|---|
 | `save_traces` | Write the separate per-field trace figures (default on). |
 | `save_companion` | Also write the old stacked companion figure (overview + all traces in one). Turn off for traces-only. |
-| `trace_aspect` | Aspect ratio `width:height` of the **plot box** (data area) — `4:3`, `1:1`, `16:9`, …; the plotted rectangle keeps this ratio exactly, regardless of label/title margins. The saved PNG is always tight-cropped around the box + labels. |
-| `trace_width_in` | Width of the trace figure canvas in inches (sets the overall scale; the plot box is inset from it by the label/title margins). **Ignored while the publication style's Scale (µm/cm) is set** — the box width then comes from the line length at that scale, so the distance axis prints at the same µm-per-cm as the maps. |
+| `trace_aspect` | Aspect ratio `width:height` of the **plot box** (data area) — `4:3`, `1:1`, `16:9`, …; the plotted rectangle keeps this ratio exactly, regardless of label/title margins. The saved PNG is always tight-cropped around the box + labels. **Ignored while a fixed scale (Scale/Trace scale µm/cm) is set** — see below. |
+| `trace_width_in` | Width of the trace figure canvas in inches (sets the overall scale; the plot box is inset from it by the label/title margins). **Ignored while a fixed scale (Scale/Trace scale µm/cm) is set** — the box width then comes from the line length at that scale and the box height from "Trace height (cm)", so the distance axis prints at the same µm-per-cm as the maps. |
 | `trace_linewidth` | Thickness (pt) of the plotted profile curve. |
 | `trace_color` | Colour of the curve and its std band (blank = default matplotlib blue). |
 | `trace_font_scale` | Multiplies the trace figures' label/tick/title fonts, independent of the map figures' font scale. |
@@ -1172,10 +1172,14 @@ form.
 > each crop's pixel extent. The profiles **trace figures** follow the same
 > scale on their distance axis — or their own **Trace scale (µm/cm)** when
 > that field is set (traces usually want ~half the map value or less): the
-> plot box prints `line length ÷ scale` cm wide (so horizontal axes line up
-> across traces and against the maps), with the box height set by
-> `trace_aspect`. While a scale is set, **Figure width is ignored for maps
-> and Trace width is ignored for traces**. Requested sides are clamped to 30 in — a typo scale (e.g. a
+> plot box is placed at an EXACT `line length ÷ scale` cm wide × **Trace
+> height (cm)** tall (default 3 cm) — `trace_aspect`/`trace_width_in` no
+> longer shape the box in this mode, only the legacy (no fixed scale) trace
+> figures. Box placement is deterministic — the box is measured and set
+> exactly once, with no iterative fitting and no dependence on the saved
+> PNG's tight crop for correctness. While a scale is set, **Figure width is
+> ignored for maps and Trace width is ignored for
+> traces**. Requested sides are clamped to 30 in — a typo scale (e.g. a
 > stray `0.001`) raises the effective scale instead of rendering a
 > 47000-pixel image. **Identical bars across different crops:** auto Bar
 > length still picks ~15 % of each crop's own extent, so it differs crop to

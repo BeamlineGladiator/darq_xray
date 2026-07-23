@@ -43,9 +43,10 @@ from ..common.plotting import (
     draw_scale_bar,
     fit_axes_to_box,
     fixed_scale_box,
+    place_axes_box,
     style_from_params,
     styled_figure,
-    trace_fixed_scale,
+    trace_fixed_box,
 )
 from ..config.models import Param, ParamType, StageSpec
 
@@ -778,6 +779,33 @@ def save_companion_figure(ref, fields, geom, line_color, out_png, dpi, style=Non
     )
 
 
+def _draw_trace_axes(ax, fld, geom, *, linewidth, color, font_scale, style, show_xlabel=True):
+    """Draw one field's line profile into *ax* — the single source of the trace
+    look, shared by the standalone trace figures and the companion panels."""
+    fs = float(font_scale)
+    curve_color = color or "C0"
+    distance = geom["distance"]
+    vm = fld["value_mean"]
+    ax.plot(distance, vm, "-", lw=float(linewidth), color=curve_color, zorder=3)
+    if fld["value_std"] is not None:
+        vs = fld["value_std"]
+        ax.fill_between(distance, vm - vs, vm + vs, color=curve_color, alpha=0.22, lw=0, zorder=2)
+    ax.set_ylabel(fld["attrs"]["cbar_label"], fontsize=10 * fs)
+    src = os.path.basename(fld["attrs"]["source_volume"]) or "(consolidated)"
+    if style is None or style.show_title:
+        title_fs = 10 * fs * (style.title_scale if style is not None else 1.0)
+        ax.set_title(
+            f"{fld['attrs']['kind']}  |  {fld['vid']}  |  {src}", fontsize=title_fs, loc="left"
+        )
+    ax.grid(True, color="0.85", lw=0.6)
+    ax.set_xlim(0.0, geom["L"])
+    if show_xlabel:
+        ax.set_xlabel("distance along line (µm)", fontsize=12 * fs)
+    ax.tick_params(axis="both", labelsize=10 * fs)
+    ax.yaxis.get_offset_text().set_fontsize(10 * fs)
+    ax.xaxis.get_offset_text().set_fontsize(10 * fs)
+
+
 def build_trace_figure(
     fld,
     geom,
@@ -791,21 +819,26 @@ def build_trace_figure(
 ) -> Figure:
     """Build a standalone line-profile figure for a single field. Does NOT savefig.
 
-    ``aspect_wh == (w, h)`` pins the **plot box** (the data rectangle) to exactly
-    ``w:h`` via ``ax.set_box_aspect(h / w)`` — so the plotted area keeps the
-    requested ratio regardless of how much room the labels/title consume or how
-    large ``font_scale`` is. The figure canvas is created at
-    ``(width_in, width_in * h / w)`` so it roughly matches the box (minimal
-    whitespace); on save the PNG is tight-cropped (its file dimensions hug
-    box+labels). The box itself stays exactly ``w:h`` either way.
+    Two modes, chosen by the style's TRACE-effective fixed scale
+    (``trace_scale_um_per_cm``, falling back to the map's ``scale_um_per_cm``):
 
-    When the style's fixed physical scale (``scale_um_per_cm``) is set, the box
-    WIDTH comes from the line length instead: ``geom["L"] / scale`` cm, so the
-    distance axis prints at the same µm-per-cm as the map figures. ``width_in``
-    is ignored in that mode (the same rule as ``figure_width`` for maps);
-    ``aspect_wh`` still governs the box height. Uses the shared primitives
-    (``fixed_scale_box`` → 30-in clamp preserved, ``fit_axes_to_box`` run last)
-    so the box is point-exact regardless of label sizes.
+    * **Fixed-scale mode** (scale set): the plot box is placed at an EXACT
+      physical size — ``geom["L"] / scale`` cm wide by ``style.trace_height_cm``
+      cm tall (default 3 cm) — via the deterministic ``place_axes_box`` engine
+      (measure decorations once, size the figure to margins+box, no iteration,
+      no ``set_box_aspect``). ``aspect_wh`` and ``width_in`` are both ignored in
+      this mode (the box height comes from ``trace_height_cm``, not the
+      aspect ratio); the distance axis prints at the same µm-per-cm as the map
+      figures. Width clamps to 30 in like the map figures, raising the
+      effective scale and logging a warning rather than producing an
+      unreasonably wide canvas.
+    * **Legacy mode** (no fixed scale, incl. ``style=None``): ``aspect_wh ==
+      (w, h)`` pins the **plot box** (the data rectangle) to exactly ``w:h`` via
+      ``ax.set_box_aspect(h / w)`` — so the plotted area keeps the requested
+      ratio regardless of how much room the labels/title consume or how large
+      ``font_scale`` is. The figure canvas is created at ``(width_in, width_in
+      * h / w)`` so it roughly matches the box (minimal whitespace); on save
+      the PNG is tight-cropped (its file dimensions hug box+labels).
 
     All trace text is multiplied by ``font_scale`` — this is the trace figures'
     own scale, independent of the map figures' ``style.font_scale``. The curve
@@ -816,53 +849,24 @@ def build_trace_figure(
     keeps the legacy always-on title).
     """
     w_ratio, h_ratio = aspect_wh
-    fs = float(font_scale)
-    curve_color = color or "C0"
-    # Fixed-scale mode: ext_y = L·h/w keeps fixed_scale_box's aspect-preserving
-    # clamp aligned with the trace aspect, so h_in/w_in == h/w survives clamping.
-    # The scale is the TRACE-effective one: trace_scale_um_per_cm when set,
-    # else the map scale (traces typically want ~half the map value or less).
-    box = fixed_scale_box(
-        style,
-        float(geom["L"]),
-        float(geom["L"]) * float(h_ratio) / float(w_ratio),
-        scale=trace_fixed_scale(style),
-    )
+    box = trace_fixed_box(style, float(geom["L"]))
     if box is not None:
-        figsize = (box[0] + 1.5, box[1] + 1.5)
-    else:
-        figsize = (float(width_in), float(width_in) * float(h_ratio) / float(w_ratio))
+        # fixed-scale mode: exact physical box, deterministic placement — no
+        # set_box_aspect, no constrained layout, no tight-crop reliance.
+        fig = styled_figure((box[0] + 1.5, box[1] + 1.5), styled=True)
+        ax = fig.add_subplot(111)
+        _draw_trace_axes(
+            ax, fld, geom, linewidth=linewidth, color=color, font_scale=font_scale, style=style
+        )
+        place_axes_box(fig, ax, box[0], box[1])
+        return fig
+    figsize = (float(width_in), float(width_in) * float(h_ratio) / float(w_ratio))
     fig = styled_figure(figsize, styled=style is not None)
     ax = fig.add_subplot(111)
-    ax.set_box_aspect(float(h_ratio) / float(w_ratio))  # pin the DATA box to exactly w:h
-    distance = geom["distance"]
-    vm = fld["value_mean"]
-    ax.plot(distance, vm, "-", lw=float(linewidth), color=curve_color, zorder=3)
-    if fld["value_std"] is not None:
-        vs = fld["value_std"]
-        ax.fill_between(distance, vm - vs, vm + vs, color=curve_color, alpha=0.22, lw=0, zorder=2)
-    ax.set_ylabel(fld["attrs"]["cbar_label"], fontsize=10 * fs)
-    src = os.path.basename(fld["attrs"]["source_volume"]) or "(consolidated)"
-    # publication-style title flags apply here too; the unstyled (style=None)
-    # CLI path keeps today's always-on title. Mirrors apply_text_scale's
-    # show_title/title_scale semantics — kept inline because traces deliberately
-    # use their own font_scale, not style.font_scale, which apply_text_scale
-    # would impose on every label.
-    if style is None or style.show_title:
-        title_fs = 10 * fs * (style.title_scale if style is not None else 1.0)
-        ax.set_title(
-            f"{fld['attrs']['kind']}  |  {fld['vid']}  |  {src}", fontsize=title_fs, loc="left"
-        )
-    ax.grid(True, color="0.85", lw=0.6)
-    ax.set_xlim(0.0, geom["L"])
-    ax.set_xlabel("distance along line (µm)", fontsize=12 * fs)
-    ax.tick_params(axis="both", labelsize=10 * fs)
-    # tick_params does not touch the scientific ×10ⁿ offset text — scale it too so
-    # "all trace text" honours font_scale even when an axis uses an offset.
-    ax.yaxis.get_offset_text().set_fontsize(10 * fs)
-    ax.xaxis.get_offset_text().set_fontsize(10 * fs)
-    if box is not None:
-        fit_axes_to_box(fig, ax, box[0], box[1])
+    ax.set_box_aspect(float(h_ratio) / float(w_ratio))  # legacy: pin the box to w:h
+    _draw_trace_axes(
+        ax, fld, geom, linewidth=linewidth, color=color, font_scale=font_scale, style=style
+    )
     return fig
 
 

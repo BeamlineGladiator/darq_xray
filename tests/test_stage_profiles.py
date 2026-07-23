@@ -365,24 +365,27 @@ def _trace_box_inches(fig):
     return bbox.width / fig.dpi, bbox.height / fig.dpi
 
 
-def test_build_trace_figure_fixed_scale_pins_box_width():
-    # Scale 2 µm/cm on a 10 µm line -> box exactly 5 cm wide; height from aspect.
+def test_build_trace_figure_fixed_scale_box_is_length_by_height():
+    # fixed-scale mode: box width = L/scale, box height = trace_height_cm —
+    # trace_aspect no longer shapes the box (it only governs the legacy mode).
     from dfxm.common.plotting import PlotStyle
 
-    fld, geom = _fake_field()  # geom["L"] == 10.0
+    fld, geom = _fake_field(std=True)  # L = 10 um
+    st = PlotStyle(trace_scale_um_per_cm=2.0, trace_height_cm=3.0)
     fig = PR.build_trace_figure(
         fld,
         geom,
         aspect_wh=(2.0, 1.0),
         width_in=6.0,
-        linewidth=1.5,
+        linewidth=2.0,
         color="",
         font_scale=1.0,
-        style=PlotStyle(scale_um_per_cm=2.0),
+        style=st,
     )
     w_in, h_in = _trace_box_inches(fig)
-    assert abs(w_in - (10.0 / 2.0) / 2.54) < 0.03  # 5 cm
-    assert abs(h_in - w_in / 2.0) < 0.03  # trace_aspect 2:1 governs box height
+    assert abs(w_in - 10.0 / 2.0 / 2.54) < 0.005 * w_in
+    assert abs(h_in - 3.0 / 2.54) < 0.005 * h_in
+    assert fig.axes[0].get_box_aspect() is None  # no aspect pin in fixed mode
 
 
 def test_build_trace_figure_fixed_scale_ignores_width_in():
@@ -405,24 +408,62 @@ def test_build_trace_figure_fixed_scale_ignores_width_in():
     assert abs(widths[0] - widths[1]) < 0.03  # width_in is a no-op in fixed mode
 
 
-def test_build_trace_figure_fixed_scale_clamps_like_maps():
-    # A pathological scale would give a metres-wide box; the shared 30-in clamp
-    # applies (aspect preserved), never an exception.
+def test_build_trace_figure_fixed_scale_exact_for_short_line_real_repro():
+    # regression: L=29.668647 at 10 um/cm rendered at ~5.7 um/cm on real data
+    # (set_box_aspect defeated fit_axes_to_box, which silently kept the miss).
     from dfxm.common.plotting import PlotStyle
 
-    fld, geom = _fake_field()
+    n = 200
+    dist = np.linspace(0.0, 29.668647, n)
+    fld = {
+        "vid": "mosa_com_mu",
+        "attrs": {
+            "cbar_label": "COM mu (deg)",
+            "kind": "mosa_com",
+            "source_volume": "aligned_raw_mosa_volumes.h5",
+            "title": "t",
+            "cmap": "viridis",
+        },
+        "value_mean": np.sin(dist / 5.0) * 1e-4,
+        "value_std": None,
+    }
+    geom = {"distance": dist, "L": 29.668647}
+    for fs in (1.0, 1.4, 2.0):
+        st = PlotStyle(trace_scale_um_per_cm=10.0, trace_height_cm=3.0)
+        fig = PR.build_trace_figure(
+            fld,
+            geom,
+            aspect_wh=(4.0, 3.0),
+            width_in=2.0,
+            linewidth=2.0,
+            color="",
+            font_scale=fs,
+            style=st,
+        )
+        w_in, _ = _trace_box_inches(fig)
+        implied = 29.668647 / (w_in * 2.54)
+        assert abs(implied - 10.0) < 0.05, (fs, implied)
+
+
+def test_build_trace_figure_fixed_scale_clamps_width_only():
+    from dfxm.common.plotting import PlotStyle
+
+    fld, geom = _fake_field(std=True)
+    geom = {**geom, "L": 10.0}
+    st = PlotStyle(trace_scale_um_per_cm=0.01, trace_height_cm=3.0)  # 10um/0.01 -> 393 in
     fig = PR.build_trace_figure(
         fld,
         geom,
-        aspect_wh=(2.0, 1.0),
+        aspect_wh=(4.0, 3.0),
         width_in=6.0,
-        linewidth=1.5,
+        linewidth=2.0,
         color="",
         font_scale=1.0,
-        style=PlotStyle(scale_um_per_cm=0.01),
+        style=st,
     )
-    w_in, _ = _trace_box_inches(fig)
-    assert w_in <= 30.5
+    w_in, h_in = _trace_box_inches(fig)
+    assert w_in <= 30.0 + 0.2  # clamped width
+    assert abs(h_in - 3.0 / 2.54) < 0.02  # height keeps trace_height_cm
 
 
 def test_build_trace_figure_trace_scale_overrides_map_scale():
