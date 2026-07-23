@@ -38,14 +38,22 @@ from ..common.plotting import (
     GROUP_BY_KIND,
     PlotStyle,
     add_colorbar,
+    apply_axes_margins,
     apply_axes_mode,
     apply_text_scale,
+    box_drift_note,
     draw_scale_bar,
     fit_axes_to_box,
+    fixed_scale,
     fixed_scale_box,
+    measure_axes_margins,
+    place_axes_box,
+    place_axes_stack,
     style_from_params,
     styled_figure,
+    trace_fixed_box,
     trace_fixed_scale,
+    trace_height_cm,
 )
 from ..config.models import Param, ParamType, StageSpec
 
@@ -524,31 +532,39 @@ def render_replot(h5_path, jobs, style, clim, out_dir, *, dpi=None, params=None)
     os.makedirs(out_dir, exist_ok=True)
     result = ProfilesResult(output_dir=out_dir, mode="parameter")
     used_stems: dict[str, int] = {}
-    with h5py.File(h5_path, "r") as f:
-        for ji, job in enumerate(jobs):
-            if not isinstance(job, dict) or "name" not in job:
-                result.skipped.append(f"job {ji}: malformed job spec")
-                continue
-            name, pin_note = resolve_job_slice_name(f, job["name"], job.get("offset_um", 0.0))
-            if pin_note:
-                result.notes.append(pin_note)
-                job = {**job, "name": name}
-            if not volume_ids_with_slice(f, name):
-                result.skipped.append(f"slice {name!r} not present")
-                continue
-            _render_parameter_job(
-                f,
-                job,
-                ji,
-                (ji + 0.5) / len(jobs),
-                p,
-                result,
-                used_stems,
-                out_dir,
-                style,
-                _noop,
-                clim=clim,
-            )
+    trace_deferred: list = []
+    try:
+        with h5py.File(h5_path, "r") as f:
+            for ji, job in enumerate(jobs):
+                if not isinstance(job, dict) or "name" not in job:
+                    result.skipped.append(f"job {ji}: malformed job spec")
+                    continue
+                name, pin_note = resolve_job_slice_name(f, job["name"], job.get("offset_um", 0.0))
+                if pin_note:
+                    result.notes.append(pin_note)
+                    job = {**job, "name": name}
+                if not volume_ids_with_slice(f, name):
+                    result.skipped.append(f"slice {name!r} not present")
+                    continue
+                _render_parameter_job(
+                    f,
+                    job,
+                    ji,
+                    (ji + 0.5) / len(jobs),
+                    p,
+                    result,
+                    used_stems,
+                    out_dir,
+                    style,
+                    _noop,
+                    clim=clim,
+                    trace_deferred=trace_deferred,
+                )
+    finally:
+        # Runs even on a hard mid-loop failure (e.g. a corrupt h5 raising
+        # partway through) so earlier jobs' already-built fixed-scale trace
+        # figures still get placed and saved instead of silently discarded.
+        _flush_deferred_traces(trace_deferred, int(p["fig_dpi"]), result.notes)
     return result
 
 
@@ -700,17 +716,37 @@ def _draw_reference_image(
 
 
 def build_companion_figure(
-    ref, fields, geom, line_color, *, style: PlotStyle | None = None
+    ref, fields, geom, line_color, *, style: PlotStyle | None = None, trace_opts=None, notes=None
 ) -> Figure:
     """Build and return a companion profile figure. Does NOT call savefig.
 
-    When *style* is ``None`` the legacy appearance is reproduced exactly
-    (image panel + N trace panels, same fonts and colorbar as before).
-    When a :class:`~dfxm.common.plotting.PlotStyle` is supplied its font/
-    colorbar settings are honoured and the map panel draws the shared styled
-    scale bar (``scale_bar``/``scale_bar_length_um`` and the look knobs all
-    apply, exactly as on the map stages).
+    When *style* has no effective fixed scale (map or trace) — including
+    ``style=None`` — the legacy appearance is reproduced exactly (image panel
+    + N trace panels, same fonts and colorbar as before): see
+    :func:`_build_companion_legacy`. When a fixed scale IS in effect, the
+    companion is instead built on the deterministic left-aligned stack layout
+    — the map panel at the map scale, trace panels styled exactly like the
+    standalone trace figures — see :func:`_build_companion_fixed`. That fixed
+    path itself degrades back to :func:`_build_companion_legacy` (never
+    raises) when the reference plane's own extent is degenerate (zero-width,
+    single-point, or non-finite ``u_um``/``v_um`` — e.g. a pinned edge-of-ROI
+    plane) so the trace scale alone cannot fit a physical map box.
+
+    *trace_opts* (fixed-scale path only) is ``{"linewidth": float, "color":
+    str | None, "font_scale": float}``; ``None`` keeps the trace panels'
+    built-in default styling. *notes* (fixed-scale path only), when given, is
+    a list that box-drift warnings are appended to (the caller's
+    ``ProfilesResult.notes``).
     """
+    if trace_fixed_box(style, float(geom["L"])) is None:
+        return _build_companion_legacy(ref, fields, geom, line_color, style)
+    return _build_companion_fixed(ref, fields, geom, line_color, style, trace_opts, notes)
+
+
+def _build_companion_legacy(
+    ref, fields, geom, line_color, style: PlotStyle | None = None
+) -> Figure:
+    """The pre-fixed-scale companion layout — pinned by tests, verbatim."""
     ref_plane, u_um, v_um, ref_attrs, ref_label = ref
     n = len(fields)
     fig = styled_figure((9.0, 4.8 + 1.85 * n), styled=True)
@@ -771,11 +807,138 @@ def build_companion_figure(
     return fig
 
 
-def save_companion_figure(ref, fields, geom, line_color, out_png, dpi, style=None):
-    """Build a companion figure (legacy look when *style* is None) and save it."""
-    build_companion_figure(ref, fields, geom, line_color, style=style).savefig(
-        out_png, dpi=dpi, facecolor="white", edgecolor="none"
+def _build_companion_fixed(ref, fields, geom, line_color, style, trace_opts, notes):
+    """Fixed-scale companion: map panel at the MAP scale, trace panels styled
+    exactly like the standalone trace figures, stacked left-aligned.
+
+    Falls back to :func:`_build_companion_legacy` (never raises) when the
+    reference plane's extent is degenerate and ``fixed_scale_box`` returns
+    ``None`` for the map panel — a plausible pinned edge-of-ROI plane."""
+    ref_plane, u_um, v_um, ref_attrs, ref_label = ref
+    topts = {"linewidth": 1.8, "color": None, "font_scale": 1.0, **(trace_opts or {})}
+    ext_u, ext_v = float(u_um[-1] - u_um[0]), float(v_um[-1] - v_um[0])
+    map_scale = fixed_scale(style) or trace_fixed_scale(style)
+    mbox = fixed_scale_box(style, ext_u, ext_v, scale=map_scale)
+    if mbox is None:
+        # Degenerate reference-plane extent (zero-width/single-point/non-finite
+        # u_um or v_um — a plausible pinned edge-of-ROI plane): the map panel
+        # cannot be fitted to a physical scale even though the trace scale is
+        # set. Degrade to the legacy layout rather than indexing a None box —
+        # guards in this module never raise (see fixed_scale/trace_fixed_box).
+        if notes is not None:
+            notes.append(
+                "companion: reference plane extent is degenerate — rendered with the "
+                "legacy layout (fixed scale not applied)"
+            )
+        return _build_companion_legacy(ref, fields, geom, line_color, style)
+    tbox = trace_fixed_box(style, float(geom["L"]))
+    fig = styled_figure((10.0, 10.0), styled=True)
+    fig.set_layout_engine("none")
+    n = len(fields)
+    ax_img = fig.add_subplot(n + 1, 1, 1)
+    im = _draw_reference_image(
+        ax_img,
+        ref_plane,
+        u_um,
+        v_um,
+        ref_attrs,
+        line_color,
+        geom=geom,
+        title=(f"{ref_attrs['title']}\nreference: {ref_label}" if style.show_title else None),
+        style=style,
+        fixed_scale_um_per_cm=mbox[2],
     )
+    cax = None
+    if style.colorbar:
+        cax = fig.add_axes([0.9, 0.6, 0.03, 0.25])  # provisional; sync repositions it
+        add_colorbar(
+            fig,
+            im,
+            ax_img,
+            ref_attrs["cbar_label"],
+            style,
+            group=GROUP_BY_KIND.get(ref_attrs.get("kind")),
+            cax=cax,
+        )
+    apply_text_scale(ax_img, style)
+
+    def _sync_cax(fig_, ax_, _w=mbox[0]):
+        if cax is None:
+            return
+        pos = ax_.get_position()
+        fw, _fh = fig_.get_size_inches()
+        cax.set_position(
+            [pos.x1 + 0.04 * _w / fw, pos.y0, style.colorbar_fraction * _w / fw, pos.height]
+        )
+
+    trace_axes = []
+    for i, fld in enumerate(fields):
+        ax = fig.add_subplot(n + 1, 1, i + 2)
+        _draw_trace_axes(
+            ax,
+            fld,
+            geom,
+            linewidth=topts["linewidth"],
+            color=topts["color"],
+            font_scale=topts["font_scale"],
+            style=style,
+            show_xlabel=(i == n - 1),
+        )
+        if i < n - 1:
+            ax.tick_params(labelbottom=False)
+        trace_axes.append(ax)
+    panels = [(ax_img, mbox[0], mbox[1], (cax,) if cax is not None else (), _sync_cax)]
+    panels += [(ax, tbox[0], tbox[1], (), None) for ax in trace_axes]
+    place_axes_stack(fig, panels)
+    if notes is not None:
+        for label, ax, (w, h) in [("companion map", ax_img, (mbox[0], mbox[1]))] + [
+            (f"companion trace {fld['vid']}", ax, (tbox[0], tbox[1]))
+            for fld, ax in zip(fields, trace_axes)
+        ]:
+            note = box_drift_note(label, fig, ax, w, h)
+            if note:
+                notes.append(note)
+    return fig
+
+
+def save_companion_figure(
+    ref, fields, geom, line_color, out_png, dpi, style=None, trace_opts=None, notes=None
+):
+    """Build a companion figure (legacy look when *style* is None) and save it.
+
+    *trace_opts*/*notes* are forwarded to :func:`build_companion_figure`
+    unchanged — see there (fixed-scale path only; ignored on the legacy path).
+    """
+    build_companion_figure(
+        ref, fields, geom, line_color, style=style, trace_opts=trace_opts, notes=notes
+    ).savefig(out_png, dpi=dpi, facecolor="white", edgecolor="none")
+
+
+def _draw_trace_axes(ax, fld, geom, *, linewidth, color, font_scale, style, show_xlabel=True):
+    """Draw one field's line profile into *ax* — the single source of the trace
+    look, shared by the standalone trace figures and the companion panels."""
+    fs = float(font_scale)
+    curve_color = color or "C0"
+    distance = geom["distance"]
+    vm = fld["value_mean"]
+    ax.plot(distance, vm, "-", lw=float(linewidth), color=curve_color, zorder=3)
+    if fld["value_std"] is not None:
+        vs = fld["value_std"]
+        ax.fill_between(distance, vm - vs, vm + vs, color=curve_color, alpha=0.22, lw=0, zorder=2)
+    ax.set_ylabel(fld["attrs"]["cbar_label"], fontsize=10 * fs)
+    src = os.path.basename(fld["attrs"]["source_volume"]) or "(consolidated)"
+    if style is None or style.show_title:
+        title_fs = 10 * fs * (style.title_scale if style is not None else 1.0)
+        ax.set_title(
+            f"{fld['attrs']['kind']}  |  {fld['vid']}  |  {src}", fontsize=title_fs, loc="left"
+        )
+    ax.grid(True, color="0.85", lw=0.6)
+    ax.set_xlim(0.0, geom["L"])
+    if show_xlabel:
+        ax.set_xlabel("distance along line (µm)", fontsize=12 * fs)
+    ax.tick_params(axis="both", labelsize=10 * fs)
+    ax.yaxis.get_offset_text().set_fontsize(10 * fs)
+    ax.xaxis.get_offset_text().set_fontsize(10 * fs)
 
 
 def build_trace_figure(
@@ -791,21 +954,26 @@ def build_trace_figure(
 ) -> Figure:
     """Build a standalone line-profile figure for a single field. Does NOT savefig.
 
-    ``aspect_wh == (w, h)`` pins the **plot box** (the data rectangle) to exactly
-    ``w:h`` via ``ax.set_box_aspect(h / w)`` — so the plotted area keeps the
-    requested ratio regardless of how much room the labels/title consume or how
-    large ``font_scale`` is. The figure canvas is created at
-    ``(width_in, width_in * h / w)`` so it roughly matches the box (minimal
-    whitespace); on save the PNG is tight-cropped (its file dimensions hug
-    box+labels). The box itself stays exactly ``w:h`` either way.
+    Two modes, chosen by the style's TRACE-effective fixed scale
+    (``trace_scale_um_per_cm``, falling back to the map's ``scale_um_per_cm``):
 
-    When the style's fixed physical scale (``scale_um_per_cm``) is set, the box
-    WIDTH comes from the line length instead: ``geom["L"] / scale`` cm, so the
-    distance axis prints at the same µm-per-cm as the map figures. ``width_in``
-    is ignored in that mode (the same rule as ``figure_width`` for maps);
-    ``aspect_wh`` still governs the box height. Uses the shared primitives
-    (``fixed_scale_box`` → 30-in clamp preserved, ``fit_axes_to_box`` run last)
-    so the box is point-exact regardless of label sizes.
+    * **Fixed-scale mode** (scale set): the plot box is placed at an EXACT
+      physical size — ``geom["L"] / scale`` cm wide by ``style.trace_height_cm``
+      cm tall (default 3 cm) — via the deterministic ``place_axes_box`` engine
+      (measure decorations once, size the figure to margins+box, no iteration,
+      no ``set_box_aspect``). ``aspect_wh`` and ``width_in`` are both ignored in
+      this mode (the box height comes from ``trace_height_cm``, not the
+      aspect ratio); the distance axis prints at the same µm-per-cm as the map
+      figures. Width clamps to 30 in like the map figures, raising the
+      effective scale and logging a warning rather than producing an
+      unreasonably wide canvas.
+    * **Legacy mode** (no fixed scale, incl. ``style=None``): ``aspect_wh ==
+      (w, h)`` pins the **plot box** (the data rectangle) to exactly ``w:h`` via
+      ``ax.set_box_aspect(h / w)`` — so the plotted area keeps the requested
+      ratio regardless of how much room the labels/title consume or how large
+      ``font_scale`` is. The figure canvas is created at ``(width_in, width_in
+      * h / w)`` so it roughly matches the box (minimal whitespace); on save
+      the PNG is tight-cropped (its file dimensions hug box+labels).
 
     All trace text is multiplied by ``font_scale`` — this is the trace figures'
     own scale, independent of the map figures' ``style.font_scale``. The curve
@@ -816,57 +984,28 @@ def build_trace_figure(
     keeps the legacy always-on title).
     """
     w_ratio, h_ratio = aspect_wh
-    fs = float(font_scale)
-    curve_color = color or "C0"
-    # Fixed-scale mode: ext_y = L·h/w keeps fixed_scale_box's aspect-preserving
-    # clamp aligned with the trace aspect, so h_in/w_in == h/w survives clamping.
-    # The scale is the TRACE-effective one: trace_scale_um_per_cm when set,
-    # else the map scale (traces typically want ~half the map value or less).
-    box = fixed_scale_box(
-        style,
-        float(geom["L"]),
-        float(geom["L"]) * float(h_ratio) / float(w_ratio),
-        scale=trace_fixed_scale(style),
-    )
+    box = trace_fixed_box(style, float(geom["L"]))
     if box is not None:
-        figsize = (box[0] + 1.5, box[1] + 1.5)
-    else:
-        figsize = (float(width_in), float(width_in) * float(h_ratio) / float(w_ratio))
+        # fixed-scale mode: exact physical box, deterministic placement — no
+        # set_box_aspect, no constrained layout, no tight-crop reliance.
+        fig = styled_figure((box[0] + 1.5, box[1] + 1.5), styled=True)
+        ax = fig.add_subplot(111)
+        _draw_trace_axes(
+            ax, fld, geom, linewidth=linewidth, color=color, font_scale=font_scale, style=style
+        )
+        place_axes_box(fig, ax, box[0], box[1])
+        return fig
+    figsize = (float(width_in), float(width_in) * float(h_ratio) / float(w_ratio))
     fig = styled_figure(figsize, styled=style is not None)
     ax = fig.add_subplot(111)
-    ax.set_box_aspect(float(h_ratio) / float(w_ratio))  # pin the DATA box to exactly w:h
-    distance = geom["distance"]
-    vm = fld["value_mean"]
-    ax.plot(distance, vm, "-", lw=float(linewidth), color=curve_color, zorder=3)
-    if fld["value_std"] is not None:
-        vs = fld["value_std"]
-        ax.fill_between(distance, vm - vs, vm + vs, color=curve_color, alpha=0.22, lw=0, zorder=2)
-    ax.set_ylabel(fld["attrs"]["cbar_label"], fontsize=10 * fs)
-    src = os.path.basename(fld["attrs"]["source_volume"]) or "(consolidated)"
-    # publication-style title flags apply here too; the unstyled (style=None)
-    # CLI path keeps today's always-on title. Mirrors apply_text_scale's
-    # show_title/title_scale semantics — kept inline because traces deliberately
-    # use their own font_scale, not style.font_scale, which apply_text_scale
-    # would impose on every label.
-    if style is None or style.show_title:
-        title_fs = 10 * fs * (style.title_scale if style is not None else 1.0)
-        ax.set_title(
-            f"{fld['attrs']['kind']}  |  {fld['vid']}  |  {src}", fontsize=title_fs, loc="left"
-        )
-    ax.grid(True, color="0.85", lw=0.6)
-    ax.set_xlim(0.0, geom["L"])
-    ax.set_xlabel("distance along line (µm)", fontsize=12 * fs)
-    ax.tick_params(axis="both", labelsize=10 * fs)
-    # tick_params does not touch the scientific ×10ⁿ offset text — scale it too so
-    # "all trace text" honours font_scale even when an axis uses an offset.
-    ax.yaxis.get_offset_text().set_fontsize(10 * fs)
-    ax.xaxis.get_offset_text().set_fontsize(10 * fs)
-    if box is not None:
-        fit_axes_to_box(fig, ax, box[0], box[1])
+    ax.set_box_aspect(float(h_ratio) / float(w_ratio))  # legacy: pin the box to w:h
+    _draw_trace_axes(
+        ax, fld, geom, linewidth=linewidth, color=color, font_scale=font_scale, style=style
+    )
     return fig
 
 
-def render_single(ref, geom, line_color, out_png, header, dpi, style=None):
+def render_single(ref, geom, line_color, out_png, header, dpi, style=None, notes=None):
     plane, u_um, v_um, attrs, label = ref
     ext_u = float(u_um[-1] - u_um[0])
     ext_v = float(v_um[-1] - v_um[0])
@@ -897,6 +1036,10 @@ def render_single(ref, geom, line_color, out_png, header, dpi, style=None):
         apply_axes_mode(ax, style)
     if box is not None:
         fit_axes_to_box(fig, ax, box[0], box[1])
+        if notes is not None:
+            note = box_drift_note(os.path.basename(out_png), fig, ax, box[0], box[1])
+            if note:
+                notes.append(note)
     fig.savefig(out_png, dpi=dpi, facecolor="white", edgecolor="none", bbox_inches="tight")
 
 
@@ -1036,7 +1179,9 @@ def _write_csvs(out_dir, stem, distance, fields):
     return paths
 
 
-def _save_overviews(out_dir, stem, ref, fields, geom, off_used, line_override, dpi, style=None):
+def _save_overviews(
+    out_dir, stem, ref, fields, geom, off_used, line_override, dpi, style=None, notes=None
+):
     u_um, v_um = ref[1], ref[2]
     paths = []
     for fld in fields:
@@ -1049,7 +1194,9 @@ def _save_overviews(out_dir, stem, ref, fields, geom, off_used, line_override, d
             f"{fld['vid']}  @ offset {off_used:+.3f} µm",
         )
         color = auto_line_color(fld["attrs"]["cmap"], line_override)
-        render_single(ov_ref, geom, color, ov_png, fld["attrs"]["title"], dpi, style=style)
+        render_single(
+            ov_ref, geom, color, ov_png, fld["attrs"]["title"], dpi, style=style, notes=notes
+        )
         paths.append(ov_png)
     return paths
 
@@ -1067,10 +1214,16 @@ def _save_traces(
     font_scale,
     dpi,
     style=None,
+    deferred=None,
+    notes=None,
 ):
-    # The PNG is always tight-cropped around box+labels; the plot box keeps
-    # `aspect` exactly (and, in fixed-scale mode, its physical width — a tight
-    # crop trims the canvas without rescaling the fitted box).
+    # Legacy mode (no fixed trace scale): the PNG is tight-cropped around
+    # box+labels; the plot box keeps `aspect` exactly. Fixed-scale mode never
+    # tight-crops — build_trace_figure already placed the axes at its own
+    # exact box+margins, and (when *deferred* is given) the figure is handed
+    # to _flush_deferred_traces for a second pass that re-places every figure
+    # of the invocation at the shared max margins before saving the exact
+    # canvas, so every trace PNG of one run/replot aligns in a grid.
     aspect_wh = parse_aspect(aspect)
     paths = []
     for fld in fields:
@@ -1085,22 +1238,86 @@ def _save_traces(
             font_scale=font_scale,
             style=style,
         )
-        fig.savefig(tr_png, dpi=dpi, facecolor="white", edgecolor="none", bbox_inches="tight")
+        box = trace_fixed_box(style, float(geom["L"]))
+        if box is not None:
+            if notes is not None:
+                if box[2] != trace_fixed_scale(style):
+                    msg = (
+                        f"{os.path.basename(tr_png)}: trace box clamped to 30 in — "
+                        f"effective scale raised to {box[2]:.4g} µm/cm"
+                    )
+                    if msg not in notes:
+                        notes.append(msg)
+                if trace_height_cm(style) / 2.54 > box[1]:
+                    msg = (
+                        f"{os.path.basename(tr_png)}: trace box height clamped to 30 in "
+                        f"(trace_height_cm={trace_height_cm(style):g} cm)"
+                    )
+                    if msg not in notes:
+                        notes.append(msg)
+            if deferred is not None:
+                deferred.append((fig, box[0], box[1], tr_png))
+            else:
+                if notes is not None:
+                    note = box_drift_note(
+                        os.path.basename(tr_png), fig, fig.axes[0], box[0], box[1]
+                    )
+                    if note:
+                        notes.append(note)
+                fig.savefig(tr_png, dpi=dpi, facecolor="white", edgecolor="none")
+        else:
+            fig.savefig(tr_png, dpi=dpi, facecolor="white", edgecolor="none", bbox_inches="tight")
         paths.append(tr_png)
     return paths
+
+
+def _flush_deferred_traces(deferred, dpi, notes):
+    """Second pass for fixed-scale traces: re-place every figure of the
+    invocation with the shared max margins (so all PNGs align in a grid),
+    verify the box, save, then clear the figure (drops its artists/renderer
+    buffers) so a big sweep does not accumulate every trace figure's memory
+    until the whole invocation finishes. First pass (build) already placed
+    each figure with its own margins, so single-figure consumers stay exact."""
+    if not deferred:
+        return
+    shared = None
+    for fig, w_in, h_in, _png in deferred:
+        m = measure_axes_margins(fig, fig.axes[0])
+        shared = m if shared is None else shared.max_with(m)
+    for fig, w_in, h_in, png in deferred:
+        apply_axes_margins(fig, fig.axes[0], w_in, h_in, shared)
+        note = box_drift_note(os.path.basename(png), fig, fig.axes[0], w_in, h_in)
+        if note:
+            notes.append(note)
+        fig.savefig(png, dpi=dpi, facecolor="white", edgecolor="none")
+        fig.clear()
 
 
 # -----------------------------------------------------------------------------
 # Entry point
 # -----------------------------------------------------------------------------
 def _render_parameter_job(
-    f, job, ji, frac, p, result, used_stems, out_dir, style, progress, clim=None
+    f,
+    job,
+    ji,
+    frac,
+    p,
+    result,
+    used_stems,
+    out_dir,
+    style,
+    progress,
+    clim=None,
+    trace_deferred=None,
 ):
     """Render one parameter-mode job into *out_dir* (companion/traces/CSVs/
     overviews per the p-flags), appending to *result*. Shared verbatim by
     run() and render_replot() so the two paths cannot drift; *frac* is the
     precomputed progress fraction for this job's drop notes and *clim* is the
-    per-quantity override mapping threaded to _collect."""
+    per-quantity override mapping threaded to _collect. *trace_deferred*, when
+    given, collects fixed-scale trace figures for the caller to flush via
+    :func:`_flush_deferred_traces` once every job in the invocation is built,
+    so all trace PNGs of the run/replot share one set of margins."""
     ref_pref = p["reference_volume_id"] or ""
     restrict = [v.strip() for v in p["volume_ids"].split(",") if v.strip()] or None
     line_override = p["line_color"] or None
@@ -1136,7 +1353,21 @@ def _render_parameter_job(
     )
     if save_companion:
         out_png = os.path.join(out_dir, f"{stem}.png")
-        save_companion_figure(ref, fields, geom, color, out_png, dpi, style=style)
+        save_companion_figure(
+            ref,
+            fields,
+            geom,
+            color,
+            out_png,
+            dpi,
+            style=style,
+            trace_opts={
+                "linewidth": trace_linewidth,
+                "color": trace_color,
+                "font_scale": trace_font_scale,
+            },
+            notes=result.notes,
+        )
         jr.figure = out_png
     if save_traces:
         jr.traces = _save_traces(
@@ -1151,12 +1382,23 @@ def _render_parameter_job(
             font_scale=trace_font_scale,
             dpi=dpi,
             style=style,
+            deferred=trace_deferred,
+            notes=result.notes,
         )
     if bool(p["save_csv"]):
         jr.csvs = _write_csvs(out_dir, stem, geom["distance"], fields)
     if bool(p["save_overview"]):
         jr.overviews = _save_overviews(
-            out_dir, stem, ref, fields, geom, off_used, line_override, dpi, style=style
+            out_dir,
+            stem,
+            ref,
+            fields,
+            geom,
+            off_used,
+            line_override,
+            dpi,
+            style=style,
+            notes=result.notes,
         )
     result.jobs.append(jr)
 
@@ -1212,55 +1454,73 @@ def run(params: dict, progress: ProgressFn | None = None) -> ProfilesResult:
     # Same-named jobs default to the same stem — suffix later ones so a second
     # job on one slice cannot silently overwrite the first's files.
     used_stems: dict[str, int] = {}
+    trace_deferred: list = []
 
-    with h5py.File(h5_path, "r") as f:
-        for ji, job in enumerate(jobs):
-            progress((ji + 0.5) / len(jobs), f"{mode}: {job.get('name')}")
-            name, pin_note = resolve_job_slice_name(f, job["name"], job.get("offset_um", 0.0))
-            if pin_note:
-                result.notes.append(pin_note)
-                job = {**job, "name": name}
-            present = volume_ids_with_slice(f, name)
-            if not present:
-                result.skipped.append(f"slice {name!r} not present")
-                continue
-            if mode == "preview":
-                ref_id = _pick_reference_id(present, ref_pref)
-                u_um, v_um, offsets = read_axes(f[f"{ref_id}/{name}"])
-                idx, off_used = resolve_plane_index(offsets, job["offset_um"])
-                attrs = read_volume_attrs(f, ref_id)
-                ref_plane = f[f"{ref_id}/{name}"]["slices"][idx].astype(np.float64)
-                geom = None
-                if job.get("start_uv") is not None and job.get("end_uv") is not None:
-                    geom = line_geometry(
-                        u_um,
-                        v_um,
-                        job["start_uv"],
-                        job["end_uv"],
-                        job.get("n_samples"),
-                        job.get("width_pixels", 1),
-                        grid_pitch(u_um, v_um),
+    try:
+        with h5py.File(h5_path, "r") as f:
+            for ji, job in enumerate(jobs):
+                progress((ji + 0.5) / len(jobs), f"{mode}: {job.get('name')}")
+                name, pin_note = resolve_job_slice_name(f, job["name"], job.get("offset_um", 0.0))
+                if pin_note:
+                    result.notes.append(pin_note)
+                    job = {**job, "name": name}
+                present = volume_ids_with_slice(f, name)
+                if not present:
+                    result.skipped.append(f"slice {name!r} not present")
+                    continue
+                if mode == "preview":
+                    ref_id = _pick_reference_id(present, ref_pref)
+                    u_um, v_um, offsets = read_axes(f[f"{ref_id}/{name}"])
+                    idx, off_used = resolve_plane_index(offsets, job["offset_um"])
+                    attrs = read_volume_attrs(f, ref_id)
+                    ref_plane = f[f"{ref_id}/{name}"]["slices"][idx].astype(np.float64)
+                    geom = None
+                    if job.get("start_uv") is not None and job.get("end_uv") is not None:
+                        geom = line_geometry(
+                            u_um,
+                            v_um,
+                            job["start_uv"],
+                            job["end_uv"],
+                            job.get("n_samples"),
+                            job.get("width_pixels", 1),
+                            grid_pitch(u_um, v_um),
+                        )
+                    color = auto_line_color(attrs["cmap"], line_override)
+                    ref = (ref_plane, u_um, v_um, attrs, f"{ref_id}  @ offset {off_used:+.3f} µm")
+                    stem = _unique_name(
+                        used_stems, (job.get("fig_name") or f"preview_{name}") + "__PREVIEW"
                     )
-                color = auto_line_color(attrs["cmap"], line_override)
-                ref = (ref_plane, u_um, v_um, attrs, f"{ref_id}  @ offset {off_used:+.3f} µm")
-                stem = _unique_name(
-                    used_stems, (job.get("fig_name") or f"preview_{name}") + "__PREVIEW"
-                )
-                out_png = os.path.join(out_dir, f"{stem}.png")
-                header = f"PREVIEW :: slice {name!r} offset {off_used:+.3f} µm"
-                render_single(ref, geom, color, out_png, header, dpi, style=style)
-                result.jobs.append(
-                    ProfileJobResult(
-                        name=name, offset_used_um=off_used, figure=out_png, job_index=ji
+                    out_png = os.path.join(out_dir, f"{stem}.png")
+                    header = f"PREVIEW :: slice {name!r} offset {off_used:+.3f} µm"
+                    render_single(
+                        ref, geom, color, out_png, header, dpi, style=style, notes=result.notes
                     )
+                    result.jobs.append(
+                        ProfileJobResult(
+                            name=name, offset_used_um=off_used, figure=out_png, job_index=ji
+                        )
+                    )
+                    continue
+
+                # parameter mode
+                _render_parameter_job(
+                    f,
+                    job,
+                    ji,
+                    (ji + 0.5) / len(jobs),
+                    p,
+                    result,
+                    used_stems,
+                    out_dir,
+                    style,
+                    progress,
+                    trace_deferred=trace_deferred,
                 )
-                continue
-
-            # parameter mode
-            _render_parameter_job(
-                f, job, ji, (ji + 0.5) / len(jobs), p, result, used_stems, out_dir, style, progress
-            )
-
+    finally:
+        # Runs even on a hard mid-loop failure (e.g. a corrupt h5 raising
+        # partway through) so earlier jobs' already-built fixed-scale trace
+        # figures still get placed and saved instead of silently discarded.
+        _flush_deferred_traces(trace_deferred, int(p["fig_dpi"]), result.notes)
     progress(1.0, f"{mode}: {len(result.jobs)} job(s) -> {out_dir}")
     return result
 
@@ -1346,6 +1606,9 @@ def figures(result: ProfilesResult, params: dict) -> list[FigureSpec]:
             _res=restrict,
             _lo=line_override,
             _name=name,
+            _lw=trace_linewidth,
+            _col=trace_color,
+            _fs=trace_font_scale,
         ):
             if not _job:
                 raise ValueError(
@@ -1364,7 +1627,8 @@ def figures(result: ProfilesResult, params: dict) -> list[FigureSpec]:
             with _h5py.File(_h5, "r") as f:
                 ref, fields, geom, _, _dropped = _collect(f, _job, _p, _ref, _res)
             color = auto_line_color(ref[3]["cmap"], _lo)
-            return build_companion_figure(ref, fields, geom, color, style=style)
+            topts = {"linewidth": _lw, "color": _col, "font_scale": _fs}
+            return build_companion_figure(ref, fields, geom, color, style=style, trace_opts=topts)
 
         if save_companion:
             specs.append(

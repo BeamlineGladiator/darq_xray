@@ -91,8 +91,9 @@ One canvas, N+1 panels placed deterministically with the Section-A engine:
   per style, as today.
 - **Trace panels** below, each `(L / trace-scale)` cm × `trace_height_cm`,
   visually identical to the standalone trace figures: `trace_font_scale` (not
-  the map `font_scale`), `trace_linewidth`, and the job's line colour for the
-  curve (currently hard-coded C0 / 1.8 lw / map fonts).
+  the map `font_scale`), `trace_linewidth`, and the trace colour param
+  (`trace_color`, standalone-trace-identical) for the curve (currently
+  hard-coded C0 / 1.8 lw / map fonts).
 - **De-crowding:** per-panel titles only when `style.show_title`; otherwise
   panels carry just their y-label. Fixed real-inch spacing between panels
   replaces gridspec height ratios. Shared x-limits (0..L) across trace panels.

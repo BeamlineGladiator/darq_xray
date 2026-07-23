@@ -355,6 +355,122 @@ def test_run_bad_trace_dimensions_raise(tmp_path, bad):
         PR.run(_base_params(h5, out, **bad))
 
 
+def _png_size(path):
+    import matplotlib.image as mpimg
+
+    img = mpimg.imread(path)
+    return img.shape[1], img.shape[0]  # (w_px, h_px)
+
+
+def _write_consolidated_mixed_scale(path):
+    """Like `_write_consolidated`, but the two fields differ in magnitude by
+    ~1e8: "raw_sum" is O(100) (plain tick labels, no scientific offset text),
+    "strain" is O(1e-6) (triggers a scientific offset annotation, which adds
+    TOP margin). Own-margin placement (no sharing across the run) therefore
+    gives every "strain" trace a taller canvas than every "raw_sum" trace —
+    a real discriminator for the uniform-margins flush. The original
+    same-magnitude fixture cannot discriminate: both fields' natural margins
+    coincide by construction, so per-figure and shared-max placement produce
+    the same heights either way (empirically confirmed — see task-3 report).
+    """
+    u = np.linspace(-10.0, 10.0, 81)
+    v = np.linspace(-8.0, 8.0, 65)
+    uu, vv = np.meshgrid(u, v)
+    offsets = np.array([-1.0, 0.0, 1.0])
+    with h5py.File(path, "w") as f:
+        for vid, kind, cmap, scale, base in (
+            ("raw_sum", "raw_sum", "gray", 1.0, 100.0),
+            ("strain", "strain", "RdBu_r", 1e-6, 0.0),
+        ):
+            g = f.create_group(vid)
+            g.attrs["kind"] = kind
+            g.attrs["cbar_label"] = "value"
+            g.attrs["cmap"] = cmap
+            g.attrs["title"] = vid
+            g.attrs["vmin"] = -10.0
+            g.attrs["vmax"] = 10.0
+            sg = g.create_group("oblique_full")
+            stack = np.stack(
+                [scale * (A * uu + B * vv + o) + base for o in offsets], axis=0
+            ).astype(np.float32)
+            sg.create_dataset("slices", data=stack)
+            sg.create_dataset("u_um", data=u)
+            sg.create_dataset("v_um", data=v)
+            sg.create_dataset("offsets_um", data=offsets)
+
+
+def _own_margin_flush(deferred, dpi, notes):
+    """Test-only stand-in for `_flush_deferred_traces` that places each
+    figure at its OWN measured margins instead of the shared max — simulates
+    the bug the uniform-margins flush fixes, to prove the test below actually
+    discriminates (rather than passing by fixture coincidence)."""
+    import os as _os
+
+    from dfxm.common.plotting import apply_axes_margins, box_drift_note, measure_axes_margins
+
+    if not deferred:
+        return
+    for fig, w_in, h_in, png in deferred:
+        m = measure_axes_margins(fig, fig.axes[0])
+        apply_axes_margins(fig, fig.axes[0], w_in, h_in, m)
+        note = box_drift_note(_os.path.basename(png), fig, fig.axes[0], w_in, h_in)
+        if note:
+            notes.append(note)
+        fig.savefig(png, dpi=dpi, facecolor="white", edgecolor="none")
+
+
+def test_run_fixed_scale_traces_share_height_and_margins(tmp_path, monkeypatch):
+    h5 = tmp_path / "c.h5"
+    _write_consolidated_mixed_scale(str(h5))
+    jobs = (
+        '[{"name":"oblique_full","offset_um":0.0,"start_uv":[-5,-3],"end_uv":[5,3],'
+        '"n_samples":40,"width_pixels":1,"fig_name":"jobA"},'
+        '{"name":"oblique_full","offset_um":0.0,"start_uv":[-2,-1],"end_uv":[2,1],'
+        '"n_samples":40,"width_pixels":1,"fig_name":"jobB"}]'
+    )
+    style = {"trace_scale_um_per_cm": 2.0, "trace_height_cm": 3.0}
+
+    # Discrimination check (verification contract, item 1): with the fields'
+    # natural margins forced apart, an own-margins-only flush must NOT
+    # satisfy "same height" — proving this fixture (unlike the same-scale
+    # original) actually exercises the sharing behaviour.
+    monkeypatch.setattr(PR, "_flush_deferred_traces", _own_margin_flush)
+    bug_out = tmp_path / "prof_bug"
+    bug_res = PR.run(_base_params(h5, bug_out, jobs_json=jobs, plot_style=style))
+    bug_heights = {h for _, h in (_png_size(t) for jr in bug_res.jobs for t in jr.traces)}
+    assert len(bug_heights) > 1, bug_heights  # own-margins-only: heights DO differ
+    monkeypatch.undo()
+
+    # Real code: the shared-max flush makes every trace PNG of the run the
+    # same height.
+    out = tmp_path / "prof"
+    res = PR.run(_base_params(h5, out, jobs_json=jobs, plot_style=style))
+    assert len(res.jobs) == 2
+    sizes = [_png_size(t) for jr in res.jobs for t in jr.traces]
+    heights = {h for _, h in sizes}
+    assert len(heights) == 1, sizes  # every trace PNG of the run: same pixel height
+    # widths track line length: jobA line is ~2.5x jobB's
+    wA = _png_size(res.jobs[0].traces[0])[0]
+    wB = _png_size(res.jobs[1].traces[0])[0]
+    assert wA > wB
+    # and no drift notes were emitted
+    assert not any("physical scale is off" in n for n in res.notes)
+
+
+def test_run_fixed_scale_clamp_appends_note(tmp_path):
+    h5 = tmp_path / "c.h5"
+    _write_consolidated(str(h5))
+    out = tmp_path / "prof"
+    res = PR.run(
+        _base_params(
+            h5,
+            out,
+            plot_style={"trace_scale_um_per_cm": 0.001, "trace_height_cm": 3.0},
+        )
+    )
+    assert any("clamped to 30 in" in n for n in res.notes), res.notes
+
+
 def _trace_box_inches(fig):
     """Draw *fig* on Agg and return the axes-box (w_in, h_in)."""
     from matplotlib.backends.backend_agg import FigureCanvasAgg
@@ -365,24 +481,27 @@ def _trace_box_inches(fig):
     return bbox.width / fig.dpi, bbox.height / fig.dpi
 
 
-def test_build_trace_figure_fixed_scale_pins_box_width():
-    # Scale 2 µm/cm on a 10 µm line -> box exactly 5 cm wide; height from aspect.
+def test_build_trace_figure_fixed_scale_box_is_length_by_height():
+    # fixed-scale mode: box width = L/scale, box height = trace_height_cm —
+    # trace_aspect no longer shapes the box (it only governs the legacy mode).
     from dfxm.common.plotting import PlotStyle
 
-    fld, geom = _fake_field()  # geom["L"] == 10.0
+    fld, geom = _fake_field(std=True)  # L = 10 um
+    st = PlotStyle(trace_scale_um_per_cm=2.0, trace_height_cm=3.0)
     fig = PR.build_trace_figure(
         fld,
         geom,
         aspect_wh=(2.0, 1.0),
         width_in=6.0,
-        linewidth=1.5,
+        linewidth=2.0,
         color="",
         font_scale=1.0,
-        style=PlotStyle(scale_um_per_cm=2.0),
+        style=st,
     )
     w_in, h_in = _trace_box_inches(fig)
-    assert abs(w_in - (10.0 / 2.0) / 2.54) < 0.03  # 5 cm
-    assert abs(h_in - w_in / 2.0) < 0.03  # trace_aspect 2:1 governs box height
+    assert abs(w_in - 10.0 / 2.0 / 2.54) < 0.005 * w_in
+    assert abs(h_in - 3.0 / 2.54) < 0.005 * h_in
+    assert fig.axes[0].get_box_aspect() is None  # no aspect pin in fixed mode
 
 
 def test_build_trace_figure_fixed_scale_ignores_width_in():
@@ -405,24 +524,62 @@ def test_build_trace_figure_fixed_scale_ignores_width_in():
     assert abs(widths[0] - widths[1]) < 0.03  # width_in is a no-op in fixed mode
 
 
-def test_build_trace_figure_fixed_scale_clamps_like_maps():
-    # A pathological scale would give a metres-wide box; the shared 30-in clamp
-    # applies (aspect preserved), never an exception.
+def test_build_trace_figure_fixed_scale_exact_for_short_line_real_repro():
+    # regression: L=29.668647 at 10 um/cm rendered at ~5.7 um/cm on real data
+    # (set_box_aspect defeated fit_axes_to_box, which silently kept the miss).
     from dfxm.common.plotting import PlotStyle
 
-    fld, geom = _fake_field()
+    n = 200
+    dist = np.linspace(0.0, 29.668647, n)
+    fld = {
+        "vid": "mosa_com_mu",
+        "attrs": {
+            "cbar_label": "COM mu (deg)",
+            "kind": "mosa_com",
+            "source_volume": "aligned_raw_mosa_volumes.h5",
+            "title": "t",
+            "cmap": "viridis",
+        },
+        "value_mean": np.sin(dist / 5.0) * 1e-4,
+        "value_std": None,
+    }
+    geom = {"distance": dist, "L": 29.668647}
+    for fs in (1.0, 1.4, 2.0):
+        st = PlotStyle(trace_scale_um_per_cm=10.0, trace_height_cm=3.0)
+        fig = PR.build_trace_figure(
+            fld,
+            geom,
+            aspect_wh=(4.0, 3.0),
+            width_in=2.0,
+            linewidth=2.0,
+            color="",
+            font_scale=fs,
+            style=st,
+        )
+        w_in, _ = _trace_box_inches(fig)
+        implied = 29.668647 / (w_in * 2.54)
+        assert abs(implied - 10.0) < 0.05, (fs, implied)
+
+
+def test_build_trace_figure_fixed_scale_clamps_width_only():
+    from dfxm.common.plotting import PlotStyle
+
+    fld, geom = _fake_field(std=True)
+    geom = {**geom, "L": 10.0}
+    st = PlotStyle(trace_scale_um_per_cm=0.01, trace_height_cm=3.0)  # 10um/0.01 -> 393 in
     fig = PR.build_trace_figure(
         fld,
         geom,
-        aspect_wh=(2.0, 1.0),
+        aspect_wh=(4.0, 3.0),
         width_in=6.0,
-        linewidth=1.5,
+        linewidth=2.0,
         color="",
         font_scale=1.0,
-        style=PlotStyle(scale_um_per_cm=0.01),
+        style=st,
     )
-    w_in, _ = _trace_box_inches(fig)
-    assert w_in <= 30.5
+    w_in, h_in = _trace_box_inches(fig)
+    assert w_in <= 30.0 + 0.2  # clamped width
+    assert abs(h_in - 3.0 / 2.54) < 0.02  # height keeps trace_height_cm
 
 
 def test_build_trace_figure_trace_scale_overrides_map_scale():
@@ -795,11 +952,54 @@ def test_render_single_overview_fits_fixed_scale(tmp_path, monkeypatch):
     assert calls == []
 
 
-def test_companion_map_panel_bar_geometry_unchanged_by_scale_knob():
-    """The multi-panel companion is NOT fitted: setting scale_um_per_cm must not
-    change the map panel's scale-bar geometry (it keeps today's data-fraction
-    thickness), because build_companion_figure never forwards
-    fixed_scale_um_per_cm to _draw_reference_image."""
+def test_render_single_appends_drift_note_on_forced_miss(tmp_path, monkeypatch):
+    """render_single's overview drift guard: when fit_axes_to_box fails to place
+    the axes at the target box (forced here via monkeypatch to simulate a miss),
+    box_drift_note must catch the discrepancy and append a user-visible note."""
+    from dfxm.common.plotting import PlotStyle
+
+    # force fit_axes_to_box to do nothing so the guard must catch the miss
+    monkeypatch.setattr(PR, "fit_axes_to_box", lambda *a, **k: False)
+    ref, _fields, geom = _companion_inputs()
+    notes = []
+    PR.render_single(
+        ref,
+        geom,
+        "white",
+        str(tmp_path / "ov.png"),
+        "hdr",
+        100,
+        style=PlotStyle(scale_um_per_cm=20.0),
+        notes=notes,
+    )
+    assert notes and "physical scale is off" in notes[0]
+
+
+def test_companion_map_panel_bar_geometry_unchanged_without_scale_knob():
+    """Without a fixed scale, the multi-panel companion is NOT fitted: the map
+    panel's scale-bar keeps today's data-fraction thickness (the legacy path,
+    :func:`_build_companion_legacy`, never forwards fixed_scale_um_per_cm to
+    _draw_reference_image)."""
+    from matplotlib.patches import Rectangle
+
+    from dfxm.common.plotting import PlotStyle
+
+    ref, fields, geom = _companion_inputs()
+    style = PlotStyle(scale_bar_thickness_pt=3.0)  # no scale_um_per_cm -> legacy path
+    fig = PR.build_companion_figure(ref, fields, geom, "cyan", style=style)
+    ax_img = fig.axes[0]
+    yr = ax_img.get_ylim()[1] - ax_img.get_ylim()[0]
+    box = _offsetbox_artists(ax_img)[0]
+    bar = next(p for p in _offsetbox_children(box) if isinstance(p, Rectangle))
+    # companion is NOT fitted: bar height stays the data-fraction geometry
+    assert bar.get_height() == pytest.approx(abs(yr) * 0.004 * 3.0)
+
+
+def test_companion_map_panel_bar_geometry_matches_fixed_scale():
+    """With a fixed scale, the companion routes to the deterministic stack
+    (:func:`_build_companion_fixed`) and the map panel's scale bar uses the
+    fixed-scale point-based thickness — the same geometry the standalone map
+    figures use (e.g. render_single) — not the data-fraction fallback."""
     from matplotlib.patches import Rectangle
 
     from dfxm.common.plotting import PlotStyle
@@ -808,11 +1008,82 @@ def test_companion_map_panel_bar_geometry_unchanged_by_scale_knob():
     style = PlotStyle(scale_um_per_cm=50.0, scale_bar_thickness_pt=3.0)
     fig = PR.build_companion_figure(ref, fields, geom, "cyan", style=style)
     ax_img = fig.axes[0]
-    yr = ax_img.get_ylim()[1] - ax_img.get_ylim()[0]
     box = _offsetbox_artists(ax_img)[0]
     bar = next(p for p in _offsetbox_children(box) if isinstance(p, Rectangle))
-    # companion is NOT fitted: bar height stays the data-fraction geometry
-    assert bar.get_height() == pytest.approx(abs(yr) * 0.004 * 3.0)
+    expected = 3.0 * (2.54 / 72.0) * 50.0  # thickness_pt in TRUE points at 50 um/cm
+    assert bar.get_height() == pytest.approx(expected)
+
+
+# -- companion on the deterministic stack layout (fixed scale) ----------------
+def test_companion_fixed_scale_panel_boxes_and_trace_style():
+    from dfxm.common.plotting import PlotStyle
+
+    ref, fields, geom = _companion_inputs()
+    st = PlotStyle(scale_um_per_cm=20.0, trace_scale_um_per_cm=2.0, trace_height_cm=3.0)
+    topts = {"linewidth": 2.5, "color": "red", "font_scale": 1.4}
+    fig = PR.build_companion_figure(ref, fields, geom, "white", style=st, trace_opts=topts)
+    from dfxm.common.plotting import measured_box_in
+
+    # trace axes carry the plotted lines; the manual colorbar axes has none
+    ax_map, ax_traces = fig.axes[0], [a for a in fig.axes[1:] if a.lines]
+    u, v = ref[1], ref[2]
+    ext_u, ext_v = float(u[-1] - u[0]), float(v[-1] - v[0])
+    mw, mh = measured_box_in(fig, ax_map)
+    assert abs(mw - ext_u / 20.0 / 2.54) < 0.01 * max(1.0, mw)
+    assert abs(mh - ext_v / 20.0 / 2.54) < 0.01 * max(1.0, mh)
+    for ax in ax_traces:
+        tw, th = measured_box_in(fig, ax)
+        assert abs(tw - geom["L"] / 2.0 / 2.54) < 0.01 * tw
+        assert abs(th - 3.0 / 2.54) < 0.01 * th
+        assert abs(ax.lines[0].get_linewidth() - 2.5) < 1e-9  # trace_opts, not 1.8
+        assert ax.yaxis.label.get_fontsize() == 10 * 1.4  # trace font scale, not map
+
+
+def test_companion_fixed_scale_show_title_false_no_panel_titles():
+    from dfxm.common.plotting import PlotStyle
+
+    ref, fields, geom = _companion_inputs()
+    st = PlotStyle(
+        scale_um_per_cm=20.0, trace_scale_um_per_cm=2.0, trace_height_cm=3.0, show_title=False
+    )
+    fig = PR.build_companion_figure(ref, fields, geom, "white", style=st)
+    for ax in fig.axes:
+        assert ax.get_title() == "" and ax.get_title(loc="left") == ""
+
+
+def test_companion_without_fixed_scale_keeps_legacy_layout():
+    from dfxm.common.plotting import PlotStyle
+
+    ref, fields, geom = _companion_inputs()
+    fig_none = PR.build_companion_figure(ref, fields, geom, "white", style=None)
+    w, h = fig_none.get_size_inches()
+    assert abs(w - 9.0) < 1e-6  # legacy canvas untouched
+    fig_styled = PR.build_companion_figure(ref, fields, geom, "white", style=PlotStyle())
+    w2, _ = fig_styled.get_size_inches()
+    assert abs(w2 - 9.0) < 1e-6  # styled-but-no-scale also legacy
+
+
+@pytest.mark.filterwarnings("ignore:Attempting to set identical low and high xlims")
+def test_companion_fixed_scale_degenerate_map_extent_falls_back_to_legacy():
+    """A fixed TRACE scale is set (so the dispatcher enters the fixed-scale
+    path) but the reference plane's own U extent is degenerate (zero-width —
+    a plausible pinned edge-of-ROI plane), so fixed_scale_box can't fit a
+    physical map box. Must degrade to the legacy layout, never raise.
+    (matplotlib's zero-width-xlim UserWarning is expected here — the legacy
+    fallback imshows the degenerate extent — and filtered so suite output
+    stays pristine.)"""
+    from dfxm.common.plotting import PlotStyle
+
+    ref, fields, geom = _companion_inputs()
+    plane, u, v, attrs, label = ref
+    degenerate_ref = (plane, np.array([u[0]]), v, attrs, label)  # ext_u == 0
+    st = PlotStyle(scale_um_per_cm=20.0, trace_scale_um_per_cm=2.0, trace_height_cm=3.0)
+    notes: list[str] = []
+    fig = PR.build_companion_figure(degenerate_ref, fields, geom, "white", style=st, notes=notes)
+    w, h = fig.get_size_inches()
+    assert abs(w - 9.0) < 1e-6  # legacy canvas, not a crash
+    assert abs(h - (4.8 + 1.85 * len(fields))) < 1e-6  # legacy height formula
+    assert any("degenerate" in n and "legacy layout" in n for n in notes), notes
 
 
 def test_clim_attrs_field_id_beats_group_fallback():

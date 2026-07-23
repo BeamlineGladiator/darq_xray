@@ -982,8 +982,8 @@ distance — reads clearly as a paper subfigure. Shape and style them with:
 |---|---|
 | `save_traces` | Write the separate per-field trace figures (default on). |
 | `save_companion` | Also write the old stacked companion figure (overview + all traces in one). Turn off for traces-only. |
-| `trace_aspect` | Aspect ratio `width:height` of the **plot box** (data area) — `4:3`, `1:1`, `16:9`, …; the plotted rectangle keeps this ratio exactly, regardless of label/title margins. The saved PNG is always tight-cropped around the box + labels. |
-| `trace_width_in` | Width of the trace figure canvas in inches (sets the overall scale; the plot box is inset from it by the label/title margins). **Ignored while the publication style's Scale (µm/cm) is set** — the box width then comes from the line length at that scale, so the distance axis prints at the same µm-per-cm as the maps. |
+| `trace_aspect` | Aspect ratio `width:height` of the **plot box** (data area) — `4:3`, `1:1`, `16:9`, …; the plotted rectangle keeps this ratio exactly, regardless of label/title margins. The saved PNG is tight-cropped around the box + labels (legacy mode only — see below for fixed-scale mode). **Ignored while a fixed scale (Scale/Trace scale µm/cm) is set** — see below. |
+| `trace_width_in` | Width of the trace figure canvas in inches (sets the overall scale; the plot box is inset from it by the label/title margins). **Ignored while a fixed scale (Scale/Trace scale µm/cm) is set** — the box width then comes from the line length at that scale and the box height from "Trace height (cm)", so the distance axis prints at the same µm-per-cm as the maps. |
 | `trace_linewidth` | Thickness (pt) of the plotted profile curve. |
 | `trace_color` | Colour of the curve and its std band (blank = default matplotlib blue). |
 | `trace_font_scale` | Multiplies the trace figures' label/tick/title fonts, independent of the map figures' font scale. |
@@ -997,11 +997,27 @@ paper-ready trace can drop its `kind | field | source` header entirely. The
 companion's and the per-field overview figures' reference map panels both draw
 the publication-style scale bar (length, thickness, colour, location,
 background box — all the Scale bar controls apply, exactly as on the map
-stages). Only the **overview** honours the "Scale (µm/cm)" fixed-scale field,
-though — the map is fitted to a physical page size the way slices/strain/
-mosaicity/rocking/visualize/paraview maps are. The **companion**'s map panel is
-left alone by design: it keeps today's geometry byte-identically even when the
-knob is set, so a saved companion layout never shifts underfoot.
+stages).
+
+Whether the **companion**'s map panel honours "Scale (µm/cm)" depends on
+whether a fixed scale is in effect:
+
+- **No fixed scale set** (blank Scale and Trace scale, or a plain run):
+  the companion keeps its today's-look layout byte-for-byte — the map panel is
+  left alone by design and never fitted, so a saved companion never shifts
+  underfoot.
+- **A fixed scale IS set** (Scale and/or Trace scale µm/cm): the companion is
+  instead built on the same deterministic, left-aligned stacked layout the
+  standalone trace figures use — the map panel is fitted to the **map**
+  scale (same point-exact scale bar as the overview/map stages), and every
+  trace panel is styled *exactly* like its standalone counterpart (trace
+  line width/colour/font scale, box sized from the line length at the
+  TRACE-effective scale and "Trace height (cm)"). Panels share one left
+  margin so their boxes line up, and each panel's title follows **Show
+  title** independently (a colourbar attached to the map panel, if shown,
+  travels with it). A rendered box that misses its physical target is
+  reported the same way the standalone trace figures report it (a note in
+  the Results tab / run log).
 
 #### Replotting line profiles
 
@@ -1163,24 +1179,53 @@ form.
 | Figure width | `single` (3.5 in), `double` (7.0 in), or `auto` (keeps the stage's own figsize) |
 | Scale (µm/cm) | Fixed physical scale for **map** figures: µm of data per cm of page. Blank = off (default). Trace figures follow it too unless Trace scale overrides. |
 | Trace scale (µm/cm) | Separate fixed scale for the profiles **trace** figures only. Blank = follow Scale (µm/cm). **Hint:** traces usually need a *smaller* value than the maps — start at about half the map scale or less; at the map's own scale the trace box tends to come out too small. |
+| Trace height (cm) | Fixed height of every trace plot box, in cm of page — only takes effect once a fixed scale (Scale and/or Trace scale) is set. Blank = 3 cm (default). All traces of one run/replot share this height, so they align side-by-side; pairs with **Trace scale (µm/cm)**, which sets the box width via the line length. |
 
 > [!tip] Fixed physical scale across figures
 > Setting **Scale (µm/cm)** fits every map's data box (per-layer maps, slices,
 > the strain diagnostic, the matched stage's rocking-matched layer maps, and
-> the profiles reference/overview panels — not the profiles companion) so the
-> printed scale, and the scale bar, are identical across figures regardless of
-> each crop's pixel extent. The profiles **trace figures** follow the same
+> the profiles reference/overview panels — and, once a fixed scale is set,
+> the profiles companion's map panel too, at the same point-exact scale bar)
+> so the printed scale, and the scale bar, are identical across figures
+> regardless of each crop's pixel extent. The profiles **trace figures** follow the same
 > scale on their distance axis — or their own **Trace scale (µm/cm)** when
 > that field is set (traces usually want ~half the map value or less): the
-> plot box prints `line length ÷ scale` cm wide (so horizontal axes line up
-> across traces and against the maps), with the box height set by
-> `trace_aspect`. While a scale is set, **Figure width is ignored for maps
-> and Trace width is ignored for traces**. Requested sides are clamped to 30 in — a typo scale (e.g. a
+> plot box is placed at an EXACT `line length ÷ scale` cm wide × **Trace
+> height (cm)** tall (default 3 cm) — `trace_aspect`/`trace_width_in` no
+> longer shape the box in this mode, only the legacy (no fixed scale) trace
+> figures. Box placement is deterministic — the box is measured and set
+> exactly once, with no iterative fitting and no dependence on the saved
+> PNG's tight crop for correctness — fixed-scale trace PNGs are no longer
+> tight-cropped at all; the saved canvas is exactly box + margins. While a
+> scale is set, **Figure width is
+> ignored for maps and Trace width is ignored for
+> traces**. Requested sides are clamped to 30 in — a typo scale (e.g. a
 > stray `0.001`) raises the effective scale instead of rendering a
-> 47000-pixel image. **Identical bars across different crops:** auto Bar
-> length still picks ~15 % of each crop's own extent, so it differs crop to
-> crop even at a fixed scale — set an explicit **Bar length** (e.g. 50 µm) as
-> well to get bars that match pixel-for-pixel across figures.
+> 47000-pixel image (and the Results notes flag it: "trace box clamped to 30
+> in — effective scale raised to …"). An extreme **Trace height (cm)** clamps
+> the same way, but since height carries no scale the note instead reads
+> "trace box height clamped to 30 in (trace_height_cm=… cm)" — the requested
+> height is simply capped. If the reference plane's own extent is degenerate
+> (e.g. a zero-width pinned edge-of-ROI plane) the companion figure cannot fit
+> a physical map box even though a trace scale is set, and falls back to the
+> pre-fixed-scale legacy layout with a Results note: "companion: reference
+> plane extent is degenerate — rendered with the legacy layout (fixed scale
+> not applied)". **Identical bars across different
+> crops:** auto Bar length still picks ~15 % of each crop's own extent, so it
+> differs crop to crop even at a fixed scale — set an explicit **Bar length**
+> (e.g. 50 µm) as well to get bars that match pixel-for-pixel across
+> figures. **Uniform margins across a run/replot:** all fixed-scale trace
+> PNGs produced by one **run or replot batch** share the same margins — sized
+> to the largest labels/title in that set — so they line up if you place
+> several in a grid or slideshow; re-rendering a different subset (or a
+> single job) can shift the margins slightly since the shared max is
+> recomputed over whatever was rendered. This uniform-margin behaviour is
+> specific to batch output (Run/Replot…); a **single figure exported from the
+> Export… dialog** is tight-cropped around its box + labels instead (the box
+> itself is still placed at the exact physical scale — only the surrounding
+> whitespace differs, so it will not share a batch's margins if you mix the
+> two). If the rendered box still misses its target after placement, a note
+> appears in Results ("… physical scale is off").
 
 **Output**
 

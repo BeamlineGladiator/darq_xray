@@ -836,3 +836,13 @@ def test_histogram_keeps_axes_under_axes_mode_none():
         style=PlotStyle(axes_mode="none"),
     )
     assert fig.axes[0].axison
+
+
+def test_trace_height_cm_roundtrips_and_defaults():
+    from dfxm.common.plotting import PlotStyle, style_from_json, style_to_json, trace_height_cm
+
+    st = PlotStyle(trace_height_cm=4.2)
+    assert style_from_json(style_to_json(st)).trace_height_cm == 4.2
+    # old persisted styles (no field) load with the default
+    st_old = style_from_json(style_to_json(PlotStyle()))
+    assert trace_height_cm(st_old) == 3.0
