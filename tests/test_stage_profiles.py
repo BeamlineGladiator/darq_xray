@@ -952,11 +952,31 @@ def test_render_single_overview_fits_fixed_scale(tmp_path, monkeypatch):
     assert calls == []
 
 
-def test_companion_map_panel_bar_geometry_unchanged_by_scale_knob():
-    """The multi-panel companion is NOT fitted: setting scale_um_per_cm must not
-    change the map panel's scale-bar geometry (it keeps today's data-fraction
-    thickness), because build_companion_figure never forwards
-    fixed_scale_um_per_cm to _draw_reference_image."""
+def test_companion_map_panel_bar_geometry_unchanged_without_scale_knob():
+    """Without a fixed scale, the multi-panel companion is NOT fitted: the map
+    panel's scale-bar keeps today's data-fraction thickness (the legacy path,
+    :func:`_build_companion_legacy`, never forwards fixed_scale_um_per_cm to
+    _draw_reference_image)."""
+    from matplotlib.patches import Rectangle
+
+    from dfxm.common.plotting import PlotStyle
+
+    ref, fields, geom = _companion_inputs()
+    style = PlotStyle(scale_bar_thickness_pt=3.0)  # no scale_um_per_cm -> legacy path
+    fig = PR.build_companion_figure(ref, fields, geom, "cyan", style=style)
+    ax_img = fig.axes[0]
+    yr = ax_img.get_ylim()[1] - ax_img.get_ylim()[0]
+    box = _offsetbox_artists(ax_img)[0]
+    bar = next(p for p in _offsetbox_children(box) if isinstance(p, Rectangle))
+    # companion is NOT fitted: bar height stays the data-fraction geometry
+    assert bar.get_height() == pytest.approx(abs(yr) * 0.004 * 3.0)
+
+
+def test_companion_map_panel_bar_geometry_matches_fixed_scale():
+    """With a fixed scale, the companion routes to the deterministic stack
+    (:func:`_build_companion_fixed`) and the map panel's scale bar uses the
+    fixed-scale point-based thickness — the same geometry the standalone map
+    figures use (e.g. render_single) — not the data-fraction fallback."""
     from matplotlib.patches import Rectangle
 
     from dfxm.common.plotting import PlotStyle
@@ -965,11 +985,59 @@ def test_companion_map_panel_bar_geometry_unchanged_by_scale_knob():
     style = PlotStyle(scale_um_per_cm=50.0, scale_bar_thickness_pt=3.0)
     fig = PR.build_companion_figure(ref, fields, geom, "cyan", style=style)
     ax_img = fig.axes[0]
-    yr = ax_img.get_ylim()[1] - ax_img.get_ylim()[0]
     box = _offsetbox_artists(ax_img)[0]
     bar = next(p for p in _offsetbox_children(box) if isinstance(p, Rectangle))
-    # companion is NOT fitted: bar height stays the data-fraction geometry
-    assert bar.get_height() == pytest.approx(abs(yr) * 0.004 * 3.0)
+    expected = 3.0 * (2.54 / 72.0) * 50.0  # thickness_pt in TRUE points at 50 um/cm
+    assert bar.get_height() == pytest.approx(expected)
+
+
+# -- companion on the deterministic stack layout (fixed scale) ----------------
+def test_companion_fixed_scale_panel_boxes_and_trace_style():
+    from dfxm.common.plotting import PlotStyle
+
+    ref, fields, geom = _companion_inputs()
+    st = PlotStyle(scale_um_per_cm=20.0, trace_scale_um_per_cm=2.0, trace_height_cm=3.0)
+    topts = {"linewidth": 2.5, "color": "red", "font_scale": 1.4}
+    fig = PR.build_companion_figure(ref, fields, geom, "white", style=st, trace_opts=topts)
+    from dfxm.common.plotting import measured_box_in
+
+    # trace axes carry the plotted lines; the manual colorbar axes has none
+    ax_map, ax_traces = fig.axes[0], [a for a in fig.axes[1:] if a.lines]
+    u, v = ref[1], ref[2]
+    ext_u, ext_v = float(u[-1] - u[0]), float(v[-1] - v[0])
+    mw, mh = measured_box_in(fig, ax_map)
+    assert abs(mw - ext_u / 20.0 / 2.54) < 0.01 * max(1.0, mw)
+    assert abs(mh - ext_v / 20.0 / 2.54) < 0.01 * max(1.0, mh)
+    for ax in ax_traces:
+        tw, th = measured_box_in(fig, ax)
+        assert abs(tw - geom["L"] / 2.0 / 2.54) < 0.01 * tw
+        assert abs(th - 3.0 / 2.54) < 0.01 * th
+        assert abs(ax.lines[0].get_linewidth() - 2.5) < 1e-9  # trace_opts, not 1.8
+        assert ax.yaxis.label.get_fontsize() == 10 * 1.4  # trace font scale, not map
+
+
+def test_companion_fixed_scale_show_title_false_no_panel_titles():
+    from dfxm.common.plotting import PlotStyle
+
+    ref, fields, geom = _companion_inputs()
+    st = PlotStyle(
+        scale_um_per_cm=20.0, trace_scale_um_per_cm=2.0, trace_height_cm=3.0, show_title=False
+    )
+    fig = PR.build_companion_figure(ref, fields, geom, "white", style=st)
+    for ax in fig.axes:
+        assert ax.get_title() == "" and ax.get_title(loc="left") == ""
+
+
+def test_companion_without_fixed_scale_keeps_legacy_layout():
+    from dfxm.common.plotting import PlotStyle
+
+    ref, fields, geom = _companion_inputs()
+    fig_none = PR.build_companion_figure(ref, fields, geom, "white", style=None)
+    w, h = fig_none.get_size_inches()
+    assert abs(w - 9.0) < 1e-6  # legacy canvas untouched
+    fig_styled = PR.build_companion_figure(ref, fields, geom, "white", style=PlotStyle())
+    w2, _ = fig_styled.get_size_inches()
+    assert abs(w2 - 9.0) < 1e-6  # styled-but-no-scale also legacy
 
 
 def test_clim_attrs_field_id_beats_group_fallback():

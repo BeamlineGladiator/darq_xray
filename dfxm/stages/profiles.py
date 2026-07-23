@@ -44,9 +44,11 @@ from ..common.plotting import (
     box_drift_note,
     draw_scale_bar,
     fit_axes_to_box,
+    fixed_scale,
     fixed_scale_box,
     measure_axes_margins,
     place_axes_box,
+    place_axes_stack,
     style_from_params,
     styled_figure,
     trace_fixed_box,
@@ -708,17 +710,33 @@ def _draw_reference_image(
 
 
 def build_companion_figure(
-    ref, fields, geom, line_color, *, style: PlotStyle | None = None
+    ref, fields, geom, line_color, *, style: PlotStyle | None = None, trace_opts=None, notes=None
 ) -> Figure:
     """Build and return a companion profile figure. Does NOT call savefig.
 
-    When *style* is ``None`` the legacy appearance is reproduced exactly
-    (image panel + N trace panels, same fonts and colorbar as before).
-    When a :class:`~dfxm.common.plotting.PlotStyle` is supplied its font/
-    colorbar settings are honoured and the map panel draws the shared styled
-    scale bar (``scale_bar``/``scale_bar_length_um`` and the look knobs all
-    apply, exactly as on the map stages).
+    When *style* has no effective fixed scale (map or trace) — including
+    ``style=None`` — the legacy appearance is reproduced exactly (image panel
+    + N trace panels, same fonts and colorbar as before): see
+    :func:`_build_companion_legacy`. When a fixed scale IS in effect, the
+    companion is instead built on the deterministic left-aligned stack layout
+    — the map panel at the map scale, trace panels styled exactly like the
+    standalone trace figures — see :func:`_build_companion_fixed`.
+
+    *trace_opts* (fixed-scale path only) is ``{"linewidth": float, "color":
+    str | None, "font_scale": float}``; ``None`` keeps the trace panels'
+    built-in default styling. *notes* (fixed-scale path only), when given, is
+    a list that box-drift warnings are appended to (the caller's
+    ``ProfilesResult.notes``).
     """
+    if trace_fixed_box(style, float(geom["L"])) is None:
+        return _build_companion_legacy(ref, fields, geom, line_color, style)
+    return _build_companion_fixed(ref, fields, geom, line_color, style, trace_opts, notes)
+
+
+def _build_companion_legacy(
+    ref, fields, geom, line_color, style: PlotStyle | None = None
+) -> Figure:
+    """The pre-fixed-scale companion layout — pinned by tests, verbatim."""
     ref_plane, u_um, v_um, ref_attrs, ref_label = ref
     n = len(fields)
     fig = styled_figure((9.0, 4.8 + 1.85 * n), styled=True)
@@ -779,11 +797,91 @@ def build_companion_figure(
     return fig
 
 
-def save_companion_figure(ref, fields, geom, line_color, out_png, dpi, style=None):
-    """Build a companion figure (legacy look when *style* is None) and save it."""
-    build_companion_figure(ref, fields, geom, line_color, style=style).savefig(
-        out_png, dpi=dpi, facecolor="white", edgecolor="none"
+def _build_companion_fixed(ref, fields, geom, line_color, style, trace_opts, notes):
+    """Fixed-scale companion: map panel at the MAP scale, trace panels styled
+    exactly like the standalone trace figures, stacked left-aligned."""
+    ref_plane, u_um, v_um, ref_attrs, ref_label = ref
+    topts = {"linewidth": 1.8, "color": None, "font_scale": 1.0, **(trace_opts or {})}
+    ext_u, ext_v = float(u_um[-1] - u_um[0]), float(v_um[-1] - v_um[0])
+    map_scale = fixed_scale(style) or trace_fixed_scale(style)
+    mbox = fixed_scale_box(style, ext_u, ext_v, scale=map_scale)
+    tbox = trace_fixed_box(style, float(geom["L"]))
+    fig = styled_figure((10.0, 10.0), styled=True)
+    fig.set_layout_engine("none")
+    n = len(fields)
+    ax_img = fig.add_subplot(n + 1, 1, 1)
+    im = _draw_reference_image(
+        ax_img,
+        ref_plane,
+        u_um,
+        v_um,
+        ref_attrs,
+        line_color,
+        geom=geom,
+        title=(f"{ref_attrs['title']}\nreference: {ref_label}" if style.show_title else None),
+        style=style,
+        fixed_scale_um_per_cm=mbox[2],
     )
+    cax = None
+    if style.colorbar:
+        cax = fig.add_axes([0.9, 0.6, 0.03, 0.25])  # provisional; sync repositions it
+        add_colorbar(
+            fig,
+            im,
+            ax_img,
+            ref_attrs["cbar_label"],
+            style,
+            group=GROUP_BY_KIND.get(ref_attrs.get("kind")),
+            cax=cax,
+        )
+    apply_text_scale(ax_img, style)
+
+    def _sync_cax(fig_, ax_, _w=mbox[0]):
+        if cax is None:
+            return
+        pos = ax_.get_position()
+        fw, _fh = fig_.get_size_inches()
+        cax.set_position(
+            [pos.x1 + 0.04 * _w / fw, pos.y0, style.colorbar_fraction * _w / fw, pos.height]
+        )
+
+    trace_axes = []
+    for i, fld in enumerate(fields):
+        ax = fig.add_subplot(n + 1, 1, i + 2)
+        _draw_trace_axes(
+            ax,
+            fld,
+            geom,
+            linewidth=topts["linewidth"],
+            color=topts["color"],
+            font_scale=topts["font_scale"],
+            style=style,
+            show_xlabel=(i == n - 1),
+        )
+        if i < n - 1:
+            ax.tick_params(labelbottom=False)
+        trace_axes.append(ax)
+    panels = [(ax_img, mbox[0], mbox[1], (cax,) if cax is not None else (), _sync_cax)]
+    panels += [(ax, tbox[0], tbox[1], (), None) for ax in trace_axes]
+    place_axes_stack(fig, panels)
+    if notes is not None:
+        for label, ax, (w, h) in [("companion map", ax_img, (mbox[0], mbox[1]))] + [
+            (f"companion trace {fld['vid']}", ax, (tbox[0], tbox[1]))
+            for fld, ax in zip(fields, trace_axes)
+        ]:
+            note = box_drift_note(label, fig, ax, w, h)
+            if note:
+                notes.append(note)
+    return fig
+
+
+def save_companion_figure(
+    ref, fields, geom, line_color, out_png, dpi, style=None, trace_opts=None, notes=None
+):
+    """Build a companion figure (legacy look when *style* is None) and save it."""
+    build_companion_figure(
+        ref, fields, geom, line_color, style=style, trace_opts=trace_opts, notes=notes
+    ).savefig(out_png, dpi=dpi, facecolor="white", edgecolor="none")
 
 
 def _draw_trace_axes(ax, fld, geom, *, linewidth, color, font_scale, style, show_xlabel=True):
@@ -1204,7 +1302,21 @@ def _render_parameter_job(
     )
     if save_companion:
         out_png = os.path.join(out_dir, f"{stem}.png")
-        save_companion_figure(ref, fields, geom, color, out_png, dpi, style=style)
+        save_companion_figure(
+            ref,
+            fields,
+            geom,
+            color,
+            out_png,
+            dpi,
+            style=style,
+            trace_opts={
+                "linewidth": trace_linewidth,
+                "color": trace_color,
+                "font_scale": trace_font_scale,
+            },
+            notes=result.notes,
+        )
         jr.figure = out_png
     if save_traces:
         jr.traces = _save_traces(
@@ -1428,6 +1540,9 @@ def figures(result: ProfilesResult, params: dict) -> list[FigureSpec]:
             _res=restrict,
             _lo=line_override,
             _name=name,
+            _lw=trace_linewidth,
+            _col=trace_color,
+            _fs=trace_font_scale,
         ):
             if not _job:
                 raise ValueError(
@@ -1446,7 +1561,8 @@ def figures(result: ProfilesResult, params: dict) -> list[FigureSpec]:
             with _h5py.File(_h5, "r") as f:
                 ref, fields, geom, _, _dropped = _collect(f, _job, _p, _ref, _res)
             color = auto_line_color(ref[3]["cmap"], _lo)
-            return build_companion_figure(ref, fields, geom, color, style=style)
+            topts = {"linewidth": _lw, "color": _col, "font_scale": _fs}
+            return build_companion_figure(ref, fields, geom, color, style=style, trace_opts=topts)
 
         if save_companion:
             specs.append(

@@ -997,11 +997,27 @@ paper-ready trace can drop its `kind | field | source` header entirely. The
 companion's and the per-field overview figures' reference map panels both draw
 the publication-style scale bar (length, thickness, colour, location,
 background box — all the Scale bar controls apply, exactly as on the map
-stages). Only the **overview** honours the "Scale (µm/cm)" fixed-scale field,
-though — the map is fitted to a physical page size the way slices/strain/
-mosaicity/rocking/visualize/paraview maps are. The **companion**'s map panel is
-left alone by design: it keeps today's geometry byte-identically even when the
-knob is set, so a saved companion layout never shifts underfoot.
+stages).
+
+Whether the **companion**'s map panel honours "Scale (µm/cm)" depends on
+whether a fixed scale is in effect:
+
+- **No fixed scale set** (blank Scale and Trace scale, or a plain run):
+  the companion keeps its today's-look layout byte-for-byte — the map panel is
+  left alone by design and never fitted, so a saved companion never shifts
+  underfoot.
+- **A fixed scale IS set** (Scale and/or Trace scale µm/cm): the companion is
+  instead built on the same deterministic, left-aligned stacked layout the
+  standalone trace figures use — the map panel is fitted to the **map**
+  scale (same point-exact scale bar as the overview/map stages), and every
+  trace panel is styled *exactly* like its standalone counterpart (trace
+  line width/colour/font scale, box sized from the line length at the
+  TRACE-effective scale and "Trace height (cm)"). Panels share one left
+  margin so their boxes line up, and each panel's title follows **Show
+  title** independently (a colourbar attached to the map panel, if shown,
+  travels with it). A rendered box that misses its physical target is
+  reported the same way the standalone trace figures report it (a note in
+  the Results tab / run log).
 
 #### Replotting line profiles
 
@@ -1167,9 +1183,10 @@ form.
 > [!tip] Fixed physical scale across figures
 > Setting **Scale (µm/cm)** fits every map's data box (per-layer maps, slices,
 > the strain diagnostic, the matched stage's rocking-matched layer maps, and
-> the profiles reference/overview panels — not the profiles companion) so the
-> printed scale, and the scale bar, are identical across figures regardless of
-> each crop's pixel extent. The profiles **trace figures** follow the same
+> the profiles reference/overview panels — and, once a fixed scale is set,
+> the profiles companion's map panel too, at the same point-exact scale bar)
+> so the printed scale, and the scale bar, are identical across figures
+> regardless of each crop's pixel extent. The profiles **trace figures** follow the same
 > scale on their distance axis — or their own **Trace scale (µm/cm)** when
 > that field is set (traces usually want ~half the map value or less): the
 > plot box is placed at an EXACT `line length ÷ scale` cm wide × **Trace

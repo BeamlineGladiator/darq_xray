@@ -98,3 +98,24 @@ def test_box_drift_note_fires_only_on_miss():
     assert box_drift_note("t", fig, ax, 2.0, 1.2) is None
     note = box_drift_note("t", fig, ax, 3.0, 1.2)  # deliberately wrong target
     assert note is not None and "t" in note and "cm" in note
+
+
+def test_place_axes_stack_left_aligned_exact_boxes():
+    fig = Figure(figsize=(8, 10), facecolor="white")
+    axs = [fig.add_subplot(3, 1, i + 1) for i in range(3)]
+    labels = ["short", "a very very long y label (units)", "mid label"]
+    for ax, lab in zip(axs, labels):
+        ax.plot([0, 1], [0, 1])
+        ax.set_ylabel(lab)
+    from dfxm.common.plotting import place_axes_stack
+
+    boxes = [(2.5, 1.6), (1.4, 1.0), (2.0, 1.0)]
+    place_axes_stack(fig, [(ax, w, h, (), None) for ax, (w, h) in zip(axs, boxes)])
+    x0 = {round(ax.get_position().x0, 4) for ax in axs}
+    assert len(x0) == 1  # shared left edge
+    for ax, (w, h) in zip(axs, boxes):
+        bw, bh = measured_box_in(fig, ax)
+        assert abs(bw - w) < 0.01 and abs(bh - h) < 0.01
+    # panels must not overlap: y-intervals strictly descending
+    ys = [ax.get_position() for ax in axs]
+    assert ys[0].y0 > ys[1].y1 - 1e-6 and ys[1].y0 > ys[2].y1 - 1e-6

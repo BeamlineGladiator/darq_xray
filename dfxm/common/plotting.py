@@ -439,6 +439,45 @@ def place_axes_box(fig, ax, w_in, h_in, margins: AxesMargins | None = None, pad_
     return margins
 
 
+def place_axes_stack(fig, panels, pad_in: float = 0.02, gap_in: float = 0.15) -> None:
+    """Stack *panels* top→bottom, each with an EXACT (w_in, h_in) box, sharing
+    one left margin (the max over panels) so their boxes left-align.
+
+    panels: list of (ax, w_in, h_in, extras, sync). *extras* are attached axes
+    (a manual colorbar) counted in the panel's decoration envelope; *sync* is
+    an optional callable(fig, ax) re-gluing attachments after placement.
+    Two passes: provisional placement at final box sizes → measure → final.
+    """
+    fig.set_layout_engine("none")
+    n = len(panels)
+    prov_w = max(w for _, w, _, _, _ in panels) + 2.5
+    prov_h = sum(h for _, _, h, _, _ in panels) + 1.5 * (n + 1)
+    fig.set_size_inches(prov_w, prov_h, forward=False)
+    y = prov_h - 1.5
+    for ax, w, h, _extras, sync in panels:
+        y -= h
+        ax.set_position([1.5 / prov_w, y / prov_h, w / prov_w, h / prov_h])
+        y -= 1.5
+        if sync is not None:
+            sync(fig, ax)
+    margins = [
+        measure_axes_margins(fig, ax, extras=extras, pad_in=pad_in)
+        for ax, _w, _h, extras, _s in panels
+    ]
+    left = max(m.left for m in margins)
+    fig_w = left + max(w + m.right for (_a, w, _h, _e, _s), m in zip(panels, margins))
+    fig_h = sum(m.top + h + m.bottom for (_a, _w, h, _e, _s), m in zip(panels, margins))
+    fig_h += gap_in * (n - 1)
+    fig.set_size_inches(fig_w, fig_h, forward=False)
+    y = fig_h
+    for (ax, w, h, _extras, sync), m in zip(panels, margins):
+        y -= m.top + h
+        ax.set_position([left / fig_w, y / fig_h, w / fig_w, h / fig_h])
+        y -= m.bottom + gap_in
+        if sync is not None:
+            sync(fig, ax)
+
+
 _TRACE_HEIGHT_CM_DEFAULT = 3.0
 
 
@@ -924,7 +963,9 @@ def _apply_scientific(cb, im, style, group) -> None:
         )
 
 
-def add_colorbar(fig, im, ax, label: str, style: "PlotStyle", *, group: str | None = None):
+def add_colorbar(
+    fig, im, ax, label: str, style: "PlotStyle", *, group: str | None = None, cax=None
+):
     """Add a colourbar honouring thickness, label, tick count and per-group number format.
 
     *group* (one of :data:`CMAP_GROUPS`, or ``None`` for the neutral default)
@@ -932,8 +973,17 @@ def add_colorbar(fig, im, ax, label: str, style: "PlotStyle", *, group: str | No
     ``"auto"``/digit as before; ``"scientific"`` renders a custom, styleable
     ``×10ⁿ`` exponent (see :func:`_apply_scientific`); ``"arb"`` drops all
     numeric ticks and marks the label "arbitrary units".
+
+    *cax*, when given, is an already-placed axes to draw the colourbar into
+    (``fig.colorbar(im, cax=cax)``) instead of stealing space from *ax* — used
+    by callers that place the colourbar axes themselves (e.g. the companion
+    figure's deterministic stack, which re-glues *cax* to its panel after each
+    placement pass). Callers that omit *cax* are unaffected (byte-identical).
     """
-    cb = fig.colorbar(im, ax=ax, fraction=style.colorbar_fraction, pad=0.04)
+    if cax is not None:
+        cb = fig.colorbar(im, cax=cax)
+    else:
+        cb = fig.colorbar(im, ax=ax, fraction=style.colorbar_fraction, pad=0.04)
     text = style.colorbar_label if style.colorbar_label is not None else label
     fmt = style.tickfmt_for(group)
 
