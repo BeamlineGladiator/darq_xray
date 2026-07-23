@@ -53,6 +53,7 @@ from ..common.plotting import (
     styled_figure,
     trace_fixed_box,
     trace_fixed_scale,
+    trace_height_cm,
 )
 from ..config.models import Param, ParamType, StageSpec
 
@@ -532,33 +533,38 @@ def render_replot(h5_path, jobs, style, clim, out_dir, *, dpi=None, params=None)
     result = ProfilesResult(output_dir=out_dir, mode="parameter")
     used_stems: dict[str, int] = {}
     trace_deferred: list = []
-    with h5py.File(h5_path, "r") as f:
-        for ji, job in enumerate(jobs):
-            if not isinstance(job, dict) or "name" not in job:
-                result.skipped.append(f"job {ji}: malformed job spec")
-                continue
-            name, pin_note = resolve_job_slice_name(f, job["name"], job.get("offset_um", 0.0))
-            if pin_note:
-                result.notes.append(pin_note)
-                job = {**job, "name": name}
-            if not volume_ids_with_slice(f, name):
-                result.skipped.append(f"slice {name!r} not present")
-                continue
-            _render_parameter_job(
-                f,
-                job,
-                ji,
-                (ji + 0.5) / len(jobs),
-                p,
-                result,
-                used_stems,
-                out_dir,
-                style,
-                _noop,
-                clim=clim,
-                trace_deferred=trace_deferred,
-            )
-    _flush_deferred_traces(trace_deferred, int(p["fig_dpi"]), result.notes)
+    try:
+        with h5py.File(h5_path, "r") as f:
+            for ji, job in enumerate(jobs):
+                if not isinstance(job, dict) or "name" not in job:
+                    result.skipped.append(f"job {ji}: malformed job spec")
+                    continue
+                name, pin_note = resolve_job_slice_name(f, job["name"], job.get("offset_um", 0.0))
+                if pin_note:
+                    result.notes.append(pin_note)
+                    job = {**job, "name": name}
+                if not volume_ids_with_slice(f, name):
+                    result.skipped.append(f"slice {name!r} not present")
+                    continue
+                _render_parameter_job(
+                    f,
+                    job,
+                    ji,
+                    (ji + 0.5) / len(jobs),
+                    p,
+                    result,
+                    used_stems,
+                    out_dir,
+                    style,
+                    _noop,
+                    clim=clim,
+                    trace_deferred=trace_deferred,
+                )
+    finally:
+        # Runs even on a hard mid-loop failure (e.g. a corrupt h5 raising
+        # partway through) so earlier jobs' already-built fixed-scale trace
+        # figures still get placed and saved instead of silently discarded.
+        _flush_deferred_traces(trace_deferred, int(p["fig_dpi"]), result.notes)
     return result
 
 
@@ -819,6 +825,11 @@ def _build_companion_fixed(ref, fields, geom, line_color, style, trace_opts, not
         # cannot be fitted to a physical scale even though the trace scale is
         # set. Degrade to the legacy layout rather than indexing a None box —
         # guards in this module never raise (see fixed_scale/trace_fixed_box).
+        if notes is not None:
+            notes.append(
+                "companion: reference plane extent is degenerate — rendered with the "
+                "legacy layout (fixed scale not applied)"
+            )
         return _build_companion_legacy(ref, fields, geom, line_color, style)
     tbox = trace_fixed_box(style, float(geom["L"]))
     fig = styled_figure((10.0, 10.0), styled=True)
@@ -1229,11 +1240,21 @@ def _save_traces(
         )
         box = trace_fixed_box(style, float(geom["L"]))
         if box is not None:
-            if notes is not None and box[2] != trace_fixed_scale(style):
-                notes.append(
-                    f"{os.path.basename(tr_png)}: trace box clamped to 30 in — "
-                    f"effective scale raised to {box[2]:.4g} µm/cm"
-                )
+            if notes is not None:
+                if box[2] != trace_fixed_scale(style):
+                    msg = (
+                        f"{os.path.basename(tr_png)}: trace box clamped to 30 in — "
+                        f"effective scale raised to {box[2]:.4g} µm/cm"
+                    )
+                    if msg not in notes:
+                        notes.append(msg)
+                if trace_height_cm(style) / 2.54 > box[1]:
+                    msg = (
+                        f"{os.path.basename(tr_png)}: trace box height clamped to 30 in "
+                        f"(trace_height_cm={trace_height_cm(style):g} cm)"
+                    )
+                    if msg not in notes:
+                        notes.append(msg)
             if deferred is not None:
                 deferred.append((fig, box[0], box[1], tr_png))
             else:
@@ -1253,8 +1274,10 @@ def _save_traces(
 def _flush_deferred_traces(deferred, dpi, notes):
     """Second pass for fixed-scale traces: re-place every figure of the
     invocation with the shared max margins (so all PNGs align in a grid),
-    verify the box, save, close. First pass (build) already placed each
-    figure with its own margins, so single-figure consumers stay exact."""
+    verify the box, save, then clear the figure (drops its artists/renderer
+    buffers) so a big sweep does not accumulate every trace figure's memory
+    until the whole invocation finishes. First pass (build) already placed
+    each figure with its own margins, so single-figure consumers stay exact."""
     if not deferred:
         return
     shared = None
@@ -1267,6 +1290,7 @@ def _flush_deferred_traces(deferred, dpi, notes):
         if note:
             notes.append(note)
         fig.savefig(png, dpi=dpi, facecolor="white", edgecolor="none")
+        fig.clear()
 
 
 # -----------------------------------------------------------------------------
@@ -1432,67 +1456,71 @@ def run(params: dict, progress: ProgressFn | None = None) -> ProfilesResult:
     used_stems: dict[str, int] = {}
     trace_deferred: list = []
 
-    with h5py.File(h5_path, "r") as f:
-        for ji, job in enumerate(jobs):
-            progress((ji + 0.5) / len(jobs), f"{mode}: {job.get('name')}")
-            name, pin_note = resolve_job_slice_name(f, job["name"], job.get("offset_um", 0.0))
-            if pin_note:
-                result.notes.append(pin_note)
-                job = {**job, "name": name}
-            present = volume_ids_with_slice(f, name)
-            if not present:
-                result.skipped.append(f"slice {name!r} not present")
-                continue
-            if mode == "preview":
-                ref_id = _pick_reference_id(present, ref_pref)
-                u_um, v_um, offsets = read_axes(f[f"{ref_id}/{name}"])
-                idx, off_used = resolve_plane_index(offsets, job["offset_um"])
-                attrs = read_volume_attrs(f, ref_id)
-                ref_plane = f[f"{ref_id}/{name}"]["slices"][idx].astype(np.float64)
-                geom = None
-                if job.get("start_uv") is not None and job.get("end_uv") is not None:
-                    geom = line_geometry(
-                        u_um,
-                        v_um,
-                        job["start_uv"],
-                        job["end_uv"],
-                        job.get("n_samples"),
-                        job.get("width_pixels", 1),
-                        grid_pitch(u_um, v_um),
+    try:
+        with h5py.File(h5_path, "r") as f:
+            for ji, job in enumerate(jobs):
+                progress((ji + 0.5) / len(jobs), f"{mode}: {job.get('name')}")
+                name, pin_note = resolve_job_slice_name(f, job["name"], job.get("offset_um", 0.0))
+                if pin_note:
+                    result.notes.append(pin_note)
+                    job = {**job, "name": name}
+                present = volume_ids_with_slice(f, name)
+                if not present:
+                    result.skipped.append(f"slice {name!r} not present")
+                    continue
+                if mode == "preview":
+                    ref_id = _pick_reference_id(present, ref_pref)
+                    u_um, v_um, offsets = read_axes(f[f"{ref_id}/{name}"])
+                    idx, off_used = resolve_plane_index(offsets, job["offset_um"])
+                    attrs = read_volume_attrs(f, ref_id)
+                    ref_plane = f[f"{ref_id}/{name}"]["slices"][idx].astype(np.float64)
+                    geom = None
+                    if job.get("start_uv") is not None and job.get("end_uv") is not None:
+                        geom = line_geometry(
+                            u_um,
+                            v_um,
+                            job["start_uv"],
+                            job["end_uv"],
+                            job.get("n_samples"),
+                            job.get("width_pixels", 1),
+                            grid_pitch(u_um, v_um),
+                        )
+                    color = auto_line_color(attrs["cmap"], line_override)
+                    ref = (ref_plane, u_um, v_um, attrs, f"{ref_id}  @ offset {off_used:+.3f} µm")
+                    stem = _unique_name(
+                        used_stems, (job.get("fig_name") or f"preview_{name}") + "__PREVIEW"
                     )
-                color = auto_line_color(attrs["cmap"], line_override)
-                ref = (ref_plane, u_um, v_um, attrs, f"{ref_id}  @ offset {off_used:+.3f} µm")
-                stem = _unique_name(
-                    used_stems, (job.get("fig_name") or f"preview_{name}") + "__PREVIEW"
-                )
-                out_png = os.path.join(out_dir, f"{stem}.png")
-                header = f"PREVIEW :: slice {name!r} offset {off_used:+.3f} µm"
-                render_single(
-                    ref, geom, color, out_png, header, dpi, style=style, notes=result.notes
-                )
-                result.jobs.append(
-                    ProfileJobResult(
-                        name=name, offset_used_um=off_used, figure=out_png, job_index=ji
+                    out_png = os.path.join(out_dir, f"{stem}.png")
+                    header = f"PREVIEW :: slice {name!r} offset {off_used:+.3f} µm"
+                    render_single(
+                        ref, geom, color, out_png, header, dpi, style=style, notes=result.notes
                     )
+                    result.jobs.append(
+                        ProfileJobResult(
+                            name=name, offset_used_um=off_used, figure=out_png, job_index=ji
+                        )
+                    )
+                    continue
+
+                # parameter mode
+                _render_parameter_job(
+                    f,
+                    job,
+                    ji,
+                    (ji + 0.5) / len(jobs),
+                    p,
+                    result,
+                    used_stems,
+                    out_dir,
+                    style,
+                    progress,
+                    trace_deferred=trace_deferred,
                 )
-                continue
-
-            # parameter mode
-            _render_parameter_job(
-                f,
-                job,
-                ji,
-                (ji + 0.5) / len(jobs),
-                p,
-                result,
-                used_stems,
-                out_dir,
-                style,
-                progress,
-                trace_deferred=trace_deferred,
-            )
-
-    _flush_deferred_traces(trace_deferred, int(p["fig_dpi"]), result.notes)
+    finally:
+        # Runs even on a hard mid-loop failure (e.g. a corrupt h5 raising
+        # partway through) so earlier jobs' already-built fixed-scale trace
+        # figures still get placed and saved instead of silently discarded.
+        _flush_deferred_traces(trace_deferred, int(p["fig_dpi"]), result.notes)
     progress(1.0, f"{mode}: {len(result.jobs)} job(s) -> {out_dir}")
     return result
 

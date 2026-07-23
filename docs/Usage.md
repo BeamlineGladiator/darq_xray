@@ -1202,17 +1202,30 @@ form.
 > traces**. Requested sides are clamped to 30 in — a typo scale (e.g. a
 > stray `0.001`) raises the effective scale instead of rendering a
 > 47000-pixel image (and the Results notes flag it: "trace box clamped to 30
-> in — effective scale raised to …"). **Identical bars across different
+> in — effective scale raised to …"). An extreme **Trace height (cm)** clamps
+> the same way, but since height carries no scale the note instead reads
+> "trace box height clamped to 30 in (trace_height_cm=… cm)" — the requested
+> height is simply capped. If the reference plane's own extent is degenerate
+> (e.g. a zero-width pinned edge-of-ROI plane) the companion figure cannot fit
+> a physical map box even though a trace scale is set, and falls back to the
+> pre-fixed-scale legacy layout with a Results note: "companion: reference
+> plane extent is degenerate — rendered with the legacy layout (fixed scale
+> not applied)". **Identical bars across different
 > crops:** auto Bar length still picks ~15 % of each crop's own extent, so it
 > differs crop to crop even at a fixed scale — set an explicit **Bar length**
 > (e.g. 50 µm) as well to get bars that match pixel-for-pixel across
 > figures. **Uniform margins across a run/replot:** all fixed-scale trace
-> PNGs produced by one run or replot share the same margins — sized to the
-> largest labels/title in that set — so they line up if you place several in
-> a grid or slideshow; re-rendering a different subset (or a single job) can
-> shift the margins slightly since the shared max is recomputed over
-> whatever was rendered. If the rendered box still misses its target after
-> that placement, a note appears in Results ("… physical scale is off").
+> PNGs produced by one **run or replot batch** share the same margins — sized
+> to the largest labels/title in that set — so they line up if you place
+> several in a grid or slideshow; re-rendering a different subset (or a
+> single job) can shift the margins slightly since the shared max is
+> recomputed over whatever was rendered. This uniform-margin behaviour is
+> specific to batch output (Run/Replot…); a **single figure exported from the
+> Export… dialog** is tight-cropped around its box + labels instead (the box
+> itself is still placed at the exact physical scale — only the surrounding
+> whitespace differs, so it will not share a batch's margins if you mix the
+> two). If the rendered box still misses its target after placement, a note
+> appears in Results ("… physical scale is off").
 
 **Output**
 

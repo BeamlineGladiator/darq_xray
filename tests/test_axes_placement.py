@@ -92,6 +92,22 @@ def test_trace_fixed_box_geometry_and_clamp():
     assert w == 30.0 and s > 0.1  # width clamped, effective scale raised
 
 
+def test_trace_fixed_box_height_clamp(caplog):
+    # An extreme trace_height_cm clamps the height side to 30 in, leaving the
+    # width/scale untouched (height has no bearing on the effective µm/cm) and
+    # logs a warning — the height clamp must not be silent, mirroring the
+    # width clamp above.
+    import logging
+
+    st = PlotStyle(trace_scale_um_per_cm=10.0, trace_height_cm=100.0)  # 100/2.54 = 39.4 in
+    with caplog.at_level(logging.WARNING, logger="dfxm.common.plotting"):
+        w, h, s = trace_fixed_box(st, 44.941256)
+    assert h == 30.0
+    assert abs(w - 44.941256 / 10.0 / 2.54) < 1e-9  # width unchanged
+    assert s == 10.0  # scale unchanged
+    assert any("height clamped" in rec.message for rec in caplog.records)
+
+
 def test_box_drift_note_fires_only_on_miss():
     fig, ax = _plot_fig()
     place_axes_box(fig, ax, 2.0, 1.2)

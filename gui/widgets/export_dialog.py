@@ -587,7 +587,8 @@ class StyleControls(QWidget):
             self._w_trace_height_cm.setText(f"{_thv:g}")
         self._w_trace_height_cm.setToolTip(
             "Fixed height of every trace plot box in cm of page. All traces of a run share "
-            "it, so they align side-by-side. Blank = 3 cm."
+            "it, so they align side-by-side. Blank = 3 cm. Only takes effect when a fixed "
+            "scale (Scale and/or Trace scale) is set."
         )
         self._w_trace_height_cm.textChanged.connect(self._on_trace_height_cm)
         form.addRow("Trace height (cm)", self._w_trace_height_cm)
@@ -630,46 +631,33 @@ class StyleControls(QWidget):
             setattr(self._style, "scale_bar_length_um", self._w_bar_len.value())
         self._emit()
 
-    def _on_scale_umcm(self, text: str) -> None:
+    @staticmethod
+    def _parse_positive_float(text: str) -> float | None:
+        """Blank/unparsable/non-positive -> None; else the parsed float.
+
+        Shared by the three fixed-scale line-edit handlers below (`_on_scale_umcm`,
+        `_on_trace_scale_umcm`, `_on_trace_height_cm`) — they were byte-identical
+        apart from which style attribute they wrote.
+        """
         t = text.strip()
-        val: float | None = None
-        if t:
-            try:
-                val = float(t)
-            except ValueError:
-                val = None
-            else:
-                if val <= 0:
-                    val = None
-        self._style.scale_um_per_cm = val
+        if not t:
+            return None
+        try:
+            val = float(t)
+        except ValueError:
+            return None
+        return val if val > 0 else None
+
+    def _on_scale_umcm(self, text: str) -> None:
+        self._style.scale_um_per_cm = self._parse_positive_float(text)
         self._emit()
 
     def _on_trace_scale_umcm(self, text: str) -> None:
-        t = text.strip()
-        val: float | None = None
-        if t:
-            try:
-                val = float(t)
-            except ValueError:
-                val = None
-            else:
-                if val <= 0:
-                    val = None
-        self._style.trace_scale_um_per_cm = val
+        self._style.trace_scale_um_per_cm = self._parse_positive_float(text)
         self._emit()
 
     def _on_trace_height_cm(self, text: str) -> None:
-        t = text.strip()
-        val: float | None = None
-        if t:
-            try:
-                val = float(t)
-            except ValueError:
-                val = None
-            else:
-                if val <= 0:
-                    val = None
-        self._style.trace_height_cm = val
+        self._style.trace_height_cm = self._parse_positive_float(text)
         self._emit()
 
     def _on_formats_changed(self) -> None:

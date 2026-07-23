@@ -498,7 +498,10 @@ def trace_fixed_box(style: "PlotStyle | None", length_um: float):
 
     Width = line length / trace-effective scale; height = the fixed
     ``trace_height_cm`` (trace_aspect does NOT apply in fixed-scale mode).
-    Width clamps to 30 in, raising the effective scale like the map clamp.
+    Width clamps to 30 in, raising the effective scale like the map clamp and
+    logging a warning. Height clamps to 30 in too (only reachable via an
+    extreme ``trace_height_cm``) — it does not affect the effective scale, but
+    the clamp is still logged so it is never silent.
     """
     s = trace_fixed_scale(style)
     if s is None:
@@ -506,7 +509,14 @@ def trace_fixed_box(style: "PlotStyle | None", length_um: float):
     if not math.isfinite(length_um) or length_um <= 0:
         return None
     w = length_um / s / 2.54
-    h = min(trace_height_cm(style) / 2.54, _MAX_FIXED_SIDE_IN)
+    th_cm = trace_height_cm(style)
+    h = min(th_cm / 2.54, _MAX_FIXED_SIDE_IN)
+    if th_cm / 2.54 > _MAX_FIXED_SIDE_IN:
+        _log.warning(
+            "trace fixed-scale box height clamped to %.0f in (trace_height_cm=%.4g cm)",
+            _MAX_FIXED_SIDE_IN,
+            th_cm,
+        )
     if w > _MAX_FIXED_SIDE_IN:
         s = s * (w / _MAX_FIXED_SIDE_IN)
         w = _MAX_FIXED_SIDE_IN

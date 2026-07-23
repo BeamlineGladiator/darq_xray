@@ -1074,10 +1074,12 @@ def test_companion_fixed_scale_degenerate_map_extent_falls_back_to_legacy():
     plane, u, v, attrs, label = ref
     degenerate_ref = (plane, np.array([u[0]]), v, attrs, label)  # ext_u == 0
     st = PlotStyle(scale_um_per_cm=20.0, trace_scale_um_per_cm=2.0, trace_height_cm=3.0)
-    fig = PR.build_companion_figure(degenerate_ref, fields, geom, "white", style=st)
+    notes: list[str] = []
+    fig = PR.build_companion_figure(degenerate_ref, fields, geom, "white", style=st, notes=notes)
     w, h = fig.get_size_inches()
     assert abs(w - 9.0) < 1e-6  # legacy canvas, not a crash
     assert abs(h - (4.8 + 1.85 * len(fields))) < 1e-6  # legacy height formula
+    assert any("degenerate" in n and "legacy layout" in n for n in notes), notes
 
 
 def test_clim_attrs_field_id_beats_group_fallback():
