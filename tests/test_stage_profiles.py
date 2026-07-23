@@ -362,24 +362,89 @@ def _png_size(path):
     return img.shape[1], img.shape[0]  # (w_px, h_px)
 
 
-def test_run_fixed_scale_traces_share_height_and_margins(tmp_path):
+def _write_consolidated_mixed_scale(path):
+    """Like `_write_consolidated`, but the two fields differ in magnitude by
+    ~1e8: "raw_sum" is O(100) (plain tick labels, no scientific offset text),
+    "strain" is O(1e-6) (triggers a scientific offset annotation, which adds
+    TOP margin). Own-margin placement (no sharing across the run) therefore
+    gives every "strain" trace a taller canvas than every "raw_sum" trace —
+    a real discriminator for the uniform-margins flush. The original
+    same-magnitude fixture cannot discriminate: both fields' natural margins
+    coincide by construction, so per-figure and shared-max placement produce
+    the same heights either way (empirically confirmed — see task-3 report).
+    """
+    u = np.linspace(-10.0, 10.0, 81)
+    v = np.linspace(-8.0, 8.0, 65)
+    uu, vv = np.meshgrid(u, v)
+    offsets = np.array([-1.0, 0.0, 1.0])
+    with h5py.File(path, "w") as f:
+        for vid, kind, cmap, scale, base in (
+            ("raw_sum", "raw_sum", "gray", 1.0, 100.0),
+            ("strain", "strain", "RdBu_r", 1e-6, 0.0),
+        ):
+            g = f.create_group(vid)
+            g.attrs["kind"] = kind
+            g.attrs["cbar_label"] = "value"
+            g.attrs["cmap"] = cmap
+            g.attrs["title"] = vid
+            g.attrs["vmin"] = -10.0
+            g.attrs["vmax"] = 10.0
+            sg = g.create_group("oblique_full")
+            stack = np.stack(
+                [scale * (A * uu + B * vv + o) + base for o in offsets], axis=0
+            ).astype(np.float32)
+            sg.create_dataset("slices", data=stack)
+            sg.create_dataset("u_um", data=u)
+            sg.create_dataset("v_um", data=v)
+            sg.create_dataset("offsets_um", data=offsets)
+
+
+def _own_margin_flush(deferred, dpi, notes):
+    """Test-only stand-in for `_flush_deferred_traces` that places each
+    figure at its OWN measured margins instead of the shared max — simulates
+    the bug the uniform-margins flush fixes, to prove the test below actually
+    discriminates (rather than passing by fixture coincidence)."""
+    import os as _os
+
+    from dfxm.common.plotting import apply_axes_margins, box_drift_note, measure_axes_margins
+
+    if not deferred:
+        return
+    for fig, w_in, h_in, png in deferred:
+        m = measure_axes_margins(fig, fig.axes[0])
+        apply_axes_margins(fig, fig.axes[0], w_in, h_in, m)
+        note = box_drift_note(_os.path.basename(png), fig, fig.axes[0], w_in, h_in)
+        if note:
+            notes.append(note)
+        fig.savefig(png, dpi=dpi, facecolor="white", edgecolor="none")
+
+
+def test_run_fixed_scale_traces_share_height_and_margins(tmp_path, monkeypatch):
     h5 = tmp_path / "c.h5"
-    _write_consolidated(str(h5))
-    out = tmp_path / "prof"
+    _write_consolidated_mixed_scale(str(h5))
     jobs = (
         '[{"name":"oblique_full","offset_um":0.0,"start_uv":[-5,-3],"end_uv":[5,3],'
         '"n_samples":40,"width_pixels":1,"fig_name":"jobA"},'
         '{"name":"oblique_full","offset_um":0.0,"start_uv":[-2,-1],"end_uv":[2,1],'
         '"n_samples":40,"width_pixels":1,"fig_name":"jobB"}]'
     )
-    res = PR.run(
-        _base_params(
-            h5,
-            out,
-            jobs_json=jobs,
-            plot_style={"trace_scale_um_per_cm": 2.0, "trace_height_cm": 3.0},
-        )
-    )
+    style = {"trace_scale_um_per_cm": 2.0, "trace_height_cm": 3.0}
+
+    # Discrimination check (verification contract, item 1): with the fields'
+    # natural margins forced apart, an own-margins-only flush must NOT
+    # satisfy "same height" — proving this fixture (unlike the same-scale
+    # original) actually exercises the sharing behaviour.
+    monkeypatch.setattr(PR, "_flush_deferred_traces", _own_margin_flush)
+    bug_out = tmp_path / "prof_bug"
+    bug_res = PR.run(_base_params(h5, bug_out, jobs_json=jobs, plot_style=style))
+    bug_heights = {h for _, h in (_png_size(t) for jr in bug_res.jobs for t in jr.traces)}
+    assert len(bug_heights) > 1, bug_heights  # own-margins-only: heights DO differ
+    monkeypatch.undo()
+
+    # Real code: the shared-max flush makes every trace PNG of the run the
+    # same height.
+    out = tmp_path / "prof"
+    res = PR.run(_base_params(h5, out, jobs_json=jobs, plot_style=style))
     assert len(res.jobs) == 2
     sizes = [_png_size(t) for jr in res.jobs for t in jr.traces]
     heights = {h for _, h in sizes}
