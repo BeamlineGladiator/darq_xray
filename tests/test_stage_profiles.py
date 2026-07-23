@@ -1063,11 +1063,15 @@ def test_companion_without_fixed_scale_keeps_legacy_layout():
     assert abs(w2 - 9.0) < 1e-6  # styled-but-no-scale also legacy
 
 
+@pytest.mark.filterwarnings("ignore:Attempting to set identical low and high xlims")
 def test_companion_fixed_scale_degenerate_map_extent_falls_back_to_legacy():
     """A fixed TRACE scale is set (so the dispatcher enters the fixed-scale
     path) but the reference plane's own U extent is degenerate (zero-width —
     a plausible pinned edge-of-ROI plane), so fixed_scale_box can't fit a
-    physical map box. Must degrade to the legacy layout, never raise."""
+    physical map box. Must degrade to the legacy layout, never raise.
+    (matplotlib's zero-width-xlim UserWarning is expected here — the legacy
+    fallback imshows the degenerate extent — and filtered so suite output
+    stays pristine.)"""
     from dfxm.common.plotting import PlotStyle
 
     ref, fields, geom = _companion_inputs()
