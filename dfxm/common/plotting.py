@@ -117,6 +117,9 @@ class PlotStyle:
     # separate scale for the profiles TRACE figures only; None/blank = follow
     # scale_um_per_cm (traces typically want ~half the map value or less)
     trace_scale_um_per_cm: float | None = None
+    # fixed box HEIGHT for the profiles trace figures in fixed-scale mode, in cm
+    # of page. None/blank -> 3.0. Ignored when no trace/map scale is set.
+    trace_height_cm: float | None = None
     # output
     formats: tuple[str, ...] = ("png",)
     dpi: int = 300
@@ -355,10 +358,150 @@ def fit_axes_to_box(fig, ax, w_in: float, h_in: float, tol_in: float = 0.02, max
             return True
         fw, fh = fig.get_size_inches()
         fig.set_size_inches(max(fw + dw, 0.5), max(fh + dh, 0.5), forward=False)
-    _log.info(
+    _log.warning(
         "fit_axes_to_box: miss > %.3f in after %d iterations (kept last size)", tol_in, max_iter
     )
     return False
+
+
+@dataclass(frozen=True)
+class AxesMargins:
+    """Decoration extents around an axes box, in inches."""
+
+    left: float
+    right: float
+    top: float
+    bottom: float
+
+    def max_with(self, other: "AxesMargins") -> "AxesMargins":
+        return AxesMargins(
+            max(self.left, other.left),
+            max(self.right, other.right),
+            max(self.top, other.top),
+            max(self.bottom, other.bottom),
+        )
+
+
+def _ensure_agg(fig):
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+
+    if fig.canvas is None or not hasattr(fig.canvas, "get_renderer"):
+        FigureCanvasAgg(fig)
+
+
+def measure_axes_margins(fig, ax, extras=(), pad_in: float = 0.02) -> AxesMargins:
+    """Measure *ax*'s decoration margins (labels/ticks/title/offset text) in inches.
+
+    Draws once; *extras* are additional axes (e.g. a manually placed colorbar)
+    whose extents count toward this axes' decoration envelope. ``pad_in`` is a
+    small breathing margin added on every side.
+    """
+    _ensure_agg(fig)
+    fig.canvas.draw()
+    r = fig.canvas.get_renderer()
+    tb = ax.get_tightbbox(r)
+    for ex in extras:
+        if ex is not None:
+            tb = tb.union([tb, ex.get_tightbbox(r)])
+    bb = ax.get_window_extent(r)
+    d = fig.dpi
+    return AxesMargins(
+        left=max(0.0, (bb.x0 - tb.x0) / d) + pad_in,
+        right=max(0.0, (tb.x1 - bb.x1) / d) + pad_in,
+        top=max(0.0, (tb.y1 - bb.y1) / d) + pad_in,
+        bottom=max(0.0, (bb.y0 - tb.y0) / d) + pad_in,
+    )
+
+
+def apply_axes_margins(fig, ax, w_in: float, h_in: float, m: AxesMargins) -> None:
+    """Size *fig* to exactly margins+box and pin *ax* there. No iteration."""
+    fig.set_layout_engine("none")
+    fw, fh = m.left + w_in + m.right, m.bottom + h_in + m.top
+    fig.set_size_inches(fw, fh, forward=False)
+    ax.set_position([m.left / fw, m.bottom / fh, w_in / fw, h_in / fh])
+
+
+def place_axes_box(fig, ax, w_in, h_in, margins: AxesMargins | None = None, pad_in=0.02):
+    """Deterministically give *ax* an exactly (w_in, h_in)-inch box.
+
+    With ``margins=None``: place provisionally at the final box size (so tick
+    density is measured at the real geometry), measure the decorations, then
+    apply. With explicit *margins* (e.g. the max over a figure set): apply
+    directly. Returns the margins used. Exact by construction — replaces
+    ``fit_axes_to_box`` + ``set_box_aspect`` for the trace path, whose coupling
+    made the iterative fit stall and silently keep a wrong physical scale.
+    """
+    fig.set_layout_engine("none")
+    if margins is None:
+        apply_axes_margins(fig, ax, w_in, h_in, AxesMargins(1.2, 0.6, 0.8, 0.9))
+        margins = measure_axes_margins(fig, ax, pad_in=pad_in)
+    apply_axes_margins(fig, ax, w_in, h_in, margins)
+    return margins
+
+
+_TRACE_HEIGHT_CM_DEFAULT = 3.0
+
+
+def trace_height_cm(style: "PlotStyle | None") -> float:
+    """Defensive read of ``style.trace_height_cm``: positive finite float, else 3.0."""
+    v = getattr(style, "trace_height_cm", None)
+    if v is None or v == "":
+        return _TRACE_HEIGHT_CM_DEFAULT
+    try:
+        v = float(v)
+    except (TypeError, ValueError):
+        return _TRACE_HEIGHT_CM_DEFAULT
+    return v if (v > 0 and math.isfinite(v)) else _TRACE_HEIGHT_CM_DEFAULT
+
+
+def trace_fixed_box(style: "PlotStyle | None", length_um: float):
+    """Target trace box (w_in, h_in, effective_um_per_cm), or None when off.
+
+    Width = line length / trace-effective scale; height = the fixed
+    ``trace_height_cm`` (trace_aspect does NOT apply in fixed-scale mode).
+    Width clamps to 30 in, raising the effective scale like the map clamp.
+    """
+    s = trace_fixed_scale(style)
+    if s is None:
+        return None
+    if not math.isfinite(length_um) or length_um <= 0:
+        return None
+    w = length_um / s / 2.54
+    h = min(trace_height_cm(style) / 2.54, _MAX_FIXED_SIDE_IN)
+    if w > _MAX_FIXED_SIDE_IN:
+        s = s * (w / _MAX_FIXED_SIDE_IN)
+        w = _MAX_FIXED_SIDE_IN
+        _log.warning(
+            "trace fixed-scale box clamped to %.0f in wide; effective scale raised to %.4g um/cm",
+            _MAX_FIXED_SIDE_IN,
+            s,
+        )
+    return (w, h, s)
+
+
+def measured_box_in(fig, ax) -> tuple[float, float]:
+    """The axes box as actually rendered, in inches (draws once)."""
+    _ensure_agg(fig)
+    fig.canvas.draw()
+    bb = ax.get_window_extent(fig.canvas.get_renderer())
+    return (bb.width / fig.dpi, bb.height / fig.dpi)
+
+
+def box_drift_note(label: str, fig, ax, w_in, h_in, rel_tol: float = 0.005) -> str | None:
+    """None when the rendered box is within *rel_tol* of target; else a user note.
+
+    The no-silent-drift guard: callers append the note to the stage result
+    notes (GUI Results tab) and we log a WARNING. Never raises.
+    """
+    w, h = measured_box_in(fig, ax)
+    if abs(w - w_in) <= rel_tol * w_in and abs(h - h_in) <= rel_tol * h_in:
+        return None
+    msg = (
+        f"{label}: plot box rendered {w * 2.54:.2f}x{h * 2.54:.2f} cm, "
+        f"expected {w_in * 2.54:.2f}x{h_in * 2.54:.2f} cm — physical scale is off"
+    )
+    _log.warning(msg)
+    return msg
 
 
 def finalize_fixed_scale(
