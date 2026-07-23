@@ -38,15 +38,19 @@ from ..common.plotting import (
     GROUP_BY_KIND,
     PlotStyle,
     add_colorbar,
+    apply_axes_margins,
     apply_axes_mode,
     apply_text_scale,
+    box_drift_note,
     draw_scale_bar,
     fit_axes_to_box,
     fixed_scale_box,
+    measure_axes_margins,
     place_axes_box,
     style_from_params,
     styled_figure,
     trace_fixed_box,
+    trace_fixed_scale,
 )
 from ..config.models import Param, ParamType, StageSpec
 
@@ -525,6 +529,7 @@ def render_replot(h5_path, jobs, style, clim, out_dir, *, dpi=None, params=None)
     os.makedirs(out_dir, exist_ok=True)
     result = ProfilesResult(output_dir=out_dir, mode="parameter")
     used_stems: dict[str, int] = {}
+    trace_deferred: list = []
     with h5py.File(h5_path, "r") as f:
         for ji, job in enumerate(jobs):
             if not isinstance(job, dict) or "name" not in job:
@@ -549,7 +554,9 @@ def render_replot(h5_path, jobs, style, clim, out_dir, *, dpi=None, params=None)
                 style,
                 _noop,
                 clim=clim,
+                trace_deferred=trace_deferred,
             )
+    _flush_deferred_traces(trace_deferred, int(p["fig_dpi"]), result.notes)
     return result
 
 
@@ -1071,10 +1078,16 @@ def _save_traces(
     font_scale,
     dpi,
     style=None,
+    deferred=None,
+    notes=None,
 ):
-    # The PNG is always tight-cropped around box+labels; the plot box keeps
-    # `aspect` exactly (and, in fixed-scale mode, its physical width — a tight
-    # crop trims the canvas without rescaling the fitted box).
+    # Legacy mode (no fixed trace scale): the PNG is tight-cropped around
+    # box+labels; the plot box keeps `aspect` exactly. Fixed-scale mode never
+    # tight-crops — build_trace_figure already placed the axes at its own
+    # exact box+margins, and (when *deferred* is given) the figure is handed
+    # to _flush_deferred_traces for a second pass that re-places every figure
+    # of the invocation at the shared max margins before saving the exact
+    # canvas, so every trace PNG of one run/replot aligns in a grid.
     aspect_wh = parse_aspect(aspect)
     paths = []
     for fld in fields:
@@ -1089,22 +1102,73 @@ def _save_traces(
             font_scale=font_scale,
             style=style,
         )
-        fig.savefig(tr_png, dpi=dpi, facecolor="white", edgecolor="none", bbox_inches="tight")
+        box = trace_fixed_box(style, float(geom["L"]))
+        if box is not None:
+            if notes is not None and box[2] != trace_fixed_scale(style):
+                notes.append(
+                    f"{os.path.basename(tr_png)}: trace box clamped to 30 in — "
+                    f"effective scale raised to {box[2]:.4g} µm/cm"
+                )
+            if deferred is not None:
+                deferred.append((fig, box[0], box[1], tr_png))
+            else:
+                if notes is not None:
+                    note = box_drift_note(
+                        os.path.basename(tr_png), fig, fig.axes[0], box[0], box[1]
+                    )
+                    if note:
+                        notes.append(note)
+                fig.savefig(tr_png, dpi=dpi, facecolor="white", edgecolor="none")
+        else:
+            fig.savefig(tr_png, dpi=dpi, facecolor="white", edgecolor="none", bbox_inches="tight")
         paths.append(tr_png)
     return paths
+
+
+def _flush_deferred_traces(deferred, dpi, notes):
+    """Second pass for fixed-scale traces: re-place every figure of the
+    invocation with the shared max margins (so all PNGs align in a grid),
+    verify the box, save, close. First pass (build) already placed each
+    figure with its own margins, so single-figure consumers stay exact."""
+    if not deferred:
+        return
+    shared = None
+    for fig, w_in, h_in, _png in deferred:
+        m = measure_axes_margins(fig, fig.axes[0])
+        shared = m if shared is None else shared.max_with(m)
+    for fig, w_in, h_in, png in deferred:
+        apply_axes_margins(fig, fig.axes[0], w_in, h_in, shared)
+        note = box_drift_note(os.path.basename(png), fig, fig.axes[0], w_in, h_in)
+        if note:
+            notes.append(note)
+        fig.savefig(png, dpi=dpi, facecolor="white", edgecolor="none")
 
 
 # -----------------------------------------------------------------------------
 # Entry point
 # -----------------------------------------------------------------------------
 def _render_parameter_job(
-    f, job, ji, frac, p, result, used_stems, out_dir, style, progress, clim=None
+    f,
+    job,
+    ji,
+    frac,
+    p,
+    result,
+    used_stems,
+    out_dir,
+    style,
+    progress,
+    clim=None,
+    trace_deferred=None,
 ):
     """Render one parameter-mode job into *out_dir* (companion/traces/CSVs/
     overviews per the p-flags), appending to *result*. Shared verbatim by
     run() and render_replot() so the two paths cannot drift; *frac* is the
     precomputed progress fraction for this job's drop notes and *clim* is the
-    per-quantity override mapping threaded to _collect."""
+    per-quantity override mapping threaded to _collect. *trace_deferred*, when
+    given, collects fixed-scale trace figures for the caller to flush via
+    :func:`_flush_deferred_traces` once every job in the invocation is built,
+    so all trace PNGs of the run/replot share one set of margins."""
     ref_pref = p["reference_volume_id"] or ""
     restrict = [v.strip() for v in p["volume_ids"].split(",") if v.strip()] or None
     line_override = p["line_color"] or None
@@ -1155,6 +1219,8 @@ def _render_parameter_job(
             font_scale=trace_font_scale,
             dpi=dpi,
             style=style,
+            deferred=trace_deferred,
+            notes=result.notes,
         )
     if bool(p["save_csv"]):
         jr.csvs = _write_csvs(out_dir, stem, geom["distance"], fields)
@@ -1216,6 +1282,7 @@ def run(params: dict, progress: ProgressFn | None = None) -> ProfilesResult:
     # Same-named jobs default to the same stem — suffix later ones so a second
     # job on one slice cannot silently overwrite the first's files.
     used_stems: dict[str, int] = {}
+    trace_deferred: list = []
 
     with h5py.File(h5_path, "r") as f:
         for ji, job in enumerate(jobs):
@@ -1262,9 +1329,20 @@ def run(params: dict, progress: ProgressFn | None = None) -> ProfilesResult:
 
             # parameter mode
             _render_parameter_job(
-                f, job, ji, (ji + 0.5) / len(jobs), p, result, used_stems, out_dir, style, progress
+                f,
+                job,
+                ji,
+                (ji + 0.5) / len(jobs),
+                p,
+                result,
+                used_stems,
+                out_dir,
+                style,
+                progress,
+                trace_deferred=trace_deferred,
             )
 
+    _flush_deferred_traces(trace_deferred, int(p["fig_dpi"]), result.notes)
     progress(1.0, f"{mode}: {len(result.jobs)} job(s) -> {out_dir}")
     return result
 

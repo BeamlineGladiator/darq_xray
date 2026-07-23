@@ -355,6 +355,57 @@ def test_run_bad_trace_dimensions_raise(tmp_path, bad):
         PR.run(_base_params(h5, out, **bad))
 
 
+def _png_size(path):
+    import matplotlib.image as mpimg
+
+    img = mpimg.imread(path)
+    return img.shape[1], img.shape[0]  # (w_px, h_px)
+
+
+def test_run_fixed_scale_traces_share_height_and_margins(tmp_path):
+    h5 = tmp_path / "c.h5"
+    _write_consolidated(str(h5))
+    out = tmp_path / "prof"
+    jobs = (
+        '[{"name":"oblique_full","offset_um":0.0,"start_uv":[-5,-3],"end_uv":[5,3],'
+        '"n_samples":40,"width_pixels":1,"fig_name":"jobA"},'
+        '{"name":"oblique_full","offset_um":0.0,"start_uv":[-2,-1],"end_uv":[2,1],'
+        '"n_samples":40,"width_pixels":1,"fig_name":"jobB"}]'
+    )
+    res = PR.run(
+        _base_params(
+            h5,
+            out,
+            jobs_json=jobs,
+            plot_style={"trace_scale_um_per_cm": 2.0, "trace_height_cm": 3.0},
+        )
+    )
+    assert len(res.jobs) == 2
+    sizes = [_png_size(t) for jr in res.jobs for t in jr.traces]
+    heights = {h for _, h in sizes}
+    assert len(heights) == 1, sizes  # every trace PNG of the run: same pixel height
+    # widths track line length: jobA line is ~2.5x jobB's
+    wA = _png_size(res.jobs[0].traces[0])[0]
+    wB = _png_size(res.jobs[1].traces[0])[0]
+    assert wA > wB
+    # and no drift notes were emitted
+    assert not any("physical scale is off" in n for n in res.notes)
+
+
+def test_run_fixed_scale_clamp_appends_note(tmp_path):
+    h5 = tmp_path / "c.h5"
+    _write_consolidated(str(h5))
+    out = tmp_path / "prof"
+    res = PR.run(
+        _base_params(
+            h5,
+            out,
+            plot_style={"trace_scale_um_per_cm": 0.001, "trace_height_cm": 3.0},
+        )
+    )
+    assert any("clamped to 30 in" in n for n in res.notes), res.notes
+
+
 def _trace_box_inches(fig):
     """Draw *fig* on Agg and return the axes-box (w_in, h_in)."""
     from matplotlib.backends.backend_agg import FigureCanvasAgg

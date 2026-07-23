@@ -982,7 +982,7 @@ distance — reads clearly as a paper subfigure. Shape and style them with:
 |---|---|
 | `save_traces` | Write the separate per-field trace figures (default on). |
 | `save_companion` | Also write the old stacked companion figure (overview + all traces in one). Turn off for traces-only. |
-| `trace_aspect` | Aspect ratio `width:height` of the **plot box** (data area) — `4:3`, `1:1`, `16:9`, …; the plotted rectangle keeps this ratio exactly, regardless of label/title margins. The saved PNG is always tight-cropped around the box + labels. **Ignored while a fixed scale (Scale/Trace scale µm/cm) is set** — see below. |
+| `trace_aspect` | Aspect ratio `width:height` of the **plot box** (data area) — `4:3`, `1:1`, `16:9`, …; the plotted rectangle keeps this ratio exactly, regardless of label/title margins. The saved PNG is tight-cropped around the box + labels (legacy mode only — see below for fixed-scale mode). **Ignored while a fixed scale (Scale/Trace scale µm/cm) is set** — see below. |
 | `trace_width_in` | Width of the trace figure canvas in inches (sets the overall scale; the plot box is inset from it by the label/title margins). **Ignored while a fixed scale (Scale/Trace scale µm/cm) is set** — the box width then comes from the line length at that scale and the box height from "Trace height (cm)", so the distance axis prints at the same µm-per-cm as the maps. |
 | `trace_linewidth` | Thickness (pt) of the plotted profile curve. |
 | `trace_color` | Colour of the curve and its std band (blank = default matplotlib blue). |
@@ -1177,14 +1177,24 @@ form.
 > longer shape the box in this mode, only the legacy (no fixed scale) trace
 > figures. Box placement is deterministic — the box is measured and set
 > exactly once, with no iterative fitting and no dependence on the saved
-> PNG's tight crop for correctness. While a scale is set, **Figure width is
+> PNG's tight crop for correctness — fixed-scale trace PNGs are no longer
+> tight-cropped at all; the saved canvas is exactly box + margins. While a
+> scale is set, **Figure width is
 > ignored for maps and Trace width is ignored for
 > traces**. Requested sides are clamped to 30 in — a typo scale (e.g. a
 > stray `0.001`) raises the effective scale instead of rendering a
-> 47000-pixel image. **Identical bars across different crops:** auto Bar
-> length still picks ~15 % of each crop's own extent, so it differs crop to
-> crop even at a fixed scale — set an explicit **Bar length** (e.g. 50 µm) as
-> well to get bars that match pixel-for-pixel across figures.
+> 47000-pixel image (and the Results notes flag it: "trace box clamped to 30
+> in — effective scale raised to …"). **Identical bars across different
+> crops:** auto Bar length still picks ~15 % of each crop's own extent, so it
+> differs crop to crop even at a fixed scale — set an explicit **Bar length**
+> (e.g. 50 µm) as well to get bars that match pixel-for-pixel across
+> figures. **Uniform margins across a run/replot:** all fixed-scale trace
+> PNGs produced by one run or replot share the same margins — sized to the
+> largest labels/title in that set — so they line up if you place several in
+> a grid or slideshow; re-rendering a different subset (or a single job) can
+> shift the margins slightly since the shared max is recomputed over
+> whatever was rendered. If the rendered box still misses its target after
+> that placement, a note appears in Results ("… physical scale is off").
 
 **Output**
 
