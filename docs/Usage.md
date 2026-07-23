@@ -1179,6 +1179,7 @@ form.
 | Figure width | `single` (3.5 in), `double` (7.0 in), or `auto` (keeps the stage's own figsize) |
 | Scale (µm/cm) | Fixed physical scale for **map** figures: µm of data per cm of page. Blank = off (default). Trace figures follow it too unless Trace scale overrides. |
 | Trace scale (µm/cm) | Separate fixed scale for the profiles **trace** figures only. Blank = follow Scale (µm/cm). **Hint:** traces usually need a *smaller* value than the maps — start at about half the map scale or less; at the map's own scale the trace box tends to come out too small. |
+| Trace height (cm) | Fixed height of every trace plot box, in cm of page — only takes effect once a fixed scale (Scale and/or Trace scale) is set. Blank = 3 cm (default). All traces of one run/replot share this height, so they align side-by-side; pairs with **Trace scale (µm/cm)**, which sets the box width via the line length. |
 
 > [!tip] Fixed physical scale across figures
 > Setting **Scale (µm/cm)** fits every map's data box (per-layer maps, slices,

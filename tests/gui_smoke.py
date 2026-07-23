@@ -467,6 +467,12 @@ def main() -> int:
         "Per-group tick-format combo must store the format value"
     )
 
+    # trace height knob writes through to the style (blank -> None -> 3.0 default)
+    sc._w_trace_height_cm.setText("4.5")
+    assert session_style.trace_height_cm == 4.5, session_style.trace_height_cm
+    sc._w_trace_height_cm.setText("")
+    assert session_style.trace_height_cm is None
+
     # ExportDialog constructed from the session style starts with that style.
     def _mk2(style):
         from matplotlib.figure import Figure as _Fig2

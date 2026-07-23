@@ -952,6 +952,29 @@ def test_render_single_overview_fits_fixed_scale(tmp_path, monkeypatch):
     assert calls == []
 
 
+def test_render_single_appends_drift_note_on_forced_miss(tmp_path, monkeypatch):
+    """render_single's overview drift guard: when fit_axes_to_box fails to place
+    the axes at the target box (forced here via monkeypatch to simulate a miss),
+    box_drift_note must catch the discrepancy and append a user-visible note."""
+    from dfxm.common.plotting import PlotStyle
+
+    # force fit_axes_to_box to do nothing so the guard must catch the miss
+    monkeypatch.setattr(PR, "fit_axes_to_box", lambda *a, **k: False)
+    ref, _fields, geom = _companion_inputs()
+    notes = []
+    PR.render_single(
+        ref,
+        geom,
+        "white",
+        str(tmp_path / "ov.png"),
+        "hdr",
+        100,
+        style=PlotStyle(scale_um_per_cm=20.0),
+        notes=notes,
+    )
+    assert notes and "physical scale is off" in notes[0]
+
+
 def test_companion_map_panel_bar_geometry_unchanged_without_scale_knob():
     """Without a fixed scale, the multi-panel companion is NOT fitted: the map
     panel's scale-bar keeps today's data-fraction thickness (the legacy path,

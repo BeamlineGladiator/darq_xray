@@ -164,6 +164,8 @@ class StyleControls(QWidget):
         self._w_scale_umcm.setText(f"{_sv:g}" if _sv is not None else "")
         _tsv = _own_trace_scale(s)
         self._w_trace_scale_umcm.setText(f"{_tsv:g}" if _tsv is not None else "")
+        _thv = getattr(s, "trace_height_cm", None)
+        self._w_trace_height_cm.setText(f"{_thv:g}" if _thv is not None else "")
         for cb, name in zip(self._format_checkboxes, self._format_names):
             cb.setChecked(name in s.formats)
         self._w_dpi.setValue(s.dpi)
@@ -212,6 +214,7 @@ class StyleControls(QWidget):
             self._w_fig_width,
             self._w_scale_umcm,
             self._w_trace_scale_umcm,
+            self._w_trace_height_cm,
             self._w_fmt_png,
             self._w_fmt_pdf,
             self._w_fmt_svg,
@@ -577,6 +580,18 @@ class StyleControls(QWidget):
         self._w_trace_scale_umcm.textChanged.connect(self._on_trace_scale_umcm)
         form.addRow("Trace scale (µm/cm)", self._w_trace_scale_umcm)
 
+        self._w_trace_height_cm = QLineEdit()
+        self._w_trace_height_cm.setPlaceholderText("(blank = 3)")
+        _thv = getattr(s, "trace_height_cm", None)
+        if _thv is not None:
+            self._w_trace_height_cm.setText(f"{_thv:g}")
+        self._w_trace_height_cm.setToolTip(
+            "Fixed height of every trace plot box in cm of page. All traces of a run share "
+            "it, so they align side-by-side. Blank = 3 cm."
+        )
+        self._w_trace_height_cm.textChanged.connect(self._on_trace_height_cm)
+        form.addRow("Trace height (cm)", self._w_trace_height_cm)
+
         # --- Output section ---
         form.addRow(QLabel("<b>Output</b>"))
 
@@ -641,6 +656,20 @@ class StyleControls(QWidget):
                 if val <= 0:
                     val = None
         self._style.trace_scale_um_per_cm = val
+        self._emit()
+
+    def _on_trace_height_cm(self, text: str) -> None:
+        t = text.strip()
+        val: float | None = None
+        if t:
+            try:
+                val = float(t)
+            except ValueError:
+                val = None
+            else:
+                if val <= 0:
+                    val = None
+        self._style.trace_height_cm = val
         self._emit()
 
     def _on_formats_changed(self) -> None:

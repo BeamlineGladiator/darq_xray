@@ -994,7 +994,7 @@ def build_trace_figure(
     return fig
 
 
-def render_single(ref, geom, line_color, out_png, header, dpi, style=None):
+def render_single(ref, geom, line_color, out_png, header, dpi, style=None, notes=None):
     plane, u_um, v_um, attrs, label = ref
     ext_u = float(u_um[-1] - u_um[0])
     ext_v = float(v_um[-1] - v_um[0])
@@ -1025,6 +1025,10 @@ def render_single(ref, geom, line_color, out_png, header, dpi, style=None):
         apply_axes_mode(ax, style)
     if box is not None:
         fit_axes_to_box(fig, ax, box[0], box[1])
+        if notes is not None:
+            note = box_drift_note(os.path.basename(out_png), fig, ax, box[0], box[1])
+            if note:
+                notes.append(note)
     fig.savefig(out_png, dpi=dpi, facecolor="white", edgecolor="none", bbox_inches="tight")
 
 
@@ -1164,7 +1168,9 @@ def _write_csvs(out_dir, stem, distance, fields):
     return paths
 
 
-def _save_overviews(out_dir, stem, ref, fields, geom, off_used, line_override, dpi, style=None):
+def _save_overviews(
+    out_dir, stem, ref, fields, geom, off_used, line_override, dpi, style=None, notes=None
+):
     u_um, v_um = ref[1], ref[2]
     paths = []
     for fld in fields:
@@ -1177,7 +1183,9 @@ def _save_overviews(out_dir, stem, ref, fields, geom, off_used, line_override, d
             f"{fld['vid']}  @ offset {off_used:+.3f} µm",
         )
         color = auto_line_color(fld["attrs"]["cmap"], line_override)
-        render_single(ov_ref, geom, color, ov_png, fld["attrs"]["title"], dpi, style=style)
+        render_single(
+            ov_ref, geom, color, ov_png, fld["attrs"]["title"], dpi, style=style, notes=notes
+        )
         paths.append(ov_png)
     return paths
 
@@ -1357,7 +1365,16 @@ def _render_parameter_job(
         jr.csvs = _write_csvs(out_dir, stem, geom["distance"], fields)
     if bool(p["save_overview"]):
         jr.overviews = _save_overviews(
-            out_dir, stem, ref, fields, geom, off_used, line_override, dpi, style=style
+            out_dir,
+            stem,
+            ref,
+            fields,
+            geom,
+            off_used,
+            line_override,
+            dpi,
+            style=style,
+            notes=result.notes,
         )
     result.jobs.append(jr)
 
@@ -1450,7 +1467,9 @@ def run(params: dict, progress: ProgressFn | None = None) -> ProfilesResult:
                 )
                 out_png = os.path.join(out_dir, f"{stem}.png")
                 header = f"PREVIEW :: slice {name!r} offset {off_used:+.3f} µm"
-                render_single(ref, geom, color, out_png, header, dpi, style=style)
+                render_single(
+                    ref, geom, color, out_png, header, dpi, style=style, notes=result.notes
+                )
                 result.jobs.append(
                     ProfileJobResult(
                         name=name, offset_used_um=off_used, figure=out_png, job_index=ji
