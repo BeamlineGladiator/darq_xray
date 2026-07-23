@@ -720,7 +720,11 @@ def build_companion_figure(
     :func:`_build_companion_legacy`. When a fixed scale IS in effect, the
     companion is instead built on the deterministic left-aligned stack layout
     — the map panel at the map scale, trace panels styled exactly like the
-    standalone trace figures — see :func:`_build_companion_fixed`.
+    standalone trace figures — see :func:`_build_companion_fixed`. That fixed
+    path itself degrades back to :func:`_build_companion_legacy` (never
+    raises) when the reference plane's own extent is degenerate (zero-width,
+    single-point, or non-finite ``u_um``/``v_um`` — e.g. a pinned edge-of-ROI
+    plane) so the trace scale alone cannot fit a physical map box.
 
     *trace_opts* (fixed-scale path only) is ``{"linewidth": float, "color":
     str | None, "font_scale": float}``; ``None`` keeps the trace panels'
@@ -799,12 +803,23 @@ def _build_companion_legacy(
 
 def _build_companion_fixed(ref, fields, geom, line_color, style, trace_opts, notes):
     """Fixed-scale companion: map panel at the MAP scale, trace panels styled
-    exactly like the standalone trace figures, stacked left-aligned."""
+    exactly like the standalone trace figures, stacked left-aligned.
+
+    Falls back to :func:`_build_companion_legacy` (never raises) when the
+    reference plane's extent is degenerate and ``fixed_scale_box`` returns
+    ``None`` for the map panel — a plausible pinned edge-of-ROI plane."""
     ref_plane, u_um, v_um, ref_attrs, ref_label = ref
     topts = {"linewidth": 1.8, "color": None, "font_scale": 1.0, **(trace_opts or {})}
     ext_u, ext_v = float(u_um[-1] - u_um[0]), float(v_um[-1] - v_um[0])
     map_scale = fixed_scale(style) or trace_fixed_scale(style)
     mbox = fixed_scale_box(style, ext_u, ext_v, scale=map_scale)
+    if mbox is None:
+        # Degenerate reference-plane extent (zero-width/single-point/non-finite
+        # u_um or v_um — a plausible pinned edge-of-ROI plane): the map panel
+        # cannot be fitted to a physical scale even though the trace scale is
+        # set. Degrade to the legacy layout rather than indexing a None box —
+        # guards in this module never raise (see fixed_scale/trace_fixed_box).
+        return _build_companion_legacy(ref, fields, geom, line_color, style)
     tbox = trace_fixed_box(style, float(geom["L"]))
     fig = styled_figure((10.0, 10.0), styled=True)
     fig.set_layout_engine("none")
@@ -878,7 +893,11 @@ def _build_companion_fixed(ref, fields, geom, line_color, style, trace_opts, not
 def save_companion_figure(
     ref, fields, geom, line_color, out_png, dpi, style=None, trace_opts=None, notes=None
 ):
-    """Build a companion figure (legacy look when *style* is None) and save it."""
+    """Build a companion figure (legacy look when *style* is None) and save it.
+
+    *trace_opts*/*notes* are forwarded to :func:`build_companion_figure`
+    unchanged — see there (fixed-scale path only; ignored on the legacy path).
+    """
     build_companion_figure(
         ref, fields, geom, line_color, style=style, trace_opts=trace_opts, notes=notes
     ).savefig(out_png, dpi=dpi, facecolor="white", edgecolor="none")

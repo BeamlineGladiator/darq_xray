@@ -1040,6 +1040,23 @@ def test_companion_without_fixed_scale_keeps_legacy_layout():
     assert abs(w2 - 9.0) < 1e-6  # styled-but-no-scale also legacy
 
 
+def test_companion_fixed_scale_degenerate_map_extent_falls_back_to_legacy():
+    """A fixed TRACE scale is set (so the dispatcher enters the fixed-scale
+    path) but the reference plane's own U extent is degenerate (zero-width —
+    a plausible pinned edge-of-ROI plane), so fixed_scale_box can't fit a
+    physical map box. Must degrade to the legacy layout, never raise."""
+    from dfxm.common.plotting import PlotStyle
+
+    ref, fields, geom = _companion_inputs()
+    plane, u, v, attrs, label = ref
+    degenerate_ref = (plane, np.array([u[0]]), v, attrs, label)  # ext_u == 0
+    st = PlotStyle(scale_um_per_cm=20.0, trace_scale_um_per_cm=2.0, trace_height_cm=3.0)
+    fig = PR.build_companion_figure(degenerate_ref, fields, geom, "white", style=st)
+    w, h = fig.get_size_inches()
+    assert abs(w - 9.0) < 1e-6  # legacy canvas, not a crash
+    assert abs(h - (4.8 + 1.85 * len(fields))) < 1e-6  # legacy height formula
+
+
 def test_clim_attrs_field_id_beats_group_fallback():
     attrs = {"kind": "strain", "vmin": -10.0, "vmax": 10.0}
     out = PR._clim_attrs(dict(attrs), "strain", {"strain": (-1.0, 1.0)})
