@@ -1253,11 +1253,12 @@ form.
 ## Figure builder
 
 > [!note] Work in progress
-> This chapter covers the **recipe file** and the **headless CLI** that
-> renders it. The in-app figure-builder editor (compose panels visually,
-> save/load recipes, live preview) is not wired into the GUI yet — for now a
-> recipe is a JSON file you write by hand or generate with a small script
-> against `dfxm.compose.recipe`.
+> This chapter covers the **recipe file**, the **headless CLI** that renders
+> it, and the in-app `FigureBuilderWindow` editor's own mechanics (outline
+> editing, live preview, save/load recipes) — but that window is not yet
+> reachable from the main GUI's menus, so for now a recipe is a JSON file you
+> write by hand, generate with a small script against `dfxm.compose.recipe`,
+> or build interactively once the window is opened by hand for testing.
 
 The figure builder (`dfxm/compose/`) assembles a **multi-panel publication
 figure** — several map/slice/trace panels from one or more stage outputs,
@@ -1293,6 +1294,26 @@ a composed figure looks consistent with the per-stage exports above.
   (a deleted file, a renamed dataset) never aborts the whole figure: it
   renders as a hatched grey box captioned with the reason, and the exit code
   reflects whether *any* panel had real data (see below).
+
+**In-app editor: live preview**
+
+The `FigureBuilderWindow`'s center pane shows a **live preview** of the
+composed figure — the exact figure that would be exported, not a re-fitted
+display copy. Every outline edit (add/move/delete/group/label a panel, row,
+column, spacer, or text cell) and every recipe load schedules a re-render
+300 ms after the last edit, so a burst of clicks re-renders once, not once
+per click. A **Refresh data** button forces an immediate re-render *and*
+drops the cached source-file readings first — normally a panel's h5 data is
+cached after the first read (so editing the layout, labels, or style stays
+fast even against large files), but that means a source file changed or
+deleted on disk after it was first read keeps showing its last-known data
+until you click Refresh data. A **notes bar** under the preview reports
+implied-scale/drift/placeholder notes from the render (semicolon-joined), or
+— if the recipe can't be composed at all (e.g. no panel has a physical scale
+to size from) — the error message plus its hint, without ever crashing the
+window. Clicking a panel in the preview selects that panel's node in the
+outline tree, mirroring the selection you'd otherwise make by hand before
+Label…/Delete/↑/↓.
 
 **Rendering from the command line**
 

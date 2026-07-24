@@ -117,3 +117,71 @@ def test_panel_picker_pins_loaded_h5_path_not_live_field_text(tmp_path):
     panels = dlg._build_panels()
     assert panels
     assert panels[0].source.h5_path == str(h5)
+
+
+# -- preview + cache ----------------------------------------------------------
+def _obl_recipe_panels(tmp_path):
+    import h5py
+    import numpy as np
+
+    h5 = tmp_path / "obl.h5"
+    with h5py.File(h5, "w") as f:
+        g = f.create_group("strain")
+        g.attrs.update(kind="strain", cbar_label="v", cmap="RdBu_r", title="s", vmin=-1, vmax=1)
+        sg = g.create_group("obl")
+        sg.create_dataset("slices", data=np.zeros((1, 4, 5), "f4"))
+        sg.create_dataset("u_um", data=np.linspace(0.0, 2.0, 5))
+        sg.create_dataset("v_um", data=np.linspace(0.0, 1.5, 4))
+        sg.create_dataset("offsets_um", data=np.array([0.0]))
+    from dfxm.compose.recipe import PanelDef, PanelSource
+
+    return [
+        PanelDef(
+            "a",
+            PanelSource(
+                str(h5), "slice_plane", {"volume_id": "strain", "slice_name": "obl", "plane": 0}
+            ),
+        )
+    ]
+
+
+def test_render_now_populates_preview_and_notes(tmp_path):
+    w = _win()
+    w.add_panels(_obl_recipe_panels(tmp_path))
+    res = w.render_now()
+    assert res is not None and res.n_rendered == 1
+    assert w._canvas is not None  # a live FigureCanvasQTAgg wrapping res.figure
+    assert w._canvas.figure is res.figure
+
+
+def test_render_error_lands_in_notes_bar_not_crash(tmp_path):
+    w = FigureBuilderWindow(lambda: {}, PlotStyle())  # NO scale anywhere
+    w.add_panels(_obl_recipe_panels(tmp_path))
+    res = w.render_now()
+    assert res is None
+    assert "scale" in w._notes_label.text().lower()
+    assert "hint" in w._notes_label.text().lower() or "Set Scale" in w._notes_label.text()
+
+
+def test_cache_survives_file_deletion_until_refresh(tmp_path):
+    w = _win()
+    panels = _obl_recipe_panels(tmp_path)
+    w.add_panels(panels)
+    assert w.render_now() is not None
+    os.remove(panels[0].source.h5_path)
+    res2 = w.render_now()  # served from cache
+    assert res2 is not None and res2.n_rendered == 1
+    w.refresh_data()  # cache cleared -> placeholder now
+    res3 = w.render_now()
+    assert res3 is not None and res3.n_rendered == 0
+    assert "placeholder" in w._notes_label.text()
+
+
+def test_click_preview_selects_outline_node(tmp_path):
+    w = _win()
+    w.add_panels(_obl_recipe_panels(tmp_path))
+    res = w.render_now()
+    ax = res.axes_by_id["a"]
+    w._on_preview_pick(ax)  # the slot the mpl button_press handler calls
+    item = w._tree.currentItem()
+    assert item is not None and "a" in item.text(0)

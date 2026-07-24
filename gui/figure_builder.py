@@ -1,19 +1,22 @@
-"""Publication figure-builder window (Phase B skeleton, Task 10).
+"""Publication figure-builder window (Phase B, Tasks 10-11).
 
 A non-modal window with a left sources+outline pane (Add panels…, the recipe
 outline tree, structural-edit buttons, and recipe file I/O), a center preview
-host and a right style pane — both placeholders here, filled in by Tasks
-11-12. Only the Qt-free recipe model (:mod:`dfxm.compose.recipe`) is imported
-at module level; the render/compose machinery (matplotlib-heavy) is left for
-the tasks that actually draw a preview.
+pane with a cached, debounced live render + notes bar (Task 11), and a right
+style pane — still a placeholder here, filled in by Task 12. Only the
+Qt-free recipe model (:mod:`dfxm.compose.recipe`) is imported at module
+level; the render/compose machinery (matplotlib-heavy) is imported lazily
+inside :meth:`FigureBuilderWindow.render_now`/`_show_figure` so importing
+this module stays light.
 """
 
 from __future__ import annotations
 
 import os
+from dataclasses import asdict
 from dataclasses import replace as dc_replace
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
     QDialog,
     QFileDialog,
@@ -53,17 +56,39 @@ class FigureBuilderWindow(QMainWindow):
     ``defaults_provider`` is a zero-arg callable the main window supplies —
     it closes over the live experiment + stage forms and returns the
     ``{stage: {...}}`` dict :class:`~gui.widgets.panel_picker.AddPanelDialog`
-    needs. ``style`` is the session's live :class:`~dfxm.common.plotting.PlotStyle`,
-    kept for the preview/style panes built in Tasks 11-12.
+    needs. ``style`` is the session's live :class:`~dfxm.common.plotting.PlotStyle`;
+    it seeds the new recipe's ``style`` override dict (so a fresh figure
+    already renders in the app's current look) and is kept around for the
+    style pane built in Task 12.
     """
 
     def __init__(self, defaults_provider, style: PlotStyle, parent=None) -> None:
         super().__init__(parent)
         self._defaults_provider = defaults_provider
         self._style = style
-        self._recipe = FigureRecipe("untitled", {}, ComposeStyle(), Row([]), [])
+        # Seed the new recipe's style overrides from the session's live style
+        # so a freshly opened builder (and any recipe built from here without
+        # ever touching Task 12's style pane) renders with the same look the
+        # rest of the GUI is using — recipe.style stays a plain JSON-safe dict
+        # (see FigureRecipe.style) so it round-trips through save/open intact.
+        self._recipe = FigureRecipe("untitled", asdict(style), ComposeStyle(), Row([]), [])
         self._dirty = False
         self._current_path: str | None = None
+
+        self._cache: dict = {}
+        self._canvas = None
+        self._result = None
+        self._preview_host = QWidget()
+        self._preview_layout = QVBoxLayout(self._preview_host)
+        self._preview_layout.setContentsMargins(0, 0, 0, 0)
+        self._notes_label = QLabel("")
+        self._notes_label.setWordWrap(True)
+        self._refresh_btn = QPushButton("Refresh data")
+        self._refresh_btn.clicked.connect(self.refresh_data)
+        self._debounce = QTimer(self)
+        self._debounce.setSingleShot(True)
+        self._debounce.setInterval(300)
+        self._debounce.timeout.connect(self.render_now)
 
         self._build_ui()
         self._rebuild_tree()
@@ -145,9 +170,9 @@ class FigureBuilderWindow(QMainWindow):
     def _build_center_pane(self) -> QWidget:
         pane = QWidget()
         layout = QVBoxLayout(pane)
-        label = QLabel("preview")
-        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(label)
+        layout.addWidget(self._refresh_btn)
+        layout.addWidget(self._preview_host, 1)
+        layout.addWidget(self._notes_label)
         return pane
 
     def _build_right_pane(self) -> QWidget:
@@ -209,6 +234,7 @@ class FigureBuilderWindow(QMainWindow):
         self._dirty = True
         self._rebuild_tree()
         self._update_title()
+        self.schedule_preview()
 
     # -- outline structural helpers --------------------------------------------
     def _parent_and_index(self, target):
@@ -323,6 +349,96 @@ class FigureBuilderWindow(QMainWindow):
             return
         self._after_mutation()
 
+    # -- preview: cached debounced render --------------------------------------
+    def schedule_preview(self) -> None:
+        """Restart the 300 ms debounce; the actual render runs on timeout."""
+        self._debounce.start()
+
+    def refresh_data(self) -> None:
+        """Drop the loader cache (stale/deleted source files) and re-render now."""
+        self._cache.clear()
+        self.render_now()
+
+    def render_now(self):
+        """Render the current recipe from ``self._cache`` right away.
+
+        Returns the :class:`~dfxm.compose.render.ComposeResult` on success, or
+        ``None`` if there was nothing to render or the render was refused —
+        either way the notes bar carries the explanation and the window never
+        crashes.
+        """
+        from dfxm.common.errors import StageUserError
+        from dfxm.compose.render import render_recipe
+
+        if not self._recipe.panels:
+            self._notes_label.setText("add panels to preview")
+            return None
+        try:
+            result = render_recipe(self._recipe, loader_cache=self._cache)
+        except StageUserError as exc:
+            hint = f"  Hint: {exc.hint}" if exc.hint else ""
+            self._notes_label.setText(f"cannot render: {exc}{hint}")
+            return None
+        except Exception as exc:  # noqa: BLE001 — preview must never crash the window
+            self._notes_label.setText(f"render failed: {exc}")
+            return None
+        self._show_figure(result.figure)
+        self._result = result
+        self._notes_label.setText("; ".join(result.notes) if result.notes else "")
+        return result
+
+    def _show_figure(self, figure) -> None:
+        """Swap in a fresh, undecorated ``FigureCanvasQTAgg`` for *figure*.
+
+        The composed figure is placed absolutely by the compose layout
+        solver, so it must never be re-laid-out by a display canvas — always
+        a new plain canvas here, never the themed :class:`~gui.widgets.mpl_canvas.MplCanvas`
+        (that would restyle/re-fit the white publication figure and break
+        WYSIWYG parity with the export).
+        """
+        from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
+
+        if self._canvas is not None:
+            self._preview_layout.removeWidget(self._canvas)
+            self._canvas.deleteLater()
+        self._canvas = FigureCanvasQTAgg(figure)
+        self._canvas.mpl_connect("button_press_event", self._on_preview_click)
+        self._preview_layout.addWidget(self._canvas, 1)
+        self._canvas.draw_idle()
+
+    def _on_preview_click(self, event) -> None:
+        if event.inaxes is not None:
+            self._on_preview_pick(event.inaxes)
+
+    def _on_preview_pick(self, ax) -> None:
+        """Select the outline node for the clicked axes (reverse ``axes_by_id``)."""
+        if self._result is None:
+            return
+        for pid, panel_ax in self._result.axes_by_id.items():
+            if panel_ax is ax:
+                self._select_outline_panel(pid)
+                return
+
+    def _select_outline_panel(self, pid: str) -> None:
+        """Find and select the tree item for panel id *pid*, if still present."""
+
+        def walk(item):
+            node = item.data(0, Qt.ItemDataRole.UserRole)
+            if isinstance(node, PanelRef) and node.panel_id == pid:
+                return item
+            for i in range(item.childCount()):
+                found = walk(item.child(i))
+                if found is not None:
+                    return found
+            return None
+
+        root = self._tree.topLevelItem(0)
+        if root is None:
+            return
+        item = walk(root)
+        if item is not None:
+            self._tree.setCurrentItem(item)
+
     # -- slots ------------------------------------------------------------------
     def _on_add_panels(self) -> None:
         defaults = self._defaults_provider()
@@ -387,6 +503,7 @@ class FigureBuilderWindow(QMainWindow):
         self._dirty = False
         self._rebuild_tree()
         self._update_title()
+        self.schedule_preview()
 
     def save_recipe_file(self, path: str) -> None:
         base_dir = os.path.dirname(os.path.abspath(path)) or None
