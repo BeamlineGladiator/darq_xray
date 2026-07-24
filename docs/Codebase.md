@@ -475,7 +475,7 @@ strain layers.
 
 Qt-free package for building multi-panel publication figures on top of the
 per-stage outputs (recipes, layout solver, adapters, render — later tasks add
-the solver/adapters/render pieces; this stub covers the schema module).
+the solver/render pieces; this covers the schema + panel-adapter modules).
 
 #### `recipe.py`
 
@@ -512,6 +512,67 @@ other `dfxm/compose` module builds on.
   `PanelSource.kind`, an unknown `ComposeStyle.scale_bar_mode`, a
   `label_template` with no `A`/`a` placeholder, or a non-positive
   `gutter_cm`/`padding_cm`.
+
+#### `adapters.py`
+
+The panel-kind registry: maps a recipe `PanelSource` to (a) a pure data loader
+reading only that panel's arrays from its h5 and (b) a draw call into a
+provided axes. Connects the `recipe.py` schema to the map/slice/profiles draw
+functions extracted in tasks 2/3 (`render.draw_map_layer`,
+`slices.draw_slice_axes`, `profiles.draw_reference_axes`/`draw_trace_axes`) so
+the solver/renderer (later tasks) can drive any panel kind uniformly. Heavy
+deps (`h5py`, the stage modules) are imported inside the loader/draw functions
+so `import dfxm.compose` stays light.
+- `PanelData` — dataclass produced by every loader: `kind` (a `PANEL_KINDS`
+  value, or `"placeholder"`), `ext_x_um`/`ext_y_um` (map/slice sizing inputs),
+  `length_um` (trace sizing input), `group` (quantity group, for shared
+  colorbars), `vmin`/`vmax` (default colour limits before any panel
+  override), `payload` (kind-specific draw inputs — the raw layer/plane
+  array, prep dict, `fld`/`geom`, etc.).
+- `load_panel(panel: PanelDef, *, cache=None) -> PanelData` — reads one
+  panel's data from its source h5 and applies its `roi` crop. **Never raises**
+  for a missing file/dataset/field — those become `kind="placeholder"` with
+  `payload["reason"]` describing why (the composed figure keeps going with a
+  hatched cell instead of crashing on one stale panel). Only a malformed
+  selector (unknown `PanelSource.kind`, or a `map_layer` selector missing/with
+  a bad `stage`) raises `StageUserError` — those are recipe-authoring bugs,
+  not data-availability issues. `cache`, when given, is a plain dict keyed by
+  `(h5_path, kind, selector, roi)` (JSON-serialized) so the GUI can skip a
+  re-read of an unchanged panel; a cache hit returns the exact same
+  `PanelData` instance.
+- Selector shapes per `PanelSource.kind` (documented in the module docstring
+  too):
+  - `map_layer`: `{"stage": "strain"|"mosaicity"|"rocking", "dataset": str,
+    "z": int, "sx": float?, "sy": float?}`. For `stage="strain"` the dataset
+    is fixed to `"strain"` and `sx`/`sy` default from the file attrs
+    `scale_x_um`/`scale_y_um` (falling back to 0.152/0.385); for
+    `mosaicity`/`rocking`, `sx`/`sy` default to 0.152/0.385 when omitted (the
+    GUI/recipe author is expected to supply the real values, matching the
+    replot defaults). Colour limits come from `mosaicity._streamed_clim`,
+    `rocking._replot_default_clim`, or `symmetric_limits` (strain)
+    respectively; the colormap group comes from `mosaicity._KEY_DISPLAY` /
+    a fixed `"raw"` (rocking) / `"strain"`.
+  - `slice_plane`: `{"volume_id": str, "slice_name": str, "plane": int}` —
+    mirrors `slices._rebuild_plane_figure`'s attrs-to-prep reconstruction and
+    ROI-cropping.
+  - `profiles_ref`: `{"job": dict, "field": str | None}` — runs
+    `profiles._collect` for the job; `field=None` picks the job's own
+    reference plane, otherwise the named field's plane is drawn instead (like
+    `profiles._save_overviews`'s `ov_ref`), still on the reference's `u_um`/`v_um`
+    axes.
+  - `profiles_trace`: `{"job": dict, "field": str}` — the named field's line
+    profile from the same `_collect` call.
+- `draw_panel(ax, panel, data, style, *, cax=None, colorbar=None,
+  scale_bar=None, fixed_scale_um_per_cm=None, show_xlabel=True,
+  show_title=False)` — dispatches on `data.kind` to the matching draw
+  function, applying `panel.clim`/`panel.cmap` overrides over `data`'s
+  defaults first. Titles are OFF by default in composed figures
+  (`panel.show_title=True`, or the `show_title` kwarg, re-enables); returns
+  the `AxesImage` for `map_layer`/`slice_plane`/`profiles_ref`, or `None` for
+  `profiles_trace` and `"placeholder"`.
+- `draw_placeholder(ax, reason: str) -> None` — a hatched grey cell (no ticks,
+  a centred "unavailable" caption) for a panel whose data could not be
+  loaded — the never-crash fallback `load_panel`/`draw_panel` route to.
 
 ### `dfxm/runner.py` — the process worker
 
