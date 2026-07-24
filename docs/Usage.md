@@ -1277,6 +1277,9 @@ a composed figure looks consistent with the per-stage exports above.
   plane, or a `profiles` job's reference image/line trace) plus optional
   per-panel overrides (ROI crop, colour limits, colormap, label text, its own
   physical scale). A recipe can mix panels from several different h5 files.
+  A `profiles_ref` panel's ROI crop only trims the displayed image — the
+  analysis line overlay keeps the job's own endpoints and simply clips at the
+  crop's edge when the line runs past it, rather than resizing the panel.
 - **Rows/Cols** — the layout tree nests `Row`/`Col` containers (each holding
   panels, spacers, text cells, or further rows/columns) to arrange panels
   side-by-side or stacked; a `Row`/`Col` can also pin a height/width, carry a

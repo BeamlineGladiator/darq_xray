@@ -975,6 +975,39 @@ def test_render_single_appends_drift_note_on_forced_miss(tmp_path, monkeypatch):
     assert notes and "physical scale is off" in notes[0]
 
 
+def test_draw_reference_image_pins_view_when_line_exits_a_cropped_frame():
+    """A line overlay computed from the job's full (pre-crop) geometry can run
+    past a caller-cropped plane's own u/v extent — e.g. the figure-composer's
+    profiles_ref ROI crop. The axes view must stay pinned to the plotted
+    extent (the line simply clips at the frame edge); matplotlib's default
+    autoscale-on-add previously widened xlim/ylim to include the out-of-frame
+    endpoint, which — under aspect="equal" — silently shrank the rendered box
+    below its intended fixed-scale size (found via the fig2 acceptance test)."""
+    u = np.linspace(-15.0, 9.5, 50)  # a cropped sub-range of a larger axis
+    v = np.linspace(-10.0, 9.5, 40)
+    uu, vv = np.meshgrid(u, v)
+    plane = (uu + vv).astype(np.float64)
+    # the line's own geometry is computed on the FULL (uncropped) domain and
+    # its far endpoint (15.0) lies outside the cropped u range above
+    geom = PR.line_geometry(
+        np.linspace(-20.0, 20.0, 81),
+        np.linspace(-15.0, 15.0, 61),
+        (-15.0, -9.0),
+        (15.0, 9.0),
+        40,
+        1,
+        0.5,
+    )
+    from matplotlib.figure import Figure
+
+    attrs = {"cmap": "gray", "vmin": -20.0, "vmax": 20.0}
+    fig = Figure()
+    ax = fig.add_subplot(111)
+    PR.draw_reference_axes(ax, plane, u, v, attrs, "cyan", geom=geom)
+    assert ax.get_xlim() == (u[0], u[-1])
+    assert ax.get_ylim() == (v[0], v[-1])
+
+
 def test_companion_map_panel_bar_geometry_unchanged_without_scale_knob():
     """Without a fixed scale, the multi-panel companion is NOT fitted: the map
     panel's scale-bar keeps today's data-fraction thickness (the legacy path,

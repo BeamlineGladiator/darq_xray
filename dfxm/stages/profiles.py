@@ -682,6 +682,18 @@ def _draw_reference_image(
         origin="lower",
         aspect="equal",
     )
+    # Pin the view to the image's own extent and turn off further autoscaling:
+    # the overlaid line (below) is computed from the job's full (pre-crop)
+    # geometry and can extend past a caller-supplied ROI crop (e.g. the
+    # figure-composer's profiles_ref ROI). Without this, matplotlib's default
+    # autoscale-on-add would widen xlim/ylim to include the out-of-frame line
+    # points, changing the data aspect ratio and — under aspect="equal" with
+    # adjustable="box" — shrinking the rendered axes box below its intended
+    # fixed-scale size (silent physical-scale drift). The line still draws;
+    # it is simply clipped at the frame edge, same as any other zoomed crop.
+    ax.set_xlim(extent[0], extent[1])
+    ax.set_ylim(extent[2], extent[3])
+    ax.set_autoscale_on(False)
     ax.set_xlabel("u (µm)")
     ax.set_ylabel("v (µm)")
     if title:
