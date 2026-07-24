@@ -809,6 +809,28 @@ anywhere (`fig.set_layout_engine("none")` throughout, same as `layout.py`).
   a content-dependent crop. The output filename stem is
   `re.sub(r"[^\w.-]+", "_", recipe.name or "figure")`.
 
+#### `__main__.py` — headless CLI (new)
+
+`python3 -m dfxm.compose render recipe.json -o outdir [--formats png,pdf,svg] [--dpi N]` —
+the CLI entry over `recipe_from_json`/`export_recipe`, no GUI required (the
+GUI-facing recipe editor is a later task).
+- `_main(argv: list[str] | None = None) -> int` — parses args with
+  `argparse` (subcommand `render`; `--formats` is a comma list, default ""
+  meaning "follow the recipe's own style"; `--dpi` overrides the style's
+  default), reads and parses the recipe file (`recipe_from_json`, `base_dir`
+  set to the recipe file's own directory so relative `h5_path`s resolve), then
+  `export_recipe`s it. **Exit-code contract**: `0` when at least one panel
+  rendered (placeholder/drift notes still print to stdout as `note: …` and are
+  not a failure); `1` when the figure exported but **every** panel was a
+  placeholder (`res.n_rendered == 0` — printed to stderr as
+  `error: no panel rendered (all placeholders)`); `2` on a `StageUserError`
+  (bad/missing/corrupt recipe, invalid `scale_bar_panel`, mixed-group shared
+  colorbar, etc.) — message then `hint: …` line, both to stderr, before any
+  file is written. Every written path is echoed to stdout as `wrote <path>`.
+  `if __name__ == "__main__": raise SystemExit(_main())` is the module's only
+  top-level statement — `_main` itself is import-safe and unit-testable
+  without a subprocess.
+
 ### `dfxm/runner.py` — the process worker
 
 Runs a stage in a **child process** and streams messages back; UI-agnostic.

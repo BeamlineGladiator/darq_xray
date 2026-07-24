@@ -26,6 +26,7 @@ aliases: [DFXM Pipeline Usage, Pipeline Guide, How to use the pipeline]
   - [[#Regions of interest — two windows, two frames]]
 - [[#The pipeline at a glance]]
 - [[#Stage reference]]
+- [[#Figure builder]]
 - [[#Interactive viewers]]
 - [[#Tips & troubleshooting]]
 - [[#Running without the GUI (CLI)]]
@@ -1249,6 +1250,75 @@ form.
 
 ---
 
+## Figure builder
+
+> [!note] Work in progress
+> This chapter covers the **recipe file** and the **headless CLI** that
+> renders it. The in-app figure-builder editor (compose panels visually,
+> save/load recipes, live preview) is not wired into the GUI yet — for now a
+> recipe is a JSON file you write by hand or generate with a small script
+> against `dfxm.compose.recipe`.
+
+The figure builder (`dfxm/compose/`) assembles a **multi-panel publication
+figure** — several map/slice/trace panels from one or more stage outputs,
+laid out together, sized to an exact physical page size — from a single
+**recipe file**, independent of any one stage's own export. It reuses the
+same panel-drawing code and `PlotStyle` as every other export in this app, so
+a composed figure looks consistent with the per-stage exports above.
+
+**Concepts**
+
+- **Recipe** — one JSON file (`dfxm.compose.recipe.FigureRecipe`) describing
+  a figure: a name, a `PlotStyle` override dict, composer-level settings
+  (label lettering, gutter/padding, scale-bar mode, an optional pinned total
+  width), a **layout tree**, and the list of **panels** the layout refers to.
+- **Panels** — each panel (`PanelDef`) points at one dataset inside a stage's
+  output h5 (`strain`/`mosaicity`/`rocking` map layer, an `oblique_slices.h5`
+  plane, or a `profiles` job's reference image/line trace) plus optional
+  per-panel overrides (ROI crop, colour limits, colormap, label text, its own
+  physical scale). A recipe can mix panels from several different h5 files.
+- **Rows/Cols** — the layout tree nests `Row`/`Col` containers (each holding
+  panels, spacers, text cells, or further rows/columns) to arrange panels
+  side-by-side or stacked; a `Row`/`Col` can also pin a height/width, carry a
+  group label (one letter for the whole group), or share a colorbar/x-axis
+  across its members.
+- **Physical scales** — like every other exported map (see the "Scale
+  (µm/cm)" control under [[#Publication export]] above), a panel's box can be
+  sized from an exact µm/cm scale rather than a fixed inch size, so panels
+  drawn from different crops still print at a common, comparable scale.
+- **Placeholders** — a panel whose source data can't be read at render time
+  (a deleted file, a renamed dataset) never aborts the whole figure: it
+  renders as a hatched grey box captioned with the reason, and the exit code
+  reflects whether *any* panel had real data (see below).
+
+**Rendering from the command line**
+
+```bash
+python3 -m dfxm.compose render recipe.json -o outdir
+python3 -m dfxm.compose render recipe.json -o outdir --formats png,pdf,svg --dpi 300
+```
+
+- `recipe.json` — the recipe file. Relative `h5_path`s inside it resolve
+  against the recipe file's own directory, so a recipe and the data it
+  points at can be moved together.
+- `-o/--out` — output directory (created if missing).
+- `--formats` — comma list of `png`/`pdf`/`svg` (default: whatever the
+  recipe's own style specifies).
+- `--dpi` — overrides the recipe's own DPI.
+- The output filename is the recipe's `name` (sanitised) plus the format
+  extension, e.g. `recipe.json` named `"demo"` → `outdir/demo.png`.
+
+Any implied-scale, drift, or placeholder note is printed to stdout as
+`note: …` — these are informational, not failures. The command's **exit
+code** is the pass/fail signal: `0` once at least one panel rendered for
+real; `1` if the figure was produced but every panel came out a placeholder;
+`2` if the recipe itself was rejected before anything rendered (invalid
+JSON, unknown recipe version, a layout `Row`/`Col` referencing a panel id
+that doesn't exist, an invalid `scale_bar_panel`, mismatched scales under a
+shared scale bar, …) — the error message and a hint print to stderr.
+
+---
+
 ## Interactive viewers
 
 > [!note] Loaded only when you ask
@@ -1303,9 +1373,17 @@ Every stage is also a headless command (handy for batch/scripting):
 ```bash
 python3 -m dfxm.stages.strain --help
 python3 -m dfxm.stages.mosaicity --root-folder /path/to/processed --folder-pattern '*_mosa__*'
+python3 -m dfxm.compose render recipe.json -o outdir --formats png,pdf,svg
 python3 -m pytest -q          # run the test suite
 ruff check . && ruff format . # lint + format
 ```
+
+`python3 -m dfxm.compose render` re-renders a **figure recipe** (see
+[[#Figure builder]]) without launching the GUI — handy for CI or a batch of
+figures from a script. Exit code `0` means at least one panel rendered
+(placeholder/drift notes still print); `1` means every panel was a
+placeholder; `2` means the recipe itself was rejected (bad JSON, unknown
+panel id, …) — the message and a hint print to stderr.
 
 ---
 
