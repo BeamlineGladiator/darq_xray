@@ -531,12 +531,16 @@ so `import dfxm.compose` stays light.
   array, prep dict, `fld`/`geom`, etc.).
 - `load_panel(panel: PanelDef, *, cache=None) -> PanelData` — reads one
   panel's data from its source h5 and applies its `roi` crop. **Never raises**
-  for a missing file/dataset/field — those become `kind="placeholder"` with
-  `payload["reason"]` describing why (the composed figure keeps going with a
-  hatched cell instead of crashing on one stale panel). Only a malformed
-  selector (unknown `PanelSource.kind`, or a `map_layer` selector missing/with
-  a bad `stage`) raises `StageUserError` — those are recipe-authoring bugs,
-  not data-availability issues. `cache`, when given, is a plain dict keyed by
+  for missing DATA (a file/dataset/field gone at render time) — those become
+  `kind="placeholder"` with `payload["reason"]` describing why (the composed
+  figure keeps going with a hatched cell instead of crashing on one stale
+  panel). A malformed SELECTOR raises `StageUserError` instead, checked before
+  any h5 access — those are recipe-authoring bugs, not data-availability
+  issues: an unknown `PanelSource.kind`; a `map_layer` selector with a bad/
+  missing `stage`, or (for `stage` `mosaicity`/`rocking`) missing `"dataset"`;
+  a `slice_plane` selector missing `"volume_id"` or `"slice_name"`; a
+  `profiles_ref` selector missing `"job"`; or a `profiles_trace` selector
+  missing `"job"` or `"field"`. `cache`, when given, is a plain dict keyed by
   `(h5_path, kind, selector, roi)` (JSON-serialized) so the GUI can skip a
   re-read of an unchanged panel; a cache hit returns the exact same
   `PanelData` instance.

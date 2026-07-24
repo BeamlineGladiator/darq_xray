@@ -2,8 +2,10 @@
 
 import h5py
 import numpy as np
+import pytest
 from matplotlib.figure import Figure
 
+from dfxm.common.errors import StageUserError
 from dfxm.compose.adapters import draw_panel, load_panel
 from dfxm.compose.recipe import PanelDef, PanelSource
 
@@ -122,6 +124,66 @@ def test_missing_file_and_missing_key_become_placeholders(tmp_path):
         )
     )
     assert d2.kind == "placeholder"
+
+
+def test_map_layer_mosaicity_missing_dataset_raises(tmp_path):
+    h5 = _write_mosa(tmp_path / "stack.h5")
+    p = PanelDef(
+        "m", PanelSource(h5, "map_layer", {"stage": "mosaicity", "z": 0, "sx": 1.0, "sy": 1.0})
+    )
+    with pytest.raises(StageUserError) as exc_info:
+        load_panel(p)
+    assert "dataset" in str(exc_info.value)
+    assert "dataset" in exc_info.value.hint
+
+
+def test_map_layer_rocking_missing_dataset_raises(tmp_path):
+    h5 = _write_mosa(tmp_path / "stack.h5")
+    p = PanelDef("m", PanelSource(h5, "map_layer", {"stage": "rocking", "z": 0}))
+    with pytest.raises(StageUserError) as exc_info:
+        load_panel(p)
+    assert "dataset" in str(exc_info.value)
+
+
+def test_slice_plane_missing_volume_id_raises(tmp_path):
+    h5 = _write_obl(tmp_path / "obl.h5")
+    p = PanelDef("p", PanelSource(h5, "slice_plane", {"slice_name": "obl", "plane": 0}))
+    with pytest.raises(StageUserError) as exc_info:
+        load_panel(p)
+    assert "volume_id" in str(exc_info.value)
+
+
+def test_slice_plane_missing_slice_name_raises(tmp_path):
+    h5 = _write_obl(tmp_path / "obl.h5")
+    p = PanelDef("p", PanelSource(h5, "slice_plane", {"volume_id": "strain", "plane": 0}))
+    with pytest.raises(StageUserError) as exc_info:
+        load_panel(p)
+    assert "slice_name" in str(exc_info.value)
+
+
+def test_profiles_ref_missing_job_raises(tmp_path):
+    h5 = _write_obl(tmp_path / "obl.h5")
+    p = PanelDef("r", PanelSource(h5, "profiles_ref", {"field": None}))
+    with pytest.raises(StageUserError) as exc_info:
+        load_panel(p)
+    assert "job" in str(exc_info.value)
+
+
+def test_profiles_trace_missing_job_raises(tmp_path):
+    h5 = _write_obl(tmp_path / "obl.h5")
+    p = PanelDef("t", PanelSource(h5, "profiles_trace", {"field": "strain"}))
+    with pytest.raises(StageUserError) as exc_info:
+        load_panel(p)
+    assert "job" in str(exc_info.value)
+
+
+def test_profiles_trace_missing_field_raises(tmp_path):
+    h5 = _write_obl(tmp_path / "obl.h5")
+    p = PanelDef("t", PanelSource(h5, "profiles_trace", {"job": JOB}))
+    with pytest.raises(StageUserError) as exc_info:
+        load_panel(p)
+    assert "field" in str(exc_info.value)
+    assert "field" in exc_info.value.hint
 
 
 def test_loader_cache_hit_skips_reread(tmp_path):

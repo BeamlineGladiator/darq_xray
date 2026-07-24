@@ -2,8 +2,11 @@
 
 Loaders are pure functions of (PanelSource, roi) so the GUI can cache results;
 heavy deps (h5py, stage modules) are imported inside functions. A loader never
-raises for missing files/keys — it returns a ``kind="placeholder"`` PanelData
-with the reason; only a malformed selector raises StageUserError.
+raises for missing DATA (file/dataset/field gone at render time) — it returns
+a ``kind="placeholder"`` PanelData with the reason. A malformed SELECTOR
+(a required key absent from ``selector``, checked before any h5 access)
+raises :class:`~dfxm.common.errors.StageUserError` instead — that is a
+recipe-authoring bug, not a data-availability issue.
 
 Selector shapes (per ``PanelSource.kind``):
 
@@ -90,6 +93,12 @@ def _load_map_layer(h5_path, sel, roi):
             f"map_layer selector needs stage strain/mosaicity/rocking (got {stage!r})",
             hint='Set selector["stage"], e.g. {"stage": "mosaicity", "dataset": ..., "z": 0}.',
         )
+    if stage != "strain" and "dataset" not in sel:
+        raise StageUserError(
+            f"map_layer selector for stage={stage!r} needs a dataset",
+            hint='Set selector["dataset"] to the HDF5 dataset path, '
+            f'e.g. {{"stage": {stage!r}, "dataset": "/chi/Center of mass", "z": 0}}.',
+        )
     if not os.path.exists(h5_path):
         raise FileNotFoundError(f"{h5_path} not found")
     with h5py.File(h5_path, "r") as f:
@@ -138,6 +147,13 @@ def _load_slice_plane(h5_path, sel, roi):
 
     from ..common.plotting import resolve_cmap
 
+    missing = [k for k in ("volume_id", "slice_name") if k not in sel]
+    if missing:
+        raise StageUserError(
+            f"slice_plane selector missing {', '.join(missing)}",
+            hint='Set selector["volume_id"] and selector["slice_name"], '
+            'e.g. {"volume_id": "strain", "slice_name": "obl", "plane": 0}.',
+        )
     if not os.path.exists(h5_path):
         raise FileNotFoundError(f"{h5_path} not found")
     vid, sname = sel["volume_id"], sel["slice_name"]
@@ -202,6 +218,11 @@ def _load_profiles_ref(h5_path, sel, roi):
 
     from ..stages import profiles
 
+    if "job" not in sel:
+        raise StageUserError(
+            "profiles_ref selector needs a job",
+            hint='Set selector["job"] to the profiles job dict, e.g. {"job": {...}, "field": None}.',
+        )
     if not os.path.exists(h5_path):
         raise FileNotFoundError(f"{h5_path} not found")
     job = sel["job"]
@@ -237,6 +258,13 @@ def _load_profiles_trace(h5_path, sel, roi):
 
     from ..stages import profiles
 
+    missing = [k for k in ("job", "field") if k not in sel]
+    if missing:
+        raise StageUserError(
+            f"profiles_trace selector missing {', '.join(missing)}",
+            hint='Set selector["job"] and selector["field"], '
+            'e.g. {"job": {...}, "field": "strain"}.',
+        )
     if not os.path.exists(h5_path):
         raise FileNotFoundError(f"{h5_path} not found")
     job = sel["job"]
