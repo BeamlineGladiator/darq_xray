@@ -40,7 +40,7 @@ def _main(argv: list[str] | None = None) -> int:
     if fmts is not None:
         bad = sorted(set(fmts) - _VALID_FORMATS)
         if bad:
-            print(f"error: unknown format(s) {', '.join(bad)!r}", file=sys.stderr)
+            print(f"error: unknown format(s) {', '.join(repr(b) for b in bad)}", file=sys.stderr)
             print(
                 f"hint: --formats must be a comma list from {sorted(_VALID_FORMATS)}.",
                 file=sys.stderr,

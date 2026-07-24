@@ -590,6 +590,13 @@ so `import dfxm.compose` stays light.
 - `draw_placeholder(ax, reason: str) -> None` — a hatched grey cell (no ticks,
   a centred "unavailable" caption) for a panel whose data could not be
   loaded — the never-crash fallback `load_panel`/`draw_panel` route to.
+- `_crop_uv(plane, u, v, roi)` — the shared 2-D-plane ROI-crop helper: a no-op
+  when `roi is None`, otherwise `crop_roi_2d`s the plane and clamps the ROI's
+  row/col indices to the plane's own bounds before slicing `u`/`v` to match
+  (an empty crop raises `ValueError`). Used by both `_load_slice_plane` and
+  `_load_profiles_ref` — a rename/dedup of what used to be a
+  `_load_slice_plane`-only inline block plus an identically-shaped
+  `_load_profiles_ref`-only `_crop_profiles_uv`.
 
 #### `layout.py` — sizing pass
 
@@ -765,8 +772,14 @@ anywhere (`fig.set_layout_engine("none")` throughout, same as `layout.py`).
   the pipeline, in order:
   1. `validate_recipe(recipe)`.
   2. `style = style_from_params({"plot_style": {**recipe.style, **(style_overrides or {})}}) or PlotStyle()`.
-  3. Load every panel (`load_panel(panel, cache=loader_cache)`) into a local
-     `panels_by_id`/`data_by_id` — placeholders substituted, never raised.
+  3. Load every panel — but only the ones the layout actually references:
+     `panels_by_id` covers every `recipe.panels` entry, while `data_by_id`
+     (`load_panel(panel, cache=loader_cache)`, placeholders substituted, never
+     raised) is built only over `live_pids` (`PanelRef.panel_id` values found
+     by walking `recipe.layout`). Any `PanelDef` not among them — a def a GUI
+     delete orphaned (see `FigureBuilderWindow.delete_selected`) — is **not
+     read from h5 at all**; a note lists them:
+     `"panel def(s) not referenced by the layout — skipped without loading: …"`.
   4. `size_cells(recipe, style, data_by_id, notes)` — a map/slice panel with a
      degenerate extent (e.g. an ROI crop down to a single row/column) comes
      back as a `"placeholder"`-kind `SizedCell` even though its `PanelData.kind`
@@ -811,11 +824,22 @@ anywhere (`fig.set_layout_engine("none")` throughout, same as `layout.py`).
      non-placeholder member just hides the bar axes (`set_axis_off()`) instead
      of leaving a blank default-ticked one. The bar's actual colourbar content
      (`add_colorbar(..., cax=bar_ax)`) is drawn *after* this stretch.
-  7. **Scale-bar mode** (`_resolve_scale_bar_kwargs`) — per
-     `compose.scale_bar_mode`: `"per-panel"` leaves every map's `scale_bar`
-     kwarg as `None` (follows `style.scale_bar`); `"one-panel"` sets `True`
-     only for `compose.scale_bar_panel` (unknown/missing id → `StageUserError`,
-     hint) and `False` elsewhere; `"gutter"` sets `False` everywhere and adds
+  7. **Scale-bar mode** (`_resolve_scale_bar_kwargs`, now takes the shared
+     `notes` list) — per `compose.scale_bar_mode`: `"per-panel"` leaves every
+     map's `scale_bar` kwarg as `None` (follows `style.scale_bar`);
+     `"one-panel"` validates `compose.scale_bar_panel` in three steps before
+     setting anything — unknown id → `StageUserError` ("is not a known panel
+     id"); a known id the layout doesn't place (`not in cell_by_pid`, e.g. an
+     orphan from step 3, or one simply never added to the layout) →
+     `StageUserError` ("is not placed in the layout"); a known, placed id whose
+     `PanelData.kind == "profiles_trace"` → `StageUserError` ("is a trace panel
+     — a scale bar needs a map panel", since a trace has no µm/cm map extent to
+     size a bar from). A known, placed, non-trace target that is itself a
+     `"placeholder"` (data unavailable, e.g. a missing h5) is not an authoring
+     error — it **degrades**: no panel gets a bar, and a note is appended
+     (`"scale-bar panel {id}: data unavailable (placeholder) — no scale bar
+     drawn"`). Otherwise sets `True` only for that target panel and `False`
+     elsewhere. `"gutter"` sets `False` everywhere and adds
      one more synthetic `Spacer` leaf (wrapping the whole working layout in a
      new root `Col`) whose content is a single shared scale bar sized for the
      one common effective µm/cm across every map panel (mismatched per-panel
@@ -878,10 +902,20 @@ anywhere (`fig.set_layout_engine("none")` throughout, same as `layout.py`).
   14. **Drift guard** — `box_drift_note` per panel axes against its final
       `SizedCell.w_in`/`h_in`, appended to `notes` (never raised).
 - `export_recipe(recipe, out_dir, *, formats=None, dpi=None, style_overrides=None, loader_cache=None) -> (list[str], ComposeResult)` —
-  calls `render_recipe`, then `fig.savefig(f"{out_dir}/{safe(recipe.name)}.{fmt}", dpi=dpi, facecolor="white")`
-  per format (`formats`/`dpi` default to the recipe's own style) — **no**
-  `bbox_inches`, so the saved file is exactly the solved figure geometry, not
-  a content-dependent crop. The output filename stem is
+  creates `out_dir` **first**, before rendering anything (`os.makedirs(out_dir,
+  exist_ok=True)` wrapped in a `try`/`except OSError`, re-raised as
+  `StageUserError` — message contains `"cannot create output directory …"`,
+  hint names the likely cause: permissions, read-only media, or a file
+  standing where the directory should be — so a bad output path fails fast
+  instead of after a full render). Then calls `render_recipe`, then
+  `fig.savefig(f"{out_dir}/{safe(recipe.name)}.{fmt}", dpi=dpi,
+  facecolor="white")` per format — **no** `bbox_inches`, so the saved file is
+  exactly the solved figure geometry, not a content-dependent crop. `formats`/
+  `dpi` fall back to the style built from `{**recipe.style,
+  **(style_overrides or {})}` — the same merge `render_recipe` itself uses —
+  so an export honours whatever `style_overrides` the caller (e.g. the figure
+  builder's live style pane) passed for the preview, not just the recipe's
+  saved style. The output filename stem is
   `re.sub(r"[^\w.-]+", "_", recipe.name or "figure")`.
 
 #### `__main__.py` — headless CLI (new)
@@ -902,19 +936,24 @@ in CI or a batch script).
   unhandled exception (`1`) would collide with the "all placeholders" exit
   code below. Then validates `--formats` against `_VALID_FORMATS` (an unknown
   format, e.g. `csv`, is rejected before any panel is loaded — `Figure.savefig`
-  would otherwise raise a raw `ValueError` deep inside `export_recipe`). Only
-  then does it parse the recipe (`recipe_from_json`, `base_dir` set to the
-  recipe file's own directory so relative `h5_path`s resolve) and
-  `export_recipe` it. **Exit-code contract**: `0` when at least one panel
-  rendered (placeholder/drift notes still print to stdout as `note: …` and are
-  not a failure); `1` when the figure exported but **every** panel was a
-  placeholder (`res.n_rendered == 0` — printed to stderr as
-  `error: no panel rendered (all placeholders)`); `2` for every input problem
-  caught before/without a real render — an unreadable recipe file
+  would otherwise raise a raw `ValueError` deep inside `export_recipe`); each
+  bad value is quoted **individually** in the message
+  (`', '.join(repr(b) for b in bad)` → `error: unknown format(s) 'jpg', 'tiff'`)
+  rather than quoting the whole joined string as one (which read as a single
+  malformed value, `'jpg, tiff'`). Only then does it parse the recipe
+  (`recipe_from_json`, `base_dir` set to the recipe file's own directory so
+  relative `h5_path`s resolve) and `export_recipe` it. **Exit-code contract**:
+  `0` when at least one panel rendered (placeholder/drift notes still print to
+  stdout as `note: …` and are not a failure); `1` when the figure exported but
+  **every** panel was a placeholder (`res.n_rendered == 0` — printed to stderr
+  as `error: no panel rendered (all placeholders)`); `2` for every input
+  problem caught before/without a real render — an unreadable recipe file
   (`error: cannot read recipe file: …`), an unknown `--formats` value
-  (`error: unknown format(s) …`), or a `StageUserError` from parsing/validating/
-  rendering the recipe itself (corrupt/unsupported-version JSON, invalid
-  `scale_bar_panel`, mixed-group shared colorbar, etc.) — message then
+  (`error: unknown format(s) …`), an output directory that cannot be created
+  (e.g. a file stands in its way — `export_recipe` raises `StageUserError`,
+  caught by the same handler as any other), or a `StageUserError` from parsing/
+  validating/rendering the recipe itself (corrupt/unsupported-version JSON,
+  invalid `scale_bar_panel`, mixed-group shared colorbar, etc.) — message then
   `hint: …` line, both to stderr, before any file is written. Every written
   path is echoed to stdout as `wrote <path>`.
   `if __name__ == "__main__": raise SystemExit(_main())` is the module's only

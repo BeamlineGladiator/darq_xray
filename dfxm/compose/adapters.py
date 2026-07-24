@@ -173,17 +173,7 @@ def _load_slice_plane(h5_path, sel, roi):
         u = sg["u_um"][:]
         v = sg["v_um"][:]
         off = float(sg["offsets_um"][k])
-    if roi is not None:
-        cropped = crop_roi_2d(s2d, roi)
-        if cropped is None:
-            raise ValueError(f"ROI {roi} crops to an empty plane")
-        r0, r1, c0, c1 = roi
-        h, w = s2d.shape[:2]
-        r0 = max(0, min(int(r0), h))
-        r1 = max(0, min(int(r1), h))
-        c0 = max(0, min(int(c0), w))
-        c1 = max(0, min(int(c1), w))
-        s2d, u, v = cropped, u[c0:c1], v[r0:r1]
+    s2d, u, v = _crop_uv(s2d, u, v, roi)
     group = GROUP_BY_KIND.get(kind)
     prep["group"] = group
     prep["cmap_name"] = resolve_cmap(None, group, fallback=prep["cmap_name"])
@@ -198,7 +188,11 @@ def _load_slice_plane(h5_path, sel, roi):
     )
 
 
-def _crop_profiles_uv(plane, u, v, roi):
+def _crop_uv(plane, u, v, roi):
+    """Crop *plane* (and its ``u``/``v`` axis arrays) to *roi*, clamping
+    out-of-range indices to the plane's own bounds. ``roi is None`` is a
+    no-op. Shared by ``_load_slice_plane`` and ``_load_profiles_ref`` — the
+    two adapters that read a 2-D plane straight out of an h5 dataset."""
     if roi is None:
         return plane, u, v
     cropped = crop_roi_2d(plane, roi)
@@ -240,7 +234,7 @@ def _load_profiles_ref(h5_path, sel, roi):
             plane, attrs = fld["plane"], fld["attrs"]
         else:
             plane, attrs = ref_plane, ref_attrs
-    plane, u, v = _crop_profiles_uv(plane, u_um, v_um, roi)
+    plane, u, v = _crop_uv(plane, u_um, v_um, roi)
     color = profiles.auto_line_color(attrs["cmap"], None)
     return PanelData(
         kind="profiles_ref",

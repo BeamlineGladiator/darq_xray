@@ -117,3 +117,24 @@ def test_cli_partial_success_exits_zero(tmp_path, capsys):
     assert rc == 0
     assert os.path.exists(out / "demo.png")
     assert "placeholder" in capsys.readouterr().out
+
+
+def test_cli_uncreatable_out_dir_exits_two(tmp_path, capsys):
+    h5 = _write_obl(tmp_path / "obl.h5")
+    rp = tmp_path / "r.json"
+    rp.write_text(recipe_to_json(_two_panel_recipe(h5)))
+    blocker = tmp_path / "blocker"
+    blocker.write_text("file, not a directory")
+    rc = _main(["render", str(rp), "-o", str(blocker / "out")])
+    assert rc == 2
+    err = capsys.readouterr().err.lower()
+    assert "output directory" in err and "hint" in err
+
+
+def test_cli_multi_bad_formats_quoted_individually(tmp_path, capsys):
+    h5 = _write_obl(tmp_path / "obl.h5")
+    rp = tmp_path / "r.json"
+    rp.write_text(recipe_to_json(_two_panel_recipe(h5)))
+    rc = _main(["render", str(rp), "-o", str(tmp_path / "out"), "--formats", "png,jpg,tiff"])
+    assert rc == 2
+    assert "'jpg', 'tiff'" in capsys.readouterr().err

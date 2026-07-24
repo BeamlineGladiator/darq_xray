@@ -1365,10 +1365,12 @@ button:
   edit something else in the same panel.
 - **Export…** opens a directory picker and writes the recipe with
   `dfxm.compose.render.export_recipe` (the same formats/DPI the recipe's
-  style specifies, reusing the preview's loader cache so nothing already
-  read is re-read from disk); the notes bar reports how many files were
-  written and where, or the error and its hint if the recipe couldn't be
-  exported.
+  current style specifies — exactly what the live preview is showing you,
+  including any style-pane edits not yet saved into the recipe file — reusing
+  the preview's loader cache so nothing already read is re-read from disk);
+  the notes bar reports how many files were written and where, or the error
+  and its hint if the recipe couldn't be exported (including an output
+  directory that couldn't be created).
 
 **Rendering from the command line**
 
@@ -1394,13 +1396,16 @@ code** is the pass/fail signal: `0` once at least one panel rendered for
 real; `1` if the figure was produced but every panel came out a placeholder;
 `2` for anything that stops the render before it can produce a figure — an
 unreadable recipe file (bad path, permissions), a `--formats` value outside
-`png`/`pdf`/`svg`, or the recipe itself being rejected (invalid JSON, a file
-that isn't a figure recipe at all, unknown recipe version, a structurally
-malformed recipe — a hand-edited file with an unknown or missing field, a
-layout `Row`/`Col` referencing a panel id that doesn't exist or referencing
-the same panel more than once, an invalid `scale_bar_panel`, mismatched
-scales under a shared scale bar, …) — the error message and a hint print to
-stderr in every `2` case.
+`png`/`pdf`/`svg` (each bad value quoted individually, e.g.
+`unknown format(s) 'jpg', 'tiff'`), an output directory that cannot be created
+(e.g. a file stands in its way), or the recipe itself being rejected (invalid
+JSON, a file that isn't a figure recipe at all, unknown recipe version, a
+structurally malformed recipe — a hand-edited file with an unknown or missing
+field, a layout `Row`/`Col` referencing a panel id that doesn't exist or
+referencing the same panel more than once, an invalid `scale_bar_panel` —
+unknown, not placed in the layout, or a trace panel (a scale bar needs a map
+panel) — mismatched scales under a shared scale bar, …) — the error message
+and a hint print to stderr in every `2` case.
 
 ---
 
