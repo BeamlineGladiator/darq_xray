@@ -726,14 +726,22 @@ anywhere (`fig.set_layout_engine("none")` throughout, same as `layout.py`).
      then replace each non-placeholder member's `PanelDef` (a local copy —
      the caller's recipe is never mutated) with that unified `clim` and mark
      it colorbar-off. The bar itself is a synthetic solver cell: a `Spacer`
-     leaf sized `colorbar_fraction * first_member.w_in + 0.1` (or `.h_in` for
-     a `Row` group) by the members' summed content extent (+ internal
-     `gutter_cm` between them), with its own bare axes — `_build_working_layout`
-     rebuilds (never mutates) the recipe's layout tree, wrapping that group
-     node in a new `Row([group, bar_leaf])` (a `Col` group) or
-     `Col([group, bar_leaf])` (a `Row` group) at the same tree position. The
-     bar's actual colourbar content (`add_colorbar(..., cax=bar_ax)`) is drawn
-     *after* `place_tree`, once the bar axes has its real final position.
+     leaf whose PROVISIONAL box (`colorbar_fraction * first_member.w_in + 0.1`,
+     or `.h_in` for a `Row` group, by the members' summed content-box extent —
+     `first_member` is the first *non-placeholder* member) only reserves it a
+     slot in the tree — it omits each member's own decoration margins, which
+     `place_tree`'s per-Row/Col margin-sharing can make asymmetric besides, so
+     it under-counts the group's real span. `_build_working_layout` rebuilds
+     (never mutates) the recipe's layout tree, wrapping that group node in a
+     new `Row([group, bar_leaf])` (a `Col` group) or `Col([group, bar_leaf])`
+     (a `Row` group) at the same tree position. After `place_tree` (and any
+     pinned-width re-placement) has given every member axes its REAL final
+     position, `_stretch_shared_bar` corrects the bar axes to the group's
+     actual placed span (`min`/`max` over the members' `get_position()`, on
+     the shared axis) before its colourbar content is drawn — a group with no
+     non-placeholder member just hides the bar axes (`set_axis_off()`) instead
+     of leaving a blank default-ticked one. The bar's actual colourbar content
+     (`add_colorbar(..., cax=bar_ax)`) is drawn *after* this stretch.
   7. **Scale-bar mode** (`_resolve_scale_bar_kwargs`) — per
      `compose.scale_bar_mode`: `"per-panel"` leaves every map's `scale_bar`
      kwarg as `None` (follows `style.scale_bar`); `"one-panel"` sets `True`
@@ -742,10 +750,17 @@ anywhere (`fig.set_layout_engine("none")` throughout, same as `layout.py`).
      one more synthetic `Spacer` leaf (wrapping the whole working layout in a
      new root `Col`) whose content is a single shared scale bar sized for the
      one common effective µm/cm across every map panel (mismatched per-panel
-     scales → `StageUserError`, hint). Every map/slice/profiles-ref panel
-     draw also gets `fixed_scale_um_per_cm = ext_x_um / (cell.w_in * 2.54)` —
-     its own already-resolved effective scale — so a drawn scale bar's
-     thickness is pinned to true printed points regardless of mode.
+     scales → `StageUserError`, hint). The gutter cell's own box is a
+     practical minimum (`max(gutter_cm*4, 2cm)` × `max(gutter_cm*1.2, 0.6cm)`)
+     — **a deliberate deviation** from reusing `compose.gutter_cm` (the
+     between-cell spacing gutter, 0.5 cm by default) directly as the cell's
+     own width: that literal reading is far too narrow to hold the drawn bar
+     + its "`N µm`" label at any real font scale (the cell would clip its own
+     content), so a floor sized for legibility is used instead, still scaling
+     up with a larger `gutter_cm`. Drawn with a style FORCED to
+     `scale_bar_loc="center"`/`scale_bar_inset_pt=0.0` regardless of the
+     recipe's own style — a user's corner `scale_bar_loc` (meant for full-size
+     map panels) would clip inside this small dedicated cell.
   8. **Draw panel contents** — per `PanelRef` leaf, dispatched on
      `SizedCell.kind`: `"map"` panels needing a colourbar (not covered by a
      shared bar, `style.colorbar` on) get their own provisional `cax` axes
@@ -757,7 +772,12 @@ anywhere (`fig.set_layout_engine("none")` throughout, same as `layout.py`).
      `"trace"` panels get `show_xlabel=False` (label+tick-labels suppressed)
      for every leaf but the last under a `shared_x` `Col`; `"placeholder"`
      cells just draw the hatch. `show_title` is always `False` here (per-panel
-     `PanelDef.show_title` still re-enables it).
+     `PanelDef.show_title` still re-enables it). Every map panel's scale bar
+     is drawn with `scale_bar=False` HERE regardless of `compose.scale_bar_mode`
+     — whether one is wanted is only recorded (`scale_bar_wanted[pid]`); the
+     bar itself is drawn later (step 12) once the panel's box has its FINAL
+     size, so its baked printed-point thickness reflects the panel's real
+     effective µm/cm even after a pinned-width rescale (step 11) changes it.
   9. **Labels** — `_assign_labels`/`_draw_label`: depth-first auto-increment
      over `compose.label_template` (a `group_label` node consumes one slot for
      the whole group; a manual `PanelDef.label` replaces the slot's text;
@@ -769,10 +789,16 @@ anywhere (`fig.set_layout_engine("none")` throughout, same as `layout.py`).
       every cell's `w_in`/`h_in` by `factor = pinned_width_cm·cm→in / fig_w`,
       note each panel's new implied effective scale, re-run `measure_cells` +
       `place_tree` once, and note a residual miss > 2%.
-  12. Draw each shared bar's real colourbar content (`add_colorbar(cax=bar_ax)`,
-      picking the first member with real data as the source image/label) and
-      the gutter scale bar's content (`draw_scale_bar` with an xlim spanning
-      the gutter cell's own final width at the shared scale).
+  12. **Per-panel scale bars**, drawn now from FINAL cell sizes
+      (`fixed_scale_um_per_cm = ext_x_um / (cell.w_in * 2.54)`, recomputed
+      post-rescale) for every panel `scale_bar_wanted` (step 8) — this is the
+      first point a bar's true printed-point thickness is baked in. Then each
+      shared bar's real colourbar content (`_stretch_shared_bar` then
+      `add_colorbar(cax=bar_ax)`, picking the first member with real data as
+      the source image/label) and the gutter scale bar's content
+      (`draw_scale_bar` with an xlim spanning the gutter cell's own final
+      width at a shared µm/cm recomputed fresh from final cell sizes too, same
+      rescale concern as the per-panel bars).
   13. `TextCell` contents (centred text in its now-placed axes).
   14. **Drift guard** — `box_drift_note` per panel axes against its final
       `SizedCell.w_in`/`h_in`, appended to `notes` (never raised).

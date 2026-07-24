@@ -214,7 +214,22 @@ def _apply_shared_colorbars(recipe, style, panels_by_id, data_by_id, cells, fig)
                     no_colorbar_pids.add(pid)
 
         member_cells = [cells[id(m)] for m in members]
-        first = member_cells[0]
+        # Basis for the bar's cross-dimension: the first non-placeholder member
+        # when one exists (a placeholder's box is the fixed PLACEHOLDER_CM
+        # fallback, not representative of the group's real content size).
+        first = next(
+            (c for c, d in zip(member_cells, member_data) if d.kind != "placeholder"),
+            member_cells[0],
+        )
+        # This box only reserves the solver's PROVISIONAL space for the bar
+        # (content-box sums, no member decoration margins) — it is what lets
+        # size_cells/place_tree give the bar a slot in the tree at all. The
+        # bar's real cross-dimension is corrected after place_tree to the
+        # group's ACTUAL placed envelope (member margins included), see
+        # `_stretch_shared_bar` — a raw content-box sum under-counts the real
+        # span by each member's own top/bottom (or left/right) decoration
+        # margins, which is exactly what left the bar short of the group in
+        # the pre-fix geometry.
         if isinstance(node, Col):
             content_h = sum(c.h_in for c in member_cells) + gutter_in * max(
                 0, len(member_cells) - 1
@@ -233,6 +248,33 @@ def _apply_shared_colorbars(recipe, style, panels_by_id, data_by_id, cells, fig)
         cells[id(bar_leaf)] = SizedCell(bar_leaf, None, "spacer", bar_w_in, bar_h_in, ax=bar_ax)
         bar_specs.append((node, grp, pids, bar_leaf, bar_ax))
     return no_colorbar_pids, bar_specs
+
+
+def _stretch_shared_bar(node, pids, bar_ax, axes_by_id, data_by_id):
+    """Stretch/reposition *bar_ax* to the group's REAL placed span.
+
+    `_apply_shared_colorbars` sizes the bar leaf from a content-box sum before
+    placement (a provisional reservation — see the comment there); the real
+    placed envelope of a Row/Col of panels also includes each member's own
+    measured decoration margins (tick labels, title, etc.), which
+    `place_tree`'s margin-sharing can make asymmetric besides. Calling this
+    once placement is final (member axes have their true
+    ``get_position()``) makes the bar span exactly the group's real top/bottom
+    (a Col group) or left/right (a Row group) instead of drifting short.
+    """
+    member_axes = [axes_by_id[pid] for pid in pids if data_by_id[pid].kind != "placeholder"]
+    if not member_axes:
+        bar_ax.set_axis_off()
+        return
+    bpos = bar_ax.get_position()
+    if isinstance(node, Col):
+        top = max(ax.get_position().y1 for ax in member_axes)
+        bottom = min(ax.get_position().y0 for ax in member_axes)
+        bar_ax.set_position([bpos.x0, bottom, bpos.width, top - bottom])
+    else:
+        left = min(ax.get_position().x0 for ax in member_axes)
+        right = max(ax.get_position().x1 for ax in member_axes)
+        bar_ax.set_position([left, bpos.y0, right - left, bpos.height])
 
 
 def _wrap_bar_node(node, bar_leaf):
@@ -292,6 +334,16 @@ def _resolve_scale_bar_kwargs(recipe, panels_by_id, data_by_id, cell_by_pid):
             )
         if effs:
             gutter_scale = next(iter(effs))
+            # Deliberate deviation from the brief's literal sizing ("xlim
+            # spanning gutter_in * 2.54 * shared_scale" reads as: reuse
+            # compose.gutter_cm — the between-cell spacing gutter, 0.5 cm by
+            # default — directly as the cell's own width). That is too narrow
+            # to hold the drawn bar + its "N µm" label at any reasonable font
+            # scale; the cell would clip its own content. Use a practical
+            # minimum box instead (still derived from gutter_cm so a larger
+            # gutter setting still grows it) — the µm-per-cm SPAN drawn inside
+            # (`span = gcell.w_in * 2.54 * gutter_scale`, right where the brief
+            # calls for it) still comes from this cell's real final width.
             gutter_w_cm = max(recipe.compose.gutter_cm * 4.0, 2.0)
             gutter_h_cm = max(recipe.compose.gutter_cm * 1.2, 0.6)
             gutter_leaf = Spacer(gutter_w_cm, gutter_h_cm)
@@ -365,6 +417,13 @@ def render_recipe(
 
     hide_xlabel_pids = _resolve_show_xlabel(recipe, data_by_id)
 
+    # Per-panel scale bars are deliberately NOT drawn here — see the deferred
+    # loop after placement below (a pinned_width_cm rescale changes every
+    # panel's true effective µm/cm, so baking the bar's thickness from the
+    # pre-placement cell size would leave it wrong at final size). We only
+    # record here WHETHER a bar is wanted, matching draw_map_layer's own
+    # "explicit bool overrides, None follows style.scale_bar" convention.
+    scale_bar_wanted: dict[str, bool] = {}
     im_by_pid: dict[str, object] = {}
     for leaf in leaves:
         if not isinstance(leaf, PanelRef):
@@ -376,8 +435,8 @@ def render_recipe(
         ax = cell.ax
 
         if cell.kind == "map":
-            fixed_scale_um_per_cm = data.ext_x_um / (cell.w_in * 2.54) if cell.w_in else None
-            scale_bar_kw = scale_bar_by_pid.get(pid)
+            scale_bar_pref = scale_bar_by_pid.get(pid)
+            scale_bar_wanted[pid] = style.scale_bar if scale_bar_pref is None else scale_bar_pref
             cax = None
             if pid in no_colorbar_pids:
                 colorbar_kw = False
@@ -394,8 +453,8 @@ def render_recipe(
                 style,
                 cax=cax,
                 colorbar=colorbar_kw,
-                scale_bar=scale_bar_kw,
-                fixed_scale_um_per_cm=fixed_scale_um_per_cm,
+                scale_bar=False,
+                fixed_scale_um_per_cm=None,
                 show_title=False,
             )
             im_by_pid[pid] = im
@@ -440,7 +499,25 @@ def render_recipe(
                 f"rendered {fig_w * 2.54:.4g} cm"
             )
 
+    # Per-panel scale bars, drawn NOW (final geometry) — see the note at the
+    # draw loop above for why this can't happen before placement.
+    for pid, want in scale_bar_wanted.items():
+        if not want:
+            continue
+        cell = cell_by_pid[pid]
+        if not cell.w_in:
+            continue
+        d = data_by_id[pid]
+        final_eff = d.ext_x_um / (cell.w_in * 2.54)
+        draw_scale_bar(
+            axes_by_id[pid], style.scale_bar_length_um, style=style, fixed_scale_um_per_cm=final_eff
+        )
+
     for node, grp, pids, _bar_leaf, bar_ax in bar_specs:
+        # Stretch the bar to the group's REAL placed span before drawing its
+        # content — the provisional box from `_apply_shared_colorbars` only
+        # reserved solver space (see the comment there).
+        _stretch_shared_bar(node, pids, bar_ax, axes_by_id, data_by_id)
         rep_pid = next((pid for pid in pids if im_by_pid.get(pid) is not None), None)
         if rep_pid is not None:
             add_colorbar(
@@ -454,12 +531,35 @@ def render_recipe(
             )
 
     if gutter_leaf is not None and gutter_scale is not None:
+        # Recompute the shared scale FRESH from final cell sizes (a
+        # pinned_width_cm rescale after `_resolve_scale_bar_kwargs` ran would
+        # otherwise leave `gutter_scale` stale, same issue as the per-panel
+        # bars above); all map panels were rescaled by the same factor, so the
+        # common value is preserved, just recomputed at the final size.
+        map_pids_final = [
+            pid
+            for pid, d in data_by_id.items()
+            if d.kind in ("map_layer", "slice_plane", "profiles_ref")
+        ]
+        effs_final = {
+            round(data_by_id[pid].ext_x_um / (cell_by_pid[pid].w_in * 2.54), 6)
+            for pid in map_pids_final
+            if cell_by_pid[pid].w_in
+        }
+        gutter_scale = (
+            next(iter(effs_final), gutter_scale) if len(effs_final) == 1 else gutter_scale
+        )
         gcell = cells[id(gutter_leaf)]
         gax = gcell.ax
         span = gcell.w_in * 2.54 * gutter_scale
         gax.set_xlim(0, span if span > 0 else 1.0)
         gax.set_ylim(0, 1)
-        draw_scale_bar(gax, None, style=style, fixed_scale_um_per_cm=gutter_scale)
+        # Force a sensible, non-clipping placement in the narrow dedicated
+        # gutter cell — the brief calls for this explicitly ("loc forced
+        # sensible via the style"); an arbitrary corner loc from the user's
+        # style (meant for full-size map panels) can clip in this small box.
+        gutter_style = dc_replace(style, scale_bar_loc="center", scale_bar_inset_pt=0.0)
+        draw_scale_bar(gax, None, style=gutter_style, fixed_scale_um_per_cm=gutter_scale)
 
     for leaf in leaves:
         if isinstance(leaf, TextCell):

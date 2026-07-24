@@ -5,6 +5,8 @@ import os
 import h5py
 import numpy as np
 import pytest
+from matplotlib.offsetbox import AnchoredOffsetbox
+from matplotlib.patches import Rectangle
 
 from dfxm.common.errors import StageUserError
 from dfxm.compose.recipe import (
@@ -17,6 +19,29 @@ from dfxm.compose.recipe import (
     Row,
 )
 from dfxm.compose.render import export_recipe, render_recipe
+
+
+def _scale_bar_box(ax):
+    """The AnchoredOffsetbox draw_scale_bar attaches to *ax*, or None."""
+    for a in ax.get_children():
+        if isinstance(a, AnchoredOffsetbox):
+            return a
+    return None
+
+
+def _scale_bar_rect(ax):
+    """The scale bar's data-space Rectangle (thickness = get_height()), or None."""
+    box = _scale_bar_box(ax)
+    if box is None:
+        return None
+    stack = [box.get_child()]
+    while stack:
+        node = stack.pop()
+        if isinstance(node, Rectangle):
+            return node
+        if hasattr(node, "get_children"):
+            stack.extend(node.get_children())
+    return None
 
 
 def _write_obl(path):
@@ -117,6 +142,57 @@ def test_shared_colorbar_unified_clim_and_single_bar(tmp_path):
     # exactly one colorbar axes beyond the two panel axes + label texts
     cbar_axes = [ax for ax in res.figure.axes if ax not in res.axes_by_id.values()]
     assert len(cbar_axes) == 1
+    # the bar must span the group's REAL placed envelope (top of "a" to bottom
+    # of "b"), not a provisional content-box guess that falls short of it.
+    bar_ax = cbar_axes[0]
+    pos_a, pos_b = res.axes_by_id["a"].get_position(), res.axes_by_id["b"].get_position()
+    group_top, group_bottom = max(pos_a.y1, pos_b.y1), min(pos_a.y0, pos_b.y0)
+    bar_pos = bar_ax.get_position()
+    tol = 0.03 * (group_top - group_bottom)
+    assert abs(bar_pos.y1 - group_top) < tol
+    assert abs(bar_pos.y0 - group_bottom) < tol
+
+
+def test_one_panel_scale_bar_only_designated_panel(tmp_path):
+    h5 = _write_obl(tmp_path / "obl.h5")
+    r = _two_panel_recipe(h5)
+    r.compose.scale_bar_mode = "one-panel"
+    r.compose.scale_bar_panel = "b"
+    res = render_recipe(r)
+    assert _scale_bar_box(res.axes_by_id["a"]) is None
+    assert _scale_bar_box(res.axes_by_id["b"]) is not None
+
+
+def test_gutter_scale_bar_loc_forced_regardless_of_style(tmp_path):
+    h5 = _write_obl(tmp_path / "obl.h5")
+    r = _two_panel_recipe(h5, scale_bar_loc="upper right")
+    r.compose.scale_bar_mode = "gutter"
+    res = render_recipe(r)
+    gutter_ax = next(
+        ax
+        for ax in res.figure.axes
+        if ax not in res.axes_by_id.values() and _scale_bar_box(ax) is not None
+    )
+    box = _scale_bar_box(gutter_ax)
+    assert box.loc == AnchoredOffsetbox.codes["center"]
+
+
+def test_pinned_width_rescales_scale_bar_thickness(tmp_path):
+    h5 = _write_obl(tmp_path / "obl.h5")
+    r = _two_panel_recipe(h5)
+    r.compose.pinned_width_cm = 6.0  # forces a large rescale off the natural width
+    res = render_recipe(r)
+    from dfxm.common.plotting import PlotStyle, measured_box_in
+
+    style = PlotStyle()  # matches the recipe's un-overridden scale_bar_thickness_pt
+    for pid in ("a", "b"):
+        ax = res.axes_by_id[pid]
+        w_in, _h_in = measured_box_in(res.figure, ax)
+        final_eff = 20.0 / (w_in * 2.54)  # both slice_plane panels span 20 µm in X
+        expected_bh = style.scale_bar_thickness_pt * (2.54 / 72.0) * final_eff
+        rect = _scale_bar_rect(ax)
+        assert rect is not None
+        assert abs(rect.get_height() - expected_bh) < 0.02 * expected_bh
 
 
 def test_shared_colorbar_mixed_groups_refused(tmp_path):
