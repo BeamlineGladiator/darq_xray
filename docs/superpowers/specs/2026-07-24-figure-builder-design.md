@@ -61,7 +61,10 @@ style applied once and PNG/PDF/**SVG** export at exact physical size.
      respectively, group-labelled **A2** and **B2**; identical box height and
      width within each stack; shared distance axis (bottom only); no titles
      anywhere; identical font size on all panels; if the A line is shorter,
-     the A2 stack is padded on the right so column edges align.
+     the A2 stack is padded on the right so column edges align. The trace
+     stacks use a **different µm/cm than the maps**
+     (`trace_scale_um_per_cm` ≠ `scale_um_per_cm`) — the acceptance test
+     must assert both scales are honoured exactly in the same canvas.
 
 ## Approach decision
 
@@ -247,7 +250,10 @@ Dedicated **non-modal** window opened from the main-window toolbar.
 - Recipe JSON round-trip (+ unknown-version / bad-schema errors).
 - **Acceptance**: build figure 1 and figure 2 from synthetic h5 fixtures;
   assert panel box sizes/positions, label sequence, shared-bar placement,
-  and column-edge alignment under unequal line lengths.
+  and column-edge alignment under unequal line lengths. The figure-2
+  fixture sets `trace_scale_um_per_cm` different from `scale_um_per_cm`
+  and asserts map boxes honour the map scale while trace boxes honour the
+  trace scale, exactly, within one canvas.
 - CLI smoke (render a recipe headless); gui_smoke additions (open window,
   load recipe, preview, export).
 
