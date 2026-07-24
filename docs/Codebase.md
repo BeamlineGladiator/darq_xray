@@ -474,8 +474,9 @@ strain layers.
 ### `dfxm/compose` — publication figure composer
 
 Qt-free package for building multi-panel publication figures on top of the
-per-stage outputs (recipes, layout solver, adapters, render — later tasks add
-the solver/render pieces; this covers the schema + panel-adapter modules).
+per-stage outputs (recipes, layout solver, adapters, render). This covers the
+schema, panel-adapter, and layout-sizing modules; the placement half of the
+solver and the render entry point are later tasks.
 
 #### `recipe.py`
 
@@ -577,6 +578,53 @@ so `import dfxm.compose` stays light.
 - `draw_placeholder(ax, reason: str) -> None` — a hatched grey cell (no ticks,
   a centred "unavailable" caption) for a panel whose data could not be
   loaded — the never-crash fallback `load_panel`/`draw_panel` route to.
+
+#### `layout.py` — sizing pass
+
+The layout solver's pure-geometry half: walks a recipe's layout tree and
+resolves every leaf to an exact `(w_in, h_in)` content box in inches, all
+from physical scales — no matplotlib involved (the placement half, which
+measures decorations and places axes absolutely, is a later task).
+- `_IN_PER_CM = 1.0 / 2.54`, `PLACEHOLDER_CM = (4.0, 3.0)` — the fallback box
+  (in cm) for a panel that has no usable data or a degenerate extent.
+- `SizedCell` — dataclass keyed by `id(leaf)`: `leaf` (the `PanelRef`/`Spacer`/
+  `TextCell`), `panel` (its `PanelDef`, or `None` for `Spacer`/`TextCell`),
+  `kind` (`"map"`/`"trace"`/`"spacer"`/`"text"`/`"placeholder"`), `w_in`/
+  `h_in`. `ax`/`extras`/`sync`/`margins`/`label` default to `None`/`()` —
+  filled in by the placement pass (Task 6).
+- `size_cells(recipe, style, data_by_id, notes) -> dict[int, SizedCell]` —
+  keyed by `id(leaf)`. Sizing rules per leaf:
+  - `Spacer`/`TextCell`: box is the leaf's own `w_cm`/`h_cm`, verbatim.
+  - `PanelData(kind="placeholder")`, or a map panel with a degenerate extent
+    (`ext_x_um`/`ext_y_um` missing or non-positive): `PLACEHOLDER_CM` box; a
+    note is appended (`"panel {id}: {reason} — rendered as placeholder"` /
+    `"...degenerate extent..."`).
+  - `map_layer`/`slice_plane`/`profiles_ref` panels: box from
+    `fixed_scale_box(style, ext_x_um, ext_y_um, scale=eff)`, where `eff` is
+    the panel's own `scale_um_per_cm` override if set, else
+    `fixed_scale(style)`. A clamp to the 30-in cap (`box[2] != eff`) appends
+    an "effective scale ... µm/cm" note.
+  - `profiles_trace` panels: box from `trace_fixed_box(style, length_um)`
+    (`trace_height_cm(style)` for the height); a panel-level
+    `scale_um_per_cm` override is applied via
+    `dataclasses.replace(style, trace_scale_um_per_cm=...)` before sizing. A
+    clamp (`box[2] != trace_fixed_scale(style)`) appends a matching note (this
+    is the path the `test_trace_clamp_note_surfaces` case exercises).
+  - A `Row.pinned_height_cm` / `Col.pinned_width_cm` on an ancestor overrides
+    the intrinsic sizing for every physical (map/trace) descendant: the
+    pinned dimension is taken as-is and the other dimension is derived
+    preserving the panel's own aspect ratio (`ext_x_um/ext_y_um` for maps;
+    `trace_height_cm(style)` stays fixed for traces). This always appends an
+    "implied scale ... µm/cm" note (even when a style scale exists, since the
+    pin overrides it) and is the only way to size a physical panel that has
+    **no** scale anywhere (map: `test_pinned_col_width_covers_missing_scale`).
+  - No scale (style, per-panel override, or pin) reachable for a map/trace
+    panel: raises `StageUserError` ("has no physical scale to size from" /
+    "has no trace scale to size from") with a hint to set the style scale, a
+    per-panel override, or a pin.
+  - `notes` is mutated in place (appended to), not returned — callers pass
+    the same list through the whole solve to collect every implied-scale/
+    clamp/placeholder note for the figure.
 
 ### `dfxm/runner.py` — the process worker
 
