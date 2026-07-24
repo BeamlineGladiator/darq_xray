@@ -941,6 +941,12 @@ def _draw_trace_axes(ax, fld, geom, *, linewidth, color, font_scale, style, show
     ax.xaxis.get_offset_text().set_fontsize(10 * fs)
 
 
+# Public aliases for the compose adapters (the composer draws into its own axes;
+# the underscore originals remain the in-module call sites).
+draw_reference_axes = _draw_reference_image
+draw_trace_axes = _draw_trace_axes
+
+
 def build_trace_figure(
     fld,
     geom,

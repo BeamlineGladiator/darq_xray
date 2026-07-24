@@ -818,6 +818,56 @@ def _make_norm(prep):
 _LEGACY_STYLE = PlotStyle(scale_bar_color="black", colorbar_fraction=0.046)
 
 
+def draw_slice_axes(
+    ax,
+    prep,
+    sl,
+    slice2d,
+    u_um,
+    v_um,
+    *,
+    offset_um,
+    style: PlotStyle | None = None,
+    cax=None,
+    colorbar=None,
+    scale_bar=None,
+    fixed_scale_um_per_cm=None,
+):
+    """Draw one oblique-slice plane into *ax*; returns the image.
+
+    Extracted verbatim from :func:`build_slice_figure` so the single-figure path
+    and the compose adapters share one look. ``colorbar``/``scale_bar`` default
+    to the style flags; explicit bools override. ``cax`` routes the colourbar
+    into an already-placed axes (steal-free).
+    """
+    st = style if style is not None else _LEGACY_STYLE
+    use_legacy = style is None
+    fig = ax.get_figure()
+    extent = [float(u_um[0]), float(u_um[-1]), float(v_um[0]), float(v_um[-1])]
+    im = ax.imshow(
+        slice2d,
+        cmap=Rnd.cmap_nan_transparent(prep["cmap_name"]),
+        norm=_make_norm(prep),
+        extent=extent,
+        origin="lower",
+        aspect="equal",
+    )
+    ax.set_xlabel("u (µm)")
+    ax.set_ylabel("v (µm)")
+    sub = sl["name"] if offset_um is None else f"{sl['name']}  (offset {offset_um:+.2f} µm)"
+    ax.set_title(f"{prep['title']}\nslice: {sub}")
+    if st.colorbar if colorbar is None else colorbar:
+        add_colorbar(fig, im, ax, prep["cbar_label"], st, group=prep.get("group"), cax=cax)
+    if st.scale_bar if scale_bar is None else scale_bar:
+        draw_scale_bar(
+            ax, st.scale_bar_length_um, style=st, fixed_scale_um_per_cm=fixed_scale_um_per_cm
+        )
+    if not use_legacy:
+        apply_text_scale(ax, st)
+        apply_axes_mode(ax, st)
+    return im
+
+
 def build_slice_figure(
     prep, sl, slice2d, u_um, v_um, *, offset_um, style: PlotStyle | None = None
 ) -> Figure:
@@ -846,32 +896,17 @@ def build_slice_figure(
 
     fig = styled_figure(figsize, styled=not use_legacy)
     ax = fig.add_subplot(111)
-    extent = [float(u_um[0]), float(u_um[-1]), float(v_um[0]), float(v_um[-1])]
-    im = ax.imshow(
+    draw_slice_axes(
+        ax,
+        prep,
+        sl,
         slice2d,
-        cmap=Rnd.cmap_nan_transparent(prep["cmap_name"]),
-        norm=_make_norm(prep),
-        extent=extent,
-        origin="lower",
-        aspect="equal",
+        u_um,
+        v_um,
+        offset_um=offset_um,
+        style=style,
+        fixed_scale_um_per_cm=(box[2] if box is not None else None),
     )
-    ax.set_xlabel("u (µm)")
-    ax.set_ylabel("v (µm)")
-    sub = sl["name"] if offset_um is None else f"{sl['name']}  (offset {offset_um:+.2f} µm)"
-    ax.set_title(f"{prep['title']}\nslice: {sub}")
-
-    if st.colorbar:
-        add_colorbar(fig, im, ax, prep["cbar_label"], st, group=prep.get("group"))
-    if st.scale_bar:
-        draw_scale_bar(
-            ax,
-            st.scale_bar_length_um,
-            style=st,
-            fixed_scale_um_per_cm=(box[2] if box is not None else None),
-        )
-    if not use_legacy:
-        apply_text_scale(ax, st)
-        apply_axes_mode(ax, st)
     if box is not None:
         fit_axes_to_box(fig, ax, box[0], box[1])
 
