@@ -382,6 +382,7 @@ def draw_panel(
             title=(attrs["title"] if titled else None),
             style=style,
             fixed_scale_um_per_cm=fixed_scale_um_per_cm,
+            scale_bar=scale_bar,
         )
         want_cbar = (
             (style.colorbar if style is not None else True) if colorbar is None else colorbar

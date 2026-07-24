@@ -29,6 +29,13 @@ def _scale_bar_box(ax):
     return None
 
 
+def _scale_bar_boxes(ax):
+    """Every AnchoredOffsetbox on *ax* — used to catch a DUPLICATE scale bar
+    (one drawn by the panel's own draw function, one by the deferred
+    post-placement pass) that a lone `_scale_bar_box` lookup would miss."""
+    return [a for a in ax.get_children() if isinstance(a, AnchoredOffsetbox)]
+
+
 def _scale_bar_rect(ax):
     """The scale bar's data-space Rectangle (thickness = get_height()), or None."""
     box = _scale_bar_box(ax)
@@ -96,6 +103,34 @@ def test_render_two_maps_exact_boxes_and_labels(tmp_path):
     texts = [t.get_text() for ax in res.figure.axes for t in ax.texts]
     assert "A" in texts and "B" in texts  # auto label sequence
     assert not any("drift" in n or "scale is off" in n for n in res.notes)
+
+
+def test_profiles_ref_panel_has_single_scale_bar(tmp_path):
+    h5 = _write_obl(tmp_path / "obl.h5")
+    p = PanelDef("r", PanelSource(h5, "profiles_ref", {"job": JOB, "field": None}))
+    r = FigureRecipe(
+        "ref",
+        {"scale_um_per_cm": 10.0, "show_title": False},
+        ComposeStyle(),
+        PanelRef("r"),
+        [p],
+    )
+    res = render_recipe(r)
+    ax = res.axes_by_id["r"]
+    boxes = _scale_bar_boxes(ax)
+    assert len(boxes) == 1
+    # the surviving bar must be the deferred, final-scale one: its Rectangle
+    # thickness should match the panel's rendered box width, not some other
+    # (e.g. pre-placement) geometry.
+    from dfxm.common.plotting import PlotStyle, measured_box_in
+
+    style = PlotStyle()
+    w_in, _h_in = measured_box_in(res.figure, ax)
+    final_eff = 20.0 / (w_in * 2.54)  # the reference plane spans 20 µm in u
+    expected_bh = style.scale_bar_thickness_pt * (2.54 / 72.0) * final_eff
+    rect = _scale_bar_rect(ax)
+    assert rect is not None
+    assert abs(rect.get_height() - expected_bh) < 0.02 * expected_bh
 
 
 def test_label_template_and_manual_override(tmp_path):

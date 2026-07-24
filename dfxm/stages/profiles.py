@@ -667,6 +667,7 @@ def _draw_reference_image(
     title=None,
     style=None,
     fixed_scale_um_per_cm=None,
+    scale_bar=None,
 ):
     extent = [float(u_um[0]), float(u_um[-1]), float(v_um[0]), float(v_um[-1])]
     vmin, vmax = attrs["vmin"], attrs["vmax"]
@@ -705,7 +706,7 @@ def _draw_reference_image(
                 )
     if style is None:
         _scale_bar(ax)  # legacy look, pinned
-    elif style.scale_bar:
+    elif style.scale_bar if scale_bar is None else scale_bar:
         draw_scale_bar(
             ax,
             style.scale_bar_length_um,
