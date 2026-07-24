@@ -610,14 +610,35 @@ measures decorations and places axes absolutely, is a later task).
     `dataclasses.replace(style, trace_scale_um_per_cm=...)` before sizing. A
     clamp (`box[2] != trace_fixed_scale(style)`) appends a matching note (this
     is the path the `test_trace_clamp_note_surfaces` case exercises).
+  - A per-panel `scale_um_per_cm` override (map or trace) is validated by
+    `_validate_scale(value, panel_id, what)` before use: it must be
+    float-castable, finite, and `> 0`, else `StageUserError` (never a bare
+    `ValueError`) — this catches a hand-edited recipe JSON carrying a
+    negative/NaN/non-numeric scale (`recipe.py` reads the field uncast).
+    `_finite_positive(v)` guards `ext_x_um`/`ext_y_um` the same way (also
+    rejecting `inf`). Pins are always checked *before* an override is
+    resolved, so an unused/irrelevant bad override on a pinned panel never
+    raises (see below).
   - A `Row.pinned_height_cm` / `Col.pinned_width_cm` on an ancestor overrides
-    the intrinsic sizing for every physical (map/trace) descendant: the
-    pinned dimension is taken as-is and the other dimension is derived
-    preserving the panel's own aspect ratio (`ext_x_um/ext_y_um` for maps;
-    `trace_height_cm(style)` stays fixed for traces). This always appends an
-    "implied scale ... µm/cm" note (even when a style scale exists, since the
-    pin overrides it) and is the only way to size a physical panel that has
-    **no** scale anywhere (map: `test_pinned_col_width_covers_missing_scale`).
+    intrinsic sizing, but the two panel kinds differ because only a map has a
+    real physical aspect ratio:
+    - **Map**: either pin alone is enough to size the panel — no scale needed
+      at all. The pinned dimension is taken as-is and the other is derived
+      preserving `ext_x_um/ext_y_um` (the panel's real aspect ratio). This is
+      the only way to size a map panel with **no** scale anywhere (`Col`:
+      `test_pinned_col_width_covers_missing_scale`).
+    - **Trace**: a trace's height (`trace_height_cm(style)`) is purely
+      cosmetic — not derived from any physical extent — so only a pinned
+      **column width** can size a trace with no scale anywhere (width ←
+      pinned; height ← `trace_height_cm(style)`, unchanged). A pinned **row
+      height** cannot substitute for a missing scale: the width is still
+      resolved the normal way (a real trace/map scale is required), and the
+      pin only overrides the height field afterwards
+      (`test_pinned_row_height_reaches_trace_with_note`).
+    Both pin directions on both panel kinds always append an "implied
+    (trace) scale ... µm/cm" note — even when nothing about the resolved
+    scale actually changed (a trace row-height pin) — so a pin is never
+    silent.
   - No scale (style, per-panel override, or pin) reachable for a map/trace
     panel: raises `StageUserError` ("has no physical scale to size from" /
     "has no trace scale to size from") with a hint to set the style scale, a

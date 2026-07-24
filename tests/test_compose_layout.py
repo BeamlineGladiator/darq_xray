@@ -110,3 +110,60 @@ def test_trace_clamp_note_surfaces():
     )
     assert cells[id(layout)].w_in == 30.0
     assert any("clamp" in n.lower() for n in notes)
+
+
+def test_map_negative_scale_override_raises_user_error():
+    style = PlotStyle(scale_um_per_cm=10.0)
+    p = _panel("a")
+    p.scale_um_per_cm = -5.0
+    layout = PanelRef("a")
+    with pytest.raises(StageUserError) as e:
+        size_cells(_recipe(layout, [p]), style, {"a": _map_data()}, [])
+    assert "scale" in str(e.value).lower() and e.value.hint
+
+
+def test_map_non_numeric_scale_override_raises_user_error_not_bare_value_error():
+    style = PlotStyle(scale_um_per_cm=10.0)
+    p = _panel("a")
+    p.scale_um_per_cm = "abc"
+    layout = PanelRef("a")
+    with pytest.raises(StageUserError) as e:
+        size_cells(_recipe(layout, [p]), style, {"a": _map_data()}, [])
+    assert "scale" in str(e.value).lower() and e.value.hint
+
+
+def test_pinned_row_height_reaches_trace_with_note():
+    style = PlotStyle(scale_um_per_cm=10.0, trace_scale_um_per_cm=5.0, trace_height_cm=2.0)
+    layout = Row([PanelRef("t")], pinned_height_cm=4.0)  # natural height would be 2 cm
+    cells = size_cells(
+        _recipe(layout, [_panel("t", "profiles_trace")]),
+        style,
+        {"t": _trace_data(30.0)},
+        notes := [],
+    )
+    c = cells[id(layout.children[0])]
+    assert abs(c.h_in - 4.0 / 2.54) < 1e-9
+    # width is governed purely by length/scale, unaffected by the row's height pin
+    assert abs(c.w_in - 30.0 / 5.0 / 2.54) < 1e-9
+    assert any("implied" in n and "trace" in n for n in notes)
+
+
+def test_trace_invalid_scale_override_raises_not_silent_fallback():
+    # A valid MAP scale exists, so a silent fallback to it would produce a
+    # plausible-looking (but wrong) box instead of surfacing the bad override.
+    style = PlotStyle(scale_um_per_cm=10.0)
+    p = _panel("t", "profiles_trace")
+    p.scale_um_per_cm = -3.0
+    layout = PanelRef("t")
+    with pytest.raises(StageUserError) as e:
+        size_cells(_recipe(layout, [p]), style, {"t": _trace_data(30.0)}, [])
+    assert "scale" in str(e.value).lower() and e.value.hint
+
+
+def test_trace_no_scale_anywhere_refused_with_hint():
+    layout = PanelRef("t")
+    with pytest.raises(StageUserError) as e:
+        size_cells(
+            _recipe(layout, [_panel("t", "profiles_trace")]), PlotStyle(), {"t": _trace_data()}, []
+        )
+    assert "scale" in str(e.value).lower() and e.value.hint

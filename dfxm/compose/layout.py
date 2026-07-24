@@ -7,6 +7,7 @@ no matplotlib auto-layout anywhere (generalizes place_axes_stack)."""
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from dataclasses import replace as dc_replace
 
@@ -26,6 +27,37 @@ _NO_SCALE_HINT = (
     "Set Scale (µm/cm) in the style, a per-panel scale override, or pin the "
     "row height / column width so the composer can size this panel."
 )
+_BAD_SCALE_HINT = "Fix the per-panel scale override — it must be a positive, finite number."
+
+
+def _finite_positive(v) -> bool:
+    """True for a real (non-``None``, non-NaN/inf) positive number."""
+    return v is not None and math.isfinite(v) and v > 0
+
+
+def _validate_scale(value, panel_id: str, what: str) -> float:
+    """Validate a per-panel scale override: float-castable, finite, and > 0.
+
+    Raises :class:`StageUserError` (never a bare ``ValueError``) for a
+    non-numeric value (e.g. a hand-edited recipe JSON — ``recipe.py`` reads
+    ``scale_um_per_cm`` uncast) or a numeric-but-non-finite/non-positive one
+    (negative, zero, NaN, inf) — this is a recipe-authoring bug, not a
+    data-availability issue, so it must never silently produce a
+    negative/garbage box or a silent fallback to a different scale.
+    """
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        raise StageUserError(
+            f"panel {panel_id}: {what} override {value!r} is not a number",
+            hint=_BAD_SCALE_HINT,
+        ) from None
+    if not (math.isfinite(v) and v > 0):
+        raise StageUserError(
+            f"panel {panel_id}: {what} override {v!r} must be a positive number",
+            hint=_BAD_SCALE_HINT,
+        )
+    return v
 
 
 @dataclass
@@ -71,12 +103,12 @@ def size_cells(recipe, style, data_by_id, notes):
                 PLACEHOLDER_CM[1] * _IN_PER_CM,
             )
         if data.kind == "profiles_trace":
-            return _trace_cell(leaf, panel, data, pinned_w_in)
+            return _trace_cell(leaf, panel, data, pinned_h_in, pinned_w_in)
         return _map_cell(leaf, panel, data, pinned_h_in, pinned_w_in)
 
     def _map_cell(leaf, panel, data, pinned_h_in, pinned_w_in):
         ext_x, ext_y = data.ext_x_um, data.ext_y_um
-        if not (ext_x and ext_y and ext_x > 0 and ext_y > 0):
+        if not (_finite_positive(ext_x) and _finite_positive(ext_y)):
             notes.append(f"panel {panel.id}: degenerate extent — rendered as placeholder")
             return SizedCell(
                 leaf,
@@ -85,7 +117,9 @@ def size_cells(recipe, style, data_by_id, notes):
                 PLACEHOLDER_CM[0] * _IN_PER_CM,
                 PLACEHOLDER_CM[1] * _IN_PER_CM,
             )
-        eff = panel.scale_um_per_cm or fixed_scale(style)
+        # Pins are checked BEFORE the scale is resolved: a pinned row-height or
+        # column-width sizes purely from (ext_x, ext_y) and needs no scale at
+        # all, so an unused/irrelevant bad override must not raise here.
         if pinned_h_in is not None:
             h = pinned_h_in
             w = h * ext_x / ext_y
@@ -100,23 +134,26 @@ def size_cells(recipe, style, data_by_id, notes):
                 f"panel {panel.id}: pinned column width — implied scale {implied:.4g} µm/cm"
             )
             return SizedCell(leaf, panel, "map", w, h)
+        override = panel.scale_um_per_cm
+        eff = _validate_scale(override, panel.id, "scale") if override else fixed_scale(style)
         if eff is None:
             raise StageUserError(
                 f"panel {panel.id} has no physical scale to size from", hint=_NO_SCALE_HINT
             )
-        box = fixed_scale_box(style, ext_x, ext_y, scale=float(eff))
-        if box is None:
-            raise StageUserError(
-                f"panel {panel.id}: scale {eff!r} is not a positive number", hint=_NO_SCALE_HINT
-            )
-        if box[2] != float(eff):
+        # eff and (ext_x, ext_y) are now both known finite and positive, so
+        # fixed_scale_box cannot return None here.
+        box = fixed_scale_box(style, ext_x, ext_y, scale=eff)
+        if box[2] != eff:
             notes.append(
                 f"panel {panel.id}: box clamped to 30 in — effective scale {box[2]:.4g} µm/cm"
             )
         return SizedCell(leaf, panel, "map", box[0], box[1])
 
-    def _trace_cell(leaf, panel, data, pinned_w_in):
+    def _trace_cell(leaf, panel, data, pinned_h_in, pinned_w_in):
         length = data.length_um or 0.0
+        # A pinned column width sizes purely from (length, trace_height_cm)
+        # and needs no scale at all — checked first so an unused/irrelevant
+        # bad override cannot raise here (mirrors the map-cell ordering).
         if pinned_w_in is not None:
             w = pinned_w_in
             h = trace_height_cm(style) * _IN_PER_CM
@@ -127,7 +164,12 @@ def size_cells(recipe, style, data_by_id, notes):
             return SizedCell(leaf, panel, "trace", w, h)
         st = style
         if panel.scale_um_per_cm:
-            st = dc_replace(style, trace_scale_um_per_cm=float(panel.scale_um_per_cm))
+            st = dc_replace(
+                style,
+                trace_scale_um_per_cm=_validate_scale(
+                    panel.scale_um_per_cm, panel.id, "trace scale"
+                ),
+            )
         box = trace_fixed_box(st, float(length))
         if box is None:
             raise StageUserError(
@@ -137,6 +179,15 @@ def size_cells(recipe, style, data_by_id, notes):
             notes.append(
                 f"panel {panel.id}: trace box clamped to 30 in — effective scale {box[2]:.4g} µm/cm"
             )
+        # Unlike a map, a trace's height is purely cosmetic (trace_height_cm),
+        # not derived from any physical extent — so a pinned ROW height can
+        # only override the height field; the width still needs a real scale
+        # (already resolved above) and is never rescaled by the height pin.
+        if pinned_h_in is not None:
+            notes.append(
+                f"panel {panel.id}: pinned row height — implied trace scale {box[2]:.4g} µm/cm"
+            )
+            return SizedCell(leaf, panel, "trace", box[0], pinned_h_in)
         return SizedCell(leaf, panel, "trace", box[0], box[1])
 
     def walk(node, pinned_h_in, pinned_w_in):
