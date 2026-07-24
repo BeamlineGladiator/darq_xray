@@ -25,6 +25,7 @@ aliases: [Codebase Reference, Architecture, Code Map, Every Part Explained]
     - [[#`dfxm/config` — typed config & presets]]
     - [[#`dfxm/common` — shared primitives]]
     - [[#`dfxm/stages` — the nine analysis stages]]
+    - [[#`dfxm/compose` — publication figure composer]]
     - [[#`dfxm/runner.py` — the process worker]]
 - [[#Layer 2 — `gui/` PySide6 application]]
 - [[#Layer 3 — `tests/`]]
@@ -466,6 +467,48 @@ strain layers.
 - `_apply_shift_single(...)` — place a frame on the padded canvas with the strain samy shift (skips frames whose shape differs).
 - `figures(result, params)` — `@register("matched")` catalog: one `kind="map"` `FigureSpec` per entry in `result.recorded`, reading the saved grayscale PNG and rendering it as a figure.
 - `run` / `_main`.
+
+### `dfxm/compose` — publication figure composer
+
+Qt-free package for building multi-panel publication figures on top of the
+per-stage outputs (recipes, layout solver, adapters, render — later tasks add
+the solver/adapters/render pieces; this stub covers the schema module).
+
+#### `recipe.py`
+
+The recipe data model + JSON (de)serialization + validation — the schema every
+other `dfxm/compose` module builds on.
+- `RECIPE_VERSION = 1`, `PANEL_KINDS = ("map_layer", "slice_plane", "profiles_ref", "profiles_trace")`,
+  `SCALE_BAR_MODES = ("per-panel", "one-panel", "gutter")`.
+- `ComposeStyle` — composer-level look knobs: `label_template`, `label_font_scale`,
+  `gutter_cm`, `padding_cm`, `scale_bar_mode`, `scale_bar_panel`, `pinned_width_cm`.
+- `PanelSource` — `h5_path`, `kind` (one of `PANEL_KINDS`), `selector` (kind-specific
+  selection key, e.g. stage/field/plane).
+- `PanelDef` — one panel: `id`, `source: PanelSource`, plus per-panel overrides
+  (`roi`, `clim`, `cmap`, `label`, `show_title`, `scale_um_per_cm`, `colorbar`).
+- `PanelRef` / `Spacer` / `TextCell` — layout leaves (a panel placeholder, blank
+  space, or literal text cell).
+- `Row` / `Col` — layout containers (nest freely); each supports a pinned
+  height/width, an optional group label/shared colorbar/shared clim (`Col` also
+  `shared_x`).
+- `FigureRecipe` — the whole recipe: `name`, `style` (JSON-safe `PlotStyle`
+  overrides), `compose: ComposeStyle`, `layout` (a `Row`/`Col`/`PanelRef`/`Spacer`/
+  `TextCell` tree), `panels: list[PanelDef]`, `version`. `panel_by_id()` returns an
+  `{id: PanelDef}` lookup.
+- `iter_leaves(node)` — depth-first generator over layout leaves (`PanelRef`/
+  `Spacer`/`TextCell`), recursing through `Row`/`Col`.
+- `recipe_to_json(recipe, *, base_dir=None) -> str` / `recipe_from_json(text, *, base_dir=None) -> FigureRecipe` —
+  JSON round-trip. When `base_dir` is given, each panel's `h5_path` is stored
+  relative to it on save (falling back to absolute if `os.path.relpath` can't
+  compute one) and resolved back against it on load. Raises `StageUserError`
+  (with a hint) for invalid JSON, an unsupported/missing `version`, or a missing
+  `layout`/`panels`.
+- `validate_recipe(recipe) -> None` — raises `StageUserError` (with a hint) on
+  the first problem found: duplicate panel ids, a layout `PanelRef` pointing at
+  a panel id that doesn't exist (a "ghost" reference), an unknown
+  `PanelSource.kind`, an unknown `ComposeStyle.scale_bar_mode`, a
+  `label_template` with no `A`/`a` placeholder, or a non-positive
+  `gutter_cm`/`padding_cm`.
 
 ### `dfxm/runner.py` — the process worker
 
