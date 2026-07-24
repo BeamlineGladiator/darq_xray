@@ -475,8 +475,8 @@ strain layers.
 
 Qt-free package for building multi-panel publication figures on top of the
 per-stage outputs (recipes, layout solver, adapters, render). This covers the
-schema, panel-adapter, and full layout-solver (sizing + measure/align/place)
-modules; the render entry point is a later task.
+schema, panel-adapter, full layout-solver (sizing + measure/align/place), and
+render/export modules; a GUI-facing recipe editor is a later task.
 
 #### `recipe.py`
 
@@ -697,6 +697,92 @@ throughout, no matplotlib auto-layout, generalizing `place_axes_stack`.
   sharing/placement here doesn't know about `shared_x` itself, it just aligns
   whatever margins it measures.
 
+#### `render.py` — orchestrator + export
+
+Ties `recipe.py`/`adapters.py`/`layout.py` together into one `Figure` and
+saves it at exact physical size — no `bbox_inches`, no matplotlib auto-layout
+anywhere (`fig.set_layout_engine("none")` throughout, same as `layout.py`).
+- `ComposeResult` — `figure: Figure`, `notes: list[str]`, `n_panels` (`PanelRef`
+  leaves in the layout), `n_rendered` (panels drawn with real data —
+  placeholders excluded), `axes_by_id: dict[str, Axes]` (every `PanelRef`'s
+  main axes, including placeholders — GUI click-pick and tests read this).
+- `render_recipe(recipe, style_overrides=None, *, loader_cache=None) -> ComposeResult` —
+  the pipeline, in order:
+  1. `validate_recipe(recipe)`.
+  2. `style = style_from_params({"plot_style": {**recipe.style, **(style_overrides or {})}}) or PlotStyle()`.
+  3. Load every panel (`load_panel(panel, cache=loader_cache)`) into a local
+     `panels_by_id`/`data_by_id` — placeholders substituted, never raised.
+  4. `size_cells(recipe, style, data_by_id, notes)`.
+  5. Create one `Figure(facecolor="white")`; add a bare axes per `PanelRef`
+     (any kind, incl. placeholder — so it stays click-pickable) and per
+     `TextCell` (`set_axis_off()` immediately); `Spacer` leaves get no axes.
+  6. **Shared-colorbar transform** (`_apply_shared_colorbars`) — for every
+     `Row`/`Col` node with `shared_colorbar=True` found anywhere in the
+     layout: gather its `PanelRef` leaves (any depth) as members; refuse
+     (`StageUserError`, hint) when the non-placeholder members' quantity
+     `group`s aren't all equal ("shared colorbar mixes quantity groups …");
+     unify colour limits as `node.shared_clim` or `(min(vmins), max(vmaxs))`
+     over the members with each panel's own `clim` override applied first,
+     then replace each non-placeholder member's `PanelDef` (a local copy —
+     the caller's recipe is never mutated) with that unified `clim` and mark
+     it colorbar-off. The bar itself is a synthetic solver cell: a `Spacer`
+     leaf sized `colorbar_fraction * first_member.w_in + 0.1` (or `.h_in` for
+     a `Row` group) by the members' summed content extent (+ internal
+     `gutter_cm` between them), with its own bare axes — `_build_working_layout`
+     rebuilds (never mutates) the recipe's layout tree, wrapping that group
+     node in a new `Row([group, bar_leaf])` (a `Col` group) or
+     `Col([group, bar_leaf])` (a `Row` group) at the same tree position. The
+     bar's actual colourbar content (`add_colorbar(..., cax=bar_ax)`) is drawn
+     *after* `place_tree`, once the bar axes has its real final position.
+  7. **Scale-bar mode** (`_resolve_scale_bar_kwargs`) — per
+     `compose.scale_bar_mode`: `"per-panel"` leaves every map's `scale_bar`
+     kwarg as `None` (follows `style.scale_bar`); `"one-panel"` sets `True`
+     only for `compose.scale_bar_panel` (unknown/missing id → `StageUserError`,
+     hint) and `False` elsewhere; `"gutter"` sets `False` everywhere and adds
+     one more synthetic `Spacer` leaf (wrapping the whole working layout in a
+     new root `Col`) whose content is a single shared scale bar sized for the
+     one common effective µm/cm across every map panel (mismatched per-panel
+     scales → `StageUserError`, hint). Every map/slice/profiles-ref panel
+     draw also gets `fixed_scale_um_per_cm = ext_x_um / (cell.w_in * 2.54)` —
+     its own already-resolved effective scale — so a drawn scale bar's
+     thickness is pinned to true printed points regardless of mode.
+  8. **Draw panel contents** — per `PanelRef` leaf, dispatched on
+     `SizedCell.kind`: `"map"` panels needing a colourbar (not covered by a
+     shared bar, `style.colorbar` on) get their own provisional `cax` axes
+     wired onto the cell as `extras`/`sync` (mirrors
+     `profiles.build_companion_figure`'s per-panel colourbar-beside-axes
+     pattern) — this is mandatory under this solver: `fig.colorbar(im, ax=ax)`
+     (no `cax`) reshapes `ax` itself, which would corrupt the exact-box
+     contract the moment it ran after `place_tree`'s absolute `set_position`;
+     `"trace"` panels get `show_xlabel=False` (label+tick-labels suppressed)
+     for every leaf but the last under a `shared_x` `Col`; `"placeholder"`
+     cells just draw the hatch. `show_title` is always `False` here (per-panel
+     `PanelDef.show_title` still re-enables it).
+  9. **Labels** — `_assign_labels`/`_draw_label`: depth-first auto-increment
+     over `compose.label_template` (a `group_label` node consumes one slot for
+     the whole group; a manual `PanelDef.label` replaces the slot's text;
+     `label=""` suppresses it), drawn as a bold `ax.annotate` at the axes'
+     top-left *before* `measure_cells` so the label counts toward margins.
+  10. `measure_cells` then `place_tree` (`gutter_in`/`pad_in` from
+      `compose.gutter_cm`/`padding_cm`).
+  11. **Pinned total width** (`compose.pinned_width_cm`, optional) — rescale
+      every cell's `w_in`/`h_in` by `factor = pinned_width_cm·cm→in / fig_w`,
+      note each panel's new implied effective scale, re-run `measure_cells` +
+      `place_tree` once, and note a residual miss > 2%.
+  12. Draw each shared bar's real colourbar content (`add_colorbar(cax=bar_ax)`,
+      picking the first member with real data as the source image/label) and
+      the gutter scale bar's content (`draw_scale_bar` with an xlim spanning
+      the gutter cell's own final width at the shared scale).
+  13. `TextCell` contents (centred text in its now-placed axes).
+  14. **Drift guard** — `box_drift_note` per panel axes against its final
+      `SizedCell.w_in`/`h_in`, appended to `notes` (never raised).
+- `export_recipe(recipe, out_dir, *, formats=None, dpi=None, style_overrides=None, loader_cache=None) -> (list[str], ComposeResult)` —
+  calls `render_recipe`, then `fig.savefig(f"{out_dir}/{safe(recipe.name)}.{fmt}", dpi=dpi, facecolor="white")`
+  per format (`formats`/`dpi` default to the recipe's own style) — **no**
+  `bbox_inches`, so the saved file is exactly the solved figure geometry, not
+  a content-dependent crop. The output filename stem is
+  `re.sub(r"[^\w.-]+", "_", recipe.name or "figure")`.
+
 ### `dfxm/runner.py` — the process worker
 
 Runs a stage in a **child process** and streams messages back; UI-agnostic.
@@ -809,6 +895,7 @@ What each stage reads and writes (file names are the defaults), and what its `fi
 | `slices` | stacked volumes + aligned rocking volume + (opt.) aligned mosa volume | `oblique_slices.h5` (or `oblique_slices_pinned.h5` when `use_pinned` is on and the filename wasn't user-edited) + PNG per plane (in `<out_dir>/<slice name>/`) | map per plane per volume group |
 | `profiles` | `oblique_slices.h5` | per-field trace figures (+ optional companion) + CSVs + overviews | one trace `FigureSpec` per field (+ optional companion) per parameter-mode job |
 | `matched` | raw strain + rocking scans | grayscale `rocking_layers/*.png` | map per matched layer |
+| *(figure recipes)* | a `recipe.json` (`dfxm.compose.recipe`) + the stage h5s it references (`maps.h5`, `oblique_slices.h5`, …) | `dfxm.compose.render.render_recipe`/`export_recipe` → `<recipe name>.png`/`.pdf`/`.svg` | *(none — the recipe's own `layout` is the catalog)* |
 
 `bindings.experiment_overrides` encodes these hand-offs so each stage's inputs
 auto-fill from the experiment + the previous stage's outputs.
