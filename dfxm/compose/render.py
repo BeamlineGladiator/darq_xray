@@ -71,7 +71,7 @@ def _assign_labels(layout, panels_by_id, compose):
     def walk(node):
         nonlocal seq
         if isinstance(node, (Row, Col)):
-            if node.group_label is not None:
+            if node.group_label:  # "" = not a group (item 8) — falls through to per-child labelling
                 text = _format_label(compose.label_template, seq)
                 if node.group_label not in ("", "auto"):
                     text = node.group_label

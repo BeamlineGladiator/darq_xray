@@ -66,7 +66,10 @@ class TextCell:
 class Row:
     children: list
     pinned_height_cm: float | None = None
-    group_label: str | None = None  # None = not a group; "auto" = auto slot; text = manual
+    # None = not a group; "auto" = auto-lettered slot; text = manual label.
+    # "" is normalized to None on load — a blank GROUP label means "not a
+    # group", unlike PanelDef.label where "" means "suppress the label".
+    group_label: str | None = None
     shared_colorbar: bool = False
     shared_clim: tuple[float, float] | None = None
 
@@ -75,6 +78,9 @@ class Row:
 class Col:
     children: list
     pinned_width_cm: float | None = None
+    # None = not a group; "auto" = auto-lettered slot; text = manual label.
+    # "" is normalized to None on load — a blank GROUP label means "not a
+    # group", unlike PanelDef.label where "" means "suppress the label".
     group_label: str | None = None
     shared_x: bool = False
     shared_colorbar: bool = False
@@ -140,7 +146,7 @@ def _node_from_dict(d):
         return Row(
             [_node_from_dict(c) for c in d.get("children", [])],
             pinned_height_cm=d.get("pinned_height_cm"),
-            group_label=d.get("group_label"),
+            group_label=d.get("group_label") or None,
             shared_colorbar=bool(d.get("shared_colorbar", False)),
             shared_clim=tuple(d["shared_clim"]) if d.get("shared_clim") else None,
         )
@@ -148,7 +154,7 @@ def _node_from_dict(d):
         return Col(
             [_node_from_dict(c) for c in d.get("children", [])],
             pinned_width_cm=d.get("pinned_width_cm"),
-            group_label=d.get("group_label"),
+            group_label=d.get("group_label") or None,
             shared_x=bool(d.get("shared_x", False)),
             shared_colorbar=bool(d.get("shared_colorbar", False)),
             shared_clim=tuple(d["shared_clim"]) if d.get("shared_clim") else None,
@@ -249,8 +255,11 @@ def recipe_to_json(recipe: FigureRecipe, *, base_dir: str | None = None) -> str:
 def recipe_from_json(text: str, *, base_dir: str | None = None) -> FigureRecipe:
     """Parse a recipe previously written by :func:`recipe_to_json`.
 
-    Raises :class:`StageUserError` (with a hint) for invalid JSON, an
-    unsupported/missing ``version``, or a missing ``layout``/``panels``.
+    Raises :class:`StageUserError` (with a hint) for invalid JSON, JSON that
+    is not a figure recipe at all, an unsupported/missing ``version``, or a
+    structurally malformed v1 recipe (e.g. a hand-edited file missing a
+    required key or carrying an unknown one) — the latter wraps the
+    underlying ``TypeError``/``KeyError`` instead of letting it escape.
     """
     try:
         d = json.loads(text)
@@ -260,7 +269,14 @@ def recipe_from_json(text: str, *, base_dir: str | None = None) -> FigureRecipe:
             hint="Re-export the recipe from the figure builder, or restore it from a backup.",
         ) from exc
 
-    version = d.get("version") if isinstance(d, dict) else None
+    if not isinstance(d, dict) or not any(k in d for k in ("version", "layout", "panels")):
+        raise StageUserError(
+            "this JSON file is not a figure recipe",
+            hint="Pick a recipe .json saved by the figure builder "
+            "(it has version/layout/panels keys).",
+        )
+
+    version = d.get("version")
     if version != RECIPE_VERSION:
         raise StageUserError(
             f"unsupported recipe version {version!r}",
@@ -273,13 +289,23 @@ def recipe_from_json(text: str, *, base_dir: str | None = None) -> FigureRecipe:
             hint="This does not look like a figure-recipe file.",
         )
 
-    panels = [_panel_def_from_dict(pd, base_dir) for pd in d["panels"]]
-    layout = _node_from_dict(d["layout"])
+    try:
+        compose = ComposeStyle(**d.get("compose", {}))
+        panels = [_panel_def_from_dict(pd, base_dir) for pd in d["panels"]]
+        layout = _node_from_dict(d["layout"])
+    except StageUserError:
+        raise
+    except (TypeError, KeyError) as exc:
+        raise StageUserError(
+            f"recipe is malformed ({type(exc).__name__}: {exc})",
+            hint="A hand-edited or corrupted field is the likely cause — "
+            "re-save the recipe from the figure builder.",
+        ) from exc
 
     return FigureRecipe(
         name=d.get("name", ""),
         style=d.get("style", {}),
-        compose=ComposeStyle(**d.get("compose", {})),
+        compose=compose,
         layout=layout,
         panels=panels,
         version=version,
@@ -298,12 +324,22 @@ def validate_recipe(recipe: FigureRecipe) -> None:
         seen.add(p.id)
 
     by_id = recipe.panel_by_id()
+    ref_counts: dict[str, int] = {}
     for leaf in iter_leaves(recipe.layout):
-        if isinstance(leaf, PanelRef) and leaf.panel_id not in by_id:
-            raise StageUserError(
-                f"layout refers to unknown panel id {leaf.panel_id!r} (ghost reference)",
-                hint="Every panel referenced by the layout must exist in the recipe's panel list.",
-            )
+        if isinstance(leaf, PanelRef):
+            if leaf.panel_id not in by_id:
+                raise StageUserError(
+                    f"layout refers to unknown panel id {leaf.panel_id!r} (ghost reference)",
+                    hint="Every panel referenced by the layout must exist in the recipe's panel list.",
+                )
+            ref_counts[leaf.panel_id] = ref_counts.get(leaf.panel_id, 0) + 1
+    dupes = sorted(pid for pid, n in ref_counts.items() if n > 1)
+    if dupes:
+        raise StageUserError(
+            f"layout references panel(s) {', '.join(repr(p) for p in dupes)} more than once",
+            hint="Each panel can appear in the layout once — add a second PanelDef "
+            "(new id, same source) to show the same data twice.",
+        )
 
     for p in recipe.panels:
         if p.source.kind not in PANEL_KINDS:

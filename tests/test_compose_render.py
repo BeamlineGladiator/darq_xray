@@ -143,6 +143,17 @@ def test_label_template_and_manual_override(tmp_path):
     assert "(a)" in texts and "X9" in texts and "(b)" not in texts
 
 
+def test_blank_group_label_is_not_a_group_slot(tmp_path):
+    """Item 8: '' group_label = "not a group" (each member gets its own letter),
+    distinct from PanelDef.label where '' = suppressed."""
+    h5 = _write_obl(tmp_path / "obl.h5")
+    r = _two_panel_recipe(h5)
+    r.layout.group_label = ""  # programmatic edge — JSON load already normalizes
+    res = render_recipe(r)
+    texts = [t.get_text() for ax in res.figure.axes for t in ax.texts]
+    assert "A" in texts and "B" in texts  # two per-panel letters, not one group slot
+
+
 def test_missing_file_renders_placeholder_and_notes(tmp_path):
     h5 = _write_obl(tmp_path / "obl.h5")
     r = _two_panel_recipe(h5)

@@ -1290,7 +1290,9 @@ a composed figure looks consistent with the per-stage exports above.
   panels, spacers, text cells, or further rows/columns) to arrange panels
   side-by-side or stacked; a `Row`/`Col` can also pin a height/width, carry a
   group label (one letter for the whole group), or share a colorbar/x-axis
-  across its members.
+  across its members. A blank group label means "no group" — each member
+  keeps its own per-panel letter — the opposite of a blank panel label, which
+  is its own explicit "no label" state.
 - **Physical scales** — like every other exported map (see the "Scale
   (µm/cm)" control under [[#Publication export]] above), a panel's box can be
   sized from an exact µm/cm scale rather than a fixed inch size, so panels
@@ -1389,11 +1391,13 @@ code** is the pass/fail signal: `0` once at least one panel rendered for
 real; `1` if the figure was produced but every panel came out a placeholder;
 `2` for anything that stops the render before it can produce a figure — an
 unreadable recipe file (bad path, permissions), a `--formats` value outside
-`png`/`pdf`/`svg`, or the recipe itself being rejected (invalid JSON,
-unknown recipe version, a layout `Row`/`Col` referencing a panel id that
-doesn't exist, an invalid `scale_bar_panel`, mismatched scales under a
-shared scale bar, …) — the error message and a hint print to stderr in every
-`2` case.
+`png`/`pdf`/`svg`, or the recipe itself being rejected (invalid JSON, a file
+that isn't a figure recipe at all, unknown recipe version, a structurally
+malformed recipe — a hand-edited file with an unknown or missing field, a
+layout `Row`/`Col` referencing a panel id that doesn't exist or referencing
+the same panel more than once, an invalid `scale_bar_panel`, mismatched
+scales under a shared scale bar, …) — the error message and a hint print to
+stderr in every `2` case.
 
 ---
 

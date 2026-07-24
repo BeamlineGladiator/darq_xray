@@ -495,7 +495,12 @@ other `dfxm/compose` module builds on.
   space, or literal text cell).
 - `Row` / `Col` — layout containers (nest freely); each supports a pinned
   height/width, an optional group label/shared colorbar/shared clim (`Col` also
-  `shared_x`).
+  `shared_x`). `group_label` is tri-state: `None` = not a group, `"auto"` = an
+  auto-lettered slot, any other text = a manual label; a blank `""` is
+  normalized to `None` on load (`_node_from_dict`) — a blank *group* label
+  means "not a group" (each member keeps its own per-panel letter), the
+  opposite convention from `PanelDef.label`, where `""` means "suppress the
+  label".
 - `FigureRecipe` — the whole recipe: `name`, `style` (JSON-safe `PlotStyle`
   overrides), `compose: ComposeStyle`, `layout` (a `Row`/`Col`/`PanelRef`/`Spacer`/
   `TextCell` tree), `panels: list[PanelDef]`, `version`. `panel_by_id()` returns an
@@ -506,14 +511,19 @@ other `dfxm/compose` module builds on.
   JSON round-trip. When `base_dir` is given, each panel's `h5_path` is stored
   relative to it on save (falling back to absolute if `os.path.relpath` can't
   compute one) and resolved back against it on load. Raises `StageUserError`
-  (with a hint) for invalid JSON, an unsupported/missing `version`, or a missing
-  `layout`/`panels`.
+  (with a hint) for invalid JSON, JSON that isn't a figure recipe at all (no
+  `version`/`layout`/`panels` key — message contains "not a figure recipe",
+  distinct from the unsupported-`version` case), an unsupported/missing
+  `version`, a missing `layout`/`panels`, or a structurally malformed v1
+  recipe (an unknown `ComposeStyle` key, a panel missing `id`/`source`, etc. —
+  the underlying `TypeError`/`KeyError` is wrapped into a "recipe is
+  malformed (...)" `StageUserError` instead of escaping raw).
 - `validate_recipe(recipe) -> None` — raises `StageUserError` (with a hint) on
   the first problem found: duplicate panel ids, a layout `PanelRef` pointing at
-  a panel id that doesn't exist (a "ghost" reference), an unknown
-  `PanelSource.kind`, an unknown `ComposeStyle.scale_bar_mode`, a
-  `label_template` with no `A`/`a` placeholder, or a non-positive
-  `gutter_cm`/`padding_cm`.
+  a panel id that doesn't exist (a "ghost" reference), a panel referenced by
+  the layout more than once, an unknown `PanelSource.kind`, an unknown
+  `ComposeStyle.scale_bar_mode`, a `label_template` with no `A`/`a`
+  placeholder, or a non-positive `gutter_cm`/`padding_cm`.
 
 #### `adapters.py`
 
