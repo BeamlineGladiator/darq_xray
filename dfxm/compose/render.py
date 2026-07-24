@@ -71,7 +71,7 @@ def _assign_labels(layout, panels_by_id, compose):
     def walk(node):
         nonlocal seq
         if isinstance(node, (Row, Col)):
-            if node.group_label is not None:
+            if node.group_label:  # "" = not a group (item 8) — falls through to per-child labelling
                 text = _format_label(compose.label_template, seq)
                 if node.group_label not in ("", "auto"):
                     text = node.group_label
@@ -298,7 +298,7 @@ def _build_working_layout(node, bar_map):
     return node
 
 
-def _resolve_scale_bar_kwargs(recipe, panels_by_id, data_by_id, cell_by_pid):
+def _resolve_scale_bar_kwargs(recipe, panels_by_id, data_by_id, cell_by_pid, notes):
     """Per-panel ``scale_bar`` kwargs from ``compose.scale_bar_mode``, plus an
     optional gutter leaf (``"gutter"`` mode) and its shared µm/cm scale."""
     mode = recipe.compose.scale_bar_mode
@@ -323,8 +323,28 @@ def _resolve_scale_bar_kwargs(recipe, panels_by_id, data_by_id, cell_by_pid):
                 f"compose.scale_bar_panel {target!r} is not a known panel id",
                 hint=_NO_SCALE_BAR_PANEL_HINT,
             )
-        for pid in map_pids:
-            scale_bar_by_pid[pid] = pid == target
+        if target not in cell_by_pid:
+            raise StageUserError(
+                f"compose.scale_bar_panel {target!r} is not placed in the layout",
+                hint=_NO_SCALE_BAR_PANEL_HINT,
+            )
+        target_kind = data_by_id[target].kind
+        if target_kind == "profiles_trace":
+            raise StageUserError(
+                f"compose.scale_bar_panel {target!r} is a trace panel — "
+                "a scale bar needs a map panel",
+                hint=_NO_SCALE_BAR_PANEL_HINT,
+            )
+        if target_kind == "placeholder":
+            # data-availability, not authoring: degrade with a note, no bar anywhere
+            notes.append(
+                f"scale-bar panel {target}: data unavailable (placeholder) — no scale bar drawn"
+            )
+            for pid in map_pids:
+                scale_bar_by_pid[pid] = False
+        else:
+            for pid in map_pids:
+                scale_bar_by_pid[pid] = pid == target
     elif mode == "gutter":
         for pid in map_pids:
             scale_bar_by_pid[pid] = False
@@ -367,9 +387,16 @@ def render_recipe(
     )
 
     panels_by_id = dict(recipe.panel_by_id())
-    data_by_id = {pid: load_panel(p, cache=loader_cache) for pid, p in panels_by_id.items()}
-
     notes: list[str] = []
+    live_pids = {leaf.panel_id for leaf in iter_leaves(recipe.layout) if isinstance(leaf, PanelRef)}
+    orphans = sorted(set(panels_by_id) - live_pids)
+    if orphans:
+        notes.append(
+            "panel def(s) not referenced by the layout — skipped without loading: "
+            + ", ".join(orphans)
+        )
+    data_by_id = {pid: load_panel(panels_by_id[pid], cache=loader_cache) for pid in live_pids}
+
     cells = size_cells(recipe, style, data_by_id, notes)
 
     fig = Figure(facecolor="white")
@@ -417,7 +444,7 @@ def render_recipe(
     bar_map = {id(node): bar_leaf for node, _grp, _pids, bar_leaf, _ax in bar_specs}
 
     scale_bar_by_pid, gutter_leaf, gutter_scale = _resolve_scale_bar_kwargs(
-        recipe, panels_by_id, data_by_id, cell_by_pid
+        recipe, panels_by_id, data_by_id, cell_by_pid, notes
     )
     if gutter_leaf is not None:
         gax = fig.add_axes([0.0, 0.0, 0.01, 0.01])
@@ -615,11 +642,21 @@ def export_recipe(
     style_overrides: dict | None = None,
     loader_cache: dict | None = None,
 ):
+    try:
+        os.makedirs(out_dir, exist_ok=True)
+    except OSError as exc:
+        raise StageUserError(
+            f"cannot create output directory {out_dir!r}: {exc}",
+            hint="Check the path — it must be creatable and writable (permissions, "
+            "read-only media, or a file standing where the directory should be).",
+        ) from exc
     res = render_recipe(recipe, style_overrides, loader_cache=loader_cache)
-    style = style_from_params({"plot_style": dict(recipe.style)}) or PlotStyle()
+    style = (
+        style_from_params({"plot_style": {**recipe.style, **(style_overrides or {})}})
+        or PlotStyle()
+    )
     fmts = tuple(formats) if formats else tuple(style.formats)
     the_dpi = int(dpi) if dpi else int(style.dpi)
-    os.makedirs(out_dir, exist_ok=True)
     stem = re.sub(r"[^\w.-]+", "_", recipe.name or "figure").strip("_") or "figure"
     paths = []
     for fmt in fmts:

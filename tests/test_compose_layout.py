@@ -171,6 +171,87 @@ def test_trace_no_scale_anywhere_refused_with_hint():
     assert "scale" in str(e.value).lower() and e.value.hint
 
 
+def test_nested_col_under_pinned_row_divides_height_after_gutters():
+    """Item 5(b): Row(pinned_height) > Col([a, b]) — each stacked child gets
+    (pin − gutter)/2, not the full pin (which overflowed the container)."""
+    style = PlotStyle(scale_um_per_cm=10.0)
+    a, b = PanelRef("a"), PanelRef("b")
+    layout = Row([Col([a, b])], pinned_height_cm=4.0)
+    recipe = _recipe(layout, [_panel("a"), _panel("b")])
+    recipe.compose.gutter_cm = 0.5
+    cells = size_cells(recipe, style, {"a": _map_data(), "b": _map_data()}, notes := [])
+    each_in = ((4.0 - 0.5) / 2) / 2.54
+    assert abs(cells[id(a)].h_in - each_in) < 1e-9
+    assert abs(cells[id(b)].h_in - each_in) < 1e-9
+    assert any("split over 2 stacked children" in n for n in notes)
+
+
+def test_trace_under_both_pins_honours_row_height_too():
+    """Item 5(a): Col(pinned_width) inside Row(pinned_height) — the width-pin
+    early return used to keep the cosmetic trace height, silently dropping the
+    row's height pin."""
+    style = PlotStyle(trace_scale_um_per_cm=5.0, trace_height_cm=2.0)
+    t = PanelRef("t")
+    layout = Row([Col([t], pinned_width_cm=6.0)], pinned_height_cm=4.0)
+    cells = size_cells(
+        _recipe(layout, [_panel("t", "profiles_trace")]), style, {"t": _trace_data()}, notes := []
+    )
+    c = cells[id(t)]
+    assert abs(c.w_in - 6.0 / 2.54) < 1e-9
+    assert abs(c.h_in - 4.0 / 2.54) < 1e-9  # NOT trace_height_cm's 2.0
+    assert any("pinned row height" in n for n in notes)
+
+
+def test_map_double_pin_height_wins_with_note():
+    style = PlotStyle(scale_um_per_cm=10.0)
+    a = PanelRef("a")
+    layout = Row([Col([a], pinned_width_cm=6.0)], pinned_height_cm=2.0)
+    cells = size_cells(_recipe(layout, [_panel("a")]), style, {"a": _map_data()}, notes := [])
+    c = cells[id(a)]
+    assert abs(c.h_in - 2.0 / 2.54) < 1e-9
+    assert abs(c.w_in - 2.0 * (20.0 / 10.0) / 2.54) < 1e-9  # aspect from the height pin
+    assert any("width pin ignored" in n for n in notes)
+
+
+def test_pin_too_small_for_children_refused():
+    layout = Row([Col([PanelRef("a"), PanelRef("b")])], pinned_height_cm=0.4)
+    recipe = _recipe(layout, [_panel("a"), _panel("b")])
+    recipe.compose.gutter_cm = 0.5  # the gutter alone exceeds the pin
+    with pytest.raises(StageUserError) as e:
+        size_cells(
+            recipe, PlotStyle(scale_um_per_cm=10.0), {"a": _map_data(), "b": _map_data()}, []
+        )
+    assert "too small" in str(e.value) and e.value.hint
+
+
+def test_zero_length_trace_becomes_placeholder_with_note():
+    style = PlotStyle(trace_scale_um_per_cm=5.0)
+    layout = PanelRef("t")
+    cells = size_cells(
+        _recipe(layout, [_panel("t", "profiles_trace")]),
+        style,
+        {"t": _trace_data(0.0)},
+        notes := [],
+    )
+    c = cells[id(layout)]
+    assert c.kind == "placeholder"
+    assert (c.w_in, c.h_in) == (4.0 / 2.54, 3.0 / 2.54)
+    assert any("degenerate trace length" in n for n in notes)
+
+
+def test_zero_length_trace_under_width_pin_still_placeholder():
+    t = PanelRef("t")
+    layout = Col([t], pinned_width_cm=4.0)
+    cells = size_cells(
+        _recipe(layout, [_panel("t", "profiles_trace")]),
+        PlotStyle(),
+        {"t": _trace_data(0.0)},
+        notes := [],
+    )
+    assert cells[id(t)].kind == "placeholder"
+    assert any("degenerate trace length" in n for n in notes)
+
+
 # -- measure/align/place ------------------------------------------------------
 
 

@@ -143,6 +143,17 @@ def test_label_template_and_manual_override(tmp_path):
     assert "(a)" in texts and "X9" in texts and "(b)" not in texts
 
 
+def test_blank_group_label_is_not_a_group_slot(tmp_path):
+    """Item 8: '' group_label = "not a group" (each member gets its own letter),
+    distinct from PanelDef.label where '' = suppressed."""
+    h5 = _write_obl(tmp_path / "obl.h5")
+    r = _two_panel_recipe(h5)
+    r.layout.group_label = ""  # programmatic edge — JSON load already normalizes
+    res = render_recipe(r)
+    texts = [t.get_text() for ax in res.figure.axes for t in ax.texts]
+    assert "A" in texts and "B" in texts  # two per-panel letters, not one group slot
+
+
 def test_missing_file_renders_placeholder_and_notes(tmp_path):
     h5 = _write_obl(tmp_path / "obl.h5")
     r = _two_panel_recipe(h5)
@@ -296,6 +307,26 @@ def test_shared_x_stack_bottom_labels_only(tmp_path):
     assert not any(t.get_visible() for t in top.get_xticklabels())
 
 
+def test_zero_length_trace_renders_placeholder_lockstep(tmp_path, monkeypatch):
+    """Item 6: length_um == 0 joins the degenerate-extent placeholder lockstep —
+    placeholder draw + note, never a zero-width trace axes (no mpl warnings)."""
+    import warnings
+
+    from dfxm.compose.adapters import PanelData
+
+    monkeypatch.setattr(
+        "dfxm.compose.render.load_panel",
+        lambda p, cache=None: PanelData(kind="profiles_trace", length_um=0.0, payload={}),
+    )
+    p = PanelDef("t", PanelSource("/x.h5", "profiles_trace", {"job": JOB, "field": "strain"}))
+    r = FigureRecipe("z", {"trace_scale_um_per_cm": 5.0}, ComposeStyle(), PanelRef("t"), [p])
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        res = render_recipe(r)
+    assert res.n_rendered == 0
+    assert any("degenerate trace length" in n for n in res.notes)
+
+
 def test_export_no_tightcrop_all_formats(tmp_path):
     h5 = _write_obl(tmp_path / "obl.h5")
     out = tmp_path / "out"
@@ -314,3 +345,82 @@ def test_export_no_tightcrop_all_formats(tmp_path):
     # coin flip at the sub-pixel margin sizes real tick-label/colorbar decoration
     # produces.
     assert img.shape[1] == int(fw * 120) and img.shape[0] == int(fh * 120)  # exact canvas
+
+
+def test_orphaned_panel_def_not_loaded_at_all(tmp_path):
+    """Item 7: an orphaned PanelDef is skipped WITHOUT an h5 read and reported."""
+    h5 = _write_obl(tmp_path / "obl.h5")
+    r = _two_panel_recipe(h5)
+    r.layout = Row([PanelRef("a")])  # "b" orphaned
+    cache: dict = {}
+    res = render_recipe(r, loader_cache=cache)
+    assert res.n_panels == 1 and res.n_rendered == 1
+    assert len(cache) == 1  # only "a" was loaded
+    assert any("skipped without loading" in n and "b" in n for n in res.notes)
+
+
+def test_one_panel_scale_bar_unplaced_target_refused(tmp_path):
+    h5 = _write_obl(tmp_path / "obl.h5")
+    r = _two_panel_recipe(h5)
+    r.layout = Row([PanelRef("a")])  # "b" exists as a def but is not placed
+    r.compose.scale_bar_mode = "one-panel"
+    r.compose.scale_bar_panel = "b"
+    with pytest.raises(StageUserError) as e:
+        render_recipe(r)
+    assert "not placed" in str(e.value) and e.value.hint
+
+
+def test_one_panel_scale_bar_trace_target_refused(tmp_path):
+    h5 = _write_obl(tmp_path / "obl.h5")
+    r = _two_panel_recipe(h5)
+    r.panels.append(
+        PanelDef("t", PanelSource(h5, "profiles_trace", {"job": JOB, "field": "strain"}))
+    )
+    r.layout.children.append(PanelRef("t"))
+    r.style["trace_scale_um_per_cm"] = 5.0
+    r.compose.scale_bar_mode = "one-panel"
+    r.compose.scale_bar_panel = "t"
+    with pytest.raises(StageUserError) as e:
+        render_recipe(r)
+    assert "trace panel" in str(e.value) and e.value.hint
+
+
+def test_one_panel_scale_bar_placeholder_target_degrades_with_note(tmp_path):
+    h5 = _write_obl(tmp_path / "obl.h5")
+    r = _two_panel_recipe(h5)
+    r.panels[1].source.h5_path = str(tmp_path / "gone.h5")  # "b" -> placeholder
+    r.compose.scale_bar_mode = "one-panel"
+    r.compose.scale_bar_panel = "b"
+    res = render_recipe(r)
+    assert _scale_bar_box(res.axes_by_id["a"]) is None  # no bar leaks elsewhere
+    assert any("no scale bar drawn" in n for n in res.notes)
+
+
+def test_export_dir_uncreatable_raises_user_error(tmp_path):
+    h5 = _write_obl(tmp_path / "obl.h5")
+    blocker = tmp_path / "blocker"
+    blocker.write_text("a file standing where the out dir should be")
+    with pytest.raises(StageUserError) as e:
+        export_recipe(_two_panel_recipe(h5), str(blocker / "out"))
+    assert "output directory" in str(e.value) and e.value.hint
+
+
+def test_export_honours_style_overrides_formats_and_dpi(tmp_path, monkeypatch):
+    from matplotlib.figure import Figure
+
+    h5 = _write_obl(tmp_path / "obl.h5")
+    recorded = {}
+    orig = Figure.savefig
+
+    def rec(self, path, **kw):
+        recorded[os.path.basename(path)] = kw.get("dpi")
+        return orig(self, path, **kw)
+
+    monkeypatch.setattr(Figure, "savefig", rec)
+    paths, _res = export_recipe(
+        _two_panel_recipe(h5),
+        str(tmp_path / "out"),
+        style_overrides={"formats": ["svg"], "dpi": 72},
+    )
+    assert [os.path.splitext(p)[1] for p in paths] == [".svg"]
+    assert recorded == {"demo.svg": 72}

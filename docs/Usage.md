@@ -1290,7 +1290,16 @@ a composed figure looks consistent with the per-stage exports above.
   panels, spacers, text cells, or further rows/columns) to arrange panels
   side-by-side or stacked; a `Row`/`Col` can also pin a height/width, carry a
   group label (one letter for the whole group), or share a colorbar/x-axis
-  across its members.
+  across its members. A blank group label means "no group" — each member
+  keeps its own per-panel letter — the opposite of a blank panel label, which
+  is its own explicit "no label" state. A pinned height crossing a nested
+  column (or a pinned width crossing a nested row) is divided equally among
+  the stacked panels after gutters, so the container matches the pin exactly;
+  the split is reported in the notes bar. That exact match assumes every
+  stacked child is a panel — mixing in a spacer or text cell breaks it, since
+  those keep their own fixed size regardless of the pin, so the container's
+  total can drift from the pin by that amount (the note still reports the
+  equal split that was computed).
 - **Physical scales** — like every other exported map (see the "Scale
   (µm/cm)" control under [[#Publication export]] above), a panel's box can be
   sized from an exact µm/cm scale rather than a fixed inch size, so panels
@@ -1319,9 +1328,20 @@ until you click Refresh data. A **notes bar** under the preview reports
 implied-scale/drift/placeholder notes from the render (semicolon-joined), or
 — if the recipe can't be composed at all (e.g. no panel has a physical scale
 to size from) — the error message plus its hint, without ever crashing the
-window. Clicking a panel in the preview selects that panel's node in the
+window. Deleting the last panel clears the live preview canvas outright
+(rather than leaving the last-rendered figure showing behind the "add panels
+to preview" note) — the note always describes exactly what's on screen.
+Clicking a panel in the preview selects that panel's node in the
 outline tree, mirroring the selection you'd otherwise make by hand before
-Label…/Delete/↑/↓.
+Label…/Delete/↑/↓. The outline keeps the node you're editing selected across
+a move, group toggle, or label edit — the rebuilt tree re-selects the same
+node by identity, so pressing ↑/↓ repeatedly keeps moving the same item
+instead of losing the selection after the first press. Deleting a node
+selects its parent container afterwards, so the outline never drops to no
+selection after a delete. A panel whose label has been switched off (Label
+mode "No label" in the selected-node pane, below) shows "(label off)" next
+to its id in the outline, distinguishing it at a glance from a panel still
+auto-lettering.
 
 **In-app editor: right pane (style, compose, overrides, export)**
 
@@ -1344,26 +1364,48 @@ button:
   the recipe's current panels; blank = none designated yet), and a pinned
   total width in cm (0 = auto-sized from the layout). Every edit writes
   straight into `recipe.compose` and schedules a re-render.
-- *Selected panel overrides* — enabled only when the outline selection is a
-  panel; edits its `PanelDef` in place: **ROI crop** as `r0,r1,c0,c1` pixel
-  text (blank = full frame; all four values are required together — a
-  malformed entry reports to the notes bar and changes nothing), **colour
-  limits** as `lo,hi` (either half may be left blank to keep that bound
-  automatic; malformed text likewise reports and changes nothing),
-  **colormap** (blank = follow the style), **label** (blank = the automatic
-  sequence letter), **show title** and **colourbar** (Follow/On/Off —
-  Follow defers to the composed default), and **panel scale** in µm/cm
-  (0 = follow the style's own scale). Each override field is applied
-  independently — editing one (say ROI crop) never re-reads or resets any of
-  the others, so an explicitly blank label or a colour limit typed more
-  precisely than the box's own display stays exactly as set even after you
-  edit something else in the same panel.
+- *Selected node* — a stack of pages, one per outline-node type; the page
+  shown always matches the current tree selection. Selecting nothing shows a
+  short hint ("select a node in the outline to edit it"). Every field on
+  every page applies independently and immediately: editing one never
+  re-reads or resets any other field on the same node, malformed text (a
+  colour-limits or shared-colour-limits box that isn't `lo,hi`, or a
+  malformed ROI) reports to the notes bar and changes nothing, and typing
+  back the value already stored changes nothing at all — no dirty flag, no
+  re-render.
+  - **Panel** — edits its `PanelDef` in place: **ROI crop** as `r0,r1,c0,c1`
+    pixel text (blank = full frame; all four values are required together),
+    **colour limits** as `lo,hi` (either half may be left blank to keep that
+    bound automatic), **colormap** (blank = follow the style), a three-state
+    **Label** control — *Auto letter* (the automatic sequence letter, the
+    default), *No label* (explicitly suppressed), or *Custom…* (a text box
+    appears below, enabled only in this mode) — **show title** and
+    **colourbar** (Follow/On/Off — Follow defers to the composed default),
+    and **panel scale** in µm/cm (0 = follow the style's own scale).
+  - **Row** — a **Group label** control with three states — *Not a group*,
+    *Auto letter* (the panel-group bracket/letter is auto-assigned; this is
+    the same "auto" bookkeeping value `toggle_group_selected`/the outline's
+    Group button write, so re-selecting a row grouped this way always shows
+    *Auto letter* with a blank custom-text box, never a literal "auto"),
+    and *Custom…* (a text box beneath becomes enabled for a literal group
+    label) — a **pinned height** in cm (0 = off, the row sizes itself from
+    its content), a **One colorbar for this group** checkbox
+    (`shared_colorbar`), and **shared colour limits** as `lo,hi`
+    (`shared_clim`; blank = union of the member panels' own ranges).
+  - **Col** — the same group-label control, pinned-height control (here
+    **pinned width**, cm, 0 = off), one-colorbar checkbox, and shared colour
+    limits as Row, plus a **Shared x axis (bottom labels only)** checkbox
+    (`shared_x`).
+  - **Spacer** — its width and height in cm.
+  - **Text** — its text string plus its box's width and height in cm.
 - **Export…** opens a directory picker and writes the recipe with
   `dfxm.compose.render.export_recipe` (the same formats/DPI the recipe's
-  style specifies, reusing the preview's loader cache so nothing already
-  read is re-read from disk); the notes bar reports how many files were
-  written and where, or the error and its hint if the recipe couldn't be
-  exported.
+  current style specifies — exactly what the live preview is showing you,
+  including any style-pane edits not yet saved into the recipe file — reusing
+  the preview's loader cache so nothing already read is re-read from disk);
+  the notes bar reports how many files were written and where, or the error
+  and its hint if the recipe couldn't be exported (including an output
+  directory that couldn't be created).
 
 **Rendering from the command line**
 
@@ -1389,11 +1431,16 @@ code** is the pass/fail signal: `0` once at least one panel rendered for
 real; `1` if the figure was produced but every panel came out a placeholder;
 `2` for anything that stops the render before it can produce a figure — an
 unreadable recipe file (bad path, permissions), a `--formats` value outside
-`png`/`pdf`/`svg`, or the recipe itself being rejected (invalid JSON,
-unknown recipe version, a layout `Row`/`Col` referencing a panel id that
-doesn't exist, an invalid `scale_bar_panel`, mismatched scales under a
-shared scale bar, …) — the error message and a hint print to stderr in every
-`2` case.
+`png`/`pdf`/`svg` (each bad value quoted individually, e.g.
+`unknown format(s) 'jpg', 'tiff'`), an output directory that cannot be created
+(e.g. a file stands in its way), or the recipe itself being rejected (invalid
+JSON, a file that isn't a figure recipe at all, unknown recipe version, a
+structurally malformed recipe — a hand-edited file with an unknown or missing
+field, a layout `Row`/`Col` referencing a panel id that doesn't exist or
+referencing the same panel more than once, an invalid `scale_bar_panel` —
+unknown, not placed in the layout, or a trace panel (a scale bar needs a map
+panel) — mismatched scales under a shared scale bar, …) — the error message
+and a hint print to stderr in every `2` case.
 
 ---
 

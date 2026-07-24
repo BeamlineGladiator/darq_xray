@@ -469,3 +469,319 @@ def test_builder_defaults_prefill_stage_output_h5_not_folder():
     for stage in ("strain", "mosaicity", "rocking"):
         h5 = defaults[stage]["h5"]
         assert h5 == "" or h5.endswith(".h5"), f"{stage} default {h5!r} is not an h5 path"
+
+
+# -- node inspector (T4) ------------------------------------------------------
+def _select_child(w, i):
+    w._tree.setCurrentItem(w._tree.topLevelItem(0).child(i))
+
+
+def test_inspector_switches_page_per_node_type():
+    w = _win()
+    w.add_panels([_panel("a")])
+    w._tree.setCurrentItem(None)
+    w.add_row()
+    w._tree.setCurrentItem(None)
+    w.add_col()
+    w._tree.setCurrentItem(None)
+    w.add_spacer()
+    w._tree.setCurrentItem(None)
+    w.add_text()
+    w._tree.setCurrentItem(None)
+    assert w._inspector.currentWidget() is w._page_hint
+    _select_child(w, 0)
+    assert w._inspector.currentWidget() is w._page_panel
+    _select_child(w, 1)
+    assert w._inspector.currentWidget() is w._page_row
+    _select_child(w, 2)
+    assert w._inspector.currentWidget() is w._page_col
+    _select_child(w, 3)
+    assert w._inspector.currentWidget() is w._page_spacer
+    _select_child(w, 4)
+    assert w._inspector.currentWidget() is w._page_text
+
+
+def test_row_page_pin_and_shared_controls_write_fields():
+    w = _win()
+    w.add_row()
+    _select_child(w, 0)
+    row = w.recipe().layout.children[0]
+    w._row_pin_h.setValue(3.5)
+    assert row.pinned_height_cm == 3.5
+    w._row_pin_h.setValue(0.0)
+    assert row.pinned_height_cm is None
+    w._row_shared_cb.setChecked(True)
+    assert row.shared_colorbar is True
+    w._row_shared_clim.setText("-1,2")
+    assert row.shared_clim == (-1.0, 2.0)
+    w._row_shared_clim.setText("")
+    assert row.shared_clim is None
+
+
+def test_col_page_shared_x_and_pin_width():
+    w = _win()
+    w.add_col()
+    _select_child(w, 0)
+    col = w.recipe().layout.children[0]
+    w._col_shared_x.setChecked(True)
+    assert col.shared_x is True
+    w._col_pin_w.setValue(6.0)
+    assert col.pinned_width_cm == 6.0
+
+
+def test_shared_clim_parse_failure_notes_no_mutation():
+    w = _win()
+    w.add_row()
+    _select_child(w, 0)
+    row = w.recipe().layout.children[0]
+    row.shared_clim = (0.0, 1.0)
+    w._dirty = False
+    w._row_shared_clim.setText("nope")
+    assert row.shared_clim == (0.0, 1.0)
+    assert "shared clim" in w._notes_label.text()
+    assert not w.is_dirty()
+
+
+def test_spacer_and_text_pages_edit_boxes():
+    w = _win()
+    w.add_spacer()
+    _select_child(w, 0)
+    sp = w.recipe().layout.children[0]
+    w._spacer_w.setValue(1.25)
+    assert sp.w_cm == 1.25
+    w._tree.setCurrentItem(None)
+    w.add_text()
+    _select_child(w, 1)
+    tx = w.recipe().layout.children[1]
+    w._text_edit.setText("Header")
+    assert tx.text == "Header"
+    w._text_h.setValue(0.75)
+    assert tx.h_cm == 0.75
+
+
+def test_panel_label_three_state_control():
+    w = _win()
+    w.add_panels([_panel("a")])
+    _select_child(w, 0)
+    panel = w.recipe().panels[0]
+    assert panel.label is None
+    w._ov_label_mode.setCurrentIndex(1)  # "No label"
+    assert panel.label == ""
+    w._ov_label_mode.setCurrentIndex(2)  # "Custom…"
+    w._ov_label.setText("Z9")
+    assert panel.label == "Z9"
+    w._ov_label_mode.setCurrentIndex(0)  # back to auto
+    assert panel.label is None
+
+
+def test_group_mode_control_and_no_auto_sentinel_leak(monkeypatch):
+    w = _win()
+    w.add_row()
+    _select_child(w, 0)
+    row = w.recipe().layout.children[0]
+    w._row_group_mode.setCurrentIndex(1)  # Auto letter
+    assert row.group_label == "auto"
+    w._tree.setCurrentItem(None)
+    w.add_spacer()  # a second node to bounce selection off
+    _select_child(w, 1)
+    _select_child(w, 0)  # reload the Row page
+    assert w._row_group_label.text() == ""  # sentinel never shown
+    assert w._row_group_mode.currentData() == "auto"
+    captured = {}
+
+    def fake_get_text(*_a, **kw):
+        captured["prefill"] = kw.get("text", "")
+        return ("", False)
+
+    monkeypatch.setattr("gui.figure_builder.QInputDialog.getText", fake_get_text)
+    w._on_label_selected()
+    assert captured["prefill"] == ""  # the Label… dialog leak, fixed
+    w._row_group_mode.setCurrentIndex(2)  # Custom…
+    w._row_group_label.setText("M1")
+    assert row.group_label == "M1"
+
+
+def test_noop_inspector_edit_does_not_dirty():
+    w = _win()
+    w.add_row()
+    _select_child(w, 0)
+    row = w.recipe().layout.children[0]
+    w._dirty = False
+    w._apply_node_field(row, "shared_colorbar", False)  # already False
+    assert not w.is_dirty()
+    w._tree.setCurrentItem(None)
+    w.add_panels([_panel("a")])
+    panel = w.recipe().panels[0]
+    w._dirty = False
+    w._apply_panel_overrides(panel, {"cmap": ""})  # "" maps to None == current
+    assert not w.is_dirty()
+
+
+def test_inspector_edit_updates_item_text_in_place_without_rebuild():
+    w = _win()
+    w.add_row()
+    _select_child(w, 0)
+    item_before = w._tree.currentItem()
+    w._row_group_mode.setCurrentIndex(1)  # -> "[group]" marker
+    assert w._tree.currentItem() is item_before  # same item object: no rebuild
+    assert "[group]" in item_before.text(0)
+
+
+# -- selection persistence + stale canvas (T5) --------------------------------
+def test_move_selected_is_repeatable_selection_persists():
+    w = _win()
+    w.add_panels([_panel("a"), _panel("b"), _panel("c")])
+    w._tree.setCurrentItem(w._tree.topLevelItem(0).child(2))  # select "c"
+    w.move_selected(-1)
+    assert [getattr(x, "panel_id", None) for x in _row(w).children] == ["a", "c", "b"]
+    assert getattr(w._selected_node(), "panel_id", None) == "c"  # survived the rebuild
+    w.move_selected(-1)  # pressing ↑ again must keep working
+    assert [getattr(x, "panel_id", None) for x in _row(w).children] == ["c", "a", "b"]
+
+
+def test_delete_selects_parent_container():
+    w = _win()
+    w.add_col()
+    w._tree.setCurrentItem(w._tree.topLevelItem(0).child(0))
+    w.add_panels([_panel("a"), _panel("b")])  # into the selected Col
+    col = w.recipe().layout.children[0]
+    w.select_node(col.children[0])
+    w.delete_selected()
+    assert w._selected_node() is col
+
+
+def test_label_edit_keeps_selection():
+    w = _win()
+    w.add_col()
+    w._tree.setCurrentItem(w._tree.topLevelItem(0).child(0))
+    col = w.recipe().layout.children[0]
+    w.set_selected_label("G1")
+    assert w._selected_node() is col
+
+
+def test_render_now_clears_canvas_when_no_panels_left(tmp_path):
+    w = _win()
+    w.add_panels(_obl_recipe_panels(tmp_path))
+    assert w.render_now() is not None and w._canvas is not None
+    w._tree.setCurrentItem(w._tree.topLevelItem(0).child(0))
+    w.delete_selected()
+    assert w.render_now() is None
+    assert w._canvas is None and w._result is None
+    assert "add panels" in w._notes_label.text()
+
+
+def test_outline_marks_suppressed_label():
+    w = _win()
+    w.add_panels([_panel("a")])
+    w.recipe().panels[0].label = ""
+    w._rebuild_tree()
+    assert "label off" in w._tree.topLevelItem(0).child(0).text(0)
+
+
+# -- figure-2 acceptance: authored entirely through window methods (T6) -------
+def test_figure2_authored_through_window_methods(tmp_path):
+    """Spec §C: acceptance figure 2 — ragged 3 columns, shared_x trace stacks
+    with group labels, split map/trace scales — authored purely through
+    FigureBuilderWindow methods (no JSON editing), rendering with exactly the
+    geometry tests/test_compose_acceptance.py's figure-2 test pins."""
+    import numpy as np
+
+    from dfxm.common.plotting import measured_box_in
+    from dfxm.compose.recipe import PanelSource
+    from tests.test_compose_acceptance import _write_profiles_three_fields
+
+    h5 = _write_profiles_three_fields(tmp_path / "obl.h5")
+    job_a = {"name": "obl", "offset_um": 0.0, "start_uv": [-8.0, -6.0], "end_uv": [8.0, 6.0]}
+    job_b = {"name": "obl", "offset_um": 0.0, "start_uv": [-15.0, -9.0], "end_uv": [15.0, 9.0]}
+    len_a = float(np.hypot(16.0, 12.0))  # 20 µm
+    len_b = float(np.hypot(30.0, 18.0))  # ~34.99 µm
+    fields = ["mosa_com_chi", "strain", "raw_mosa_sum"]
+    map_scale, trace_scale, trace_h_cm = 5.0, 2.0, 2.0
+
+    w = _track(
+        FigureBuilderWindow(
+            lambda: {},
+            PlotStyle(
+                scale_um_per_cm=map_scale,
+                trace_scale_um_per_cm=trace_scale,
+                trace_height_cm=trace_h_cm,
+                show_title=False,
+            ),
+        )
+    )
+    root = w.recipe().layout
+
+    # column 1: the two reference maps, labelled via the inspector
+    w.add_col()
+    col1 = root.children[0]
+    w.select_node(col1)
+    w.add_panels(
+        [
+            PanelDef(
+                "A1",
+                PanelSource(h5, "profiles_ref", {"job": job_a, "field": "mosa_com_chi"}),
+                roi=(10, 50, 10, 60),
+            ),
+            PanelDef(
+                "B1",
+                PanelSource(h5, "profiles_ref", {"job": job_b, "field": "mosa_com_chi"}),
+                roi=(10, 50, 10, 60),
+            ),
+        ]
+    )
+    w.select_node(col1.children[0])
+    w._ov_label_mode.setCurrentIndex(2)  # Custom… (the 3-state widget path)
+    w._ov_label.setText("A1")
+    w._apply_panel_overrides(w.recipe().panel_by_id()["B1"], {"label": "B1"})
+
+    # columns 2/3: shared-x trace stacks with group labels A2/B2
+    for tag, job, glabel in (("a", job_a, "A2"), ("b", job_b, "B2")):
+        w.select_node(root)
+        w.add_col()
+        col = root.children[-1]
+        w.select_node(col)
+        w.add_panels(
+            [
+                PanelDef(
+                    f"t_{tag}_{v}", PanelSource(h5, "profiles_trace", {"job": job, "field": v})
+                )
+                for v in fields
+            ]
+        )
+        w.select_node(col)
+        w._col_shared_x.setChecked(True)  # the NEW inspector authoring path
+        if tag == "a":
+            w._col_group_mode.setCurrentIndex(2)  # Custom… on the Col page
+            w._col_group_label.setText(glabel)
+        else:
+            w.set_selected_label(glabel)  # the outline Label… path — both must work
+        assert col.shared_x is True and col.group_label == glabel
+
+    res = w.render_now()
+    assert res is not None and res.n_rendered == 8, w._notes_label.text()
+    fig = res.figure
+
+    # geometry pins — identical to test_acceptance_figure_2_ragged_dual_scale
+    ext_x, ext_y = 24.5, 19.5
+    for pid in ("A1", "B1"):
+        bw, bh = measured_box_in(fig, res.axes_by_id[pid])
+        assert abs(bw - ext_x / map_scale / 2.54) < 0.005 * bw, pid
+        assert abs(bh - ext_y / map_scale / 2.54) < 0.005 * bh, pid
+    for tag, length in (("a", len_a), ("b", len_b)):
+        for vid in fields:
+            bw, bh = measured_box_in(fig, res.axes_by_id[f"t_{tag}_{vid}"])
+            assert abs(bw - length / trace_scale / 2.54) < 0.005 * bw, (tag, vid)
+            assert abs(bh - trace_h_cm / 2.54) < 0.005 * bh, (tag, vid)
+
+    texts = [t.get_text() for ax in fig.axes for t in ax.texts]
+    assert "A1" in texts and "B1" in texts and "A2" in texts and "B2" in texts
+    for tag in ("a", "b"):
+        for vid in fields[:-1]:
+            assert res.axes_by_id[f"t_{tag}_{vid}"].get_xlabel() == ""
+        assert res.axes_by_id[f"t_{tag}_{fields[-1]}"].get_xlabel() != ""
+        xs = {round(res.axes_by_id[f"t_{tag}_{v}"].get_position().x0, 5) for v in fields}
+        assert len(xs) == 1, tag
+    xa = max(res.axes_by_id[f"t_a_{v}"].get_position().x1 for v in fields)
+    xb = {round(res.axes_by_id[f"t_b_{v}"].get_position().x0, 5) for v in fields}
+    assert len(xb) == 1 and min(xb) > xa
+    assert not any("scale is off" in n for n in res.notes)

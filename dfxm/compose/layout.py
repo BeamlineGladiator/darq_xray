@@ -10,6 +10,10 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 from dataclasses import replace as dc_replace
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from matplotlib.figure import Figure
 
 from ..common.errors import StageUserError
 from ..common.plotting import (
@@ -86,6 +90,26 @@ def size_cells(recipe, style, data_by_id, notes):
     panels = recipe.panel_by_id()
     cells: dict[int, SizedCell] = {}
 
+    gutter_in = recipe.compose.gutter_cm * _IN_PER_CM
+
+    def _split_pin(pin_in, n, what):
+        """Divide a pin among n stacked children, subtracting inter-child
+        gutters, so the container's total equals the pin. Never silent."""
+        if pin_in is None or n <= 1:
+            return pin_in
+        each = (pin_in - gutter_in * (n - 1)) / n
+        if each <= 0:
+            raise StageUserError(
+                f"pinned {what} {pin_in / _IN_PER_CM:.4g} cm is too small for "
+                f"{n} stacked children plus {n - 1} gutter(s)",
+                hint="Increase the pinned size, reduce compose.gutter_cm, or remove the pin.",
+            )
+        notes.append(
+            f"pinned {what} {pin_in / _IN_PER_CM:.4g} cm split over {n} stacked "
+            f"children — {each / _IN_PER_CM:.4g} cm each after gutters"
+        )
+        return each
+
     def leaf_cell(leaf, pinned_h_in, pinned_w_in):
         if isinstance(leaf, Spacer):
             return SizedCell(leaf, None, "spacer", leaf.w_cm * _IN_PER_CM, leaf.h_cm * _IN_PER_CM)
@@ -125,6 +149,11 @@ def size_cells(recipe, style, data_by_id, notes):
             w = h * ext_x / ext_y
             implied = ext_y / (h / _IN_PER_CM)
             notes.append(f"panel {panel.id}: pinned row height — implied scale {implied:.4g} µm/cm")
+            if pinned_w_in is not None:
+                notes.append(
+                    f"panel {panel.id}: both row height and column width pinned — "
+                    "height pin wins (map aspect is fixed); width pin ignored"
+                )
             return SizedCell(leaf, panel, "map", w, h)
         if pinned_w_in is not None:
             w = pinned_w_in
@@ -150,17 +179,30 @@ def size_cells(recipe, style, data_by_id, notes):
         return SizedCell(leaf, panel, "map", box[0], box[1])
 
     def _trace_cell(leaf, panel, data, pinned_h_in, pinned_w_in):
-        length = data.length_um or 0.0
+        length = data.length_um
+        if not _finite_positive(length):
+            notes.append(f"panel {panel.id}: degenerate trace length — rendered as placeholder")
+            return SizedCell(
+                leaf,
+                panel,
+                "placeholder",
+                PLACEHOLDER_CM[0] * _IN_PER_CM,
+                PLACEHOLDER_CM[1] * _IN_PER_CM,
+            )
         # A pinned column width sizes purely from (length, trace_height_cm)
         # and needs no scale at all — checked first so an unused/irrelevant
         # bad override cannot raise here (mirrors the map-cell ordering).
         if pinned_w_in is not None:
             w = pinned_w_in
-            h = trace_height_cm(style) * _IN_PER_CM
+            h = pinned_h_in if pinned_h_in is not None else trace_height_cm(style) * _IN_PER_CM
             implied = length / (w / _IN_PER_CM) if w > 0 else 0.0
             notes.append(
                 f"panel {panel.id}: pinned column width — implied trace scale {implied:.4g} µm/cm"
             )
+            if pinned_h_in is not None:
+                notes.append(
+                    f"panel {panel.id}: pinned row height — trace height {h / _IN_PER_CM:.4g} cm"
+                )
             return SizedCell(leaf, panel, "trace", w, h)
         st = style
         if panel.scale_um_per_cm:
@@ -193,12 +235,16 @@ def size_cells(recipe, style, data_by_id, notes):
     def walk(node, pinned_h_in, pinned_w_in):
         if isinstance(node, Row):
             ph = node.pinned_height_cm * _IN_PER_CM if node.pinned_height_cm else pinned_h_in
+            # a width pin crossing a Row is shared by its side-by-side children
+            pw = _split_pin(pinned_w_in, len(node.children), "column width")
             for child in node.children:
-                walk(child, ph, pinned_w_in)
+                walk(child, ph, pw)
         elif isinstance(node, Col):
             pw = node.pinned_width_cm * _IN_PER_CM if node.pinned_width_cm else pinned_w_in
+            # a height pin crossing a Col is shared by its stacked children
+            ph = _split_pin(pinned_h_in, len(node.children), "row height")
             for child in node.children:
-                walk(child, pinned_h_in, pw)
+                walk(child, ph, pw)
         else:
             cells[id(node)] = leaf_cell(node, pinned_h_in, pinned_w_in)
 
@@ -206,7 +252,7 @@ def size_cells(recipe, style, data_by_id, notes):
     return cells
 
 
-def measure_cells(fig, cells, pad_in: float = 0.02) -> None:
+def measure_cells(fig: "Figure", cells: list[SizedCell], pad_in: float = 0.02) -> None:
     """Fill each cell's margins, measured at FINAL box size (mandatory: tick
     density depends on size — same rule as place_axes_box)."""
     from ..common.plotting import AxesMargins, measure_axes_margins
@@ -232,7 +278,14 @@ def _cell_env(c):
     return (m.left + c.w_in + m.right, m.bottom + c.h_in + m.top)
 
 
-def place_tree(fig, layout, cells, *, gutter_in, pad_in):
+def place_tree(
+    fig: "Figure",
+    layout: "Row | Col | PanelRef | Spacer | TextCell",
+    cells: dict[int, SizedCell],
+    *,
+    gutter_in: float,
+    pad_in: float,
+) -> tuple[float, float]:
     """Share max margins within direct-panel Rows/Cols, compute envelope sizes
     (composite children align by envelope with automatic trailing padding),
     size *fig* to the root envelope + padding, and absolute-place every axes.

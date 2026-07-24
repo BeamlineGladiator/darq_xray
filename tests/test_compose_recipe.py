@@ -91,3 +91,63 @@ def test_bad_json_raises_stageusererror():
         recipe_from_json("{not json")
     with pytest.raises(StageUserError):
         recipe_from_json('{"no": "layout"}')
+
+
+def _as_dict(r=None):
+    import json
+
+    return json.loads(recipe_to_json(r or _mini_recipe()))
+
+
+def test_malformed_recipe_unknown_compose_key_wrapped_not_raw_typeerror():
+    import json
+
+    d = _as_dict()
+    d["compose"]["no_such_knob"] = 3
+    with pytest.raises(StageUserError) as e:
+        recipe_from_json(json.dumps(d))
+    assert "malformed" in str(e.value) and e.value.hint
+
+
+def test_malformed_recipe_missing_panel_id_wrapped_not_raw_keyerror():
+    import json
+
+    d = _as_dict()
+    del d["panels"][0]["id"]
+    with pytest.raises(StageUserError) as e:
+        recipe_from_json(json.dumps(d))
+    assert "malformed" in str(e.value) and e.value.hint
+
+
+def test_malformed_recipe_missing_panel_source_wrapped():
+    import json
+
+    d = _as_dict()
+    del d["panels"][0]["source"]
+    with pytest.raises(StageUserError) as e:
+        recipe_from_json(json.dumps(d))
+    assert "malformed" in str(e.value)
+
+
+def test_not_a_recipe_json_gets_dedicated_message():
+    with pytest.raises(StageUserError) as e:
+        recipe_from_json('{"no": "layout"}')
+    assert "not a figure recipe" in str(e.value)
+    assert "version" not in str(e.value)  # not the old "unsupported recipe version None"
+
+
+def test_duplicate_panel_ref_refused():
+    r = _mini_recipe()
+    r.layout.children.append(PanelRef("m0"))  # m0 already referenced once
+    with pytest.raises(StageUserError) as e:
+        validate_recipe(r)
+    assert "more than once" in str(e.value) and e.value.hint
+
+
+def test_blank_group_label_normalized_to_none_on_load():
+    import json
+
+    d = _as_dict()
+    d["layout"]["children"][1]["group_label"] = ""  # the nested Col
+    r = recipe_from_json(json.dumps(d))
+    assert r.layout.children[1].group_label is None

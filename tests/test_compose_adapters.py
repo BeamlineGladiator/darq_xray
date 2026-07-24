@@ -225,3 +225,27 @@ def test_draw_placeholder_hatched(tmp_path):
     draw_placeholder(ax, "missing file")
     assert any(p.get_hatch() for p in ax.patches)
     assert ax.get_xticks().size == 0
+
+
+def test_slice_plane_roi_clamps_out_of_range_indices(tmp_path):
+    """Out-of-range ROI indices clamp to the plane bounds (parity guard for the
+    _crop_uv dedup — same behaviour as the pre-refactor inline clamp)."""
+    h5 = tmp_path / "obl.h5"
+    with h5py.File(h5, "w") as f:
+        g = f.create_group("strain")
+        g.attrs.update(kind="strain", cbar_label="v", cmap="RdBu_r", title="s", vmin=-1, vmax=1)
+        sg = g.create_group("obl")
+        sg.create_dataset("slices", data=np.zeros((1, 4, 5), "f4"))
+        sg.create_dataset("u_um", data=np.linspace(0.0, 2.0, 5))
+        sg.create_dataset("v_um", data=np.linspace(0.0, 1.5, 4))
+        sg.create_dataset("offsets_um", data=np.array([0.0]))
+    p = PanelDef(
+        "s",
+        PanelSource(
+            str(h5), "slice_plane", {"volume_id": "strain", "slice_name": "obl", "plane": 0}
+        ),
+        roi=(0, 999, 0, 999),
+    )
+    d = load_panel(p)
+    assert d.kind == "slice_plane"
+    assert d.ext_x_um == 2.0 and d.ext_y_um == 1.5  # full extents survive the clamp
