@@ -676,3 +676,112 @@ def test_outline_marks_suppressed_label():
     w.recipe().panels[0].label = ""
     w._rebuild_tree()
     assert "label off" in w._tree.topLevelItem(0).child(0).text(0)
+
+
+# -- figure-2 acceptance: authored entirely through window methods (T6) -------
+def test_figure2_authored_through_window_methods(tmp_path):
+    """Spec §C: acceptance figure 2 — ragged 3 columns, shared_x trace stacks
+    with group labels, split map/trace scales — authored purely through
+    FigureBuilderWindow methods (no JSON editing), rendering with exactly the
+    geometry tests/test_compose_acceptance.py's figure-2 test pins."""
+    import numpy as np
+
+    from dfxm.common.plotting import measured_box_in
+    from dfxm.compose.recipe import PanelSource
+    from tests.test_compose_acceptance import _write_profiles_three_fields
+
+    h5 = _write_profiles_three_fields(tmp_path / "obl.h5")
+    job_a = {"name": "obl", "offset_um": 0.0, "start_uv": [-8.0, -6.0], "end_uv": [8.0, 6.0]}
+    job_b = {"name": "obl", "offset_um": 0.0, "start_uv": [-15.0, -9.0], "end_uv": [15.0, 9.0]}
+    len_a = float(np.hypot(16.0, 12.0))  # 20 µm
+    len_b = float(np.hypot(30.0, 18.0))  # ~34.99 µm
+    fields = ["mosa_com_chi", "strain", "raw_mosa_sum"]
+    map_scale, trace_scale, trace_h_cm = 5.0, 2.0, 2.0
+
+    w = _track(
+        FigureBuilderWindow(
+            lambda: {},
+            PlotStyle(
+                scale_um_per_cm=map_scale,
+                trace_scale_um_per_cm=trace_scale,
+                trace_height_cm=trace_h_cm,
+                show_title=False,
+            ),
+        )
+    )
+    root = w.recipe().layout
+
+    # column 1: the two reference maps, labelled via the inspector
+    w.add_col()
+    col1 = root.children[0]
+    w.select_node(col1)
+    w.add_panels(
+        [
+            PanelDef(
+                "A1",
+                PanelSource(h5, "profiles_ref", {"job": job_a, "field": "mosa_com_chi"}),
+                roi=(10, 50, 10, 60),
+            ),
+            PanelDef(
+                "B1",
+                PanelSource(h5, "profiles_ref", {"job": job_b, "field": "mosa_com_chi"}),
+                roi=(10, 50, 10, 60),
+            ),
+        ]
+    )
+    w.select_node(col1.children[0])
+    w._ov_label_mode.setCurrentIndex(2)  # Custom… (the 3-state widget path)
+    w._ov_label.setText("A1")
+    w._apply_panel_overrides(w.recipe().panel_by_id()["B1"], {"label": "B1"})
+
+    # columns 2/3: shared-x trace stacks with group labels A2/B2
+    for tag, job, glabel in (("a", job_a, "A2"), ("b", job_b, "B2")):
+        w.select_node(root)
+        w.add_col()
+        col = root.children[-1]
+        w.select_node(col)
+        w.add_panels(
+            [
+                PanelDef(
+                    f"t_{tag}_{v}", PanelSource(h5, "profiles_trace", {"job": job, "field": v})
+                )
+                for v in fields
+            ]
+        )
+        w.select_node(col)
+        w._col_shared_x.setChecked(True)  # the NEW inspector authoring path
+        if tag == "a":
+            w._col_group_mode.setCurrentIndex(2)  # Custom… on the Col page
+            w._col_group_label.setText(glabel)
+        else:
+            w.set_selected_label(glabel)  # the outline Label… path — both must work
+        assert col.shared_x is True and col.group_label == glabel
+
+    res = w.render_now()
+    assert res is not None and res.n_rendered == 8, w._notes_label.text()
+    fig = res.figure
+
+    # geometry pins — identical to test_acceptance_figure_2_ragged_dual_scale
+    ext_x, ext_y = 24.5, 19.5
+    for pid in ("A1", "B1"):
+        bw, bh = measured_box_in(fig, res.axes_by_id[pid])
+        assert abs(bw - ext_x / map_scale / 2.54) < 0.005 * bw, pid
+        assert abs(bh - ext_y / map_scale / 2.54) < 0.005 * bh, pid
+    for tag, length in (("a", len_a), ("b", len_b)):
+        for vid in fields:
+            bw, bh = measured_box_in(fig, res.axes_by_id[f"t_{tag}_{vid}"])
+            assert abs(bw - length / trace_scale / 2.54) < 0.005 * bw, (tag, vid)
+            assert abs(bh - trace_h_cm / 2.54) < 0.005 * bh, (tag, vid)
+
+    texts = [t.get_text() for ax in fig.axes for t in ax.texts]
+    assert "A1" in texts and "B1" in texts and "A2" in texts and "B2" in texts
+    for tag in ("a", "b"):
+        for vid in fields[:-1]:
+            assert res.axes_by_id[f"t_{tag}_{vid}"].get_xlabel() == ""
+        assert res.axes_by_id[f"t_{tag}_{fields[-1]}"].get_xlabel() != ""
+        xs = {round(res.axes_by_id[f"t_{tag}_{v}"].get_position().x0, 5) for v in fields}
+        assert len(xs) == 1, tag
+    xa = max(res.axes_by_id[f"t_a_{v}"].get_position().x1 for v in fields)
+    xb = {round(res.axes_by_id[f"t_b_{v}"].get_position().x0, 5) for v in fields}
+    assert len(xb) == 1 and min(xb) > xa
+    assert not any("scale is off" in n for n in res.notes)

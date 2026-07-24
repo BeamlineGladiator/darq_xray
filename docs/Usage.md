@@ -1295,7 +1295,11 @@ a composed figure looks consistent with the per-stage exports above.
   is its own explicit "no label" state. A pinned height crossing a nested
   column (or a pinned width crossing a nested row) is divided equally among
   the stacked panels after gutters, so the container matches the pin exactly;
-  the split is reported in the notes bar.
+  the split is reported in the notes bar. That exact match assumes every
+  stacked child is a panel — mixing in a spacer or text cell breaks it, since
+  those keep their own fixed size regardless of the pin, so the container's
+  total can drift from the pin by that amount (the note still reports the
+  equal split that was computed).
 - **Physical scales** — like every other exported map (see the "Scale
   (µm/cm)" control under [[#Publication export]] above), a panel's box can be
   sized from an exact µm/cm scale rather than a fixed inch size, so panels
