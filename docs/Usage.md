@@ -1104,6 +1104,12 @@ A **Publication style…** button lives in the **left column of the main window*
 
 Clicking it opens a scrollable style editor (the same control set as the per-figure export dialog). Each **Export…** dialog starts from a private copy of the session style and lets you adjust it per-figure without changing the global.
 
+> [!note] Need several panels in one figure?
+> Everything on this page exports **one stage's own figure at a time**. To
+> arrange panels from one or more stages (maps, slices, line traces) side by
+> side into a single multi-panel publication figure, use the **Figure
+> builder…** button next to Publication style — see [[#Figure builder]].
+
 > [!important] Runs use the current style
 > Every stage **run** renders its own PNGs/animations (layer maps, slice PNGs,
 > profile companions, strain diagnostics, matched layers) with the publication
@@ -1252,14 +1258,12 @@ form.
 
 ## Figure builder
 
-> [!note] Work in progress
-> This chapter covers the **recipe file**, the **headless CLI** that renders
-> it, and the in-app `FigureBuilderWindow` editor's own mechanics (outline
-> editing, live preview, style/compose controls, per-panel overrides,
-> save/load recipes, export) — but that window is not yet reachable from the
-> main GUI's menus, so for now a recipe is a JSON file you write by hand,
-> generate with a small script against `dfxm.compose.recipe`, or build
-> interactively once the window is opened by hand for testing.
+> [!example] Opening the builder
+> Click **Figure builder…** in the left column of the main window, just below
+> **Publication style…**. The window is non-modal (the rest of the app stays
+> usable) and reused — clicking the button again re-raises the same window
+> instead of opening a second one, so a recipe you're mid-edit on is never
+> silently orphaned.
 
 The figure builder (`dfxm/compose/`) assembles a **multi-panel publication
 figure** — several map/slice/trace panels from one or more stage outputs,

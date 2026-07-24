@@ -319,3 +319,16 @@ def test_export_now_unexpected_error_reports_to_notes_bar_not_crash(tmp_path, mo
     monkeypatch.setattr("dfxm.compose.render.export_recipe", _raise)
     w.export_now()  # must not raise
     assert "export failed" in w._notes_label.text()
+
+
+# -- task 13: main-window launch wiring ---------------------------------------
+def test_main_window_launches_builder_non_modal():
+    from gui.main_window import MainWindow
+
+    win = MainWindow()
+    win._on_figure_builder()
+    assert win._figure_builder is not None
+    assert win._figure_builder.isVisible()
+    first = win._figure_builder
+    win._on_figure_builder()  # reuse, not a second window
+    assert win._figure_builder is first

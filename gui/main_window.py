@@ -115,6 +115,13 @@ class MainWindow(QMainWindow):
         self._pub_style_btn = QPushButton("Publication style…")
         self._pub_style_btn.clicked.connect(self._on_pub_style)
 
+        # "Figure builder…" button — non-modal multi-panel composer window,
+        # one instance reused across opens (lazy-imported so importing this
+        # module never pulls in the compose/matplotlib machinery).
+        self._figure_builder = None
+        self._figure_builder_btn = QPushButton("Figure builder…")
+        self._figure_builder_btn.clicked.connect(self._on_figure_builder)
+
         # Light/dark theme toggle.
         self._theme_btn = QPushButton()
         self._theme_btn.setCheckable(True)
@@ -129,6 +136,7 @@ class MainWindow(QMainWindow):
         left_layout.addWidget(self._experiment_panel)
         left_layout.addWidget(self._nav, 1)
         left_layout.addWidget(self._pub_style_btn)
+        left_layout.addWidget(self._figure_builder_btn)
         left_layout.addWidget(self._theme_btn)
 
         splitter = QSplitter()
@@ -198,6 +206,59 @@ class MainWindow(QMainWindow):
 
         dlg.exec()
         self._save_plot_style()
+
+    def _on_figure_builder(self) -> None:
+        """Open (or raise) the non-modal figure-builder window."""
+        from .figure_builder import FigureBuilderWindow
+
+        if self._figure_builder is None:
+            self._figure_builder = FigureBuilderWindow(
+                self._builder_defaults, replace(self._plot_style), parent=self
+            )
+        self._figure_builder.show()
+        self._figure_builder.raise_()
+        self._figure_builder.activateWindow()
+
+    def _builder_defaults(self) -> dict[str, dict]:
+        """Per-stage panel-picker defaults: current h5 path, pixel sizes, jobs.
+
+        Consumed by ``gui.widgets.panel_picker.AddPanelDialog`` (via the
+        figure builder's ``defaults_provider``) so a fresh Add panels… dialog
+        starts from whatever h5 the matching stage form already points at
+        (falling back to the experiment's own output-chaining default), not
+        a blank field.
+        """
+        import json
+
+        from .bindings import experiment_overrides
+
+        exp = self._experiment_panel.current_experiment()
+        sx, sy = exp.pixel_size_x_um, exp.pixel_size_y_um
+        out: dict[str, dict] = {}
+        field_for = {
+            "strain": "root_folder",
+            "mosaicity": "root_folder",
+            "rocking": "raw_root",
+            "slices": "mosa_volume_file",
+            "profiles": "consolidated_h5",
+        }
+        for stage, fld in field_for.items():
+            values = self._views[stage]._form.values()
+            chained = experiment_overrides(stage, exp)
+            h5 = values.get(fld) or chained.get(fld) or ""
+            jobs: list = []
+            if stage == "profiles":
+                try:
+                    jobs = json.loads(values.get("jobs_json") or "[]")
+                except (TypeError, ValueError):
+                    jobs = []
+            out[stage] = {
+                "h5": h5,
+                "sx": sx,
+                "sy": sy,
+                "jobs": jobs if isinstance(jobs, list) else [],
+            }
+        return out
 
     # -- theme --------------------------------------------------------------
     def _sync_theme_btn(self) -> None:
