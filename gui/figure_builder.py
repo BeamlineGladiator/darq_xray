@@ -310,16 +310,17 @@ class FigureBuilderWindow(QMainWindow):
 
     def set_selected_label(self, text: str) -> None:
         node = self._selected_node()
-        if node is None:
-            return
         if isinstance(node, PanelRef):
             panel = self._recipe.panel_by_id().get(node.panel_id)
-            if panel is not None:
-                panel.label = text
+            if panel is None:  # orphaned ref (shouldn't happen, but never mutate on it)
+                return
+            panel.label = text
         elif isinstance(node, (Row, Col)):
             node.group_label = text or None
         elif isinstance(node, TextCell):
             node.text = text
+        else:  # None selection, or a node type with no label concept (e.g. Spacer)
+            return
         self._after_mutation()
 
     # -- slots ------------------------------------------------------------------

@@ -48,6 +48,7 @@ class AddPanelDialog(QDialog):
         self.selected_panels: list[PanelDef] = []
         self._counter = 0
         self._catalog: list = []
+        self._loaded_h5 = ""  # the path self._catalog was actually built from
         self.setWindowTitle("Add panels")
 
         self._stage = QComboBox()
@@ -112,6 +113,7 @@ class AddPanelDialog(QDialog):
     def _reload(self) -> None:
         stage = self._stage.currentText()
         h5 = self._h5_edit.text().strip()
+        self._loaded_h5 = h5  # pin the path the (about-to-be-rebuilt) tree reflects
         self._tree.clear()
         self._catalog = []
         if not h5 or not os.path.exists(h5):
@@ -243,8 +245,13 @@ class AddPanelDialog(QDialog):
             walk(self._tree.topLevelItem(i))
 
     def _build_panels(self) -> list[PanelDef]:
-        """Translate every checked leaf into a :class:`PanelDef` (testable without ``exec()``)."""
-        h5 = self._h5_edit.text().strip()
+        """Translate every checked leaf into a :class:`PanelDef` (testable without ``exec()``).
+
+        Uses the h5 path the tree was actually loaded from (``self._loaded_h5``), not
+        whatever the file field currently shows — an edit to the field after Load but
+        before OK must not silently retarget already-picked panels.
+        """
+        h5 = self._loaded_h5
         stage = self._stage.currentText()
         panels: list[PanelDef] = []
 

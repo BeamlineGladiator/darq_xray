@@ -49,6 +49,7 @@ def _row(w):
 def test_save_open_round_trip_and_dirty_state(tmp_path):
     w = _win()
     w.add_panels([_panel("a")])
+    w.recipe().name = ""  # blank name — load must fall back to the file stem
     path = str(tmp_path / "r.json")
     w.save_recipe_file(path)
     assert not w.is_dirty()
@@ -56,7 +57,16 @@ def test_save_open_round_trip_and_dirty_state(tmp_path):
     w2.load_recipe_file(path)
     assert [p.id for p in w2.recipe().panels] == ["a"]
     assert not w2.is_dirty()
-    assert "r" in w2.windowTitle() or w2.recipe().name
+    assert w2.recipe().name == "r"
+
+
+def test_set_selected_label_on_spacer_is_a_noop():
+    w = _win()
+    w.add_spacer()
+    w._dirty = False  # isolate: only interested in set_selected_label's own effect
+    w._tree.setCurrentItem(w._tree.topLevelItem(0).child(0))
+    w.set_selected_label("x")
+    assert not w.is_dirty()
 
 
 def test_panel_picker_builds_slice_panel_defs(tmp_path):
@@ -82,3 +92,28 @@ def test_panel_picker_builds_slice_panel_defs(tmp_path):
     assert len(panels) == 2
     assert panels[0].source.kind == "slice_plane"
     assert panels[0].source.selector["volume_id"] == "strain"
+
+
+def test_panel_picker_pins_loaded_h5_path_not_live_field_text(tmp_path):
+    import h5py
+    import numpy as np
+
+    from gui.widgets.panel_picker import AddPanelDialog
+
+    h5 = tmp_path / "obl.h5"
+    with h5py.File(h5, "w") as f:
+        g = f.create_group("strain")
+        g.attrs.update(kind="strain", cbar_label="v", cmap="RdBu_r", title="s", vmin=-1, vmax=1)
+        sg = g.create_group("obl")
+        sg.create_dataset("slices", data=np.zeros((1, 4, 5), "f4"))
+        sg.create_dataset("u_um", data=np.linspace(0, 1, 5))
+        sg.create_dataset("v_um", data=np.linspace(0, 1, 4))
+        sg.create_dataset("offsets_um", data=np.array([0.0]))
+    dlg = AddPanelDialog({"slices": {"h5": str(h5), "sx": 0.5, "sy": 0.5, "jobs": []}})
+    dlg._stage.setCurrentText("slices")
+    dlg._reload()
+    dlg._check_all()
+    dlg._h5_edit.setText("/typo/does/not/match.h5")  # edited after Load, before OK
+    panels = dlg._build_panels()
+    assert panels
+    assert panels[0].source.h5_path == str(h5)
