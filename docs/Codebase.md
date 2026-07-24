@@ -476,7 +476,8 @@ strain layers.
 Qt-free package for building multi-panel publication figures on top of the
 per-stage outputs (recipes, layout solver, adapters, render). This covers the
 schema, panel-adapter, full layout-solver (sizing + measure/align/place), and
-render/export modules; a GUI-facing recipe editor is a later task.
+render/export modules; the GUI-facing recipe editor is `gui/figure_builder.py`
+(below), reachable from the main window's **Figure builder…** button.
 
 #### `recipe.py`
 
@@ -521,7 +522,8 @@ reading only that panel's arrays from its h5 and (b) a draw call into a
 provided axes. Connects the `recipe.py` schema to the map/slice/profiles draw
 functions extracted in tasks 2/3 (`render.draw_map_layer`,
 `slices.draw_slice_axes`, `profiles.draw_reference_axes`/`draw_trace_axes`) so
-the solver/renderer (later tasks) can drive any panel kind uniformly. Heavy
+the solver/renderer (`layout.py`/`render.py`, below) can drive any panel kind
+uniformly. Heavy
 deps (`h5py`, the stage modules) are imported inside the loader/draw functions
 so `import dfxm.compose` stays light.
 - `PanelData` — dataclass produced by every loader: `kind` (a `PANEL_KINDS`
@@ -584,7 +586,8 @@ so `import dfxm.compose` stays light.
 The layout solver's pure-geometry half: walks a recipe's layout tree and
 resolves every leaf to an exact `(w_in, h_in)` content box in inches, all
 from physical scales — no matplotlib involved (the placement half, which
-measures decorations and places axes absolutely, is a later task).
+measures decorations and places axes absolutely, is the "measure/align/place
+engine" section below, also in `layout.py`).
 - `_IN_PER_CM = 1.0 / 2.54`, `PLACEHOLDER_CM = (4.0, 3.0)` — the fallback box
   (in cm) for a panel that has no usable data or a degenerate extent.
 - `SizedCell` — dataclass keyed by `id(leaf)`: `leaf` (the `PanelRef`/`Spacer`/
@@ -813,7 +816,9 @@ anywhere (`fig.set_layout_engine("none")` throughout, same as `layout.py`).
 
 `python3 -m dfxm.compose render recipe.json -o outdir [--formats png,pdf,svg] [--dpi N]` —
 the CLI entry over `recipe_from_json`/`export_recipe`, no GUI required (the
-GUI-facing recipe editor is a later task).
+GUI-facing recipe editor, for interactive use, is `gui/figure_builder.py`,
+above — this CLI stays the way to re-render a saved recipe headlessly, e.g.
+in CI or a batch script).
 - `_VALID_FORMATS = {"png", "pdf", "svg"}` — the only formats `--formats`
   accepts.
 - `_main(argv: list[str] | None = None) -> int` — parses args with
