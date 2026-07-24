@@ -395,6 +395,16 @@ class FigureBuilderWindow(QMainWindow):
             return
         self._apply_node_field(node, "shared_clim", (lo, hi))
 
+    @staticmethod
+    def _custom_label_uncommitted(mode: QComboBox, edit: QLineEdit) -> bool:
+        """Custom… with no text yet is an uncommitted, transient state.
+
+        Shared by the panel Label control and the Row/Col Group-label control
+        so the two can never drift: while the Custom text box is blank, no
+        submission happens and the stored label keeps its previous value.
+        """
+        return mode.currentData() == "custom" and not edit.text()
+
     def _make_group_label_row(self, form: QFormLayout):
         mode = QComboBox()
         for text, value in (
@@ -408,7 +418,9 @@ class FigureBuilderWindow(QMainWindow):
 
         def apply(*_a):
             edit.setEnabled(mode.currentData() == "custom")
-            value = {"none": None, "auto": "auto"}.get(mode.currentData(), edit.text() or None)
+            if self._custom_label_uncommitted(mode, edit):
+                return
+            value = {"none": None, "auto": "auto"}.get(mode.currentData(), edit.text())
             self._apply_node_field(self._inspector_node, "group_label", value)
 
         mode.currentIndexChanged.connect(apply)
@@ -756,6 +768,8 @@ class FigureBuilderWindow(QMainWindow):
         mutates) the field that changed.
         """
         if self._override_panel is None:
+            return
+        if key == "label" and self._custom_label_uncommitted(self._ov_label_mode, self._ov_label):
             return
         getters = {
             "roi": self._ov_roi.text,
@@ -1152,12 +1166,11 @@ class FigureBuilderWindow(QMainWindow):
                 self._select_outline_panel(pid)
                 return
 
-    def _select_outline_panel(self, pid: str) -> None:
-        """Find and select the tree item for panel id *pid*, if still present."""
+    def _find_tree_item(self, predicate):
+        """First outline item (depth-first) whose stored node satisfies *predicate*."""
 
         def walk(item):
-            node = item.data(0, Qt.ItemDataRole.UserRole)
-            if isinstance(node, PanelRef) and node.panel_id == pid:
+            if predicate(item.data(0, Qt.ItemDataRole.UserRole)):
                 return item
             for i in range(item.childCount()):
                 found = walk(item.child(i))
@@ -1166,9 +1179,11 @@ class FigureBuilderWindow(QMainWindow):
             return None
 
         root = self._tree.topLevelItem(0)
-        if root is None:
-            return
-        item = walk(root)
+        return None if root is None else walk(root)
+
+    def _select_outline_panel(self, pid: str) -> None:
+        """Find and select the tree item for panel id *pid*, if still present."""
+        item = self._find_tree_item(lambda n: isinstance(n, PanelRef) and n.panel_id == pid)
         if item is not None:
             self._tree.setCurrentItem(item)
 
@@ -1176,20 +1191,7 @@ class FigureBuilderWindow(QMainWindow):
         """Select the outline item holding exactly *node* (identity), if present."""
         if node is None:
             return
-
-        def walk(item):
-            if item.data(0, Qt.ItemDataRole.UserRole) is node:
-                return item
-            for i in range(item.childCount()):
-                found = walk(item.child(i))
-                if found is not None:
-                    return found
-            return None
-
-        root = self._tree.topLevelItem(0)
-        if root is None:
-            return
-        item = walk(root)
+        item = self._find_tree_item(lambda n: n is node)
         if item is not None:
             self._tree.setCurrentItem(item)
 

@@ -151,3 +151,25 @@ def test_blank_group_label_normalized_to_none_on_load():
     d["layout"]["children"][1]["group_label"] = ""  # the nested Col
     r = recipe_from_json(json.dumps(d))
     assert r.layout.children[1].group_label is None
+
+
+def test_nested_stage_user_error_surfaces_unwrapped():
+    """A StageUserError raised inside node parsing must pass through the
+    malformed-v1 wrapper untouched (never double-wrapped as "malformed")."""
+    import json
+
+    d = _as_dict()
+    d["layout"]["children"][0] = {"type": "hologram"}
+    with pytest.raises(StageUserError) as e:
+        recipe_from_json(json.dumps(d))
+    assert "unknown layout node type" in str(e.value)
+    assert "malformed" not in str(e.value)
+
+
+def test_duplicate_panel_ref_nested_refused():
+    """Duplicate detection counts across nested containers, not just siblings."""
+    r = _mini_recipe()
+    r.layout.children.append(Col([PanelRef("m0")]))  # m0 already referenced at top level
+    with pytest.raises(StageUserError) as e:
+        validate_recipe(r)
+    assert "more than once" in str(e.value)

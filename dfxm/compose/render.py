@@ -73,7 +73,7 @@ def _assign_labels(layout, panels_by_id, compose):
         if isinstance(node, (Row, Col)):
             if node.group_label:  # "" = not a group (item 8) — falls through to per-child labelling
                 text = _format_label(compose.label_template, seq)
-                if node.group_label not in ("", "auto"):
+                if node.group_label != "auto":
                     text = node.group_label
                 seq += 1
                 first = next(leaf_panels(node), None)
@@ -303,11 +303,12 @@ def _resolve_scale_bar_kwargs(recipe, panels_by_id, data_by_id, cell_by_pid, not
     optional gutter leaf (``"gutter"`` mode) and its shared µm/cm scale."""
     mode = recipe.compose.scale_bar_mode
     scale_bar_by_pid: dict[str, bool] = {}
-    # `data_by_id`/`panels_by_id` are keyed by EVERY recipe.panels entry, but
-    # `cell_by_pid` only has layout leaves — a PanelDef the layout no longer
-    # references (e.g. left behind by a GUI delete that orphaned it, see
-    # FigureBuilderWindow.delete_selected) must not reach a `cell_by_pid[pid]`
-    # lookup below, so filter it out here.
+    # `panels_by_id` is keyed by EVERY recipe.panels entry, but `data_by_id` is
+    # built over layout-referenced pids only (orphaned defs are skipped at load
+    # time with a note), and `cell_by_pid` covers the same layout leaves — so
+    # the `pid in cell_by_pid` filter below is redundant today. It stays as
+    # defense in depth: a future load path that repopulates `data_by_id` more
+    # broadly must never reach a `cell_by_pid[pid]` lookup with an unplaced pid.
     map_pids = [
         pid
         for pid, d in data_by_id.items()

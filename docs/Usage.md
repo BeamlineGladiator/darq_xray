@@ -1379,7 +1379,10 @@ button:
     bound automatic), **colormap** (blank = follow the style), a three-state
     **Label** control — *Auto letter* (the automatic sequence letter, the
     default), *No label* (explicitly suppressed), or *Custom…* (a text box
-    appears below, enabled only in this mode) — **show title** and
+    appears below, enabled only in this mode; switching to *Custom…* commits
+    nothing until you actually type — the stored label keeps its previous
+    state, and deleting all the text again keeps the last typed label) —
+    **show title** and
     **colourbar** (Follow/On/Off — Follow defers to the composed default),
     and **panel scale** in µm/cm (0 = follow the style's own scale).
   - **Row** — a **Group label** control with three states — *Not a group*,
@@ -1388,7 +1391,8 @@ button:
     Group button write, so re-selecting a row grouped this way always shows
     *Auto letter* with a blank custom-text box, never a literal "auto"),
     and *Custom…* (a text box beneath becomes enabled for a literal group
-    label) — a **pinned height** in cm (0 = off, the row sizes itself from
+    label; as with the panel Label control, *Custom…* commits nothing until
+    text is typed) — a **pinned height** in cm (0 = off, the row sizes itself from
     its content), a **One colorbar for this group** checkbox
     (`shared_colorbar`), and **shared colour limits** as `lo,hi`
     (`shared_clim`; blank = union of the member panels' own ranges).

@@ -785,3 +785,33 @@ def test_figure2_authored_through_window_methods(tmp_path):
     xb = {round(res.axes_by_id[f"t_b_{v}"].get_position().x0, 5) for v in fields}
     assert len(xb) == 1 and min(xb) > xa
     assert not any("scale is off" in n for n in res.notes)
+
+
+# -- Custom label mode is uncommitted until text lands (followup wave) --------
+def test_custom_label_mode_uncommitted_until_text():
+    w = _win()
+    w.add_panels([_panel("a")])
+    _select_child(w, 0)
+    panel = w.recipe().panels[0]
+    assert panel.label is None
+    w._ov_label_mode.setCurrentIndex(2)  # Custom… with no text yet
+    assert panel.label is None  # pre-fix: clobbered to "" (suppressed)
+    w._ov_label.setText("Z1")
+    assert panel.label == "Z1"
+    w._ov_label.setText("")  # deleting all text is transient too
+    assert panel.label == "Z1"
+
+
+def test_custom_group_mode_uncommitted_until_text():
+    w = _win()
+    w.add_row()
+    _select_child(w, 0)
+    row = w.recipe().layout.children[0]
+    w._row_group_mode.setCurrentIndex(1)  # Auto letter
+    assert row.group_label == "auto"
+    w._row_group_mode.setCurrentIndex(2)  # Custom… with no text yet
+    assert row.group_label == "auto"  # pre-fix: clobbered to None (not a group)
+    w._row_group_label.setText("M1")
+    assert row.group_label == "M1"
+    w._row_group_label.setText("")
+    assert row.group_label == "M1"
