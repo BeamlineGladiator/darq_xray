@@ -1,11 +1,13 @@
 """Layout solver, sizing pass — dfxm.compose.layout."""
 
+import numpy as np
 import pytest
+from matplotlib.figure import Figure
 
 from dfxm.common.errors import StageUserError
-from dfxm.common.plotting import PlotStyle
+from dfxm.common.plotting import PlotStyle, measured_box_in
 from dfxm.compose.adapters import PanelData
-from dfxm.compose.layout import size_cells
+from dfxm.compose.layout import SizedCell, measure_cells, place_tree, size_cells
 from dfxm.compose.recipe import (
     Col,
     ComposeStyle,
@@ -167,3 +169,83 @@ def test_trace_no_scale_anywhere_refused_with_hint():
             _recipe(layout, [_panel("t", "profiles_trace")]), PlotStyle(), {"t": _trace_data()}, []
         )
     assert "scale" in str(e.value).lower() and e.value.hint
+
+
+# -- measure/align/place ------------------------------------------------------
+
+
+def _plot_cell(fig, leaf, w_in, h_in, ylabel="y"):
+    ax = fig.add_subplot(111)
+    ax.plot(np.linspace(0, 10, 50), np.sin(np.linspace(0, 10, 50)))
+    ax.set_xlabel("distance (µm)")
+    ax.set_ylabel(ylabel)
+    return SizedCell(leaf, None, "trace", w_in, h_in, ax=ax)
+
+
+def test_row_shared_top_bottom_margins_and_exact_boxes():
+    fig = Figure(facecolor="white")
+    a, b = PanelRef("a"), PanelRef("b")
+    layout = Row([a, b])
+    ca = _plot_cell(fig, a, 2.0, 1.5)
+    cb = _plot_cell(fig, b, 1.2, 1.5, ylabel="a much longer label (units)")
+    cells = {id(a): ca, id(b): cb}
+    measure_cells(fig, [ca, cb])
+    place_tree(fig, layout, cells, gutter_in=0.2, pad_in=0.1)
+    assert ca.margins.top == cb.margins.top and ca.margins.bottom == cb.margins.bottom
+    for c, w in ((ca, 2.0), (cb, 1.2)):
+        bw, bh = measured_box_in(fig, c.ax)
+        assert abs(bw - w) < 0.01 and abs(bh - 1.5) < 0.01
+    # boxes top-align: same y1 in figure inches
+    figh = fig.get_size_inches()[1]
+    y1a = ca.ax.get_position().y1 * figh
+    y1b = cb.ax.get_position().y1 * figh
+    assert abs(y1a - y1b) < 0.01
+
+
+def test_col_shared_left_margin_left_aligns_boxes():
+    fig = Figure(facecolor="white")
+    a, b = PanelRef("a"), PanelRef("b")
+    layout = Col([a, b])
+    ca = _plot_cell(fig, a, 2.5, 1.0, ylabel="s")
+    cb = _plot_cell(fig, b, 1.4, 1.0, ylabel="a very long y label (deg)")
+    cells = {id(a): ca, id(b): cb}
+    measure_cells(fig, [ca, cb])
+    place_tree(fig, layout, cells, gutter_in=0.15, pad_in=0.1)
+    assert abs(ca.ax.get_position().x0 - cb.ax.get_position().x0) < 1e-6
+    # no vertical overlap, a above b
+    assert ca.ax.get_position().y0 > cb.ax.get_position().y1 - 1e-6
+
+
+def test_ragged_row_of_cols_trailing_padding_aligns_envelopes():
+    fig = Figure(facecolor="white")
+    a1, a2, b1 = PanelRef("a1"), PanelRef("a2"), PanelRef("b1")
+    col_a = Col([a1, a2])  # two panels -> taller envelope
+    col_b = Col([b1])  # one panel -> padded at the bottom
+    layout = Row([col_a, col_b])
+    cells = {
+        id(a1): _plot_cell(fig, a1, 1.5, 1.0),
+        id(a2): _plot_cell(fig, a2, 1.5, 1.0),
+        id(b1): _plot_cell(fig, b1, 1.5, 1.0),
+    }
+    measure_cells(fig, list(cells.values()))
+    fw, fh = place_tree(fig, layout, cells, gutter_in=0.2, pad_in=0.1)
+    # col_b's single panel top-aligns with col_a's first panel
+    assert abs(cells[id(b1)].ax.get_position().y1 - cells[id(a1)].ax.get_position().y1) < 1e-3
+    # figure is exactly the envelope + padding, no auto layout
+    assert fig.get_layout_engine() is None
+    assert tuple(np.round(fig.get_size_inches(), 3)) == (round(fw, 3), round(fh, 3))
+
+
+def test_spacer_and_text_cells_occupy_their_boxes():
+    fig = Figure(facecolor="white")
+    sp = Spacer(2.54, 2.54)  # 1 in
+    a = PanelRef("a")
+    layout = Row([sp, a])
+    csp = SizedCell(sp, None, "spacer", 1.0, 1.0)
+    ca = _plot_cell(fig, a, 1.5, 1.0)
+    cells = {id(sp): csp, id(a): ca}
+    measure_cells(fig, [csp, ca])
+    place_tree(fig, layout, cells, gutter_in=0.0, pad_in=0.0)
+    figw = fig.get_size_inches()[0]
+    # panel starts 1 in (spacer) + its own left margin from the left edge
+    assert abs(ca.ax.get_position().x0 * figw - (1.0 + ca.margins.left)) < 0.02

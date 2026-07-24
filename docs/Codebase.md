@@ -475,8 +475,8 @@ strain layers.
 
 Qt-free package for building multi-panel publication figures on top of the
 per-stage outputs (recipes, layout solver, adapters, render). This covers the
-schema, panel-adapter, and layout-sizing modules; the placement half of the
-solver and the render entry point are later tasks.
+schema, panel-adapter, and full layout-solver (sizing + measure/align/place)
+modules; the render entry point is a later task.
 
 #### `recipe.py`
 
@@ -590,8 +590,10 @@ measures decorations and places axes absolutely, is a later task).
 - `SizedCell` — dataclass keyed by `id(leaf)`: `leaf` (the `PanelRef`/`Spacer`/
   `TextCell`), `panel` (its `PanelDef`, or `None` for `Spacer`/`TextCell`),
   `kind` (`"map"`/`"trace"`/`"spacer"`/`"text"`/`"placeholder"`), `w_in`/
-  `h_in`. `ax`/`extras`/`sync`/`margins`/`label` default to `None`/`()` —
-  filled in by the placement pass (Task 6).
+  `h_in`. `ax`/`extras`/`sync`/`margins`/`label` default to `None`/`()` — the
+  render step (Task 7) creates each cell's axes and sets `ax`/`extras`/`sync`
+  before calling `measure_cells`/`place_tree` (below), which then fill
+  `margins` and position `ax`.
 - `size_cells(recipe, style, data_by_id, notes) -> dict[int, SizedCell]` —
   keyed by `id(leaf)`. Sizing rules per leaf:
   - `Spacer`/`TextCell`: box is the leaf's own `w_cm`/`h_cm`, verbatim.
@@ -646,6 +648,54 @@ measures decorations and places axes absolutely, is a later task).
   - `notes` is mutated in place (appended to), not returned — callers pass
     the same list through the whole solve to collect every implied-scale/
     clamp/placeholder note for the figure.
+
+#### `layout.py` — measure/align/place engine
+
+The layout solver's placement half: takes the `SizedCell`s from `size_cells`
+(each already at its final `(w_in, h_in)` content box) and the recipe's
+`Row`/`Col` tree, measures every axes' real decorations, shares margins so
+sibling boxes align, and places every axes absolutely — `fig.set_layout_engine("none")`
+throughout, no matplotlib auto-layout, generalizing `place_axes_stack`.
+- `measure_cells(fig, cells, pad_in=0.02) -> None` — provisionally places every
+  live cell's axes (`cell.ax is not None`) at its exact final `(w_in, h_in)`
+  box inside a scratch-sized `fig` (one draw), calls `cell.sync(fig, cell.ax)`
+  when set (re-gluing an attached colorbar/scale-bar axes after the move),
+  then fills `cell.margins` via `measure_axes_margins(fig, cell.ax,
+  extras=cell.extras, pad_in=pad_in)`. Measuring at final box size (not some
+  placeholder size) is mandatory — tick-label density depends on the actual
+  geometry, the same rule `place_axes_box` follows. Cells with no axes
+  (`Spacer`/`TextCell`) get a zero `AxesMargins`.
+- `place_tree(fig, layout, cells, *, gutter_in, pad_in) -> (fig_w_in, fig_h_in)` —
+  three passes over the layout tree:
+  1. **Share margins** — direct `PanelRef` children of a `Row` (2+) get their
+     `margins.top`/`margins.bottom` raised to the max over the group (bottom
+     x-labels/titles line up); direct `PanelRef` children of a `Col` get
+     `margins.left`/`margins.right` raised the same way (y-axis labels align
+     across stacked panels). Composite children (a nested `Row`/`Col`) are
+     *not* included in a parent's share — they align by envelope instead (next
+     point), which is what lets a ragged sub-tree (e.g. a 2-panel `Col` next
+     to a 1-panel `Col`) still line up at the top/left without forcing every
+     leaf's margins to match.
+  2. **Envelope sizing** — every node's envelope is `(margins + content box)`
+     for a leaf, or the row/column sum (plus `gutter_in` between children) for
+     a `Row`/`Col`; a `Row`'s envelope height is the max over children's
+     envelope heights (a `Col`'s envelope width is the max over children's
+     envelope widths) — so a shorter/narrower sibling's envelope is simply
+     smaller and top/left-alignment during placement leaves the leftover space
+     as trailing padding automatically (no explicit padding calculation
+     needed). The root envelope + `2 * pad_in` sizes `fig`.
+  3. **Absolute placement** — walks the tree again with a running
+     inches-from-top-left cursor: a `Row` advances the cursor right by each
+     child's envelope width + `gutter_in` (children top-align at the same
+     `y`); a `Col` advances down by each child's envelope height + `gutter_in`
+     (children left-align at the same `x`); a leaf computes
+     `x0 = (x + margins.left) / fig_w`, `y0 = (fig_h - y - margins.top -
+     h_in) / fig_h` and calls `ax.set_position([x0, y0, w_in/fig_w,
+     h_in/fig_h])`, then `cell.sync(fig, cell.ax)` again (final position).
+  `shared_x` `Col`s must have interior x tick-labels/xlabel suppressed
+  *before* `measure_cells` runs (draw-time responsibility, Task 7) — margin
+  sharing/placement here doesn't know about `shared_x` itself, it just aligns
+  whatever margins it measures.
 
 ### `dfxm/runner.py` — the process worker
 

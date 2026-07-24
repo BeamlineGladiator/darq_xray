@@ -19,7 +19,7 @@ from ..common.plotting import (
     trace_fixed_scale,
     trace_height_cm,
 )
-from .recipe import Col, Row, Spacer, TextCell
+from .recipe import Col, PanelRef, Row, Spacer, TextCell
 
 _IN_PER_CM = 1.0 / 2.54
 PLACEHOLDER_CM = (4.0, 3.0)
@@ -204,3 +204,115 @@ def size_cells(recipe, style, data_by_id, notes):
 
     walk(recipe.layout, None, None)
     return cells
+
+
+def measure_cells(fig, cells, pad_in: float = 0.02) -> None:
+    """Fill each cell's margins, measured at FINAL box size (mandatory: tick
+    density depends on size — same rule as place_axes_box)."""
+    from ..common.plotting import AxesMargins, measure_axes_margins
+
+    fig.set_layout_engine("none")
+    live = [c for c in cells if c.ax is not None]
+    prov_w = max((c.w_in for c in live), default=1.0) + 4.0
+    prov_h = max((c.h_in for c in live), default=1.0) + 4.0
+    fig.set_size_inches(prov_w, prov_h, forward=False)
+    for c in cells:
+        if c.ax is None:
+            c.margins = AxesMargins(0.0, 0.0, 0.0, 0.0)
+            continue
+        c.ax.set_position([2.0 / prov_w, 2.0 / prov_h, c.w_in / prov_w, c.h_in / prov_h])
+        if c.sync is not None:
+            c.sync(fig, c.ax)
+    for c in live:
+        c.margins = measure_axes_margins(fig, c.ax, extras=c.extras, pad_in=pad_in)
+
+
+def _cell_env(c):
+    m = c.margins
+    return (m.left + c.w_in + m.right, m.bottom + c.h_in + m.top)
+
+
+def place_tree(fig, layout, cells, *, gutter_in, pad_in):
+    """Share max margins within direct-panel Rows/Cols, compute envelope sizes
+    (composite children align by envelope with automatic trailing padding),
+    size *fig* to the root envelope + padding, and absolute-place every axes.
+
+    Returns ``(fig_w_in, fig_h_in)``.
+    """
+    from ..common.plotting import AxesMargins
+
+    env: dict[int, tuple[float, float]] = {}
+
+    def _share_row(node):
+        leaf_cells = [
+            cells[id(ch)]
+            for ch in node.children
+            if isinstance(ch, PanelRef) and cells[id(ch)].ax is not None
+        ]
+        if len(leaf_cells) > 1:
+            top = max(c.margins.top for c in leaf_cells)
+            bottom = max(c.margins.bottom for c in leaf_cells)
+            for c in leaf_cells:
+                c.margins = AxesMargins(c.margins.left, c.margins.right, top, bottom)
+
+    def _share_col(node):
+        leaf_cells = [
+            cells[id(ch)]
+            for ch in node.children
+            if isinstance(ch, PanelRef) and cells[id(ch)].ax is not None
+        ]
+        if len(leaf_cells) > 1:
+            left = max(c.margins.left for c in leaf_cells)
+            right = max(c.margins.right for c in leaf_cells)
+            for c in leaf_cells:
+                c.margins = AxesMargins(left, right, c.margins.top, c.margins.bottom)
+
+    def _envelope(node):
+        if isinstance(node, Row):
+            _share_row(node)
+            child_envs = [_envelope(c) for c in node.children]
+            w = sum(e[0] for e in child_envs) + gutter_in * max(0, len(child_envs) - 1)
+            h = max(e[1] for e in child_envs)
+            env[id(node)] = (w, h)
+            return (w, h)
+        if isinstance(node, Col):
+            _share_col(node)
+            child_envs = [_envelope(c) for c in node.children]
+            w = max(e[0] for e in child_envs)
+            h = sum(e[1] for e in child_envs) + gutter_in * max(0, len(child_envs) - 1)
+            env[id(node)] = (w, h)
+            return (w, h)
+        e = _cell_env(cells[id(node)])
+        env[id(node)] = e
+        return e
+
+    root_w, root_h = _envelope(layout)
+    fig_w, fig_h = root_w + 2 * pad_in, root_h + 2 * pad_in
+    fig.set_size_inches(fig_w, fig_h, forward=False)
+
+    def _place(node, x, y):
+        # (x, y) = this node's envelope top-left, inches from figure top-left
+        if isinstance(node, Row):
+            cx = x
+            for child in node.children:
+                _place(child, cx, y)  # top-aligned; trailing pad below shorter kids
+                cx += env[id(child)][0] + gutter_in
+            return
+        if isinstance(node, Col):
+            cy = y
+            for child in node.children:
+                _place(child, x, cy)  # left-aligned; trailing pad right of narrower kids
+                cy += env[id(child)][1] + gutter_in
+            return
+        c = cells[id(node)]
+        if c.ax is None:
+            return
+        m = c.margins
+        x0 = (x + m.left) / fig_w
+        y0 = (fig_h - y - m.top - c.h_in) / fig_h
+        c.ax.set_position([x0, y0, c.w_in / fig_w, c.h_in / fig_h])
+        if c.sync is not None:
+            c.sync(fig, c.ax)
+
+    _place(layout, pad_in, pad_in)
+    return (fig_w, fig_h)
