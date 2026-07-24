@@ -303,10 +303,15 @@ def _resolve_scale_bar_kwargs(recipe, panels_by_id, data_by_id, cell_by_pid):
     optional gutter leaf (``"gutter"`` mode) and its shared µm/cm scale."""
     mode = recipe.compose.scale_bar_mode
     scale_bar_by_pid: dict[str, bool] = {}
+    # `data_by_id`/`panels_by_id` are keyed by EVERY recipe.panels entry, but
+    # `cell_by_pid` only has layout leaves — a PanelDef the layout no longer
+    # references (e.g. left behind by a GUI delete that orphaned it, see
+    # FigureBuilderWindow.delete_selected) must not reach a `cell_by_pid[pid]`
+    # lookup below, so filter it out here.
     map_pids = [
         pid
         for pid, d in data_by_id.items()
-        if d.kind in ("map_layer", "slice_plane", "profiles_ref")
+        if d.kind in ("map_layer", "slice_plane", "profiles_ref") and pid in cell_by_pid
     ]
     gutter_leaf = None
     gutter_scale = None
@@ -539,7 +544,7 @@ def render_recipe(
         map_pids_final = [
             pid
             for pid, d in data_by_id.items()
-            if d.kind in ("map_layer", "slice_plane", "profiles_ref")
+            if d.kind in ("map_layer", "slice_plane", "profiles_ref") and pid in cell_by_pid
         ]
         effs_final = {
             round(data_by_id[pid].ext_x_um / (cell_by_pid[pid].w_in * 2.54), 6)

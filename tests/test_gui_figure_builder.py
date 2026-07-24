@@ -9,7 +9,7 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 _app = QApplication.instance() or QApplication([])
 
 from dfxm.common.plotting import PlotStyle  # noqa: E402
-from dfxm.compose.recipe import PanelDef, PanelSource, Row  # noqa: E402
+from dfxm.compose.recipe import PanelDef, PanelRef, PanelSource, Row  # noqa: E402
 from gui.figure_builder import FigureBuilderWindow  # noqa: E402
 
 
@@ -44,6 +44,57 @@ def _row(w):
     layout = w.recipe().layout
     assert isinstance(layout, Row)
     return layout
+
+
+def test_delete_row_purges_nested_panel_defs_and_gutter_renders(tmp_path):
+    """Deleting a Row/Col removes its PanelRef leaves from the layout, but
+    used to leave their backing PanelDefs in recipe.panels — orphaned defs
+    that crash a subsequent gutter-mode render (render_recipe loads data for
+    ALL recipe.panels, but the post-placement pid loops only cover layout
+    leaves). delete_selected must purge any PanelDef no longer referenced by
+    the layout."""
+    import h5py
+    import numpy as np
+
+    from dfxm.compose.recipe import Col
+
+    h5 = tmp_path / "obl.h5"
+    with h5py.File(h5, "w") as f:
+        g = f.create_group("strain")
+        g.attrs.update(kind="strain", cbar_label="v", cmap="RdBu_r", title="s", vmin=-1, vmax=1)
+        sg = g.create_group("obl")
+        sg.create_dataset("slices", data=np.zeros((1, 4, 5), "f4"))
+        sg.create_dataset("u_um", data=np.linspace(0.0, 2.0, 5))
+        sg.create_dataset("v_um", data=np.linspace(0.0, 1.5, 4))
+        sg.create_dataset("offsets_um", data=np.array([0.0]))
+
+    def _slice_panel(pid):
+        return PanelDef(
+            pid,
+            PanelSource(
+                str(h5), "slice_plane", {"volume_id": "strain", "slice_name": "obl", "plane": 0}
+            ),
+        )
+
+    w = _win()
+    w.add_panels([_slice_panel("keep")])
+    # Nest a second panel inside a Col so deleting the Col orphans it.
+    root = w.recipe().layout
+    doomed_col = Col([])
+    root.children.append(doomed_col)
+    w.recipe().panels.append(_slice_panel("doomed"))
+    doomed_col.children.append(PanelRef("doomed"))
+    w._rebuild_tree()
+
+    # select the Col node (second top-level child) and delete it
+    w._tree.setCurrentItem(w._tree.topLevelItem(0).child(1))
+    w.delete_selected()
+
+    assert [p.id for p in w.recipe().panels] == ["keep"]
+
+    w.recipe().compose.scale_bar_mode = "gutter"
+    res = w.render_now()
+    assert res is not None and res.n_panels == 1 and res.n_rendered == 1
 
 
 def test_save_open_round_trip_and_dirty_state(tmp_path):
@@ -332,3 +383,29 @@ def test_main_window_launches_builder_non_modal():
     first = win._figure_builder
     win._on_figure_builder()  # reuse, not a second window
     assert win._figure_builder is first
+
+
+def test_builder_defaults_prefill_stage_output_h5_not_folder():
+    """strain/mosaicity/rocking panel-picker defaults must be the stacked/
+    aligned OUTPUT h5 the stage's catalog reads (mirroring how the stage's
+    own run() derives it — see strain.py/mosaicity.py's
+    ``os.path.join(default_out_root, stacked_filename)`` and rocking.py's
+    ``os.path.join(out_dir, aligned_h5_name)``), never the bare input
+    directory field (root_folder/raw_root) the picker can't load a catalog
+    from. slices/profiles are untouched (already correct)."""
+    from dataclasses import replace as _dc_replace
+
+    from gui.main_window import MainWindow
+
+    win = MainWindow()
+    exp = _dc_replace(
+        win._experiment_panel.current_experiment(),
+        raw_root="/data/raw",
+        processed_root="/data/processed",
+    )
+    win._experiment_panel._set_experiment(exp)
+
+    defaults = win._builder_defaults()
+    for stage in ("strain", "mosaicity", "rocking"):
+        h5 = defaults[stage]["h5"]
+        assert h5 == "" or h5.endswith(".h5"), f"{stage} default {h5!r} is not an h5 path"

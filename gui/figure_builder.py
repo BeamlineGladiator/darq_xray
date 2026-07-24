@@ -49,6 +49,7 @@ from dfxm.compose.recipe import (
     Row,
     Spacer,
     TextCell,
+    iter_leaves,
     recipe_from_json,
     recipe_to_json,
 )
@@ -697,7 +698,27 @@ class FigureBuilderWindow(QMainWindow):
             return
         container, idx = found
         del container.children[idx]
+        self._purge_orphaned_panels()
         self._after_mutation()
+
+    def _purge_orphaned_panels(self) -> None:
+        """Drop any PanelDef no longer referenced by a layout leaf.
+
+        Deleting a Row/Col removes every PanelRef nested under it in one go
+        (they were only reachable through that container's ``children``), but
+        their backing PanelDefs live in the flat ``recipe.panels`` list and
+        survive unless removed here. An orphaned PanelDef crashes a
+        subsequent gutter-mode render (``render_recipe`` loads data for every
+        panel in ``recipe.panels``, but its post-placement pid bookkeeping
+        only covers layout leaves) — see ``dfxm.compose.render.render_recipe``.
+        Also scrubs ``compose.scale_bar_panel`` if it named a purged id.
+        """
+        live_ids = {
+            leaf.panel_id for leaf in iter_leaves(self._recipe.layout) if isinstance(leaf, PanelRef)
+        }
+        self._recipe.panels = [p for p in self._recipe.panels if p.id in live_ids]
+        if self._recipe.compose.scale_bar_panel not in live_ids:
+            self._recipe.compose.scale_bar_panel = None
 
     def toggle_group_selected(self) -> None:
         node = self._selected_node()

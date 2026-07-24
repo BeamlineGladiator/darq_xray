@@ -212,6 +212,21 @@ def test_gutter_scale_bar_loc_forced_regardless_of_style(tmp_path):
     assert box.loc == AnchoredOffsetbox.codes["center"]
 
 
+def test_orphaned_panel_def_tolerated_in_gutter_mode(tmp_path):
+    """A PanelDef no longer referenced by any layout leaf (e.g. left behind by
+    a GUI delete of a Row/Col that orphaned its nested panels — see
+    ``FigureBuilderWindow.delete_selected``) must not crash rendering:
+    ``data_by_id``/``panels_by_id`` are keyed by ALL of ``recipe.panels``, but
+    ``cell_by_pid`` only holds layout leaves, so any pid iteration sourced from
+    the former must tolerate — or filter out — pids absent from the latter."""
+    h5 = _write_obl(tmp_path / "obl.h5")
+    r = _two_panel_recipe(h5)
+    r.compose.scale_bar_mode = "gutter"
+    r.layout = Row([PanelRef("a")])  # "b" stays in recipe.panels but is orphaned
+    res = render_recipe(r)
+    assert res.n_panels == 1 and res.n_rendered == 1
+
+
 def test_pinned_width_rescales_scale_bar_thickness(tmp_path):
     h5 = _write_obl(tmp_path / "obl.h5")
     r = _two_panel_recipe(h5)

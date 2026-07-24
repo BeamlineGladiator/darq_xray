@@ -1303,8 +1303,11 @@ a composed figure looks consistent with the per-stage exports above.
 **In-app editor: live preview**
 
 The `FigureBuilderWindow`'s center pane shows a **live preview** of the
-composed figure — the exact figure that would be exported, not a re-fitted
-display copy. Every outline edit (add/move/delete/group/label a panel, row,
+composed figure, built by the same render pipeline that exports it — the
+on-screen canvas may be display-scaled to fit the window, but every export
+re-renders from the recipe at its exact physical size, so exported files are
+always exact regardless of how the preview happened to be scaled on screen.
+Every outline edit (add/move/delete/group/label a panel, row,
 column, spacer, or text cell) and every recipe load schedules a re-render
 300 ms after the last edit, so a burst of clicks re-renders once, not once
 per click. A **Refresh data** button forces an immediate re-render *and*

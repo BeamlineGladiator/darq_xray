@@ -10,6 +10,7 @@ an :class:`~gui.overview_page.OverviewPage` landing page.
 
 from __future__ import annotations
 
+import os
 from dataclasses import replace
 
 from PySide6.QtCore import Qt
@@ -219,14 +220,29 @@ class MainWindow(QMainWindow):
         self._figure_builder.raise_()
         self._figure_builder.activateWindow()
 
+    # Which StageResult attribute holds the stacked/aligned output h5 path,
+    # for the stages the panel picker needs a CATALOG file from (not their
+    # input directory) — see ``_derive_stage_output_h5``.
+    _OUTPUT_H5_RESULT_ATTR = {
+        "strain": "stacked_path",
+        "mosaicity": "stacked_path",
+        "rocking": "aligned_path",
+    }
+
     def _builder_defaults(self) -> dict[str, dict]:
         """Per-stage panel-picker defaults: current h5 path, pixel sizes, jobs.
 
         Consumed by ``gui.widgets.panel_picker.AddPanelDialog`` (via the
         figure builder's ``defaults_provider``) so a fresh Add panels… dialog
-        starts from whatever h5 the matching stage form already points at
+        starts from whatever h5 the matching stage's catalog lives in
         (falling back to the experiment's own output-chaining default), not
         a blank field.
+
+        strain/mosaicity/rocking need the stacked/aligned OUTPUT h5 (the file
+        the panel-picker catalog reads), not the input directory field
+        (root_folder/raw_root) their form otherwise pre-fills — see
+        ``_derive_stage_output_h5``. slices/profiles already point straight
+        at their own output h5 field.
         """
         import json
 
@@ -236,16 +252,20 @@ class MainWindow(QMainWindow):
         sx, sy = exp.pixel_size_x_um, exp.pixel_size_y_um
         out: dict[str, dict] = {}
         field_for = {
-            "strain": "root_folder",
-            "mosaicity": "root_folder",
-            "rocking": "raw_root",
             "slices": "mosa_volume_file",
             "profiles": "consolidated_h5",
         }
-        for stage, fld in field_for.items():
+        for stage in ("strain", "mosaicity", "rocking", "slices", "profiles"):
             values = self._views[stage]._form.values()
             chained = experiment_overrides(stage, exp)
-            h5 = values.get(fld) or chained.get(fld) or ""
+            if stage in self._OUTPUT_H5_RESULT_ATTR:
+                last_result = self._views[stage]._last_result
+                attr = self._OUTPUT_H5_RESULT_ATTR[stage]
+                h5 = getattr(last_result, attr, "") if last_result is not None else ""
+                if not h5:
+                    h5 = self._derive_stage_output_h5(stage, values, chained)
+            else:
+                h5 = values.get(field_for[stage]) or chained.get(field_for[stage]) or ""
             jobs: list = []
             if stage == "profiles":
                 try:
@@ -259,6 +279,50 @@ class MainWindow(QMainWindow):
                 "jobs": jobs if isinstance(jobs, list) else [],
             }
         return out
+
+    @staticmethod
+    def _derive_stage_output_h5(stage: str, values: dict, chained: dict) -> str:
+        """Best-effort stacked/aligned output h5, mirroring the stage's own
+        ``run()`` path derivation — used only as a fallback when the stage
+        hasn't been run yet this session (``_builder_defaults`` always
+        prefers the real last-run result first).
+
+        strain/mosaicity: ``os.path.join(default_out_root, stacked_filename)``
+        where ``default_out_root`` is ``input_folder`` (single mode) or
+        ``root_folder`` (batch mode) — see ``dfxm.stages.strain.run``/
+        ``dfxm.stages.mosaicity.run``.
+        rocking: ``os.path.join(out_dir, aligned_h5_name)`` where ``out_dir``
+        is ``output_dir`` or ``raw_root/<default_dir>`` (the default dir and
+        default aligned filename both depend on ``source_scan`` — see
+        ``dfxm.stages.rocking.run``).
+        """
+        defaults = STAGE_SPECS[stage].defaults()
+
+        def get(key: str):
+            return values.get(key) or chained.get(key) or defaults.get(key)
+
+        if stage in ("strain", "mosaicity"):
+            mode = get("mode")
+            root = (get("input_folder") if mode == "single" else get("root_folder")) or ""
+            root = root.rstrip("/")
+            stacked_filename = get("stacked_filename") or ""
+            return os.path.join(root, stacked_filename) if root and stacked_filename else ""
+
+        if stage == "rocking":
+            raw_root = (get("raw_root") or "").rstrip("/")
+            source = get("source_scan")
+            default_dir = (
+                "aligned_raw_mosa_volumes"
+                if source == "mosaicity"
+                else "aligned_raw_rocking_volumes"
+            )
+            out_dir = get("output_dir") or (os.path.join(raw_root, default_dir) if raw_root else "")
+            aligned_name = get("aligned_h5_name") or ""
+            if source == "mosaicity" and aligned_name == defaults.get("aligned_h5_name"):
+                aligned_name = "aligned_raw_mosa_volumes.h5"
+            return os.path.join(out_dir, aligned_name) if out_dir and aligned_name else ""
+
+        return ""
 
     # -- theme --------------------------------------------------------------
     def _sync_theme_btn(self) -> None:
