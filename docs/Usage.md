@@ -1324,9 +1324,20 @@ until you click Refresh data. A **notes bar** under the preview reports
 implied-scale/drift/placeholder notes from the render (semicolon-joined), or
 — if the recipe can't be composed at all (e.g. no panel has a physical scale
 to size from) — the error message plus its hint, without ever crashing the
-window. Clicking a panel in the preview selects that panel's node in the
+window. Deleting the last panel clears the live preview canvas outright
+(rather than leaving the last-rendered figure showing behind the "add panels
+to preview" note) — the note always describes exactly what's on screen.
+Clicking a panel in the preview selects that panel's node in the
 outline tree, mirroring the selection you'd otherwise make by hand before
-Label…/Delete/↑/↓.
+Label…/Delete/↑/↓. The outline keeps the node you're editing selected across
+a move, group toggle, or label edit — the rebuilt tree re-selects the same
+node by identity, so pressing ↑/↓ repeatedly keeps moving the same item
+instead of losing the selection after the first press. Deleting a node
+selects its parent container afterwards, so the outline never drops to no
+selection after a delete. A panel whose label has been switched off (Label
+mode "No label" in the selected-node pane, below) shows "(label off)" next
+to its id in the outline, distinguishing it at a glance from a panel still
+auto-lettering.
 
 **In-app editor: right pane (style, compose, overrides, export)**
 

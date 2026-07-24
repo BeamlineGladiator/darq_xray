@@ -625,3 +625,54 @@ def test_inspector_edit_updates_item_text_in_place_without_rebuild():
     w._row_group_mode.setCurrentIndex(1)  # -> "[group]" marker
     assert w._tree.currentItem() is item_before  # same item object: no rebuild
     assert "[group]" in item_before.text(0)
+
+
+# -- selection persistence + stale canvas (T5) --------------------------------
+def test_move_selected_is_repeatable_selection_persists():
+    w = _win()
+    w.add_panels([_panel("a"), _panel("b"), _panel("c")])
+    w._tree.setCurrentItem(w._tree.topLevelItem(0).child(2))  # select "c"
+    w.move_selected(-1)
+    assert [getattr(x, "panel_id", None) for x in _row(w).children] == ["a", "c", "b"]
+    assert getattr(w._selected_node(), "panel_id", None) == "c"  # survived the rebuild
+    w.move_selected(-1)  # pressing ↑ again must keep working
+    assert [getattr(x, "panel_id", None) for x in _row(w).children] == ["c", "a", "b"]
+
+
+def test_delete_selects_parent_container():
+    w = _win()
+    w.add_col()
+    w._tree.setCurrentItem(w._tree.topLevelItem(0).child(0))
+    w.add_panels([_panel("a"), _panel("b")])  # into the selected Col
+    col = w.recipe().layout.children[0]
+    w.select_node(col.children[0])
+    w.delete_selected()
+    assert w._selected_node() is col
+
+
+def test_label_edit_keeps_selection():
+    w = _win()
+    w.add_col()
+    w._tree.setCurrentItem(w._tree.topLevelItem(0).child(0))
+    col = w.recipe().layout.children[0]
+    w.set_selected_label("G1")
+    assert w._selected_node() is col
+
+
+def test_render_now_clears_canvas_when_no_panels_left(tmp_path):
+    w = _win()
+    w.add_panels(_obl_recipe_panels(tmp_path))
+    assert w.render_now() is not None and w._canvas is not None
+    w._tree.setCurrentItem(w._tree.topLevelItem(0).child(0))
+    w.delete_selected()
+    assert w.render_now() is None
+    assert w._canvas is None and w._result is None
+    assert "add panels" in w._notes_label.text()
+
+
+def test_outline_marks_suppressed_label():
+    w = _win()
+    w.add_panels([_panel("a")])
+    w.recipe().panels[0].label = ""
+    w._rebuild_tree()
+    assert "label off" in w._tree.topLevelItem(0).child(0).text(0)

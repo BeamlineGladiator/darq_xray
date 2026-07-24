@@ -633,7 +633,7 @@ class FigureBuilderWindow(QMainWindow):
         form.addRow("Label", self._ov_label_mode)
 
         self._ov_label = QLineEdit()
-        self._ov_label.setPlaceholderText("(blank = auto sequence letter)")
+        self._ov_label.setPlaceholderText("(blank = no label)")
         self._ov_label.setEnabled(False)
         self._ov_label.textChanged.connect(lambda _t: self._on_override_field_edited("label"))
         form.addRow("", self._ov_label)
@@ -900,6 +900,8 @@ class FigureBuilderWindow(QMainWindow):
             return "Col" + (" [group]" if node.group_label else "")
         if isinstance(node, PanelRef):
             panel = self._recipe.panel_by_id().get(node.panel_id)
+            if panel is not None and panel.label == "":
+                return f"Panel: {node.panel_id} (label off)"
             suffix = f" ({panel.label})" if panel and panel.label else ""
             return f"Panel: {node.panel_id}{suffix}"
         if isinstance(node, Spacer):
@@ -917,10 +919,13 @@ class FigureBuilderWindow(QMainWindow):
         return item
 
     def _rebuild_tree(self) -> None:
+        selected = self._selected_node()  # captured BEFORE teardown (spec §B)
         self._tree.clear()
         root_item = self._build_item(self._recipe.layout)
         self._tree.addTopLevelItem(root_item)
         self._tree.expandAll()
+        if selected is not None:
+            self.select_node(selected)
 
     def _update_title(self) -> None:
         star = " *" if self._dirty else ""
@@ -1024,6 +1029,7 @@ class FigureBuilderWindow(QMainWindow):
         del container.children[idx]
         self._purge_orphaned_panels()
         self._after_mutation()
+        self.select_node(container)
 
     def _purge_orphaned_panels(self) -> None:
         """Drop any PanelDef no longer referenced by a layout leaf.
@@ -1088,6 +1094,7 @@ class FigureBuilderWindow(QMainWindow):
         from dfxm.compose.render import render_recipe
 
         if not self._recipe.panels:
+            self._clear_canvas()
             self._notes_label.setText("add panels to preview")
             return None
         try:
@@ -1103,6 +1110,15 @@ class FigureBuilderWindow(QMainWindow):
         self._result = result
         self._notes_label.setText("; ".join(result.notes) if result.notes else "")
         return result
+
+    def _clear_canvas(self) -> None:
+        """Item 9: drop the previous preview so a stale figure never lingers
+        behind the 'add panels to preview' note."""
+        if self._canvas is not None:
+            self._preview_layout.removeWidget(self._canvas)
+            self._canvas.deleteLater()
+            self._canvas = None
+        self._result = None
 
     def _show_figure(self, figure) -> None:
         """Swap in a fresh, undecorated ``FigureCanvasQTAgg`` for *figure*.
@@ -1142,6 +1158,27 @@ class FigureBuilderWindow(QMainWindow):
         def walk(item):
             node = item.data(0, Qt.ItemDataRole.UserRole)
             if isinstance(node, PanelRef) and node.panel_id == pid:
+                return item
+            for i in range(item.childCount()):
+                found = walk(item.child(i))
+                if found is not None:
+                    return found
+            return None
+
+        root = self._tree.topLevelItem(0)
+        if root is None:
+            return
+        item = walk(root)
+        if item is not None:
+            self._tree.setCurrentItem(item)
+
+    def select_node(self, node) -> None:
+        """Select the outline item holding exactly *node* (identity), if present."""
+        if node is None:
+            return
+
+        def walk(item):
+            if item.data(0, Qt.ItemDataRole.UserRole) is node:
                 return item
             for i in range(item.childCount()):
                 found = walk(item.child(i))
