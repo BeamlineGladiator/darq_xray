@@ -84,3 +84,36 @@ def test_cli_bad_recipe_exits_two(tmp_path, capsys):
     rc = _main(["render", str(rp), "-o", str(tmp_path / "out")])
     assert rc == 2
     assert "hint" in capsys.readouterr().err.lower()
+
+
+def test_cli_missing_recipe_file_exits_two(tmp_path, capsys):
+    missing = tmp_path / "nope.json"
+    rc = _main(["render", str(missing), "-o", str(tmp_path / "out")])
+    assert rc == 2
+    err = capsys.readouterr().err.lower()
+    assert "cannot read recipe file" in err
+    assert "hint" in err
+
+
+def test_cli_bad_formats_exits_two(tmp_path, capsys):
+    h5 = _write_obl(tmp_path / "obl.h5")
+    rp = tmp_path / "r.json"
+    rp.write_text(recipe_to_json(_two_panel_recipe(h5)))
+    rc = _main(["render", str(rp), "-o", str(tmp_path / "out"), "--formats", "csv"])
+    assert rc == 2
+    err = capsys.readouterr().err.lower()
+    assert "csv" in err
+    assert "hint" in err
+
+
+def test_cli_partial_success_exits_zero(tmp_path, capsys):
+    h5 = _write_obl(tmp_path / "obl.h5")
+    r = _two_panel_recipe(h5)
+    r.panels[1].source.h5_path = str(tmp_path / "gone.h5")
+    rp = tmp_path / "r.json"
+    rp.write_text(recipe_to_json(r))
+    out = tmp_path / "out"
+    rc = _main(["render", str(rp), "-o", str(out), "--formats", "png"])
+    assert rc == 0
+    assert os.path.exists(out / "demo.png")
+    assert "placeholder" in capsys.readouterr().out

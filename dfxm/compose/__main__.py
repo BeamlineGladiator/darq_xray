@@ -6,6 +6,8 @@ import argparse
 import os
 import sys
 
+_VALID_FORMATS = {"png", "pdf", "svg"}
+
 
 def _main(argv: list[str] | None = None) -> int:
     from ..common.errors import StageUserError
@@ -18,15 +20,35 @@ def _main(argv: list[str] | None = None) -> int:
     r.add_argument("recipe", help="path to a recipe .json")
     r.add_argument("-o", "--out", required=True, help="output directory")
     r.add_argument("--formats", default="", help="comma list, e.g. png,pdf,svg (default: style)")
-    r.add_argument("--dpi", type=int, default=None)
+    r.add_argument(
+        "--dpi", type=int, default=None, help="output resolution (default: style's own dpi)"
+    )
     args = ap.parse_args(argv)
 
     try:
         with open(args.recipe, encoding="utf-8") as fh:
-            recipe = recipe_from_json(
-                fh.read(), base_dir=os.path.dirname(os.path.abspath(args.recipe))
+            text = fh.read()
+    except OSError as exc:
+        print(f"error: cannot read recipe file: {exc}", file=sys.stderr)
+        print(
+            "hint: check the path is correct and the file is readable.",
+            file=sys.stderr,
+        )
+        return 2
+
+    fmts = tuple(f for f in args.formats.split(",") if f) or None
+    if fmts is not None:
+        bad = sorted(set(fmts) - _VALID_FORMATS)
+        if bad:
+            print(f"error: unknown format(s) {', '.join(bad)!r}", file=sys.stderr)
+            print(
+                f"hint: --formats must be a comma list from {sorted(_VALID_FORMATS)}.",
+                file=sys.stderr,
             )
-        fmts = tuple(f for f in args.formats.split(",") if f) or None
+            return 2
+
+    try:
+        recipe = recipe_from_json(text, base_dir=os.path.dirname(os.path.abspath(args.recipe)))
         paths, res = export_recipe(recipe, args.out, formats=fmts, dpi=args.dpi)
     except StageUserError as exc:
         print(f"error: {exc}", file=sys.stderr)

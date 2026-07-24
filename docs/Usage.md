@@ -1302,8 +1302,9 @@ python3 -m dfxm.compose render recipe.json -o outdir --formats png,pdf,svg --dpi
   against the recipe file's own directory, so a recipe and the data it
   points at can be moved together.
 - `-o/--out` — output directory (created if missing).
-- `--formats` — comma list of `png`/`pdf`/`svg` (default: whatever the
-  recipe's own style specifies).
+- `--formats` — comma list of `png`/`pdf`/`svg` only (default: whatever the
+  recipe's own style specifies); any other value is rejected before
+  anything renders.
 - `--dpi` — overrides the recipe's own DPI.
 - The output filename is the recipe's `name` (sanitised) plus the format
   extension, e.g. `recipe.json` named `"demo"` → `outdir/demo.png`.
@@ -1312,10 +1313,13 @@ Any implied-scale, drift, or placeholder note is printed to stdout as
 `note: …` — these are informational, not failures. The command's **exit
 code** is the pass/fail signal: `0` once at least one panel rendered for
 real; `1` if the figure was produced but every panel came out a placeholder;
-`2` if the recipe itself was rejected before anything rendered (invalid
-JSON, unknown recipe version, a layout `Row`/`Col` referencing a panel id
-that doesn't exist, an invalid `scale_bar_panel`, mismatched scales under a
-shared scale bar, …) — the error message and a hint print to stderr.
+`2` for anything that stops the render before it can produce a figure — an
+unreadable recipe file (bad path, permissions), a `--formats` value outside
+`png`/`pdf`/`svg`, or the recipe itself being rejected (invalid JSON,
+unknown recipe version, a layout `Row`/`Col` referencing a panel id that
+doesn't exist, an invalid `scale_bar_panel`, mismatched scales under a
+shared scale bar, …) — the error message and a hint print to stderr in every
+`2` case.
 
 ---
 
@@ -1382,8 +1386,10 @@ ruff check . && ruff format . # lint + format
 [[#Figure builder]]) without launching the GUI — handy for CI or a batch of
 figures from a script. Exit code `0` means at least one panel rendered
 (placeholder/drift notes still print); `1` means every panel was a
-placeholder; `2` means the recipe itself was rejected (bad JSON, unknown
-panel id, …) — the message and a hint print to stderr.
+placeholder; `2` means nothing rendered at all — an unreadable recipe path,
+a `--formats` value other than `png`/`pdf`/`svg`, or the recipe itself being
+rejected (bad JSON, unknown panel id, …) — the message and a hint print to
+stderr.
 
 ---
 

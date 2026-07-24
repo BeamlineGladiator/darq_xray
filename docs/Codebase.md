@@ -814,19 +814,32 @@ anywhere (`fig.set_layout_engine("none")` throughout, same as `layout.py`).
 `python3 -m dfxm.compose render recipe.json -o outdir [--formats png,pdf,svg] [--dpi N]` —
 the CLI entry over `recipe_from_json`/`export_recipe`, no GUI required (the
 GUI-facing recipe editor is a later task).
+- `_VALID_FORMATS = {"png", "pdf", "svg"}` — the only formats `--formats`
+  accepts.
 - `_main(argv: list[str] | None = None) -> int` — parses args with
   `argparse` (subcommand `render`; `--formats` is a comma list, default ""
   meaning "follow the recipe's own style"; `--dpi` overrides the style's
-  default), reads and parses the recipe file (`recipe_from_json`, `base_dir`
-  set to the recipe file's own directory so relative `h5_path`s resolve), then
-  `export_recipe`s it. **Exit-code contract**: `0` when at least one panel
+  default). Reads the recipe file first, catching `OSError` (missing file,
+  permission error, …) itself — this is deliberately **not** left to bubble
+  up as an uncaught traceback, since Python's default exit code for an
+  unhandled exception (`1`) would collide with the "all placeholders" exit
+  code below. Then validates `--formats` against `_VALID_FORMATS` (an unknown
+  format, e.g. `csv`, is rejected before any panel is loaded — `Figure.savefig`
+  would otherwise raise a raw `ValueError` deep inside `export_recipe`). Only
+  then does it parse the recipe (`recipe_from_json`, `base_dir` set to the
+  recipe file's own directory so relative `h5_path`s resolve) and
+  `export_recipe` it. **Exit-code contract**: `0` when at least one panel
   rendered (placeholder/drift notes still print to stdout as `note: …` and are
   not a failure); `1` when the figure exported but **every** panel was a
   placeholder (`res.n_rendered == 0` — printed to stderr as
-  `error: no panel rendered (all placeholders)`); `2` on a `StageUserError`
-  (bad/missing/corrupt recipe, invalid `scale_bar_panel`, mixed-group shared
-  colorbar, etc.) — message then `hint: …` line, both to stderr, before any
-  file is written. Every written path is echoed to stdout as `wrote <path>`.
+  `error: no panel rendered (all placeholders)`); `2` for every input problem
+  caught before/without a real render — an unreadable recipe file
+  (`error: cannot read recipe file: …`), an unknown `--formats` value
+  (`error: unknown format(s) …`), or a `StageUserError` from parsing/validating/
+  rendering the recipe itself (corrupt/unsupported-version JSON, invalid
+  `scale_bar_panel`, mixed-group shared colorbar, etc.) — message then
+  `hint: …` line, both to stderr, before any file is written. Every written
+  path is echoed to stdout as `wrote <path>`.
   `if __name__ == "__main__": raise SystemExit(_main())` is the module's only
   top-level statement — `_main` itself is import-safe and unit-testable
   without a subprocess.
