@@ -18,14 +18,19 @@ from dataclasses import replace as dc_replace
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
+    QComboBox,
     QDialog,
+    QDoubleSpinBox,
     QFileDialog,
+    QFormLayout,
     QHBoxLayout,
     QInputDialog,
     QLabel,
+    QLineEdit,
     QMainWindow,
     QMessageBox,
     QPushButton,
+    QScrollArea,
     QSplitter,
     QTreeWidget,
     QTreeWidgetItem,
@@ -33,8 +38,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from dfxm.common.plotting import PlotStyle
+from dfxm.common.plotting import CMAP_CHOICES, PlotStyle, style_from_params
 from dfxm.compose.recipe import (
+    SCALE_BAR_MODES,
     Col,
     ComposeStyle,
     FigureRecipe,
@@ -47,7 +53,12 @@ from dfxm.compose.recipe import (
     recipe_to_json,
 )
 
+from .widgets.export_dialog import StyleControls
 from .widgets.panel_picker import AddPanelDialog
+
+# Tri-state (Follow/On/Off) combo choices shared by show_title/colorbar override
+# rows — display label -> stored value (None = follow the composed default).
+_TRI_STATE = (("Follow", None), ("On", True), ("Off", False))
 
 
 class FigureBuilderWindow(QMainWindow):
@@ -65,7 +76,10 @@ class FigureBuilderWindow(QMainWindow):
     def __init__(self, defaults_provider, style: PlotStyle, parent=None) -> None:
         super().__init__(parent)
         self._defaults_provider = defaults_provider
-        self._style = style
+        # Independent working copy — builder edits (via the Style pane below)
+        # must never mutate the app-wide session style the caller passed in.
+        self._style = dc_replace(style)
+        self._override_panel: PanelDef | None = None
         # Seed the new recipe's style overrides from the session's live style
         # so a freshly opened builder (and any recipe built from here without
         # ever touching Task 12's style pane) renders with the same look the
@@ -130,6 +144,7 @@ class FigureBuilderWindow(QMainWindow):
 
         self._tree = QTreeWidget()
         self._tree.setHeaderLabels(["Outline"])
+        self._tree.currentItemChanged.connect(self._on_tree_selection_changed)
         layout.addWidget(self._tree, 1)
 
         edit_row1 = QHBoxLayout()
@@ -176,12 +191,323 @@ class FigureBuilderWindow(QMainWindow):
         return pane
 
     def _build_right_pane(self) -> QWidget:
-        pane = QWidget()
-        layout = QVBoxLayout(pane)
-        label = QLabel("style")
-        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(label)
-        return pane
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        container = QWidget()
+        layout = QVBoxLayout(container)
+
+        layout.addWidget(QLabel("<b>Style</b>"))
+        self._controls = StyleControls(self._style)
+        self._controls.changed.connect(self._sync_style_to_recipe)
+        layout.addWidget(self._controls)
+
+        layout.addWidget(QLabel("<b>Compose</b>"))
+        layout.addLayout(self._build_compose_form())
+
+        layout.addWidget(QLabel("<b>Selected panel overrides</b>"))
+        layout.addWidget(self._build_override_editor())
+
+        export_btn = QPushButton("Export…")
+        export_btn.clicked.connect(self.export_now)
+        layout.addWidget(export_btn)
+
+        layout.addStretch(1)
+        scroll.setWidget(container)
+        return scroll
+
+    def _build_compose_form(self) -> QFormLayout:
+        """Widgets bound to ``recipe.compose``; every edit calls ``_on_compose_edited``."""
+        c = self._recipe.compose
+        form = QFormLayout()
+
+        self._compose_template = QLineEdit(c.label_template)
+        self._compose_template.textChanged.connect(self._on_compose_edited)
+        form.addRow("Label template", self._compose_template)
+
+        self._compose_font_scale = QDoubleSpinBox()
+        self._compose_font_scale.setRange(0.1, 5.0)
+        self._compose_font_scale.setDecimals(2)
+        self._compose_font_scale.setSingleStep(0.1)
+        self._compose_font_scale.setValue(c.label_font_scale)
+        self._compose_font_scale.valueChanged.connect(self._on_compose_edited)
+        form.addRow("Label font scale", self._compose_font_scale)
+
+        self._compose_gutter = QDoubleSpinBox()
+        self._compose_gutter.setRange(0.01, 20.0)
+        self._compose_gutter.setDecimals(2)
+        self._compose_gutter.setSuffix(" cm")
+        self._compose_gutter.setValue(c.gutter_cm)
+        self._compose_gutter.valueChanged.connect(self._on_compose_edited)
+        form.addRow("Gutter", self._compose_gutter)
+
+        self._compose_padding = QDoubleSpinBox()
+        self._compose_padding.setRange(0.01, 20.0)
+        self._compose_padding.setDecimals(2)
+        self._compose_padding.setSuffix(" cm")
+        self._compose_padding.setValue(c.padding_cm)
+        self._compose_padding.valueChanged.connect(self._on_compose_edited)
+        form.addRow("Padding", self._compose_padding)
+
+        self._compose_scale_bar_mode = QComboBox()
+        self._compose_scale_bar_mode.addItems(list(SCALE_BAR_MODES))
+        self._compose_scale_bar_mode.setCurrentText(c.scale_bar_mode)
+        self._compose_scale_bar_mode.currentTextChanged.connect(self._on_compose_edited)
+        form.addRow("Scale-bar mode", self._compose_scale_bar_mode)
+
+        self._compose_scale_bar_panel = QComboBox()
+        self._compose_scale_bar_panel.currentTextChanged.connect(self._on_compose_edited)
+        form.addRow("Scale-bar panel (one-panel mode)", self._compose_scale_bar_panel)
+        self._refresh_compose_panel_combo()
+
+        self._compose_pinned_width = QDoubleSpinBox()
+        self._compose_pinned_width.setRange(0.0, 1000.0)
+        self._compose_pinned_width.setDecimals(2)
+        self._compose_pinned_width.setSuffix(" cm")
+        self._compose_pinned_width.setSpecialValueText("auto")
+        self._compose_pinned_width.setValue(c.pinned_width_cm or 0.0)
+        self._compose_pinned_width.valueChanged.connect(self._on_compose_edited)
+        form.addRow("Pinned total width (0 = auto)", self._compose_pinned_width)
+
+        return form
+
+    def _refresh_compose_panel_combo(self) -> None:
+        """Repopulate the scale-bar-panel combo with the recipe's current panel ids."""
+        combo = self._compose_scale_bar_panel
+        target = self._recipe.compose.scale_bar_panel or ""
+        combo.blockSignals(True)
+        combo.clear()
+        combo.addItem("")  # "" = no single panel designated
+        for p in self._recipe.panels:
+            combo.addItem(p.id)
+        idx = combo.findText(target)
+        combo.setCurrentIndex(idx if idx >= 0 else 0)
+        combo.blockSignals(False)
+
+    def _load_compose_into_widgets(self) -> None:
+        """Refresh every compose widget from ``self._recipe.compose`` (e.g. after a load)."""
+        c = self._recipe.compose
+        widgets = (
+            self._compose_template,
+            self._compose_font_scale,
+            self._compose_gutter,
+            self._compose_padding,
+            self._compose_scale_bar_mode,
+            self._compose_pinned_width,
+        )
+        for w in widgets:
+            w.blockSignals(True)
+        self._compose_template.setText(c.label_template)
+        self._compose_font_scale.setValue(c.label_font_scale)
+        self._compose_gutter.setValue(c.gutter_cm)
+        self._compose_padding.setValue(c.padding_cm)
+        self._compose_scale_bar_mode.setCurrentText(c.scale_bar_mode)
+        self._compose_pinned_width.setValue(c.pinned_width_cm or 0.0)
+        for w in widgets:
+            w.blockSignals(False)
+        self._refresh_compose_panel_combo()
+
+    def _on_compose_edited(self, *_args) -> None:
+        c = self._recipe.compose
+        c.label_template = self._compose_template.text()
+        c.label_font_scale = self._compose_font_scale.value()
+        c.gutter_cm = self._compose_gutter.value()
+        c.padding_cm = self._compose_padding.value()
+        c.scale_bar_mode = self._compose_scale_bar_mode.currentText()
+        c.scale_bar_panel = self._compose_scale_bar_panel.currentText() or None
+        pinned = self._compose_pinned_width.value()
+        c.pinned_width_cm = pinned if pinned > 0 else None
+        self._dirty = True
+        self._update_title()
+        self.schedule_preview()
+
+    # -- style pane -------------------------------------------------------------
+    def _sync_style_to_recipe(self) -> None:
+        self._recipe.style = asdict(self._style)
+        self._dirty = True
+        self._update_title()
+        self.schedule_preview()
+
+    # -- per-node override editor -------------------------------------------------
+    def _build_override_editor(self) -> QWidget:
+        self._override_group = QWidget()
+        form = QFormLayout(self._override_group)
+
+        self._ov_roi = QLineEdit()
+        self._ov_roi.setPlaceholderText("r0,r1,c0,c1 (blank = full)")
+        self._ov_roi.textChanged.connect(self._on_override_edited)
+        form.addRow("ROI crop (px)", self._ov_roi)
+
+        self._ov_clim = QLineEdit()
+        self._ov_clim.setPlaceholderText("lo,hi (blank half ok; blank both = stored)")
+        self._ov_clim.textChanged.connect(self._on_override_edited)
+        form.addRow("Colour limits", self._ov_clim)
+
+        self._ov_cmap = QComboBox()
+        self._ov_cmap.addItem("")  # follow style
+        self._ov_cmap.addItems(list(CMAP_CHOICES))
+        self._ov_cmap.currentTextChanged.connect(self._on_override_edited)
+        form.addRow("Colormap", self._ov_cmap)
+
+        self._ov_label = QLineEdit()
+        self._ov_label.setPlaceholderText("(blank = auto sequence letter)")
+        self._ov_label.textChanged.connect(self._on_override_edited)
+        form.addRow("Label", self._ov_label)
+
+        self._ov_show_title = QComboBox()
+        for text, value in _TRI_STATE:
+            self._ov_show_title.addItem(text, value)
+        self._ov_show_title.currentIndexChanged.connect(self._on_override_edited)
+        form.addRow("Show title", self._ov_show_title)
+
+        self._ov_scale = QDoubleSpinBox()
+        self._ov_scale.setRange(0.0, 100_000.0)
+        self._ov_scale.setDecimals(3)
+        self._ov_scale.setSuffix(" µm/cm")
+        self._ov_scale.setSpecialValueText("follow style")
+        self._ov_scale.valueChanged.connect(self._on_override_edited)
+        form.addRow("Panel scale", self._ov_scale)
+
+        self._ov_colorbar = QComboBox()
+        for text, value in _TRI_STATE:
+            self._ov_colorbar.addItem(text, value)
+        self._ov_colorbar.currentIndexChanged.connect(self._on_override_edited)
+        form.addRow("Colourbar", self._ov_colorbar)
+
+        self._override_group.setEnabled(False)
+        return self._override_group
+
+    def _on_tree_selection_changed(self, *_args) -> None:
+        """Show/enable the override editor for a selected panel; disable otherwise."""
+        node = self._selected_node()
+        panel = None
+        if isinstance(node, PanelRef):
+            panel = self._recipe.panel_by_id().get(node.panel_id)
+        self._override_panel = panel
+        if panel is None:
+            self._override_group.setEnabled(False)
+            return
+        widgets = (
+            self._ov_roi,
+            self._ov_clim,
+            self._ov_cmap,
+            self._ov_label,
+            self._ov_show_title,
+            self._ov_scale,
+            self._ov_colorbar,
+        )
+        for w in widgets:
+            w.blockSignals(True)
+        self._ov_roi.setText(",".join(str(v) for v in panel.roi) if panel.roi else "")
+        if panel.clim is not None:
+            lo, hi = panel.clim
+            lo_s = "" if lo is None else f"{lo:g}"
+            hi_s = "" if hi is None else f"{hi:g}"
+            self._ov_clim.setText(f"{lo_s},{hi_s}")
+        else:
+            self._ov_clim.setText("")
+        self._ov_cmap.setCurrentText(panel.cmap or "")
+        self._ov_label.setText(panel.label or "")
+        self._ov_show_title.setCurrentIndex(
+            next(i for i, (_t, v) in enumerate(_TRI_STATE) if v is panel.show_title)
+        )
+        self._ov_scale.setValue(panel.scale_um_per_cm or 0.0)
+        self._ov_colorbar.setCurrentIndex(
+            next(i for i, (_t, v) in enumerate(_TRI_STATE) if v is panel.colorbar)
+        )
+        for w in widgets:
+            w.blockSignals(False)
+        self._override_group.setEnabled(True)
+
+    def _on_override_edited(self, *_args) -> None:
+        if self._override_panel is None:
+            return
+        values = {
+            "roi": self._ov_roi.text(),
+            "clim": self._ov_clim.text(),
+            "cmap": self._ov_cmap.currentText(),
+            "label": self._ov_label.text(),
+            "show_title": self._ov_show_title.currentData(),
+            "scale_um_per_cm": self._ov_scale.value(),
+            "colorbar": self._ov_colorbar.currentData(),
+        }
+        self._apply_panel_overrides(self._override_panel, values)
+
+    @staticmethod
+    def _parse_int(text: str) -> int | None:
+        try:
+            return int(text)
+        except ValueError:
+            return None
+
+    def _apply_panel_overrides(self, panel: PanelDef, values: dict) -> None:
+        """Parse *values* (as read from the override editor, or supplied directly
+        by a test) onto *panel*. Malformed ROI/clim text reports to the notes bar
+        and mutates nothing; every other key is already structurally valid
+        (combo/spinbox/tri-state values), so it is assigned as-is."""
+        roi_text = (values.get("roi") or "").strip()
+        roi = None
+        if roi_text:
+            parts = [p.strip() for p in roi_text.split(",")]
+            ints = [self._parse_int(p) for p in parts]
+            if len(ints) != 4 or any(v is None for v in ints):
+                self._notes_label.setText(
+                    f"invalid ROI text {roi_text!r} — expected 'r0,r1,c0,c1' (four integers)"
+                )
+                return
+            roi = tuple(ints)
+
+        clim_text = (values.get("clim") or "").strip()
+        clim = None
+        if clim_text:
+            parts = clim_text.split(",")
+            if len(parts) != 2:
+                self._notes_label.setText(
+                    f"invalid clim text {clim_text!r} — expected 'lo,hi' (either half may be blank)"
+                )
+                return
+            lo_s, hi_s = (p.strip() for p in parts)
+            try:
+                lo = float(lo_s) if lo_s else None
+                hi = float(hi_s) if hi_s else None
+            except ValueError:
+                self._notes_label.setText(
+                    f"invalid clim text {clim_text!r} — expected 'lo,hi' (either half may be blank)"
+                )
+                return
+            clim = (lo, hi)
+
+        scale = values.get("scale_um_per_cm")
+
+        panel.roi = roi
+        panel.clim = clim
+        panel.cmap = values.get("cmap") or None
+        panel.label = values.get("label") or None
+        panel.show_title = values.get("show_title")
+        panel.scale_um_per_cm = float(scale) if scale else None
+        panel.colorbar = values.get("colorbar")
+
+        self._dirty = True
+        self._rebuild_tree()
+        self._update_title()
+        self.schedule_preview()
+        self._select_outline_panel(panel.id)
+
+    # -- export -------------------------------------------------------------------
+    def export_now(self) -> None:
+        from dfxm.common.errors import StageUserError
+        from dfxm.compose.render import export_recipe
+
+        out = QFileDialog.getExistingDirectory(self, "Export directory")
+        if not out:
+            return
+        try:
+            paths, res = export_recipe(self._recipe, out, loader_cache=self._cache)
+        except StageUserError as exc:
+            hint = f"  Hint: {exc.hint}" if exc.hint else ""
+            self._notes_label.setText(f"export failed: {exc}{hint}")
+            return
+        notes = f"; {'; '.join(res.notes)}" if res.notes else ""
+        self._notes_label.setText(f"wrote {len(paths)} file(s) → {out}{notes}")
 
     # -- recipe access ------------------------------------------------------------
     def recipe(self) -> FigureRecipe:
@@ -233,6 +559,7 @@ class FigureBuilderWindow(QMainWindow):
     def _after_mutation(self) -> None:
         self._dirty = True
         self._rebuild_tree()
+        self._refresh_compose_panel_combo()
         self._update_title()
         self.schedule_preview()
 
@@ -501,6 +828,9 @@ class FigureBuilderWindow(QMainWindow):
         self._recipe = recipe
         self._current_path = path
         self._dirty = False
+        self._style = style_from_params({"plot_style": self._recipe.style}) or PlotStyle()
+        self._controls.set_style(self._style)
+        self._load_compose_into_widgets()
         self._rebuild_tree()
         self._update_title()
         self.schedule_preview()

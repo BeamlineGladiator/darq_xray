@@ -185,3 +185,96 @@ def test_click_preview_selects_outline_node(tmp_path):
     w._on_preview_pick(ax)  # the slot the mpl button_press handler calls
     item = w._tree.currentItem()
     assert item is not None and "a" in item.text(0)
+
+
+# -- style pane + overrides + export ------------------------------------------
+def test_style_controls_edit_lands_in_recipe_style(tmp_path):
+    w = _win()
+    w.add_panels(_obl_recipe_panels(tmp_path))
+    w._style.font_scale = 2.0
+    w._sync_style_to_recipe()
+    assert w.recipe().style["font_scale"] == 2.0
+    assert w.is_dirty()
+
+
+def test_compose_knob_edits_land_in_recipe(tmp_path):
+    w = _win()
+    w._compose_template.setText("(A)")
+    w._on_compose_edited()
+    assert w.recipe().compose.label_template == "(A)"
+
+
+def test_panel_override_editor_applies(tmp_path):
+    w = _win()
+    w.add_panels(_obl_recipe_panels(tmp_path))
+    panel = w.recipe().panels[0]
+    w._apply_panel_overrides(
+        panel,
+        {
+            "roi": "0,3,1,4",
+            "clim": "-2,",
+            "cmap": "viridis",
+            "label": "Z1",
+            "show_title": None,
+            "scale_um_per_cm": 4.0,
+            "colorbar": False,
+        },
+    )
+    assert panel.roi == (0, 3, 1, 4)
+    assert panel.clim == (-2.0, None)
+    assert panel.cmap == "viridis" and panel.label == "Z1"
+    assert panel.scale_um_per_cm == 4.0 and panel.colorbar is False
+
+
+def test_panel_override_editor_malformed_roi_no_mutation(tmp_path):
+    w = _win()
+    w.add_panels(_obl_recipe_panels(tmp_path))
+    panel = w.recipe().panels[0]
+    panel.roi = (1, 2, 3, 4)
+    w._apply_panel_overrides(
+        panel,
+        {
+            "roi": "not,a,roi",
+            "clim": "",
+            "cmap": "",
+            "label": "",
+            "show_title": None,
+            "scale_um_per_cm": None,
+            "colorbar": None,
+        },
+    )
+    assert panel.roi == (1, 2, 3, 4)  # unchanged
+    assert "roi" in w._notes_label.text().lower()
+
+
+def test_panel_override_editor_malformed_clim_no_mutation(tmp_path):
+    w = _win()
+    w.add_panels(_obl_recipe_panels(tmp_path))
+    panel = w.recipe().panels[0]
+    panel.clim = (1.0, 2.0)
+    w._apply_panel_overrides(
+        panel,
+        {
+            "roi": "",
+            "clim": "nope",
+            "cmap": "",
+            "label": "",
+            "show_title": None,
+            "scale_um_per_cm": None,
+            "colorbar": None,
+        },
+    )
+    assert panel.clim == (1.0, 2.0)  # unchanged
+    assert "clim" in w._notes_label.text().lower()
+
+
+def test_export_now_writes_files(tmp_path, monkeypatch):
+    w = _win()
+    w.add_panels(_obl_recipe_panels(tmp_path))
+    out = tmp_path / "out"
+    monkeypatch.setattr(
+        "gui.figure_builder.QFileDialog.getExistingDirectory", lambda *a, **k: str(out)
+    )
+    w.export_now()
+    assert os.path.exists(out / "untitled.png")
+    assert "wrote" in w._notes_label.text()

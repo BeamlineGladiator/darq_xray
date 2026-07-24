@@ -1255,10 +1255,11 @@ form.
 > [!note] Work in progress
 > This chapter covers the **recipe file**, the **headless CLI** that renders
 > it, and the in-app `FigureBuilderWindow` editor's own mechanics (outline
-> editing, live preview, save/load recipes) — but that window is not yet
-> reachable from the main GUI's menus, so for now a recipe is a JSON file you
-> write by hand, generate with a small script against `dfxm.compose.recipe`,
-> or build interactively once the window is opened by hand for testing.
+> editing, live preview, style/compose controls, per-panel overrides,
+> save/load recipes, export) — but that window is not yet reachable from the
+> main GUI's menus, so for now a recipe is a JSON file you write by hand,
+> generate with a small script against `dfxm.compose.recipe`, or build
+> interactively once the window is opened by hand for testing.
 
 The figure builder (`dfxm/compose/`) assembles a **multi-panel publication
 figure** — several map/slice/trace panels from one or more stage outputs,
@@ -1314,6 +1315,44 @@ to size from) — the error message plus its hint, without ever crashing the
 window. Clicking a panel in the preview selects that panel's node in the
 outline tree, mirroring the selection you'd otherwise make by hand before
 Label…/Delete/↑/↓.
+
+**In-app editor: right pane (style, compose, overrides, export)**
+
+The right pane is a scrollable column with three sections plus an **Export…**
+button:
+
+- *Style* — the full per-figure style control set (the same
+  `StyleControls` widget used by [[#Publication export]]), bound to an
+  independent working copy of the `PlotStyle` the builder window was opened
+  with — editing it here never touches the app-wide session style. Every
+  change serialises the whole style into `recipe.style` (a plain JSON-safe
+  dict) and schedules a re-render, so the preview always matches what
+  Export… will write. Opening a saved recipe rebuilds this working copy from
+  the recipe's own stored `style` dict (falling back to a bare default style
+  if the recipe has none) and refreshes every control from it.
+- *Compose* — the composer-level knobs on `recipe.compose`: the label
+  template (must contain an `A`/`a` placeholder), the label font scale, the
+  gutter and padding (cm), the scale-bar mode (`per-panel`/`one-panel`/
+  `gutter`) with a panel-id dropdown for the one-panel mode (populated from
+  the recipe's current panels; blank = none designated yet), and a pinned
+  total width in cm (0 = auto-sized from the layout). Every edit writes
+  straight into `recipe.compose` and schedules a re-render.
+- *Selected panel overrides* — enabled only when the outline selection is a
+  panel; edits its `PanelDef` in place: **ROI crop** as `r0,r1,c0,c1` pixel
+  text (blank = full frame; all four values are required together — a
+  malformed entry reports to the notes bar and changes nothing), **colour
+  limits** as `lo,hi` (either half may be left blank to keep that bound
+  automatic; malformed text likewise reports and changes nothing),
+  **colormap** (blank = follow the style), **label** (blank = the automatic
+  sequence letter), **show title** and **colourbar** (Follow/On/Off —
+  Follow defers to the composed default), and **panel scale** in µm/cm
+  (0 = follow the style's own scale).
+- **Export…** opens a directory picker and writes the recipe with
+  `dfxm.compose.render.export_recipe` (the same formats/DPI the recipe's
+  style specifies, reusing the preview's loader cache so nothing already
+  read is re-read from disk); the notes bar reports how many files were
+  written and where, or the error and its hint if the recipe couldn't be
+  exported.
 
 **Rendering from the command line**
 
