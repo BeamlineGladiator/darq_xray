@@ -610,10 +610,18 @@ engine" section below, also in `layout.py`).
 - `size_cells(recipe, style, data_by_id, notes) -> dict[int, SizedCell]` —
   keyed by `id(leaf)`. Sizing rules per leaf:
   - `Spacer`/`TextCell`: box is the leaf's own `w_cm`/`h_cm`, verbatim.
-  - `PanelData(kind="placeholder")`, or a map panel with a degenerate extent
-    (`ext_x_um`/`ext_y_um` missing or non-positive): `PLACEHOLDER_CM` box; a
-    note is appended (`"panel {id}: {reason} — rendered as placeholder"` /
-    `"...degenerate extent..."`).
+  - `PanelData(kind="placeholder")`, a map panel with a degenerate extent
+    (`ext_x_um`/`ext_y_um` missing or non-positive), or a `profiles_trace`
+    panel with a degenerate length (`length_um` missing/non-positive, checked
+    by `_finite_positive` before any pin or scale is consulted): `PLACEHOLDER_CM`
+    box; a note is appended (`"panel {id}: {reason} — rendered as placeholder"`
+    / `"...degenerate extent..."` / `"...degenerate trace length..."`). A
+    zero-length trace becomes a placeholder even under a pinned column width —
+    the pin cannot rescue a line with no physical length. `render_recipe`'s
+    existing placeholder lockstep (downgrading `data_by_id[pid].kind` to
+    `"placeholder"` whenever the sized cell disagrees) already covers this
+    case, so the degenerate-length trace never reaches `draw_panel` with a
+    zero-width axes.
   - `map_layer`/`slice_plane`/`profiles_ref` panels: box from
     `fixed_scale_box(style, ext_x_um, ext_y_um, scale=eff)`, where `eff` is
     the panel's own `scale_um_per_cm` override if set, else
@@ -641,19 +649,47 @@ engine" section below, also in `layout.py`).
       at all. The pinned dimension is taken as-is and the other is derived
       preserving `ext_x_um/ext_y_um` (the panel's real aspect ratio). This is
       the only way to size a map panel with **no** scale anywhere (`Col`:
-      `test_pinned_col_width_covers_missing_scale`).
+      `test_pinned_col_width_covers_missing_scale`). If **both** a row height
+      and a column width reach the same map panel, the height pin wins (a map's
+      aspect is fixed, so only one dimension can be taken as-is) and a
+      `"... width pin ignored"` note is appended — the width pin is never
+      silently honoured instead.
     - **Trace**: a trace's height (`trace_height_cm(style)`) is purely
       cosmetic — not derived from any physical extent — so only a pinned
       **column width** can size a trace with no scale anywhere (width ←
-      pinned; height ← `trace_height_cm(style)`, unchanged). A pinned **row
-      height** cannot substitute for a missing scale: the width is still
-      resolved the normal way (a real trace/map scale is required), and the
-      pin only overrides the height field afterwards
-      (`test_pinned_row_height_reaches_trace_with_note`).
+      pinned; height ← the pinned row height if one also reaches this panel,
+      else `trace_height_cm(style)`). A pinned **row height** cannot
+      substitute for a missing scale on its own: the width is still resolved
+      the normal way (a real trace/map scale is required), and the pin only
+      overrides the height field afterwards
+      (`test_pinned_row_height_reaches_trace_with_note`). When both pins reach
+      the same trace (a pinned column width nested inside a pinned row
+      height), the row's height pin is honoured too — it used to be silently
+      dropped by the width-pin branch's early return, leaving the cosmetic
+      `trace_height_cm` in place (`test_trace_under_both_pins_honours_row_height_too`).
     Both pin directions on both panel kinds always append an "implied
     (trace) scale ... µm/cm" note — even when nothing about the resolved
     scale actually changed (a trace row-height pin) — so a pin is never
     silent.
+  - **Nested-pin division across stacked children**: a pinned dimension only
+    sizes a single leaf as-is when it lands directly on that leaf. When it
+    instead has to cross a container that stacks its children *along that same
+    axis* — a `Row.pinned_height_cm` propagating down into a nested `Col`'s
+    multiple children (stacked vertically), or a `Col.pinned_width_cm`
+    propagating into a nested `Row`'s multiple children (stacked
+    side-by-side) — the pin is divided **equally** among the `n` children
+    after subtracting the `n - 1` inter-child gutters (`recipe.compose.gutter_cm`),
+    so the container's total content height/width still equals the pin
+    exactly: `each = (pin - gutter * (n - 1)) / n`. A note is appended
+    (`"pinned {what} ... cm split over {n} stacked children — {each} cm each
+    after gutters"`). If the gutters alone consume the whole pin (`each <= 0`),
+    `size_cells` raises `StageUserError` ("... is too small for {n} stacked
+    children plus {n - 1} gutter(s)") with a hint to enlarge the pin, shrink
+    the gutter, or drop the pin — never a negative/zero box.
+    Cross-axis pins (a height pin crossing a `Row`'s side-by-side children, or
+    a width pin crossing a `Col`'s stacked children) are **not** divided — each
+    child gets the pin unchanged, since the pin doesn't compete with siblings
+    along that axis.
   - No scale (style, per-panel override, or pin) reachable for a map/trace
     panel: raises `StageUserError` ("has no physical scale to size from" /
     "has no trace scale to size from") with a hint to set the style scale, a
@@ -669,6 +705,12 @@ The layout solver's placement half: takes the `SizedCell`s from `size_cells`
 `Row`/`Col` tree, measures every axes' real decorations, shares margins so
 sibling boxes align, and places every axes absolutely — `fig.set_layout_engine("none")`
 throughout, no matplotlib auto-layout, generalizing `place_axes_stack`.
+`measure_cells(fig: "Figure", cells: list[SizedCell], pad_in: float = 0.02) ->
+None` and `place_tree(fig: "Figure", layout: "Row | Col | PanelRef | Spacer |
+TextCell", cells: dict[int, SizedCell], *, gutter_in: float, pad_in: float) ->
+tuple[float, float]` now carry their documented type hints; `Figure` is
+imported only under `TYPE_CHECKING` (a `from __future__ import annotations`
+string annotation), so `layout.py` stays matplotlib-free at import time.
 - `measure_cells(fig, cells, pad_in=0.02) -> None` — provisionally places every
   live cell's axes (`cell.ax is not None`) at its exact final `(w_in, h_in)`
   box inside a scratch-sized `fig` (one draw), calls `cell.sync(fig, cell.ax)`

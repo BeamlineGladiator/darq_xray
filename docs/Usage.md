@@ -1292,7 +1292,10 @@ a composed figure looks consistent with the per-stage exports above.
   group label (one letter for the whole group), or share a colorbar/x-axis
   across its members. A blank group label means "no group" — each member
   keeps its own per-panel letter — the opposite of a blank panel label, which
-  is its own explicit "no label" state.
+  is its own explicit "no label" state. A pinned height crossing a nested
+  column (or a pinned width crossing a nested row) is divided equally among
+  the stacked panels after gutters, so the container matches the pin exactly;
+  the split is reported in the notes bar.
 - **Physical scales** — like every other exported map (see the "Scale
   (µm/cm)" control under [[#Publication export]] above), a panel's box can be
   sized from an exact µm/cm scale rather than a fixed inch size, so panels

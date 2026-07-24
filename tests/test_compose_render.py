@@ -307,6 +307,26 @@ def test_shared_x_stack_bottom_labels_only(tmp_path):
     assert not any(t.get_visible() for t in top.get_xticklabels())
 
 
+def test_zero_length_trace_renders_placeholder_lockstep(tmp_path, monkeypatch):
+    """Item 6: length_um == 0 joins the degenerate-extent placeholder lockstep —
+    placeholder draw + note, never a zero-width trace axes (no mpl warnings)."""
+    import warnings
+
+    from dfxm.compose.adapters import PanelData
+
+    monkeypatch.setattr(
+        "dfxm.compose.render.load_panel",
+        lambda p, cache=None: PanelData(kind="profiles_trace", length_um=0.0, payload={}),
+    )
+    p = PanelDef("t", PanelSource("/x.h5", "profiles_trace", {"job": JOB, "field": "strain"}))
+    r = FigureRecipe("z", {"trace_scale_um_per_cm": 5.0}, ComposeStyle(), PanelRef("t"), [p])
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        res = render_recipe(r)
+    assert res.n_rendered == 0
+    assert any("degenerate trace length" in n for n in res.notes)
+
+
 def test_export_no_tightcrop_all_formats(tmp_path):
     h5 = _write_obl(tmp_path / "obl.h5")
     out = tmp_path / "out"
