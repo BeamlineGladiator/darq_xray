@@ -26,6 +26,7 @@ aliases: [DFXM Pipeline Usage, Pipeline Guide, How to use the pipeline]
   - [[#Regions of interest — two windows, two frames]]
 - [[#The pipeline at a glance]]
 - [[#Stage reference]]
+- [[#Figure builder]]
 - [[#Interactive viewers]]
 - [[#Tips & troubleshooting]]
 - [[#Running without the GUI (CLI)]]
@@ -1103,6 +1104,12 @@ A **Publication style…** button lives in the **left column of the main window*
 
 Clicking it opens a scrollable style editor (the same control set as the per-figure export dialog). Each **Export…** dialog starts from a private copy of the session style and lets you adjust it per-figure without changing the global.
 
+> [!note] Need several panels in one figure?
+> Everything on this page exports **one stage's own figure at a time**. To
+> arrange panels from one or more stages (maps, slices, line traces) side by
+> side into a single multi-panel publication figure, use the **Figure
+> builder…** button next to Publication style — see [[#Figure builder]].
+
 > [!important] Runs use the current style
 > Every stage **run** renders its own PNGs/animations (layer maps, slice PNGs,
 > profile companions, strain diagnostics, matched layers) with the publication
@@ -1249,6 +1256,147 @@ form.
 
 ---
 
+## Figure builder
+
+> [!example] Opening the builder
+> Click **Figure builder…** in the left column of the main window, just below
+> **Publication style…**. The window is non-modal (the rest of the app stays
+> usable) and reused — clicking the button again re-raises the same window
+> instead of opening a second one, so a recipe you're mid-edit on is never
+> silently orphaned.
+
+The figure builder (`dfxm/compose/`) assembles a **multi-panel publication
+figure** — several map/slice/trace panels from one or more stage outputs,
+laid out together, sized to an exact physical page size — from a single
+**recipe file**, independent of any one stage's own export. It reuses the
+same panel-drawing code and `PlotStyle` as every other export in this app, so
+a composed figure looks consistent with the per-stage exports above.
+
+**Concepts**
+
+- **Recipe** — one JSON file (`dfxm.compose.recipe.FigureRecipe`) describing
+  a figure: a name, a `PlotStyle` override dict, composer-level settings
+  (label lettering, gutter/padding, scale-bar mode, an optional pinned total
+  width), a **layout tree**, and the list of **panels** the layout refers to.
+- **Panels** — each panel (`PanelDef`) points at one dataset inside a stage's
+  output h5 (`strain`/`mosaicity`/`rocking` map layer, an `oblique_slices.h5`
+  plane, or a `profiles` job's reference image/line trace) plus optional
+  per-panel overrides (ROI crop, colour limits, colormap, label text, its own
+  physical scale). A recipe can mix panels from several different h5 files.
+  A `profiles_ref` panel's ROI crop only trims the displayed image — the
+  analysis line overlay keeps the job's own endpoints and simply clips at the
+  crop's edge when the line runs past it, rather than resizing the panel.
+- **Rows/Cols** — the layout tree nests `Row`/`Col` containers (each holding
+  panels, spacers, text cells, or further rows/columns) to arrange panels
+  side-by-side or stacked; a `Row`/`Col` can also pin a height/width, carry a
+  group label (one letter for the whole group), or share a colorbar/x-axis
+  across its members.
+- **Physical scales** — like every other exported map (see the "Scale
+  (µm/cm)" control under [[#Publication export]] above), a panel's box can be
+  sized from an exact µm/cm scale rather than a fixed inch size, so panels
+  drawn from different crops still print at a common, comparable scale.
+- **Placeholders** — a panel whose source data can't be read at render time
+  (a deleted file, a renamed dataset) never aborts the whole figure: it
+  renders as a hatched grey box captioned with the reason, and the exit code
+  reflects whether *any* panel had real data (see below).
+
+**In-app editor: live preview**
+
+The `FigureBuilderWindow`'s center pane shows a **live preview** of the
+composed figure, built by the same render pipeline that exports it — the
+on-screen canvas may be display-scaled to fit the window, but every export
+re-renders from the recipe at its exact physical size, so exported files are
+always exact regardless of how the preview happened to be scaled on screen.
+Every outline edit (add/move/delete/group/label a panel, row,
+column, spacer, or text cell) and every recipe load schedules a re-render
+300 ms after the last edit, so a burst of clicks re-renders once, not once
+per click. A **Refresh data** button forces an immediate re-render *and*
+drops the cached source-file readings first — normally a panel's h5 data is
+cached after the first read (so editing the layout, labels, or style stays
+fast even against large files), but that means a source file changed or
+deleted on disk after it was first read keeps showing its last-known data
+until you click Refresh data. A **notes bar** under the preview reports
+implied-scale/drift/placeholder notes from the render (semicolon-joined), or
+— if the recipe can't be composed at all (e.g. no panel has a physical scale
+to size from) — the error message plus its hint, without ever crashing the
+window. Clicking a panel in the preview selects that panel's node in the
+outline tree, mirroring the selection you'd otherwise make by hand before
+Label…/Delete/↑/↓.
+
+**In-app editor: right pane (style, compose, overrides, export)**
+
+The right pane is a scrollable column with three sections plus an **Export…**
+button:
+
+- *Style* — the full per-figure style control set (the same
+  `StyleControls` widget used by [[#Publication export]]), bound to an
+  independent working copy of the `PlotStyle` the builder window was opened
+  with — editing it here never touches the app-wide session style. Every
+  change serialises the whole style into `recipe.style` (a plain JSON-safe
+  dict) and schedules a re-render, so the preview always matches what
+  Export… will write. Opening a saved recipe rebuilds this working copy from
+  the recipe's own stored `style` dict (falling back to a bare default style
+  if the recipe has none) and refreshes every control from it.
+- *Compose* — the composer-level knobs on `recipe.compose`: the label
+  template (must contain an `A`/`a` placeholder), the label font scale, the
+  gutter and padding (cm), the scale-bar mode (`per-panel`/`one-panel`/
+  `gutter`) with a panel-id dropdown for the one-panel mode (populated from
+  the recipe's current panels; blank = none designated yet), and a pinned
+  total width in cm (0 = auto-sized from the layout). Every edit writes
+  straight into `recipe.compose` and schedules a re-render.
+- *Selected panel overrides* — enabled only when the outline selection is a
+  panel; edits its `PanelDef` in place: **ROI crop** as `r0,r1,c0,c1` pixel
+  text (blank = full frame; all four values are required together — a
+  malformed entry reports to the notes bar and changes nothing), **colour
+  limits** as `lo,hi` (either half may be left blank to keep that bound
+  automatic; malformed text likewise reports and changes nothing),
+  **colormap** (blank = follow the style), **label** (blank = the automatic
+  sequence letter), **show title** and **colourbar** (Follow/On/Off —
+  Follow defers to the composed default), and **panel scale** in µm/cm
+  (0 = follow the style's own scale). Each override field is applied
+  independently — editing one (say ROI crop) never re-reads or resets any of
+  the others, so an explicitly blank label or a colour limit typed more
+  precisely than the box's own display stays exactly as set even after you
+  edit something else in the same panel.
+- **Export…** opens a directory picker and writes the recipe with
+  `dfxm.compose.render.export_recipe` (the same formats/DPI the recipe's
+  style specifies, reusing the preview's loader cache so nothing already
+  read is re-read from disk); the notes bar reports how many files were
+  written and where, or the error and its hint if the recipe couldn't be
+  exported.
+
+**Rendering from the command line**
+
+```bash
+python3 -m dfxm.compose render recipe.json -o outdir
+python3 -m dfxm.compose render recipe.json -o outdir --formats png,pdf,svg --dpi 300
+```
+
+- `recipe.json` — the recipe file. Relative `h5_path`s inside it resolve
+  against the recipe file's own directory, so a recipe and the data it
+  points at can be moved together.
+- `-o/--out` — output directory (created if missing).
+- `--formats` — comma list of `png`/`pdf`/`svg` only (default: whatever the
+  recipe's own style specifies); any other value is rejected before
+  anything renders.
+- `--dpi` — overrides the recipe's own DPI.
+- The output filename is the recipe's `name` (sanitised) plus the format
+  extension, e.g. `recipe.json` named `"demo"` → `outdir/demo.png`.
+
+Any implied-scale, drift, or placeholder note is printed to stdout as
+`note: …` — these are informational, not failures. The command's **exit
+code** is the pass/fail signal: `0` once at least one panel rendered for
+real; `1` if the figure was produced but every panel came out a placeholder;
+`2` for anything that stops the render before it can produce a figure — an
+unreadable recipe file (bad path, permissions), a `--formats` value outside
+`png`/`pdf`/`svg`, or the recipe itself being rejected (invalid JSON,
+unknown recipe version, a layout `Row`/`Col` referencing a panel id that
+doesn't exist, an invalid `scale_bar_panel`, mismatched scales under a
+shared scale bar, …) — the error message and a hint print to stderr in every
+`2` case.
+
+---
+
 ## Interactive viewers
 
 > [!note] Loaded only when you ask
@@ -1303,9 +1451,19 @@ Every stage is also a headless command (handy for batch/scripting):
 ```bash
 python3 -m dfxm.stages.strain --help
 python3 -m dfxm.stages.mosaicity --root-folder /path/to/processed --folder-pattern '*_mosa__*'
+python3 -m dfxm.compose render recipe.json -o outdir --formats png,pdf,svg
 python3 -m pytest -q          # run the test suite
 ruff check . && ruff format . # lint + format
 ```
+
+`python3 -m dfxm.compose render` re-renders a **figure recipe** (see
+[[#Figure builder]]) without launching the GUI — handy for CI or a batch of
+figures from a script. Exit code `0` means at least one panel rendered
+(placeholder/drift notes still print); `1` means every panel was a
+placeholder; `2` means nothing rendered at all — an unreadable recipe path,
+a `--formats` value other than `png`/`pdf`/`svg`, or the recipe itself being
+rejected (bad JSON, unknown panel id, …) — the message and a hint print to
+stderr.
 
 ---
 

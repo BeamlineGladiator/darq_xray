@@ -25,6 +25,7 @@ aliases: [Codebase Reference, Architecture, Code Map, Every Part Explained]
     - [[#`dfxm/config` — typed config & presets]]
     - [[#`dfxm/common` — shared primitives]]
     - [[#`dfxm/stages` — the nine analysis stages]]
+    - [[#`dfxm/compose` — publication figure composer]]
     - [[#`dfxm/runner.py` — the process worker]]
 - [[#Layer 2 — `gui/` PySide6 application]]
 - [[#Layer 3 — `tests/`]]
@@ -294,7 +295,8 @@ GUI-safe plotting helpers — **never** `pyplot`/`matplotlib.use`.
 #### `render.py`
 Shared **volume** renderers used by [[#visualize.py]] and [[#rocking.py]].
 - `cmap_nan_transparent(name)` — colormap with NaN → transparent.
-- `layer_figure(layer, vmin, vmax, cmap, ext_x, ext_y, title, cbar_label, *, style=None, group=None)` — one equal-aspect layer figure. `style=None` reproduces the legacy look (12×10 in, plain colourbar, no scale bar). When a `PlotStyle` is passed, figsize/colourbar/scale-bar/text-scaling are honoured; `group` (a `CMAP_GROUPS` name) selects the per-group colourbar tick format. When `style.scale_um_per_cm` is set, `plotting.fixed_scale_box` sizes the initial figure to the target axes box plus 1.5 in of decoration headroom (`figure_size`/`figure_width` are ignored for the map itself), `draw_scale_bar` gets the effective µm/cm for a point-exact bar, and `plotting.fit_axes_to_box` runs last (after the colourbar/title/scale-bar are all in place) to converge the axes box onto the fixed scale regardless of decoration load. Applies `plotting.apply_axes_mode` after the text scaling, so `style.axes_mode` reaches every styled volume-layer figure (live runs, exports, replots, animation frames); the legacy `style=None` path resolves to the default `"full"` (no-op). Returns `(fig, ax, im)`. This one code path covers visualize/paraview/rocking/mosaicity/matched live runs, exports, and their `figures.render_volume_layer` replots.
+- `draw_map_layer(ax, layer, vmin, vmax, cmap, ext_x, ext_y, title, cbar_label, *, style=None, group=None, cax=None, colorbar=None, scale_bar=None, fixed_scale_um_per_cm=None)` — draws one equal-aspect map layer (imshow + labels/title + colourbar + scale bar + text-scale + axes-mode) into an *already-placed* axes; returns the image. Extracted from `layer_figure` (task 2 of the figure-builder work, 2026-07-24) so a later composer can draw map panels into axes it owns without duplicating this look. `colorbar`/`scale_bar` default to the style's flags (`None` = follow style); an explicit `bool` overrides — the composer switches them off per-panel when a shared bar covers the group. `cax`, when given, routes the colourbar into a pre-placed axes instead of stealing space from `ax` (see `add_colorbar`'s `cax`). `fixed_scale_um_per_cm` forwards straight to `draw_scale_bar` — sizing/fitting the containing figure to a target box is the caller's job (`layer_figure` still does this via `fixed_scale_box`/`fit_axes_to_box`), not `draw_map_layer`'s.
+- `layer_figure(layer, vmin, vmax, cmap, ext_x, ext_y, title, cbar_label, *, style=None, group=None)` — one equal-aspect layer figure. `style=None` reproduces the legacy look (12×10 in, plain colourbar, no scale bar). When a `PlotStyle` is passed, figsize/colourbar/scale-bar/text-scaling are honoured; `group` (a `CMAP_GROUPS` name) selects the per-group colourbar tick format. When `style.scale_um_per_cm` is set, `plotting.fixed_scale_box` sizes the initial figure to the target axes box plus 1.5 in of decoration headroom (`figure_size`/`figure_width` are ignored for the map itself), `draw_scale_bar` gets the effective µm/cm for a point-exact bar, and `plotting.fit_axes_to_box` runs last (after the colourbar/title/scale-bar are all in place) to converge the axes box onto the fixed scale regardless of decoration load. Applies `plotting.apply_axes_mode` after the text scaling, so `style.axes_mode` reaches every styled volume-layer figure (live runs, exports, replots, animation frames); the legacy `style=None` path resolves to the default `"full"` (no-op). Returns `(fig, ax, im)`. This one code path covers visualize/paraview/rocking/mosaicity/matched live runs, exports, and their `figures.render_volume_layer` replots. Now a thin wrapper: it sizes/creates the figure and axes, then delegates the actual drawing to `draw_map_layer` — byte-identical output, pinned by `tests/test_draw_map_layer.py`.
 - `save_layer_pngs(..., *, style=None, group=None)` — one PNG per Z layer (styled when a `PlotStyle` is passed); `group` (a `CMAP_GROUPS` name) forwarded to `layer_figure` for per-group colourbar tick format.
 - `save_layer_animation(..., *, style=None, group=None)` — layer flip-through movie; MP4 (ffmpeg) → GIF fallback; `group` forwarded to `layer_figure`.
 - `_pyvista_grid(data, spacing)` / `save_top_view(...)` — 3-D top-view render (**lazy** `pyvista` import; NaN voxels thresholded out).
@@ -412,7 +414,8 @@ Port of `extract_oblique_slices_v5`. Arbitrary planes through the aligned volume
 - `STAGE.params` includes `aligned_mosa_file` (PATH, `must_exist=True`, blank-allowed — immediately after `aligned_rocking_file`) and two Quantities-group BOOL toggles `include_mosa_sum` / `include_mosa_specific` (default `True`, after `include_raw_specific`).
 - `use_pinned` (BOOL, default `False`, non-advanced, immediately after `slices_json`) and `pinned_slices_json` (TEXT, default `""`, `advanced=True`, `group="Pinned planes"`) — the fast pinned-plane re-run pair consumed by `run()`. `pinned_slices_json` is normally produced by `build_pinned_spec` (above) via the GUI "Pin planes…" dialog; the sweep in `slices_json` is never written to by anything.
 - `prepare_volume(..., style=None)` — load + (if `stacked`) align + style; the colormap comes from `resolve_cmap(style, GROUP_BY_KIND.get(kind))` (shared constant; kind → group: `raw_sum`/`raw_specific`/`raw_mosa_sum`/`raw_mosa_specific` → `raw`) and the **resolved** name is written to the volume group's `cmap` attr in `oblique_slices.h5`, so profiles and the line picker inherit it. The result dict also carries `group` (a `CMAP_GROUPS` name or `None`) for use by `build_slice_figure`. Auto colour limits pass through `apply_round_clim(style)` and the result dict carries `vmin`, `vmax` (possibly rounded), `vmin_raw`, `vmax_raw` (the unrounded originals), and `clim_note`. `_estimate_box` for auto-extent; `_standard_volumes(...)` builds the volume list from the `include_*` toggles (now also looks up `aligned_mosa_file` in `file_keys`). Titles: `raw_mosa_sum` → "Mosa-integrated Sum Intensity"; `raw_mosa_specific` → "Mosa-integrated Frame N".
-- `build_slice_figure(prep, sl, slice2d, u_um, v_um, *, offset_um, style=None)` — build and return a slice `Figure` (equal-aspect, µm axes). When `style` is `None` the legacy appearance is reproduced; otherwise figsize/colourbar/scale-bar/text-scaling are honoured. `prep["group"]` (a `CMAP_GROUPS` name, via `GROUP_BY_KIND[kind]`) selects the per-group colourbar tick format. When `style.scale_um_per_cm` is set, the same fixed-scale fitting as `render.layer_figure`/`build_strain_map` applies: `plotting.fixed_scale_box` sizes the figure (target box + 1.5 in headroom, bypassing `figure_size`/`figure_width`), `draw_scale_bar` gets the effective µm/cm for a point-exact bar, and `plotting.fit_axes_to_box` converges the axes box last, after the colourbar/title/scale-bar are all in place. Honours `style.axes_mode` via `plotting.apply_axes_mode` on the styled path. `save_slice_png`, `_rebuild_plane_figure` (so the slices Replot dialog), and `render_replot`/publication export all inherit it since they funnel through this one function. Does NOT call `savefig`.
+- `draw_slice_axes(ax, prep, sl, slice2d, u_um, v_um, *, offset_um, style=None, cax=None, colorbar=None, scale_bar=None, fixed_scale_um_per_cm=None)` — draws one oblique-slice plane (imshow + labels/title + colourbar + scale bar + text-scale + axes-mode) into an *already-placed* axes; returns the image. Extracted from `build_slice_figure` (task 3 of the figure-builder work, 2026-07-24) so a later composer can draw slice panels into axes it owns without duplicating this look — the same pattern as `render.draw_map_layer`. `colorbar`/`scale_bar` default to the style's flags (`None` = follow style); an explicit `bool` overrides. `cax`, when given, routes the colourbar into a pre-placed axes instead of stealing space from `ax`. `fixed_scale_um_per_cm` forwards straight to `draw_scale_bar` — sizing/fitting the containing figure to a target box remains `build_slice_figure`'s job (`fixed_scale_box`/`fit_axes_to_box`).
+- `build_slice_figure(prep, sl, slice2d, u_um, v_um, *, offset_um, style=None)` — build and return a slice `Figure` (equal-aspect, µm axes). When `style` is `None` the legacy appearance is reproduced; otherwise figsize/colourbar/scale-bar/text-scaling are honoured. `prep["group"]` (a `CMAP_GROUPS` name, via `GROUP_BY_KIND[kind]`) selects the per-group colourbar tick format. When `style.scale_um_per_cm` is set, the same fixed-scale fitting as `render.layer_figure`/`build_strain_map` applies: `plotting.fixed_scale_box` sizes the figure (target box + 1.5 in headroom, bypassing `figure_size`/`figure_width`), `draw_scale_bar` gets the effective µm/cm for a point-exact bar, and `plotting.fit_axes_to_box` converges the axes box last, after the colourbar/title/scale-bar are all in place. Honours `style.axes_mode` via `plotting.apply_axes_mode` on the styled path. `save_slice_png`, `_rebuild_plane_figure` (so the slices Replot dialog), and `render_replot`/publication export all inherit it since they funnel through this one function. Does NOT call `savefig`. Now a thin wrapper: it sizes/creates the figure and axes, then delegates the actual drawing to `draw_slice_axes` — byte-identical output, pinned by `tests/test_stage_slices.py`'s `build_slice_figure_unstyled`/`centered_norm` tests.
 - `save_slice_png(prep, sl, slice2d, u_um, v_um, out_png, *, offset_um, dpi=150, style=None)` — build a slice figure (legacy look when `style` is None) and save it to `out_png` (used by `run`, which passes the injected style).
 - `write_volume_group` — write one volume group to `oblique_slices.h5`; when `clim_note` is set it also writes `vmin_raw` / `vmax_raw` attrs alongside the rounded `vmin` / `vmax`, so downstream tools (profiles, line picker) can show or log the original unrounded limits.
 - `_rebuild_plane_figure(h5_path, vid, sname, k, style, *, clim=None, roi=None) -> Figure | None` — shared single-plane rebuild helper used by both `figures()` and `render_replot`. Reads all needed attrs defensively from the `oblique_slices.h5` volume group (with fallback defaults), optionally overrides one or both colour limits via `clim=(vmin, vmax)` (a `None` entry keeps the stored value), and optionally applies a `roi=(r0, r1, c0, c1)` pixel-index crop to `s2d`, `u_um`, and `v_um` before calling `build_slice_figure`. Returns `None` when the clamped crop is empty. All attr-from-file reconstruction is funnelled through this one function — `figures()` no longer duplicates it.
@@ -438,13 +441,14 @@ slice plane, every field at the same in-plane positions.
 - `replot_catalog(h5_path, jobs) -> list[ReplotJobEntry]` — resolve each job's slice (plain or pinned, via `resolve_job_slice_name`) and list the fields present for it; a job whose slice has no match (plain or pinned) is omitted — the dialog shows only what will actually render, and `render_replot` re-reports the skip. Raises `StageUserError` for an unreadable file.
 - `_render_parameter_job(f, job, ji, frac, p, result, used_stems, out_dir, style, progress, clim=None, trace_deferred=None)` — the parameter-mode job body factored out of `run()` so `run()` and `render_replot()` share it verbatim (they cannot drift): calls `_collect(..., clim=clim)`, then writes companion/traces/CSVs/overviews per the `p` flags and appends the `ProfileJobResult` to `result`. `frac` is the caller's precomputed progress fraction for this job's drop notes (`progress(frac, msg)`); `ji` becomes the result's `job_index`. When `save_companion`, `save_companion_figure` is called with `trace_opts={"linewidth": trace_linewidth, "color": trace_color, "font_scale": trace_font_scale}` (the job's own `p["trace_*"]` values) and `notes=result.notes`, so a fixed-scale companion's trace panels match this invocation's trace styling and any box-drift fires into the same notes list as the standalone traces. `trace_deferred`, forwarded into `_save_traces(deferred=trace_deferred, notes=result.notes)`, is the list the caller flushes once via `_flush_deferred_traces` after the whole job loop, so every fixed-scale trace PNG of one invocation shares the same margins. Not part of the public API — an implementation detail shared by the two entry points below.
 - `render_replot(h5_path, jobs, style, clim, out_dir, *, dpi=None, params=None) -> ProfilesResult` — Qt-free cold replot: re-renders `jobs` (the same dicts `jobs_json` parses to) against a consolidated `oblique_slices.h5` on disk, with an optional per-quantity `clim` override (`{field_id_or_group: (vmin, vmax)}`, resolved inside `_collect`/`_clim_attrs`). `params` (optional) is a dict of stage param overrides — e.g. the profiles form's live values — merged over `STAGE.defaults()` (`p = {**STAGE.defaults(), **(params or {}), "save_csv": False}`), so a replot honours the caller's appearance knobs (trace styling, line colour, reference field, DPI, and — if passed through — the save-toggles) while `save_csv` is always forced off; `dpi`, if given, overrides `params["fig_dpi"]` after the merge (applied last). Resolves each job's slice name (plain or pinned) up front, skipping (into `result.skipped`) any whose slice is absent; a job that isn't a `dict` or lacks a `"name"` key is skipped as `"job {ji}: malformed job spec"` (mirrors `replot_catalog`'s guard) rather than raising. Delegates each surviving job to `_render_parameter_job`, threading a shared `trace_deferred` list through the loop and flushing it once via `_flush_deferred_traces(trace_deferred, p["fig_dpi"], result.notes)` after the `with h5py.File(...)` block — so a replot's trace PNGs share margins exactly like a run's. `dpi=None` (and no `params["fig_dpi"]`) keeps the stage's `fig_dpi` default; progress reporting is a no-op (`_noop`). Raises `StageUserError` for a missing/unreadable h5 or an empty `jobs` list.
-- `_draw_reference_image(ax, plane2d, u_um, v_um, attrs, line_color, geom=None, title=None, style=None, fixed_scale_um_per_cm=None)` — shared map-panel renderer used by both `build_companion_figure` and `render_single`. `fixed_scale_um_per_cm` is a keyword-only, opt-in-per-call pass-through to `plotting.draw_scale_bar`'s own parameter of the same name (never inferred from `style`); left `None` it draws the ordinary style-fraction bar.
+- `_draw_reference_image(ax, plane2d, u_um, v_um, attrs, line_color, geom=None, title=None, style=None, fixed_scale_um_per_cm=None, scale_bar=None)` — shared map-panel renderer used by both `build_companion_figure` and `render_single`. `fixed_scale_um_per_cm` is a keyword-only, opt-in-per-call pass-through to `plotting.draw_scale_bar`'s own parameter of the same name (never inferred from `style`); left `None` it draws the ordinary style-fraction bar. `scale_bar` (added for `dfxm.compose`, task 7 fix wave 2, 2026-07-24) is the same "explicit bool overrides, `None` follows `style.scale_bar`" convention `render.draw_map_layer`/`slices.draw_slice_axes` already use (`style.scale_bar if scale_bar is None else scale_bar`, only reachable when `style` is not `None` — the `style is None` legacy branch is untouched); left at its default `None`, every existing call site (`build_companion_figure`'s two paths, `render_single`) is byte-identical to before. `dfxm.compose.adapters.draw_panel`'s `profiles_ref` branch is the one caller that now passes an explicit `scale_bar` through — needed so the composer can draw `scale_bar=False` here and add the panel's REAL bar later, post-placement, without ending up with two overlapping bars (this function previously ignored the composer's `scale_bar` argument entirely). Right after `imshow`, the axes view is pinned to the image's own extent (`ax.set_xlim`/`set_ylim` to `extent`) and autoscale is turned off (`ax.set_autoscale_on(False)`) — found via the figure-builder Phase A acceptance test (task 9, 2026-07-24): the overlaid line/markers below are drawn from the job's full (pre-crop) geometry and can run past a caller-supplied ROI crop (`dfxm.compose.adapters`'s `profiles_ref` ROI), and matplotlib's default autoscale-on-add previously widened the view to include the out-of-frame endpoint, which — under `aspect="equal"` with the default `adjustable="box"` — silently shrank the rendered box below its intended fixed-scale size. The line now simply clips at the frame edge instead; every pre-existing (uncropped) call site is unaffected since its line points already fall inside the plotted extent by construction.
 - `build_companion_figure(ref, fields, geom, line_color, *, style=None, trace_opts=None, notes=None)` — dispatcher: `_build_companion_legacy(...)` when `trace_fixed_box(style, geom["L"])` is `None` (no effective fixed scale, incl. `style=None`), else `_build_companion_fixed(...)`. `trace_opts` (fixed-scale path only) is `{"linewidth": float, "color": str | None, "font_scale": float}` — `None` keeps the trace panels' own default styling (`linewidth=1.8, color=None, font_scale=1.0`, matching the pre-Task-4 companion look). `notes` (fixed-scale path only), when given, is a list `box_drift_note` warnings are appended to. Does NOT call `savefig`.
   - `_build_companion_legacy(ref, fields, geom, line_color, style=None)` — the pre-Task-4 companion body, moved verbatim (pinned by tests): reference image + N trace panels on a `styled_figure`/`gridspec` layout. When `style` is `None` the legacy appearance is reproduced (including the hand-drawn `_scale_bar` on the map panel); when a `PlotStyle` is supplied, colourbar and text scaling are honoured and the map panel draws the shared `plotting.draw_scale_bar` (gated on `style.scale_bar`, honouring `scale_bar_length_um` and all look knobs — threaded through `_draw_reference_image(style=...)`). It never fits the axes to `style.scale_um_per_cm` and never passes `fixed_scale_um_per_cm` to `_draw_reference_image` — the map-panel geometry (including scale-bar thickness) stays exactly what it is today.
   - `_build_companion_fixed(ref, fields, geom, line_color, style, trace_opts, notes)` — the fixed-scale companion, built on the deterministic stack engine (`plotting.place_axes_stack`): the map panel is sized via `fixed_scale_box` at the MAP-effective scale (`fixed_scale(style)`, falling back to `trace_fixed_scale(style)`). **Degenerate reference plane guard:** when that `fixed_scale_box` call returns `None` (zero-width/single-point/non-finite `u_um`/`v_um` — e.g. a pinned edge-of-ROI plane, so the map panel cannot be fitted even though the trace scale is set), this function falls straight back to `_build_companion_legacy` — never raises, matching the never-raises convention of every other fixed-scale guard in this module (`fixed_scale`/`trace_fixed_box`/`fixed_scale_box` itself) — and, when `notes` is given, appends `"companion: reference plane extent is degenerate — rendered with the legacy layout (fixed scale not applied)"` so the fallback is visible in the GUI Results tab rather than silently swapping layouts. Otherwise the map panel is drawn with `fixed_scale_um_per_cm` forwarded to `_draw_reference_image` — the same point-exact scale-bar geometry the standalone map figures (`render_single`, `render.layer_figure`) use, unlike the legacy companion path. Each trace panel is sized via `trace_fixed_box` (already known non-`None` — that is the dispatcher's own gate) and drawn through `_draw_trace_axes` with `trace_opts` (defaulted as above) — identical content/styling to `build_trace_figure`'s fixed-scale path. A colourbar, when `style.colorbar`, is drawn into a manually-placed `cax` (`add_colorbar(..., cax=cax)`, no parent-axes steal) that a `sync` callable re-glues beside the map panel after each of `place_axes_stack`'s two placement passes. Panel titles honour `style.show_title` independently per panel (`None` title suppresses it, matching `apply_text_scale`'s convention). When `notes` is given, a `box_drift_note` is appended per panel (map + each trace) that misses its target box.
 - `save_companion_figure(ref, fields, geom, line_color, out_png, dpi, style=None, trace_opts=None, notes=None)` — build a companion figure (dispatched as above) and save it (used by `run`/`render_replot` via `_render_parameter_job`, which pass the injected style, the form's `trace_*` params as `trace_opts`, and `result.notes`).
 - `parse_aspect(s)` — parse a `"W:H"` aspect string into positive `(w, h)` floats; raises `StageUserError` (with hint) on anything that isn't two positive finite numbers.
 - `_draw_trace_axes(ax, fld, geom, *, linewidth, color, font_scale, style, show_xlabel=True)` — module-level helper, the single source of the trace look: plots `value_mean` (+ std band via `fill_between` when `value_std` is set), sets the y-label/title (`show_title`/`title_scale` from `style`)/grid/xlim/x-label/tick+offset-text font sizes. Extracted so `build_trace_figure` and the fixed-scale companion's (`_build_companion_fixed`) per-field trace panels share the exact same content-drawing code — never reimplemented in two places.
+- `draw_reference_axes` / `draw_trace_axes` — public module-level aliases for `_draw_reference_image` / `_draw_trace_axes` (task 3 of the figure-builder work, 2026-07-24), added so a later composer can import and call the shared map/trace panel drawers without reaching into underscore-prefixed names. The underscore originals remain the in-module call sites; the aliases add no behaviour.
 - `build_trace_figure(fld, geom, *, aspect_wh, width_in, linewidth, color, font_scale, style=None)` — build and return a standalone line-profile `Figure` for a single field, in one of two modes selected by `trace_fixed_box(style, geom["L"])`:
   - **Fixed-scale mode** (the style's TRACE-effective scale — `trace_scale_um_per_cm`, else `scale_um_per_cm` — is set): `trace_fixed_box` returns `(w_in, h_in, effective_um_per_cm)` with `w_in = geom["L"]/scale/2.54` and `h_in = trace_height_cm(style)/2.54` (default 3 cm; width clamped to 30 in like the map figures, effective scale raised accordingly). The figure is built via `styled_figure((w_in+1.5, h_in+1.5), styled=True)`, axes content drawn via `_draw_trace_axes`, then `place_axes_box(fig, ax, w_in, h_in)` gives the axes an **exact** `(w_in, h_in)`-inch box — deterministic placement (measure decorations once, size figure to margins+box, no iteration), replacing the old `set_box_aspect` + `fit_axes_to_box` coupling that could silently stall and keep a wrong physical scale (regression: a 29.67 µm line at 10 µm/cm rendering at ~5.7 µm/cm). `aspect_wh` and `width_in` are ignored in this mode.
   - **Legacy mode** (no fixed scale, incl. `style=None`): unchanged from before — figure canvas `(width_in, width_in*h/w)`, `ax.set_box_aspect(h/w)` pins the plot box to exactly `aspect_wh`'s `w:h` ratio, content drawn via `_draw_trace_axes`. On save the PNG is tight-cropped (hugs box+labels).
@@ -467,6 +471,404 @@ strain layers.
 - `figures(result, params)` — `@register("matched")` catalog: one `kind="map"` `FigureSpec` per entry in `result.recorded`, reading the saved grayscale PNG and rendering it as a figure.
 - `run` / `_main`.
 
+### `dfxm/compose` — publication figure composer
+
+Qt-free package for building multi-panel publication figures on top of the
+per-stage outputs (recipes, layout solver, adapters, render). This covers the
+schema, panel-adapter, full layout-solver (sizing + measure/align/place), and
+render/export modules; the GUI-facing recipe editor is `gui/figure_builder.py`
+(below), reachable from the main window's **Figure builder…** button.
+
+#### `recipe.py`
+
+The recipe data model + JSON (de)serialization + validation — the schema every
+other `dfxm/compose` module builds on.
+- `RECIPE_VERSION = 1`, `PANEL_KINDS = ("map_layer", "slice_plane", "profiles_ref", "profiles_trace")`,
+  `SCALE_BAR_MODES = ("per-panel", "one-panel", "gutter")`.
+- `ComposeStyle` — composer-level look knobs: `label_template`, `label_font_scale`,
+  `gutter_cm`, `padding_cm`, `scale_bar_mode`, `scale_bar_panel`, `pinned_width_cm`.
+- `PanelSource` — `h5_path`, `kind` (one of `PANEL_KINDS`), `selector` (kind-specific
+  selection key, e.g. stage/field/plane).
+- `PanelDef` — one panel: `id`, `source: PanelSource`, plus per-panel overrides
+  (`roi`, `clim`, `cmap`, `label`, `show_title`, `scale_um_per_cm`, `colorbar`).
+- `PanelRef` / `Spacer` / `TextCell` — layout leaves (a panel placeholder, blank
+  space, or literal text cell).
+- `Row` / `Col` — layout containers (nest freely); each supports a pinned
+  height/width, an optional group label/shared colorbar/shared clim (`Col` also
+  `shared_x`).
+- `FigureRecipe` — the whole recipe: `name`, `style` (JSON-safe `PlotStyle`
+  overrides), `compose: ComposeStyle`, `layout` (a `Row`/`Col`/`PanelRef`/`Spacer`/
+  `TextCell` tree), `panels: list[PanelDef]`, `version`. `panel_by_id()` returns an
+  `{id: PanelDef}` lookup.
+- `iter_leaves(node)` — depth-first generator over layout leaves (`PanelRef`/
+  `Spacer`/`TextCell`), recursing through `Row`/`Col`.
+- `recipe_to_json(recipe, *, base_dir=None) -> str` / `recipe_from_json(text, *, base_dir=None) -> FigureRecipe` —
+  JSON round-trip. When `base_dir` is given, each panel's `h5_path` is stored
+  relative to it on save (falling back to absolute if `os.path.relpath` can't
+  compute one) and resolved back against it on load. Raises `StageUserError`
+  (with a hint) for invalid JSON, an unsupported/missing `version`, or a missing
+  `layout`/`panels`.
+- `validate_recipe(recipe) -> None` — raises `StageUserError` (with a hint) on
+  the first problem found: duplicate panel ids, a layout `PanelRef` pointing at
+  a panel id that doesn't exist (a "ghost" reference), an unknown
+  `PanelSource.kind`, an unknown `ComposeStyle.scale_bar_mode`, a
+  `label_template` with no `A`/`a` placeholder, or a non-positive
+  `gutter_cm`/`padding_cm`.
+
+#### `adapters.py`
+
+The panel-kind registry: maps a recipe `PanelSource` to (a) a pure data loader
+reading only that panel's arrays from its h5 and (b) a draw call into a
+provided axes. Connects the `recipe.py` schema to the map/slice/profiles draw
+functions extracted in tasks 2/3 (`render.draw_map_layer`,
+`slices.draw_slice_axes`, `profiles.draw_reference_axes`/`draw_trace_axes`) so
+the solver/renderer (`layout.py`/`render.py`, below) can drive any panel kind
+uniformly. Heavy
+deps (`h5py`, the stage modules) are imported inside the loader/draw functions
+so `import dfxm.compose` stays light.
+- `PanelData` — dataclass produced by every loader: `kind` (a `PANEL_KINDS`
+  value, or `"placeholder"`), `ext_x_um`/`ext_y_um` (map/slice sizing inputs),
+  `length_um` (trace sizing input), `group` (quantity group, for shared
+  colorbars), `vmin`/`vmax` (default colour limits before any panel
+  override), `payload` (kind-specific draw inputs — the raw layer/plane
+  array, prep dict, `fld`/`geom`, etc.).
+- `load_panel(panel: PanelDef, *, cache=None) -> PanelData` — reads one
+  panel's data from its source h5 and applies its `roi` crop. **Never raises**
+  for missing DATA (a file/dataset/field gone at render time) — those become
+  `kind="placeholder"` with `payload["reason"]` describing why (the composed
+  figure keeps going with a hatched cell instead of crashing on one stale
+  panel). A malformed SELECTOR raises `StageUserError` instead, checked before
+  any h5 access — those are recipe-authoring bugs, not data-availability
+  issues: an unknown `PanelSource.kind`; a `map_layer` selector with a bad/
+  missing `stage`, or (for `stage` `mosaicity`/`rocking`) missing `"dataset"`;
+  a `slice_plane` selector missing `"volume_id"` or `"slice_name"`; a
+  `profiles_ref` selector missing `"job"`; or a `profiles_trace` selector
+  missing `"job"` or `"field"`. `cache`, when given, is a plain dict keyed by
+  `(h5_path, kind, selector, roi)` (JSON-serialized) so the GUI can skip a
+  re-read of an unchanged panel; a cache hit returns the exact same
+  `PanelData` instance.
+- Selector shapes per `PanelSource.kind` (documented in the module docstring
+  too):
+  - `map_layer`: `{"stage": "strain"|"mosaicity"|"rocking", "dataset": str,
+    "z": int, "sx": float?, "sy": float?}`. For `stage="strain"` the dataset
+    is fixed to `"strain"` and `sx`/`sy` default from the file attrs
+    `scale_x_um`/`scale_y_um` (falling back to 0.152/0.385); for
+    `mosaicity`/`rocking`, `sx`/`sy` default to 0.152/0.385 when omitted (the
+    GUI/recipe author is expected to supply the real values, matching the
+    replot defaults). Colour limits come from `mosaicity._streamed_clim`,
+    `rocking._replot_default_clim`, or `symmetric_limits` (strain)
+    respectively; the colormap group comes from `mosaicity._KEY_DISPLAY` /
+    a fixed `"raw"` (rocking) / `"strain"`.
+  - `slice_plane`: `{"volume_id": str, "slice_name": str, "plane": int}` —
+    mirrors `slices._rebuild_plane_figure`'s attrs-to-prep reconstruction and
+    ROI-cropping.
+  - `profiles_ref`: `{"job": dict, "field": str | None}` — runs
+    `profiles._collect` for the job; `field=None` picks the job's own
+    reference plane, otherwise the named field's plane is drawn instead (like
+    `profiles._save_overviews`'s `ov_ref`), still on the reference's `u_um`/`v_um`
+    axes.
+  - `profiles_trace`: `{"job": dict, "field": str}` — the named field's line
+    profile from the same `_collect` call.
+- `draw_panel(ax, panel, data, style, *, cax=None, colorbar=None,
+  scale_bar=None, fixed_scale_um_per_cm=None, show_xlabel=True,
+  show_title=False)` — dispatches on `data.kind` to the matching draw
+  function, applying `panel.clim`/`panel.cmap` overrides over `data`'s
+  defaults first. Titles are OFF by default in composed figures
+  (`panel.show_title=True`, or the `show_title` kwarg, re-enables); returns
+  the `AxesImage` for `map_layer`/`slice_plane`/`profiles_ref`, or `None` for
+  `profiles_trace` and `"placeholder"`.
+- `draw_placeholder(ax, reason: str) -> None` — a hatched grey cell (no ticks,
+  a centred "unavailable" caption) for a panel whose data could not be
+  loaded — the never-crash fallback `load_panel`/`draw_panel` route to.
+
+#### `layout.py` — sizing pass
+
+The layout solver's pure-geometry half: walks a recipe's layout tree and
+resolves every leaf to an exact `(w_in, h_in)` content box in inches, all
+from physical scales — no matplotlib involved (the placement half, which
+measures decorations and places axes absolutely, is the "measure/align/place
+engine" section below, also in `layout.py`).
+- `_IN_PER_CM = 1.0 / 2.54`, `PLACEHOLDER_CM = (4.0, 3.0)` — the fallback box
+  (in cm) for a panel that has no usable data or a degenerate extent.
+- `SizedCell` — dataclass keyed by `id(leaf)`: `leaf` (the `PanelRef`/`Spacer`/
+  `TextCell`), `panel` (its `PanelDef`, or `None` for `Spacer`/`TextCell`),
+  `kind` (`"map"`/`"trace"`/`"spacer"`/`"text"`/`"placeholder"`), `w_in`/
+  `h_in`. `ax`/`extras`/`sync`/`margins`/`label` default to `None`/`()` — the
+  render step (Task 7) creates each cell's axes and sets `ax`/`extras`/`sync`
+  before calling `measure_cells`/`place_tree` (below), which then fill
+  `margins` and position `ax`.
+- `size_cells(recipe, style, data_by_id, notes) -> dict[int, SizedCell]` —
+  keyed by `id(leaf)`. Sizing rules per leaf:
+  - `Spacer`/`TextCell`: box is the leaf's own `w_cm`/`h_cm`, verbatim.
+  - `PanelData(kind="placeholder")`, or a map panel with a degenerate extent
+    (`ext_x_um`/`ext_y_um` missing or non-positive): `PLACEHOLDER_CM` box; a
+    note is appended (`"panel {id}: {reason} — rendered as placeholder"` /
+    `"...degenerate extent..."`).
+  - `map_layer`/`slice_plane`/`profiles_ref` panels: box from
+    `fixed_scale_box(style, ext_x_um, ext_y_um, scale=eff)`, where `eff` is
+    the panel's own `scale_um_per_cm` override if set, else
+    `fixed_scale(style)`. A clamp to the 30-in cap (`box[2] != eff`) appends
+    an "effective scale ... µm/cm" note.
+  - `profiles_trace` panels: box from `trace_fixed_box(style, length_um)`
+    (`trace_height_cm(style)` for the height); a panel-level
+    `scale_um_per_cm` override is applied via
+    `dataclasses.replace(style, trace_scale_um_per_cm=...)` before sizing. A
+    clamp (`box[2] != trace_fixed_scale(style)`) appends a matching note (this
+    is the path the `test_trace_clamp_note_surfaces` case exercises).
+  - A per-panel `scale_um_per_cm` override (map or trace) is validated by
+    `_validate_scale(value, panel_id, what)` before use: it must be
+    float-castable, finite, and `> 0`, else `StageUserError` (never a bare
+    `ValueError`) — this catches a hand-edited recipe JSON carrying a
+    negative/NaN/non-numeric scale (`recipe.py` reads the field uncast).
+    `_finite_positive(v)` guards `ext_x_um`/`ext_y_um` the same way (also
+    rejecting `inf`). Pins are always checked *before* an override is
+    resolved, so an unused/irrelevant bad override on a pinned panel never
+    raises (see below).
+  - A `Row.pinned_height_cm` / `Col.pinned_width_cm` on an ancestor overrides
+    intrinsic sizing, but the two panel kinds differ because only a map has a
+    real physical aspect ratio:
+    - **Map**: either pin alone is enough to size the panel — no scale needed
+      at all. The pinned dimension is taken as-is and the other is derived
+      preserving `ext_x_um/ext_y_um` (the panel's real aspect ratio). This is
+      the only way to size a map panel with **no** scale anywhere (`Col`:
+      `test_pinned_col_width_covers_missing_scale`).
+    - **Trace**: a trace's height (`trace_height_cm(style)`) is purely
+      cosmetic — not derived from any physical extent — so only a pinned
+      **column width** can size a trace with no scale anywhere (width ←
+      pinned; height ← `trace_height_cm(style)`, unchanged). A pinned **row
+      height** cannot substitute for a missing scale: the width is still
+      resolved the normal way (a real trace/map scale is required), and the
+      pin only overrides the height field afterwards
+      (`test_pinned_row_height_reaches_trace_with_note`).
+    Both pin directions on both panel kinds always append an "implied
+    (trace) scale ... µm/cm" note — even when nothing about the resolved
+    scale actually changed (a trace row-height pin) — so a pin is never
+    silent.
+  - No scale (style, per-panel override, or pin) reachable for a map/trace
+    panel: raises `StageUserError` ("has no physical scale to size from" /
+    "has no trace scale to size from") with a hint to set the style scale, a
+    per-panel override, or a pin.
+  - `notes` is mutated in place (appended to), not returned — callers pass
+    the same list through the whole solve to collect every implied-scale/
+    clamp/placeholder note for the figure.
+
+#### `layout.py` — measure/align/place engine
+
+The layout solver's placement half: takes the `SizedCell`s from `size_cells`
+(each already at its final `(w_in, h_in)` content box) and the recipe's
+`Row`/`Col` tree, measures every axes' real decorations, shares margins so
+sibling boxes align, and places every axes absolutely — `fig.set_layout_engine("none")`
+throughout, no matplotlib auto-layout, generalizing `place_axes_stack`.
+- `measure_cells(fig, cells, pad_in=0.02) -> None` — provisionally places every
+  live cell's axes (`cell.ax is not None`) at its exact final `(w_in, h_in)`
+  box inside a scratch-sized `fig` (one draw), calls `cell.sync(fig, cell.ax)`
+  when set (re-gluing an attached colorbar/scale-bar axes after the move),
+  then fills `cell.margins` via `measure_axes_margins(fig, cell.ax,
+  extras=cell.extras, pad_in=pad_in)`. Measuring at final box size (not some
+  placeholder size) is mandatory — tick-label density depends on the actual
+  geometry, the same rule `place_axes_box` follows. Cells with no axes
+  (`Spacer`/`TextCell`) get a zero `AxesMargins`.
+- `place_tree(fig, layout, cells, *, gutter_in, pad_in) -> (fig_w_in, fig_h_in)` —
+  three passes over the layout tree:
+  1. **Share margins** — direct `PanelRef` children of a `Row` (2+) get their
+     `margins.top`/`margins.bottom` raised to the max over the group (bottom
+     x-labels/titles line up); direct `PanelRef` children of a `Col` get
+     `margins.left`/`margins.right` raised the same way (y-axis labels align
+     across stacked panels). Composite children (a nested `Row`/`Col`) are
+     *not* included in a parent's share — they align by envelope instead (next
+     point), which is what lets a ragged sub-tree (e.g. a 2-panel `Col` next
+     to a 1-panel `Col`) still line up at the top/left without forcing every
+     leaf's margins to match.
+  2. **Envelope sizing** — every node's envelope is `(margins + content box)`
+     for a leaf, or the row/column sum (plus `gutter_in` between children) for
+     a `Row`/`Col`; a `Row`'s envelope height is the max over children's
+     envelope heights (a `Col`'s envelope width is the max over children's
+     envelope widths) — so a shorter/narrower sibling's envelope is simply
+     smaller and top/left-alignment during placement leaves the leftover space
+     as trailing padding automatically (no explicit padding calculation
+     needed). The root envelope + `2 * pad_in` sizes `fig`.
+  3. **Absolute placement** — walks the tree again with a running
+     inches-from-top-left cursor: a `Row` advances the cursor right by each
+     child's envelope width + `gutter_in` (children top-align at the same
+     `y`); a `Col` advances down by each child's envelope height + `gutter_in`
+     (children left-align at the same `x`); a leaf computes
+     `x0 = (x + margins.left) / fig_w`, `y0 = (fig_h - y - margins.top -
+     h_in) / fig_h` and calls `ax.set_position([x0, y0, w_in/fig_w,
+     h_in/fig_h])`, then `cell.sync(fig, cell.ax)` again (final position).
+  `shared_x` `Col`s must have interior x tick-labels/xlabel suppressed
+  *before* `measure_cells` runs (draw-time responsibility, Task 7) — margin
+  sharing/placement here doesn't know about `shared_x` itself, it just aligns
+  whatever margins it measures.
+
+#### `render.py` — orchestrator + export
+
+Ties `recipe.py`/`adapters.py`/`layout.py` together into one `Figure` and
+saves it at exact physical size — no `bbox_inches`, no matplotlib auto-layout
+anywhere (`fig.set_layout_engine("none")` throughout, same as `layout.py`).
+- `ComposeResult` — `figure: Figure`, `notes: list[str]`, `n_panels` (`PanelRef`
+  leaves in the layout), `n_rendered` (panels drawn with real data —
+  placeholders excluded), `axes_by_id: dict[str, Axes]` (every `PanelRef`'s
+  main axes, including placeholders — GUI click-pick and tests read this).
+- `render_recipe(recipe, style_overrides=None, *, loader_cache=None) -> ComposeResult` —
+  the pipeline, in order:
+  1. `validate_recipe(recipe)`.
+  2. `style = style_from_params({"plot_style": {**recipe.style, **(style_overrides or {})}}) or PlotStyle()`.
+  3. Load every panel (`load_panel(panel, cache=loader_cache)`) into a local
+     `panels_by_id`/`data_by_id` — placeholders substituted, never raised.
+  4. `size_cells(recipe, style, data_by_id, notes)` — a map/slice panel with a
+     degenerate extent (e.g. an ROI crop down to a single row/column) comes
+     back as a `"placeholder"`-kind `SizedCell` even though its `PanelData.kind`
+     is still the real `"map_layer"`/`"slice_plane"` (only the box, not the
+     loaded data, is touched). Immediately after, `render_recipe` walks the
+     leaves and overwrites `data_by_id[pid]` with a genuine
+     `PanelData(kind="placeholder", payload={"reason": "degenerate extent"})`
+     wherever `cell.kind == "placeholder"` but the data isn't already one —
+     otherwise the draw loop below (step 8) would still hand the ORIGINAL
+     degenerate arrays to `draw_panel`, which trusts `data.kind` over the
+     cell's sizing decision and would call `imshow` with a zero-width/height
+     extent (matplotlib's "identical low and high xlims/ylims" warning). This
+     keeps every downstream consumer of `data_by_id` (the draw dispatch,
+     `n_rendered`, shared-colorbar/scale-bar grouping) in lockstep with what
+     `size_cells` actually decided.
+  5. Create one `Figure(facecolor="white")`; add a bare axes per `PanelRef`
+     (any kind, incl. placeholder — so it stays click-pickable) and per
+     `TextCell` (`set_axis_off()` immediately); `Spacer` leaves get no axes.
+  6. **Shared-colorbar transform** (`_apply_shared_colorbars`) — for every
+     `Row`/`Col` node with `shared_colorbar=True` found anywhere in the
+     layout: gather its `PanelRef` leaves (any depth) as members; refuse
+     (`StageUserError`, hint) when the non-placeholder members' quantity
+     `group`s aren't all equal ("shared colorbar mixes quantity groups …");
+     unify colour limits as `node.shared_clim` or `(min(vmins), max(vmaxs))`
+     over the members with each panel's own `clim` override applied first,
+     then replace each non-placeholder member's `PanelDef` (a local copy —
+     the caller's recipe is never mutated) with that unified `clim` and mark
+     it colorbar-off. The bar itself is a synthetic solver cell: a `Spacer`
+     leaf whose PROVISIONAL box (`colorbar_fraction * first_member.w_in + 0.1`,
+     or `.h_in` for a `Row` group, by the members' summed content-box extent —
+     `first_member` is the first *non-placeholder* member) only reserves it a
+     slot in the tree — it omits each member's own decoration margins, which
+     `place_tree`'s per-Row/Col margin-sharing can make asymmetric besides, so
+     it under-counts the group's real span. `_build_working_layout` rebuilds
+     (never mutates) the recipe's layout tree, wrapping that group node in a
+     new `Row([group, bar_leaf])` (a `Col` group) or `Col([group, bar_leaf])`
+     (a `Row` group) at the same tree position. After `place_tree` (and any
+     pinned-width re-placement) has given every member axes its REAL final
+     position, `_stretch_shared_bar` corrects the bar axes to the group's
+     actual placed span (`min`/`max` over the members' `get_position()`, on
+     the shared axis) before its colourbar content is drawn — a group with no
+     non-placeholder member just hides the bar axes (`set_axis_off()`) instead
+     of leaving a blank default-ticked one. The bar's actual colourbar content
+     (`add_colorbar(..., cax=bar_ax)`) is drawn *after* this stretch.
+  7. **Scale-bar mode** (`_resolve_scale_bar_kwargs`) — per
+     `compose.scale_bar_mode`: `"per-panel"` leaves every map's `scale_bar`
+     kwarg as `None` (follows `style.scale_bar`); `"one-panel"` sets `True`
+     only for `compose.scale_bar_panel` (unknown/missing id → `StageUserError`,
+     hint) and `False` elsewhere; `"gutter"` sets `False` everywhere and adds
+     one more synthetic `Spacer` leaf (wrapping the whole working layout in a
+     new root `Col`) whose content is a single shared scale bar sized for the
+     one common effective µm/cm across every map panel (mismatched per-panel
+     scales → `StageUserError`, hint). In every mode, `map_pids` — and the
+     final-recompute `map_pids_final` further below — are filtered to
+     `pid in cell_by_pid`: `data_by_id`/`panels_by_id` are keyed by every
+     `recipe.panels` entry, but `cell_by_pid` only has layout leaves, so a
+     `PanelDef` the layout no longer references (e.g. one a GUI delete left
+     behind) is tolerated here rather than raising a `KeyError`. The gutter
+     cell's own box is a
+     practical minimum (`max(gutter_cm*4, 2cm)` × `max(gutter_cm*1.2, 0.6cm)`)
+     — **a deliberate deviation** from reusing `compose.gutter_cm` (the
+     between-cell spacing gutter, 0.5 cm by default) directly as the cell's
+     own width: that literal reading is far too narrow to hold the drawn bar
+     + its "`N µm`" label at any real font scale (the cell would clip its own
+     content), so a floor sized for legibility is used instead, still scaling
+     up with a larger `gutter_cm`. Drawn with a style FORCED to
+     `scale_bar_loc="center"`/`scale_bar_inset_pt=0.0` regardless of the
+     recipe's own style — a user's corner `scale_bar_loc` (meant for full-size
+     map panels) would clip inside this small dedicated cell.
+  8. **Draw panel contents** — per `PanelRef` leaf, dispatched on
+     `SizedCell.kind`: `"map"` panels needing a colourbar (not covered by a
+     shared bar, `style.colorbar` on) get their own provisional `cax` axes
+     wired onto the cell as `extras`/`sync` (mirrors
+     `profiles.build_companion_figure`'s per-panel colourbar-beside-axes
+     pattern) — this is mandatory under this solver: `fig.colorbar(im, ax=ax)`
+     (no `cax`) reshapes `ax` itself, which would corrupt the exact-box
+     contract the moment it ran after `place_tree`'s absolute `set_position`;
+     `"trace"` panels get `show_xlabel=False` (label+tick-labels suppressed)
+     for every leaf but the last under a `shared_x` `Col`; `"placeholder"`
+     cells just draw the hatch. `show_title` is always `False` here (per-panel
+     `PanelDef.show_title` still re-enables it). Every map panel's scale bar
+     is drawn with `scale_bar=False` HERE regardless of `compose.scale_bar_mode`
+     — whether one is wanted is only recorded (`scale_bar_wanted[pid]`); the
+     bar itself is drawn later (step 12) once the panel's box has its FINAL
+     size, so its baked printed-point thickness reflects the panel's real
+     effective µm/cm even after a pinned-width rescale (step 11) changes it.
+  9. **Labels** — `_assign_labels`/`_draw_label`: depth-first auto-increment
+     over `compose.label_template` (a `group_label` node consumes one slot for
+     the whole group; a manual `PanelDef.label` replaces the slot's text;
+     `label=""` suppresses it), drawn as a bold `ax.annotate` at the axes'
+     top-left *before* `measure_cells` so the label counts toward margins.
+  10. `measure_cells` then `place_tree` (`gutter_in`/`pad_in` from
+      `compose.gutter_cm`/`padding_cm`).
+  11. **Pinned total width** (`compose.pinned_width_cm`, optional) — rescale
+      every cell's `w_in`/`h_in` by `factor = pinned_width_cm·cm→in / fig_w`,
+      note each panel's new implied effective scale, re-run `measure_cells` +
+      `place_tree` once, and note a residual miss > 2%.
+  12. **Per-panel scale bars**, drawn now from FINAL cell sizes
+      (`fixed_scale_um_per_cm = ext_x_um / (cell.w_in * 2.54)`, recomputed
+      post-rescale) for every panel `scale_bar_wanted` (step 8) — this is the
+      first point a bar's true printed-point thickness is baked in. Then each
+      shared bar's real colourbar content (`_stretch_shared_bar` then
+      `add_colorbar(cax=bar_ax)`, picking the first member with real data as
+      the source image/label) and the gutter scale bar's content
+      (`draw_scale_bar` with an xlim spanning the gutter cell's own final
+      width at a shared µm/cm recomputed fresh from final cell sizes too, same
+      rescale concern as the per-panel bars).
+  13. `TextCell` contents (centred text in its now-placed axes).
+  14. **Drift guard** — `box_drift_note` per panel axes against its final
+      `SizedCell.w_in`/`h_in`, appended to `notes` (never raised).
+- `export_recipe(recipe, out_dir, *, formats=None, dpi=None, style_overrides=None, loader_cache=None) -> (list[str], ComposeResult)` —
+  calls `render_recipe`, then `fig.savefig(f"{out_dir}/{safe(recipe.name)}.{fmt}", dpi=dpi, facecolor="white")`
+  per format (`formats`/`dpi` default to the recipe's own style) — **no**
+  `bbox_inches`, so the saved file is exactly the solved figure geometry, not
+  a content-dependent crop. The output filename stem is
+  `re.sub(r"[^\w.-]+", "_", recipe.name or "figure")`.
+
+#### `__main__.py` — headless CLI (new)
+
+`python3 -m dfxm.compose render recipe.json -o outdir [--formats png,pdf,svg] [--dpi N]` —
+the CLI entry over `recipe_from_json`/`export_recipe`, no GUI required (the
+GUI-facing recipe editor, for interactive use, is `gui/figure_builder.py`,
+above — this CLI stays the way to re-render a saved recipe headlessly, e.g.
+in CI or a batch script).
+- `_VALID_FORMATS = {"png", "pdf", "svg"}` — the only formats `--formats`
+  accepts.
+- `_main(argv: list[str] | None = None) -> int` — parses args with
+  `argparse` (subcommand `render`; `--formats` is a comma list, default ""
+  meaning "follow the recipe's own style"; `--dpi` overrides the style's
+  default). Reads the recipe file first, catching `OSError` (missing file,
+  permission error, …) itself — this is deliberately **not** left to bubble
+  up as an uncaught traceback, since Python's default exit code for an
+  unhandled exception (`1`) would collide with the "all placeholders" exit
+  code below. Then validates `--formats` against `_VALID_FORMATS` (an unknown
+  format, e.g. `csv`, is rejected before any panel is loaded — `Figure.savefig`
+  would otherwise raise a raw `ValueError` deep inside `export_recipe`). Only
+  then does it parse the recipe (`recipe_from_json`, `base_dir` set to the
+  recipe file's own directory so relative `h5_path`s resolve) and
+  `export_recipe` it. **Exit-code contract**: `0` when at least one panel
+  rendered (placeholder/drift notes still print to stdout as `note: …` and are
+  not a failure); `1` when the figure exported but **every** panel was a
+  placeholder (`res.n_rendered == 0` — printed to stderr as
+  `error: no panel rendered (all placeholders)`); `2` for every input problem
+  caught before/without a real render — an unreadable recipe file
+  (`error: cannot read recipe file: …`), an unknown `--formats` value
+  (`error: unknown format(s) …`), or a `StageUserError` from parsing/validating/
+  rendering the recipe itself (corrupt/unsupported-version JSON, invalid
+  `scale_bar_panel`, mixed-group shared colorbar, etc.) — message then
+  `hint: …` line, both to stderr, before any file is written. Every written
+  path is echoed to stdout as `wrote <path>`.
+  `if __name__ == "__main__": raise SystemExit(_main())` is the module's only
+  top-level statement — `_main` itself is import-safe and unit-testable
+  without a subprocess.
+
 ### `dfxm/runner.py` — the process worker
 
 Runs a stage in a **child process** and streams messages back; UI-agnostic.
@@ -487,12 +889,13 @@ Runs a stage in a **child process** and streams messages back; UI-agnostic.
 | Module | What it does |
 |---|---|
 | `app.py` | Entry point `main()` (`python3 -m gui.app`). Sets `QT_API=pyside6`, then **defers** Qt imports so the spawn-reimported worker child stays Qt-free. Reads the saved theme from `QSettings("dfxm", "pipeline")` key `theme` at startup and applies it via `ThemeController.set_mode` before the window is shown. |
-| `main_window.py` | `MainWindow`: left column is a **pipeline rail** — `ExperimentPanel` (compact header) then `OverviewPage` and each stage in pipeline order, each row carrying a status glyph (— ▶ ✓ ✗). Concat is marked **(optional)**; darfix appears as a greyed, non-clickable row after concat. The right side is a `QStackedWidget` holding `OverviewPage` plus one `StageView` per stage. Wires experiment changes into every view and updates a stage's ✓/✗ glyph on `runFinished`. A **"Publication style…" button** at the bottom of the left column below the rail opens the global style editor. `global_plot_style()` returns the session-wide `PlotStyle` held as `self._plot_style` — restored at startup by `_load_plot_style()` (QSettings key `plot_style`, JSON via `style_from_json`; a missing/corrupt blob falls back to a copy of `PUBLICATION_STYLE`); `_on_pub_style()` opens a `QDialog` containing a `StyleControls` that mutates it in place and calls `_save_plot_style()` (JSON via `style_to_json`) when the dialog closes; `closeEvent` saves it too. Owns one `FormStateStore` (`self._form_state`) passed to every `StageView` for per-experiment form persistence; `closeEvent` also calls `view.flush()` on every stage to write any pending debounced form-state save. |
+| `main_window.py` | `MainWindow`: left column is a **pipeline rail** — `ExperimentPanel` (compact header) then `OverviewPage` and each stage in pipeline order, each row carrying a status glyph (— ▶ ✓ ✗). Concat is marked **(optional)**; darfix appears as a greyed, non-clickable row after concat. The right side is a `QStackedWidget` holding `OverviewPage` plus one `StageView` per stage. Wires experiment changes into every view and updates a stage's ✓/✗ glyph on `runFinished`. A **"Publication style…" button** at the bottom of the left column below the rail opens the global style editor. `global_plot_style()` returns the session-wide `PlotStyle` held as `self._plot_style` — restored at startup by `_load_plot_style()` (QSettings key `plot_style`, JSON via `style_from_json`; a missing/corrupt blob falls back to a copy of `PUBLICATION_STYLE`); `_on_pub_style()` opens a `QDialog` containing a `StyleControls` that mutates it in place and calls `_save_plot_style()` (JSON via `style_to_json`) when the dialog closes; `closeEvent` saves it too. Below "Publication style…" a **"Figure builder…" button** (`self._figure_builder_btn`) opens the non-modal multi-panel composer: `_on_figure_builder()` lazily imports `FigureBuilderWindow` and constructs it once (`self._figure_builder`, `None` until first click), passing `self._builder_defaults` (a bound method, so it always reads the *live* forms/experiment on each call — not a snapshot) and `dataclasses.replace(self._plot_style)` (an independent working copy — the builder must never mutate the app-wide session style); every subsequent click just re-`show()`/`raise_()`/`activateWindow()`s the same instance. `_builder_defaults() -> dict[str, dict]` builds the `{stage: {"h5", "sx", "sy", "jobs"}}` dict `gui.widgets.panel_picker.AddPanelDialog` needs. For `slices`/`profiles` it reads that stage's own form value for its chaining field (`mosa_volume_file`/`consolidated_h5` respectively) via `self._views[stage]._form.values()`, falling back to `bindings.experiment_overrides(stage, exp)` when the form field is blank. `strain`/`mosaicity`/`rocking` need the stacked/aligned **output** h5 the panel-picker catalog actually reads, not their input-directory field (`root_folder`/`raw_root`) — so instead: it first checks `self._views[stage]._last_result` for `stacked_path` (strain/mosaicity) or `aligned_path` (rocking) via `_OUTPUT_H5_RESULT_ATTR`, and only when the stage hasn't been run yet this session falls back to `_derive_stage_output_h5(stage, values, chained)`, a `staticmethod` that mirrors each stage's own `run()` path construction from the form/chained/`STAGE_SPECS[stage].defaults()` values (strain/mosaicity: `os.path.join(root_folder-or-input_folder, stacked_filename)`; rocking: `os.path.join(output_dir-or-raw_root/default_dir, aligned_h5_name)`, with the mosaicity-`source_scan` default-dir/default-filename special case) — returning `""` when the needed fields are all blank, never a bare directory. `sx`/`sy` are the experiment's `pixel_size_x_um`/`pixel_size_y_um`; `profiles`'s `jobs` is `json.loads` of the form's `jobs_json` (`[]` on any parse failure or a non-list result, never raises). Owns one `FormStateStore` (`self._form_state`) passed to every `StageView` for per-experiment form persistence; `closeEvent` also calls `view.flush()` on every stage to write any pending debounced form-state save. |
 | `overview_page.py` | `OverviewPage`: a read-only landing page — a left-to-right row of clickable stage **chips** (label only, `→` between them, darfix as a dashed external step after concat) above a list of per-stage **rows**, each pairing a status glyph with the stage's one-sentence `StageSpec.description`. Emits `stageSelected(str)` when a chip is clicked; `set_status(stage, glyph)` updates the per-stage row glyphs to mirror the rail. |
 | `experiment_panel.py` | `ExperimentPanel`: compact header showing the active preset name, its one-line calibration summary, and the preset's notes (red, when present). A dropdown opens the preset list; **Edit…** opens `ExperimentDialog` — a modal with the full `ParamForm` over `EXPERIMENT_SCHEMA` plus a help panel, closed with **OK**/**Cancel** and offering **Save as…** to write a new preset YAML. Emits `experimentChanged(Experiment)`. `ExperimentDialog` also exposes **Compute pixel size from scan…**: `_on_compute_pixel_size()` picks a scan and calls `_apply_pixel_size(path)`, which runs `dfxm.common.pixel_size.compute_pixel_size` and writes `pixel_size_x_um` / `pixel_size_y_um` back into the form (`_apply_pixel_size` raises `StageUserError`; `_on_compute_pixel_size` shows the result/warning). **ROI read-out + validation:** `self._roi_note` (a `QLabel`, wired to `self._form.changed`) is a live translation of `darfix_roi`/`analysis_roi_x`/`analysis_roi_y` into detector pixels via `_update_roi_note()`, which calls `dfxm.common.roi.parse_darfix_roi`/`analysis_detector_window` — blank ROI → empty label, malformed input mid-edit shows the `ValueError` text in place of numbers instead of raising. `_roi_problems()` wraps `dfxm.common.roi.validate_rois` over the same three fields; `_warn_roi_problems()` shows a `QMessageBox.warning` and returns `True` when there are problems. `buttons.accepted` is wired to `_on_accept()` (calls `_warn_roi_problems()` first, only then `self.accept()`) instead of `self.accept` directly, and `_on_save_as()` opens with the same `_warn_roi_problems()` guard — a malformed or out-of-bounds ROI can be neither accepted nor saved as a preset. **Pick analysis ROI…**: `_on_pick_analysis_roi()` builds preview params via `_roi_preview_params(vals)` (points `mosa_volume_file`/`strain_volume_file` at `stacked_volumes.h5`/`stacked_strain_volumes.h5` beside `processed_root`), calls `dfxm.common.figures.stacked_volume_previews(params)` for the `[(label, thunk)]` list, and — when empty — falls back to a `QFileDialog` Browse before retrying; still empty shows a `QMessageBox.warning`. It seeds `initial=(r0,r1,c0,c1)` from the current `analysis_roi_x`/`analysis_roi_y` via `dfxm.common.roi.parse_pair` when both are set, opens `gui.widgets.roi_picker.ROIPickerDialog(previews, initial, parent=self)`, and on accept writes `dlg.result` (map-frame `r0,r1,c0,c1`) back as `analysis_roi_x="c0,c1"` / `analysis_roi_y="r0,r1"` via `self._form.set_values(...)`, which re-fires `_update_roi_note()`. All matplotlib/h5py imports are local to the handler so opening the dialog stays light until clicked. **Initialize from data…** runs `dfxm.config.detect.detect_experiment` on the live form values and opens `DetectReviewDialog`; applying sets `_applied_detections`, which makes OK offer a save-to-YAML prompt. |
 | `stage_view.py` | `StageView`: the generic per-stage panel — param form + **Run/Cancel + progress row** + a **status banner** above the tabs + Log/Results/Output tabs (and a **3D** tab for volume stages, a **Pick line…** button for profiles, a **Replot…** button for strain/mosaicity/rocking/slices/profiles, and a **Pin planes…** button (`self._pin_btn`) for slices only). Before launching, `_validate_inputs` checks each applicable `must_exist` path on disk (skipping the mode-gated folder the current mode doesn't use, so a stale `single`/`batch` value can't block the active mode) — a missing one blocks the run, focuses the offending field, and shows an error banner. Emits `runStarted` when the stage begins. Launches the stage via `StageRunner` and polls it on a `QTimer`. `_on_run` snapshots the session publication style into the worker params under the reserved `plot_style` key (`asdict(window.global_plot_style())`) — every new run renders with the style as it is at Run click; `self._last_params` stays the clean form values. Module helpers `_summarize(stage_name, result)` (text summary) and `_representative_image(stage_name, result)` (preview picker) dispatch on the stage name via the `_SUMMARIZERS` / `_IMAGE_PICKERS` tables — one formatter per stage, no result-type sniffing. `_VOLUME_STAGES = (visualize, rocking)`. **Export support:** after a run, the Output tab gains **Export…** and **Export all…** buttons. `_figures()` calls `figures_for(stage_name, result, params)` to get the stage's `FigureSpec` list. `export_all(out_dir) -> list[ExportResult]` iterates every spec, calls `save_spec(spec, out_dir, style)` with the session style from `self.window().global_plot_style()`, and returns a `list[ExportResult]` (one per spec, `ok=True/False`, `error=str|None`); a per-figure build failure is recorded and the batch continues. `ExportResult` is a `NamedTuple(figure_id, ok, error)`. **Replot support:** `_on_replot` dispatches on `self._stage_name` — slices stages go to `_replot_slices` (opens `SliceReplotDialog`); profiles goes to `_replot_profiles` (opens `ProfilesReplotDialog`, jobs parsed from the form's `jobs_json`, plus a `params` dict built from a fixed whitelist of appearance keys in `vals` — `trace_aspect`/`trace_width_in`/`trace_linewidth`/`trace_color`/`trace_font_scale`/`line_color`/`reference_volume_id`/`fig_dpi` — deliberately excluding the save-toggles since a replot always writes all three figure kinds); strain/mosaicity/rocking open `ReplotDialog` (generic 2-level tree), with per-stage `render_fn` closures wired to the matching module's `render_replot`. All three paths pass `out_default=""` so the dialog defaults its own output dir (a timestamped `replots/<stamp>/` beside the loaded h5); `stage_view` no longer pre-computes it. **Pin planes support (slices only):** `_on_pin_planes` computes the same chained-output h5 path as `_replot_slices`, opens `pin_planes.PinPlanesDialog(h5, parent=self)`, and — only when the dialog was accepted **and** produced a non-empty `result_json` (Cancel, or OK with nothing checked/an error, leaves the form untouched) — writes `self._form.set_values({"pinned_slices_json": dlg.result_json, "use_pinned": True})`. That call flows through the normal dirty-gated form-persistence path (`_on_form_changed` → debounced save), so no custom persistence is needed; a log line and a switch to the **Log** tab confirm the write. **Form-state persistence:** the constructor takes an optional `store: FormStateStore` (None → persistence off, legacy behaviour, used by unit tests). When present: `_calib_names` = calibration params to exclude; the form's `changed` signal routes through `_on_form_changed`, which — only for a *genuine user edit* (`_loading` guards our own programmatic rewrites) — sets a `_dirty` flag and restarts a single-shot `QTimer` (`_SAVE_DEBOUNCE_MS`=400). `_persist_now` writes `_persistable_values()` (form values minus calibration) **only when `_dirty`**, so an untouched stage never freezes a snapshot. `flush()` forces a pending save (called by `MainWindow.closeEvent`). `_restore_state()` overlays `store.load(exp.name, stage)` key-by-key, skipping calibration keys and defensively skipping any value that no longer coerces (schema drift / foreign payload never crashes construction); `__init__` restores before wiring save-on-edit. `set_experiment(exp)` with a store flushes the outgoing experiment, then (under `_loading`) `reset_values`-resets the form to the new experiment's `defaults → experiment_overrides` baseline — `reset_values` clears `None`-default fields too, so no path leaks across experiments — and overlays that experiment's saved values, ending with `_dirty=False` (without a store it keeps the legacy overrides-only behaviour). **ROI deviation markers:** `self._roi_param_names` (set once in `__init__`, right after the Pick-ROI-button block) is the tuple of every param whose `roi_group` or `roi_frame` is set — this is how rocking's detector-frame `roi_x`/`roi_y` (no `roi_group`) get covered alongside the map-frame `roi_group` fields on the other stages. When non-empty, the form's `changed` signal is also connected to `_update_roi_markers`, and `set_experiment` calls it again at the end of **both** branches. `_update_roi_markers()` computes `experiment_overrides(self._stage_name, self._experiment)`, and for each ROI param calls `self._form.set_field_marker(name, deviates, tooltip)` where `deviates` is true only when the experiment actually derives a value for that field *and* the form's current value differs from it — so a field the experiment can't derive (or an experiment with no ROIs set) never gets marked. This only touches labels/tooltips, never form values, so it doesn't interact with the dirty-flag/persistence machinery. |
 | `bindings.py` | The glue: `STAGE_ORDER` (nav order), `STAGE_SPECS` (name→`StageSpec`), and `experiment_overrides(stage, exp)` — how an `Experiment` pre-fills each stage *and* how an upstream output auto-fills the next stage's input (the auto-chaining). `experiment_overrides` is `_base_overrides(stage, exp)` (the paths/angles/patterns pre-fill, one branch per stage) merged with `_roi_overrides(stage, exp)`, which derives each stage's ROI fields from `exp.darfix_roi`/`analysis_roi_x`/`analysis_roi_y` in that stage's **native frame**: rocking gets absolute detector pixels via `dfxm.common.roi.analysis_detector_window`, visualize/paraview get the map-frame `roi_x`/`roi_y` as-is, slices gets map-frame `align_roi_x`/`align_roi_y`, and strain gets a combined `roi` (`r0,r1,c0,c1`) built from both axes via `parse_pair`. Keys are omitted (not blank) whenever a value isn't derivable — a blank or malformed experiment ROI leaves the stage form exactly as before. |
 | `viewers.py` | Lazy interactive-viewer glue: `volume_sources(stage, result, params)` → `{name: callable}` where each callable loads/aligns one volume **only when invoked**; `_rocking_source(...)` (raw-group default colormap via `resolve_cmap(None, "raw")`); `inject_line_into_jobs(jobs_json, slice_name, start_uv, end_uv, offset_um, fields=None)` writes a picked line back into a profiles job — when `fields` is not `None` a `"fields"` list is written into the job, narrowing profiling to those volumes for that job only (pure, unit-tested). |
+| `figure_builder.py` | `FigureBuilderWindow(defaults_provider, style, parent=None)`: non-modal `QMainWindow` for composing a multi-panel publication figure recipe (Phase B, Tasks 10-12 — only the Qt-free recipe model is imported at module level; the matplotlib-heavy render/compose machinery is imported lazily inside `render_now`/`_show_figure`/`export_now`). Left `QSplitter` pane: **Open…/Save/Save as…** row, an **Add panels…** button (opens `gui.widgets.panel_picker.AddPanelDialog(self._defaults_provider())` — `defaults_provider` is a zero-arg callable the main window supplies, closing over the live experiment + stage forms — and on accept calls `add_panels(dlg.selected_panels)`), the outline `QTreeWidget` (`self._tree`, one top-level item mirroring `self._recipe.layout` itself, each item carrying its recipe node via `Qt.ItemDataRole.UserRole`; `currentItemChanged` is wired to `_on_tree_selection_changed`, below), and structural-edit buttons **Row/Col/Spacer/Text/↑/↓/Delete/Group/Label…**. Center pane (Task 11): a **Refresh data** button, the preview host (`self._preview_host`/`self._preview_layout`, a bare `QVBoxLayout` with zero margins — no toolbar/decoration), and a **notes bar** (`self._notes_label`, word-wrapped). Right pane (Task 12): a `QScrollArea` over three sections plus an **Export…** button — see below. Internal state: `self._style = dataclasses.replace(style)` — an **independent working copy** of the passed-in style (builder edits must never mutate the app-wide session style) — bound to a `StyleControls` widget (`self._controls`, from `gui.widgets.export_dialog`); `self._recipe = FigureRecipe("untitled", asdict(style), ComposeStyle(), Row([]), [])` seeds `recipe.style` from the *original* passed-in `style` so a fresh recipe already renders in the app's current look before the style pane is ever touched; plus `self._dirty`, `self._current_path`, `self._override_panel` (the `PanelDef` currently shown in the per-node override editor, or `None`), and the preview state `self._cache` (loader cache, keyed by source; passed straight into `render_recipe(..., loader_cache=self._cache)`/`export_recipe(..., loader_cache=self._cache)` so repeated renders and the final export reuse already-read h5 data), `self._canvas` (the live `FigureCanvasQTAgg`, or `None` before the first render), `self._result` (the last `ComposeResult`, or `None`), and `self._debounce` (a single-shot 300 ms `QTimer` wired to `render_now`). **Outline ops** (all testable without `exec()`): `add_row()`/`add_col()`/`add_spacer()`/`add_text()` append an empty `Row([])`/`Col([])`/`Spacer(2.0, 2.0)`/`TextCell("text")` into `_current_container()` (the selected Row/Col, else its parent container, else the root — wrapped in a `Row` first if the root is ever a bare leaf, e.g. after loading a recipe whose layout is a lone `PanelRef`); `add_panels(panels)` appends each `PanelDef` to `recipe.panels` (renaming on an id collision with an existing panel, `f"{id}_{n}"`) and a matching `PanelRef` into the current container; `move_selected(delta)`/`delete_selected()` locate the selected node's `(container, index)` by identity search over the layout tree (`_parent_and_index`, never dataclass `==`, since structurally-equal siblings like two default `Spacer`s must still resolve to the right one) and swap/remove it — both no-op on the root or an empty selection; `delete_selected()` additionally calls `_purge_orphaned_panels()` right after removing the node — deleting a `Row`/`Col` removes every `PanelRef` nested under it in one go, but their backing `PanelDef`s live in the flat `recipe.panels` list and would otherwise survive as orphans that crash a subsequent gutter-mode render (`render_recipe` loads data for every panel in `recipe.panels`, while its post-placement pid bookkeeping only covers layout leaves — see `dfxm/compose/render.py` below); `_purge_orphaned_panels()` recomputes the live panel ids from `iter_leaves(self._recipe.layout)`, drops any `PanelDef` not among them, and clears `compose.scale_bar_panel` if it named a purged id; `toggle_group_selected()` flips a selected Row/Col's `group_label` between `None` and `"auto"`; `set_selected_label(text)` sets a `PanelRef`'s backing `PanelDef.label`, a Row/Col's `group_label`, or a `TextCell.text` (whichever the selection is; no-op otherwise). Every mutator calls `_after_mutation()` (`self._dirty = True` + rebuild the tree + refresh the compose scale-bar-panel combo (`_refresh_compose_panel_combo`) + retitle + `schedule_preview()`); `load_recipe_file` (below) also calls `schedule_preview()` directly since it doesn't route through `_after_mutation`. **Live preview (Task 11):** `schedule_preview()` (re)starts `self._debounce` — a burst of edits inside the 300 ms window collapses to one render. `render_now() -> ComposeResult | None` does the actual render: a recipe with no panels sets the notes bar to `"add panels to preview"` and returns `None`; otherwise it calls `render_recipe(self._recipe, loader_cache=self._cache)` inside a `try` — a `StageUserError` sets the notes bar to `f"cannot render: {exc}  Hint: {exc.hint}"` (hint omitted if empty) and returns `None`; any other exception sets `f"render failed: {exc}"` and returns `None` (the preview must never crash the window); on success it calls `_show_figure(result.figure)`, stashes `result` on `self._result`, sets the notes bar to the semicolon-joined `result.notes` (or clears it), and returns `result`. `refresh_data()` clears `self._cache` (so stale/deleted source files are re-read fresh) then calls `render_now()`. `_show_figure(figure)` replaces `self._canvas` wholesale — removes and `deleteLater()`s the old one, wraps *figure* (the composed `Figure`, placed absolutely by the compose layout solver) in a brand-new, undecorated `FigureCanvasQTAgg` (never the themed `gui.widgets.mpl_canvas.MplCanvas`, which owns its own `Figure`/`layout="tight"` and would re-fit/restyle the white publication figure — the preview must show the exact exportable figure, matching the "exports stay white" convention), connects its `button_press_event` to `_on_preview_click`, adds it to `self._preview_layout`, and calls `draw_idle()`. `_on_preview_click(event)` forwards to `_on_preview_pick(event.inaxes)` when the click landed inside an axes; `_on_preview_pick(ax)` reverse-looks-up `ax` in `self._result.axes_by_id` and, on a match, calls `_select_outline_panel(pid)` (no-op before any render). `_select_outline_panel(pid)` walks the outline tree depth-first comparing each item's stored node's `panel_id`, and `setCurrentItem`s the first match. **Style pane (Task 12):** `_sync_style_to_recipe()` — connected to `StyleControls.changed` — serialises the whole working style into `self._recipe.style` (`dataclasses.asdict`), marks dirty, retitles, and schedules a preview; it is the only place `recipe.style` is written from the GUI. **Compose pane (Task 12):** `_build_compose_form()` builds `self._compose_template` (`QLineEdit`), `self._compose_font_scale`/`_compose_gutter`/`_compose_padding`/`_compose_pinned_width` (`QDoubleSpinBox`es bound to `label_font_scale`/`gutter_cm`/`padding_cm`/`pinned_width_cm`; pinned width's special value `0` reads back as `None` = auto), `self._compose_scale_bar_mode` (`QComboBox` over `SCALE_BAR_MODES`), and `self._compose_scale_bar_panel` (`QComboBox` of the recipe's current panel ids, blank = none designated; kept in sync by `_refresh_compose_panel_combo()`, called from `_after_mutation` and `_load_compose_into_widgets`). Every widget's change signal routes to `_on_compose_edited()`, which re-reads all six widgets into `self._recipe.compose`, marks dirty, and schedules a preview. `_load_compose_into_widgets()` refreshes all compose widgets from `self._recipe.compose` (used by `load_recipe_file`). **Per-node override editor (Task 12):** `_build_override_editor()` builds `self._override_group` (disabled until a panel is selected) holding `self._ov_roi`/`_ov_clim` (`QLineEdit`s, `"r0,r1,c0,c1"`/`"lo,hi"` text), `self._ov_cmap` (`QComboBox`, `("",) + CMAP_CHOICES`), `self._ov_label` (`QLineEdit`), `self._ov_show_title`/`_ov_colorbar` (tri-state `QComboBox`es over module-level `_TRI_STATE = (("Follow", None), ("On", True), ("Off", False))`), and `self._ov_scale` (`QDoubleSpinBox`, `0` = "follow style"). `_on_tree_selection_changed()` (the tree's `currentItemChanged` slot) resolves the selection to a `PanelDef` via `panel_by_id()` when it's a `PanelRef` (else `None`), stores it as `self._override_panel`, and either disables the group or loads every widget from the panel's current fields (signals blocked during the load). Each widget's change signal is wired to `_on_override_field_edited(key)` with its own fixed field name (`"roi"`/`"clim"`/`"cmap"`/`"label"`/`"show_title"`/`"scale_um_per_cm"`/`"colorbar"`), which reads *only that one widget* and calls `_apply_panel_overrides(self._override_panel, {key: value})` — a **partial update**, by design (fix wave 1, post-review): the original shape submitted all seven widgets on every single edit, which meant an unrelated edit (e.g. ROI) silently re-derived every other field from its *current widget text* — clobbering an explicitly-suppressed `PanelDef.label == ""` back to `None` (auto-lettering), since `""` and `None` both display as a blank label box, and rounding a `clim` whose true value has more precision than the clim box's `%g` display down to that display's precision. `_apply_panel_overrides(panel, values) -> None` is the single parser and now honours partial dicts: any key **absent** from `values` is left completely untouched on `panel` (a caller — test or otherwise — may still pass all seven keys at once, e.g. to seed a fresh selection). When `"roi"` is present, a non-blank text must split into exactly four ints (`_parse_int`) or the notes bar gets an "invalid ROI text…" message and **nothing in this call is mutated**; when `"clim"` is present, a non-blank text must split into exactly two comma-separated halves (either half blank = `None` for that bound) or the notes bar gets an "invalid clim text…" message and nothing is mutated. On success it assigns only the present keys — `roi`/`clim`/`cmap` (blank → `None`, follow style)/`label` (blank → `None`, auto sequence letter)/`show_title`/`scale_um_per_cm` (falsy → `None`)/`colorbar` — onto *panel*, then dirties, rebuilds the tree, retitles, schedules a preview, and reselects the panel (`_select_outline_panel(panel.id)`). **Export (Task 12):** `export_now()` opens `QFileDialog.getExistingDirectory` (imported at module top so tests can monkeypatch `gui.figure_builder.QFileDialog`); on a chosen directory it calls `dfxm.compose.render.export_recipe(self._recipe, out, loader_cache=self._cache)` — a `StageUserError` sets `f"export failed: {exc}  Hint: {exc.hint}"` in the notes bar and returns; any other exception (fix wave 1: a disk-full/permission `OSError` must not crash the window, mirroring `render_now`'s never-crash contract) sets `f"export failed: {exc}"` and returns; otherwise the notes bar gets `f"wrote {len(paths)} file(s) → {out}"` plus any semicolon-joined `res.notes`. **Recipe file I/O:** `save_recipe_file(path)` writes `recipe_to_json(self._recipe, base_dir=os.path.dirname(path))`, clears dirty, remembers `path` as `self._current_path`; `load_recipe_file(path)` reads it back via `recipe_from_json(..., base_dir=...)`, filling `recipe.name` from the file stem only when the loaded recipe has none, clears dirty, rebuilds `self._style` from the loaded `recipe.style` dict (`style_from_params({"plot_style": recipe.style}) or PlotStyle()`), pushes it into the style pane (`self._controls.set_style(self._style)`), refreshes the compose widgets (`_load_compose_into_widgets()`), and schedules a preview. `recipe()` / `is_dirty()` are plain accessors. Window title is `"Figure builder — {name}{' *' if dirty else ''}"`. `closeEvent` warns on a dirty window (`QMessageBox` Save/Discard/Cancel; Cancel or a cancelled Save-As leaves the window open). |
 | `theme.py` | Single source of truth for all GUI colours. `Palette` (frozen dataclass, 15 hex-string fields) defines the semantic colour tokens for one mode. `LIGHT` and `DARK` are the two built-in palettes (accent is KIT-Grün `#009682` in light, nudged to `#12a890` in dark). `PALETTES` maps mode strings to palettes. `build_qss(p) -> str` returns the global Qt Style Sheet for palette `p`; semantic colours are applied via dynamic `role` properties on `QLabel` (`muted`, `error`, `warning`, `calib`, `notes`, `group-header`, `banner-error`, `banner-success`) and `QPushButton` (`chip`, `external`, `primary`), plus a `HelpPanel` class selector; also covers `QGroupBox`, inputs, tabs, list, and progress bar. `_qpalette(p)` builds a `QPalette` for Fusion-drawn native bits. `apply_theme(app, mode) -> Palette` sets Fusion style + QPalette + stylesheet on the `QApplication` and returns the active `Palette`. `ThemeController(QObject)` singleton (`instance()`) holds the current mode and palette; `set_mode(mode)` applies the theme and emits `themeChanged(Palette)` — standard widgets restyle automatically via the rebuilt stylesheet, while `MplCanvas` and `PvCanvas` subscribe to `themeChanged` and call their own `apply_theme(palette)` methods to update their backgrounds. |
 
 #### `window_state.py` (new)
@@ -535,6 +938,7 @@ instance and passes it to every `StageView`.
 | `pin_planes.py` | `PinPlanesDialog(h5_default="", parent=None)`: pick specific sweep planes to pin from an `oblique_slices.h5`, emitting `self.result_json: str \| None` on accept — the slices stage's Phase B "Pin planes…" workflow (Task B6). Layout: a file row (edit + Browse… + Load, same shape as the replot dialogs) above an embedded `self._panel: PlaneSelectionPanel(show_quantities=False)` (planes-only — pinning has no per-quantity axis) and a status label + OK/Cancel row. `_reload()` calls `dfxm.stages.slices.replot_catalog(h5)` → `build_slice_rows` → `self._panel.set_rows(...)`, then **immediately un-checks every row** (`set_all_checked(False)`) — the one place this family of dialogs deliberately opens with nothing selected, since pinning means explicit picks, not "everything by default"; an unreadable/empty file leaves the panel empty and shows an inline status message rather than raising. `_on_ok()` reads `self._panel.checked_plane_keys()`, groups them by slice name, and calls `dfxm.stages.slices.build_pinned_spec(h5, slice_name, offsets)` once per slice group, concatenating the returned spec dicts into `self.result_json = json.dumps(specs, indent=2)` before accepting; an empty selection or a `StageUserError` (unreadable file, unknown slice name) sets the status label instead and leaves the dialog open with `result_json` untouched (`None` on first open) — the `StageUserError` branch follows the same `f"{exc}\n\n{exc.hint}"` convention as `experiment_panel.py`'s `_on_compute_pixel_size` (message plus hint when `exc.hint` is set, else just the message), so the hint (e.g. the volumes-present list from `_find_slice_group`) reaches the user instead of being dropped. Imported on demand inside `StageView._on_pin_planes`. |
 | `profiles_replot.py` | `ProfilesReplotDialog(h5_path, jobs, style=None, out_default="", parent=None, params=None)`: re-render profile jobs cold from an `oblique_slices.h5` with **per-quantity** (per-`volume_id`) colour-limit overrides — overviews, companion and trace figures, **never CSVs**; a thin Qt shell over the Qt-free `dfxm.stages.profiles.render_replot`. `jobs` (the profiles form's `jobs_json`, parsed by the caller) is filtered to dicts carrying a `"name"`. `params` (optional) is a whitelisted dict of the form's current appearance values (`trace_aspect`/`trace_width_in`/`trace_linewidth`/`trace_color`/`trace_font_scale`/`line_color`/`reference_volume_id`/`fig_dpi`), stored as `self._params` and threaded through to `render_replot` — it seeds the **DPI** spinbox (`self._params.get("fig_dpi", ...)` when given) and honours the rest at render time; save-toggles are deliberately excluded upstream (see `stage_view.py`'s `_replot_profiles`), since a replot always writes all three figure kinds. Selection is a plain `self._tree: QTreeWidget` (no `PlaneSelectionPanel`/filter — jobs are typically few) with one top-level item per `_pr.replot_catalog(h5, jobs)` entry (label shows `· pinned` when the entry carries a pin-substitution note) and one checkable child per field the job can profile; a job's own `"fields"` list seeds which children start checked, else every field open checked. `_checked_jobs()` rebuilds each checked top-level item into `{**original_job, "fields": [checked field ids]}` — **except** when the original job had no `"fields"` key and every one of its children is checked, in which case the job passes through unchanged (no `"fields"` key added) so `render_replot`'s run-default ordering (`[ref] + sorted(others)`) applies instead of pinning tree order. `render_selection(out_dir)` calls `_pr.render_replot(h5_path, checked_jobs, style, clim, out_dir, dpi=..., params=self._params)` and flattens `jr.figure` + `jr.overviews` + `jr.traces` (never `.csvs`, which `render_replot` never populates) into `self.written`. Colour limits live in an embedded `ClimGroupSection`, rebuilt in `_reload()` from the distinct field ids across the catalog, labelled via `clim_section.volume_label` (shared with `slice_replot.py`). `self._render_btn` is disabled whenever no job has a checked field (`_update_render_enabled`, wired to `_tree.itemChanged`). A file row (edit + Browse… + Load) reloads the catalog cold — a missing file or empty `jobs` shows an inline status message instead of raising; `_reload`/`_on_render` format a caught exception via the static `_fmt_error(exc)` helper, which appends `" — {exc.hint}"` to the status line when the exception carries a truthy `.hint` (e.g. a `StageUserError`), else just `str(exc)`. The **Output dir** defaults to `_default_out_for(h5)` — a timestamped `replots/<stamp>/` beside the loaded file — re-derived on Browse/Load unless the user edits it (`_out_pinned`) or an explicit non-empty `out_default` was passed. Wired into `StageView` via `_on_replot`/`_replot_profiles` (the **Replot…** button, always enabled, on the profiles stage panel, reading `consolidated_h5`/`jobs_json` off the live form); the slot snapshots the session `PlotStyle` via `window.global_plot_style()` and passes the whitelisted appearance subset of the form's values as `params`. |
 | `detect_review.py` | `DetectReviewDialog(detections, current, defaults, parent=None)`: review table (`Field`/`Current`/`Detected`/`Note`/`Apply`) for `list[Detection]` from `dfxm.config.detect.detect_experiment` against the *current* field values and the schema *defaults*. Per-row Apply checkbox, pre-check rules: **blank/still-default** current → pre-checked "apply this"; **user-set and differing** from the detected value → unchecked, note `"differs from current"`; **equal** (`_fmt(cur) == _fmt(d.value)`, checked ahead of the differs/pre-check cases so it takes priority) → greyed, uncheckable info row, note `"✓ matches current"` (`" — {note}"` appended when the detection carried one), excluded from `applied_values()`. Skip-with-reason (`d.error`) and info-only (`d.value is None`) detections render the same greyed/uncheckable way. The darfix-ROI row is special: when detection recovers only the crop size its Detected cell is editable (`?,?,w,h`); the checkbox stays disabled until the typed text parses via `dfxm.common.roi.parse_darfix_roi`, then auto-checks (`_on_item_changed`). `applied_values() -> {field: value}` returns only rows whose checkbox is checked **and** enabled. |
+| `panel_picker.py` | `AddPanelDialog(defaults, parent=None)`: pick panels from one stage's replot catalog for the figure builder (Task 10) — a thin shell, no figure-composition logic. `defaults` is `{stage: {"h5": str, "sx": float, "sy": float, "jobs": list[dict]}}`, the main window's live experiment/form pre-fill. A stage `QComboBox` (`strain`/`mosaicity`/`rocking`/`slices`/`profiles`) drives `_on_stage_changed` (pre-fills the h5 field from `defaults[stage]["h5"]`, then `_reload()`); a file row (edit + Browse… + Load) reloads cold. `_reload()` calls the matching Qt-free catalog function — `strain.replot_catalog`/`mosaicity.replot_catalog`/`rocking.replot_catalog(h5) -> list[ReplotGroup]` (`_build_map_tree`: one top-level item per group, one leaf per stored layer, selector `{"stage", "z", "dataset": grp.key (mosaicity/rocking only), "sx"/"sy" from defaults}`), `slices.replot_catalog(h5) -> list[ReplotEntry]` (`_build_slice_tree`: one top-level item per `(volume_id, slice_name)`, one leaf per plane offset, selector `{"volume_id", "slice_name", "plane"}`), or `profiles.replot_catalog(h5, defaults["profiles"]["jobs"])  -> list[ReplotJobEntry]` (`_build_profiles_tree`: one top-level item per job, a `"reference"` leaf (`profiles_ref`, `field=None`) plus one leaf per field (`profiles_trace`, `field=vid`), each selector carrying the resolved job dict) — any read failure sets the status label instead of raising (pattern from `ReplotDialog._reload`). `_check_all()`/`_uncheck_all()` set every leaf's check state (mirrors `ReplotDialog.select_all`). `_reload()` pins `self._loaded_h5` to the path it just (re)built the tree from. `_build_panels() -> list[PanelDef]` (testable without `exec()`) walks the tree, and for every checked leaf builds a `PanelDef(id=f"{stage}_{n}", source=PanelSource(h5_path=self._loaded_h5, kind, selector))` with a monotonically-increasing counter for unique ids — deliberately `self._loaded_h5`, not the file field's live text, so editing the field after Load but before OK can't silently retarget already-picked panels to a path the tree was never built from. `accept()` sets `self.selected_panels = self._build_panels()` before closing. |
 | `export_dialog.py` | Publication export widgets and helpers. `sanitize_stem(name)` replaces path-unsafe characters with underscores. `save_spec(spec, out_dir, style)` builds a `FigureSpec` at the given style (scale bar force-disabled for `kind="plot"`), saves one file per `style.formats` into `out_dir`, and returns the list of written paths. Each format is written **atomically** (to a `.part` temp file then `os.replace`, passing `format=` explicitly) so a failed format never leaves a truncated/corrupt file at the target; per-format failures are skipped and the built `Figure` is cleared afterwards. `ExportDialog._render` skips the rebuild when only export-only fields (`formats`/`dpi`) changed, so preview tweaks don't needlessly re-read the HDF5. `StyleControls(QWidget)` provides the full set of `PlotStyle` controls (grouped as **Colormaps** — one dropdown per quantity group (`_w_cmap_mosa_com` / `_w_cmap_mosa_fwhm` / `_w_cmap_strain` / `_w_cmap_raw`, options from `CMAP_CHOICES`) — then Scale bar / Text / Colourbar / Figure / Output). The **Text** group ends with `_w_axes_mode` (combo, display labels from `_AXES_MODE_LABELS` ↔ `PlotStyle.axes_mode` values via `itemData`; entries and the stale-value guard both derive from the canonical `plotting.AXES_MODES` tuple — same import-from-core pattern as `CMAP_CHOICES` — falling back to `full` in `sync_from_style`). The **Figure** group's `_w_fig_width` combo sits beside `_w_scale_umcm` (`QLineEdit`, blank = off), a defensively-parsed (`dfxm.common.plotting.fixed_scale`) fixed µm/cm scale for map figures that mutates `PlotStyle.scale_um_per_cm`, `_w_trace_scale_umcm` (`QLineEdit`, blank = follow Scale), the trace-only override mutating `PlotStyle.trace_scale_um_per_cm` (tooltip carries the start-at-~half-the-map-scale hint), and `_w_trace_height_cm` (`QLineEdit`, blank = 3 cm; tooltip notes it only takes effect once a fixed scale is set), mutating `PlotStyle.trace_height_cm` — the fixed trace-box height every trace of a run/replot shares; `_on_scale_umcm`/`_on_trace_scale_umcm`/`_on_trace_height_cm` are thin parse slots that each call the shared static helper `StyleControls._parse_positive_float(text)` (blank or non-positive/unparsable → `None`, else the float) and always mutate the matching style attribute + emit, and the module-level `_own_trace_scale(s)` shows the trace FIELD's own validated value in sync (deliberately not `trace_fixed_scale`, whose map-scale fallback must render as a blank inheriting field). Mutates the bound `PlotStyle` in place and emits `changed` after each mutation. `sync_from_style()` pushes the current style back into all widgets (used after a reset). `ExportDialog(QDialog)` wraps a live `MplCanvas` preview + a figure-selector `QComboBox` + `StyleControls` + **Reset to global style** and **Export** buttons. The **Export** button calls `QFileDialog.getExistingDirectory` — the user picks a folder, and files are written flat into that folder. `export_to(out_dir)` calls `save_spec` for the current spec and returns the list of written paths. |
 
 ---
@@ -579,6 +983,7 @@ What each stage reads and writes (file names are the defaults), and what its `fi
 | `slices` | stacked volumes + aligned rocking volume + (opt.) aligned mosa volume | `oblique_slices.h5` (or `oblique_slices_pinned.h5` when `use_pinned` is on and the filename wasn't user-edited) + PNG per plane (in `<out_dir>/<slice name>/`) | map per plane per volume group |
 | `profiles` | `oblique_slices.h5` | per-field trace figures (+ optional companion) + CSVs + overviews | one trace `FigureSpec` per field (+ optional companion) per parameter-mode job |
 | `matched` | raw strain + rocking scans | grayscale `rocking_layers/*.png` | map per matched layer |
+| *(figure recipes)* | a `recipe.json` (`dfxm.compose.recipe`) + the stage h5s it references (`maps.h5`, `oblique_slices.h5`, …) | `dfxm.compose.render.render_recipe`/`export_recipe` → `<recipe name>.png`/`.pdf`/`.svg` | *(none — the recipe's own `layout` is the catalog)* |
 
 `bindings.experiment_overrides` encodes these hand-offs so each stage's inputs
 auto-fill from the experiment + the previous stage's outputs.

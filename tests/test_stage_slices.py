@@ -859,3 +859,47 @@ def test_run_use_pinned_empty_or_invalid_raises_user_error(tmp_path):
         p["pinned_slices_json"] = bad
         with pytest.raises(StageUserError, match="[Pp]inned"):
             SL.run(p)
+
+
+# -- draw_slice_axes extraction pins ------------------------------------------
+def _prep(cmap="magma", center=False):
+    return {
+        "cmap_name": cmap,
+        "title": "χ CoM",
+        "cbar_label": "deg",
+        "vmin": -1.0,
+        "vmax": 3.0,
+        "center_zero": center,
+        "group": "mosa_com",
+    }
+
+
+def test_build_slice_figure_unstyled_pinned_shape_and_decor():
+    import numpy as np
+
+    from dfxm.stages.slices import build_slice_figure
+
+    u = np.linspace(-5.0, 5.0, 21)
+    v = np.linspace(-4.0, 4.0, 17)
+    fig = build_slice_figure(_prep(), {"name": "obl"}, np.zeros((17, 21)), u, v, offset_um=1.0)
+    assert tuple(fig.get_size_inches()) == (12.0, 10.0)
+    ax = fig.axes[0]
+    im = ax.images[0]
+    assert list(im.get_extent()) == [-5.0, 5.0, -4.0, 4.0]
+    assert ax.get_xlabel() == "u (µm)" and ax.get_ylabel() == "v (µm)"
+    assert "offset +1.00" in ax.get_title()
+    assert len(fig.axes) == 2  # stolen colorbar present
+
+
+def test_build_slice_figure_centered_norm_pinned():
+    import numpy as np
+    from matplotlib.colors import TwoSlopeNorm
+
+    from dfxm.stages.slices import build_slice_figure
+
+    u = np.linspace(0.0, 2.0, 5)
+    v = np.linspace(0.0, 2.0, 5)
+    fig = build_slice_figure(
+        _prep(center=True), {"name": "obl"}, np.zeros((5, 5)), u, v, offset_um=None
+    )
+    assert isinstance(fig.axes[0].images[0].norm, TwoSlopeNorm)

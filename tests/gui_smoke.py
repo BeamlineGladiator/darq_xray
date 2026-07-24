@@ -1093,6 +1093,55 @@ def main() -> int:
     assert sc36._w_axes_mode.currentData() == "no_frame", "sync_from_style did not restore combo"
     print("[36] axes-mode: dropdown mutates style + sync restores + JSON round-trip")
 
+    # [37] figure builder: open from the main window, build a 1-panel recipe from a
+    # synthetic slices h5, preview renders, export writes a PNG without tight-crop.
+    import h5py as _h5b
+    import numpy as _npb
+
+    from dfxm.compose.recipe import PanelDef as _PD
+    from dfxm.compose.recipe import PanelSource as _PS
+
+    _bdir = tempfile.mkdtemp()
+    _bh5 = os.path.join(_bdir, "obl.h5")
+    with _h5b.File(_bh5, "w") as f:
+        g = f.create_group("strain")
+        g.attrs.update(kind="strain", cbar_label="v", cmap="RdBu_r", title="s", vmin=-1, vmax=1)
+        sg = g.create_group("obl")
+        sg.create_dataset("slices", data=_npb.zeros((1, 4, 5), "f4"))
+        sg.create_dataset("u_um", data=_npb.linspace(0.0, 2.0, 5))
+        sg.create_dataset("v_um", data=_npb.linspace(0.0, 1.5, 4))
+        sg.create_dataset("offsets_um", data=_npb.array([0.0]))
+    win._on_figure_builder()
+    fb = win._figure_builder
+    assert fb.isVisible()
+    fb._style.scale_um_per_cm = 10.0
+    fb._sync_style_to_recipe()
+    fb.add_panels(
+        [
+            _PD(
+                "s0",
+                _PS(_bh5, "slice_plane", {"volume_id": "strain", "slice_name": "obl", "plane": 0}),
+            )
+        ]
+    )
+    res = fb.render_now()
+    assert res is not None and res.n_rendered == 1, fb._notes_label.text()
+    _bout = os.path.join(_bdir, "export")
+    import gui.figure_builder as _fbmod
+
+    _orig_dir = _fbmod.QFileDialog.getExistingDirectory
+    _fbmod.QFileDialog.getExistingDirectory = staticmethod(lambda *a, **k: _bout)
+    try:
+        fb.export_now()
+    finally:
+        _fbmod.QFileDialog.getExistingDirectory = _orig_dir
+    assert os.path.exists(os.path.join(_bout, "untitled.png"))
+    _rp = os.path.join(_bdir, "r.json")
+    fb.save_recipe_file(_rp)
+    fb.load_recipe_file(_rp)
+    assert not fb.is_dirty()
+    print("[37] figure builder: open, preview, export, recipe save/load round-trip")
+
     print("\nGUI SMOKE PASSED")
     return 0
 

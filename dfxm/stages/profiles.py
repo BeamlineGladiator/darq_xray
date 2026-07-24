@@ -667,6 +667,7 @@ def _draw_reference_image(
     title=None,
     style=None,
     fixed_scale_um_per_cm=None,
+    scale_bar=None,
 ):
     extent = [float(u_um[0]), float(u_um[-1]), float(v_um[0]), float(v_um[-1])]
     vmin, vmax = attrs["vmin"], attrs["vmax"]
@@ -681,6 +682,18 @@ def _draw_reference_image(
         origin="lower",
         aspect="equal",
     )
+    # Pin the view to the image's own extent and turn off further autoscaling:
+    # the overlaid line (below) is computed from the job's full (pre-crop)
+    # geometry and can extend past a caller-supplied ROI crop (e.g. the
+    # figure-composer's profiles_ref ROI). Without this, matplotlib's default
+    # autoscale-on-add would widen xlim/ylim to include the out-of-frame line
+    # points, changing the data aspect ratio and — under aspect="equal" with
+    # adjustable="box" — shrinking the rendered axes box below its intended
+    # fixed-scale size (silent physical-scale drift). The line still draws;
+    # it is simply clipped at the frame edge, same as any other zoomed crop.
+    ax.set_xlim(extent[0], extent[1])
+    ax.set_ylim(extent[2], extent[3])
+    ax.set_autoscale_on(False)
     ax.set_xlabel("u (µm)")
     ax.set_ylabel("v (µm)")
     if title:
@@ -705,7 +718,7 @@ def _draw_reference_image(
                 )
     if style is None:
         _scale_bar(ax)  # legacy look, pinned
-    elif style.scale_bar:
+    elif style.scale_bar if scale_bar is None else scale_bar:
         draw_scale_bar(
             ax,
             style.scale_bar_length_um,
@@ -939,6 +952,12 @@ def _draw_trace_axes(ax, fld, geom, *, linewidth, color, font_scale, style, show
     ax.tick_params(axis="both", labelsize=10 * fs)
     ax.yaxis.get_offset_text().set_fontsize(10 * fs)
     ax.xaxis.get_offset_text().set_fontsize(10 * fs)
+
+
+# Public aliases for the compose adapters (the composer draws into its own axes;
+# the underscore originals remain the in-module call sites).
+draw_reference_axes = _draw_reference_image
+draw_trace_axes = _draw_trace_axes
 
 
 def build_trace_figure(

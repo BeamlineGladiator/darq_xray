@@ -38,6 +38,56 @@ def cmap_nan_transparent(name: str):
     return cmap
 
 
+def draw_map_layer(
+    ax,
+    layer,
+    vmin,
+    vmax,
+    cmap,
+    ext_x,
+    ext_y,
+    title,
+    cbar_label,
+    *,
+    style=None,
+    group=None,
+    cax=None,
+    colorbar=None,
+    scale_bar=None,
+    fixed_scale_um_per_cm=None,
+):
+    """Draw one equal-aspect map layer into *ax* (µm axes); returns the image.
+
+    Extracted verbatim from :func:`layer_figure` so the single-figure path and
+    the compose adapters share one look. ``colorbar``/``scale_bar`` default to
+    the style's flags; an explicit bool overrides (the composer switches them
+    off when a shared bar covers the panel). ``cax`` routes the colourbar into
+    an already-placed axes (steal-free, see ``add_colorbar``).
+    """
+    st = style if style is not None else PlotStyle(scale_bar_color="black", colorbar_fraction=0.046)
+    fig = ax.get_figure()
+    im = ax.imshow(
+        layer,
+        cmap=cmap_nan_transparent(cmap),
+        norm=mcolors.Normalize(vmin=vmin, vmax=vmax),
+        extent=[0, ext_x, 0, ext_y],
+        origin="lower",
+        aspect="equal",
+    )
+    ax.set_xlabel("X (µm)")
+    ax.set_ylabel("Y (µm)")
+    ax.set_title(title)
+    if st.colorbar if colorbar is None else colorbar:
+        add_colorbar(fig, im, ax, cbar_label, st, group=group, cax=cax)
+    if st.scale_bar if scale_bar is None else scale_bar:
+        draw_scale_bar(
+            ax, st.scale_bar_length_um, style=st, fixed_scale_um_per_cm=fixed_scale_um_per_cm
+        )
+    apply_text_scale(ax, st)
+    apply_axes_mode(ax, st)
+    return im
+
+
 def layer_figure(
     layer, vmin, vmax, cmap, ext_x, ext_y, title, cbar_label, *, style=None, group=None
 ):
@@ -57,28 +107,20 @@ def layer_figure(
         figsize = (figure_size(st, ext_x, ext_y) or (12, 10)) if style is not None else (12, 10)
     fig = styled_figure(figsize, styled=style is not None)
     ax = fig.add_subplot(111)
-    im = ax.imshow(
+    im = draw_map_layer(
+        ax,
         layer,
-        cmap=cmap_nan_transparent(cmap),
-        norm=mcolors.Normalize(vmin=vmin, vmax=vmax),
-        extent=[0, ext_x, 0, ext_y],
-        origin="lower",
-        aspect="equal",
+        vmin,
+        vmax,
+        cmap,
+        ext_x,
+        ext_y,
+        title,
+        cbar_label,
+        style=style,
+        group=group,
+        fixed_scale_um_per_cm=(box[2] if box is not None else None),
     )
-    ax.set_xlabel("X (µm)")
-    ax.set_ylabel("Y (µm)")
-    ax.set_title(title)
-    if st.colorbar:
-        add_colorbar(fig, im, ax, cbar_label, st, group=group)
-    if st.scale_bar:
-        draw_scale_bar(
-            ax,
-            st.scale_bar_length_um,
-            style=st,
-            fixed_scale_um_per_cm=(box[2] if box is not None else None),
-        )
-    apply_text_scale(ax, st)
-    apply_axes_mode(ax, st)
     if box is not None:
         fit_axes_to_box(fig, ax, box[0], box[1])
     return fig, ax, im
