@@ -152,6 +152,29 @@ def test_missing_file_renders_placeholder_and_notes(tmp_path):
     assert any("placeholder" in n for n in res.notes)
 
 
+def test_degenerate_roi_extent_renders_placeholder_not_singular_imshow(tmp_path):
+    """A panel whose ROI crops to a single column (zero x-extent) is downgraded
+    to a placeholder BOX by size_cells (dfxm/compose/layout.py's _map_cell),
+    but that alone used to leave the panel's loaded PanelData.kind untouched
+    ("slice_plane") — the per-leaf draw loop in render_recipe dispatches on
+    the cell's kind, sees "placeholder", yet still handed draw_panel the
+    original (still-degenerate) data, so draw_panel trusted data.kind and
+    called imshow with a zero-width extent: matplotlib's "identical low and
+    high xlims" UserWarning, reachable any time a recipe/ROI-override crops a
+    map or slice panel to a single row or column. render_recipe must draw an
+    actual placeholder for it instead, warning-free."""
+    import warnings
+
+    h5 = _write_obl(tmp_path / "obl.h5")
+    r = _two_panel_recipe(h5)
+    r.panels[1].roi = (0, 33, 5, 6)  # full v range, single u column -> ext_x_um == 0
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        res = render_recipe(r)
+    assert res.n_panels == 2 and res.n_rendered == 1  # "b" now counts as unrendered
+    assert any("degenerate extent" in n for n in res.notes)
+
+
 def test_shared_colorbar_unified_clim_and_single_bar(tmp_path):
     h5 = _write_obl(tmp_path / "obl.h5")
     p1 = PanelDef(

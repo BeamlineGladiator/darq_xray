@@ -913,6 +913,7 @@ class FigureBuilderWindow(QMainWindow):
     # -- lifecycle ----------------------------------------------------------------
     def closeEvent(self, event) -> None:  # noqa: N802 — Qt override signature
         if not self._dirty:
+            self._debounce.stop()
             event.accept()
             return
         ret = QMessageBox.question(
@@ -932,4 +933,12 @@ class FigureBuilderWindow(QMainWindow):
             if self._dirty:  # Save As was cancelled — don't close with unsaved work
                 event.ignore()
                 return
+        # A pending 300 ms debounce (schedule_preview) must not fire after
+        # close — Qt keeps a QTimer parented to this window alive until the
+        # event loop next turns, so an in-flight timer can call render_now()
+        # against a window that is closing/closed (harmless here since Qt
+        # widgets tolerate it, but wasteful and a source of surprising
+        # behaviour — e.g. it re-populating the notes label of a hidden
+        # window, or firing during an unrelated later event-loop turn).
+        self._debounce.stop()
         event.accept()

@@ -715,7 +715,21 @@ anywhere (`fig.set_layout_engine("none")` throughout, same as `layout.py`).
   2. `style = style_from_params({"plot_style": {**recipe.style, **(style_overrides or {})}}) or PlotStyle()`.
   3. Load every panel (`load_panel(panel, cache=loader_cache)`) into a local
      `panels_by_id`/`data_by_id` — placeholders substituted, never raised.
-  4. `size_cells(recipe, style, data_by_id, notes)`.
+  4. `size_cells(recipe, style, data_by_id, notes)` — a map/slice panel with a
+     degenerate extent (e.g. an ROI crop down to a single row/column) comes
+     back as a `"placeholder"`-kind `SizedCell` even though its `PanelData.kind`
+     is still the real `"map_layer"`/`"slice_plane"` (only the box, not the
+     loaded data, is touched). Immediately after, `render_recipe` walks the
+     leaves and overwrites `data_by_id[pid]` with a genuine
+     `PanelData(kind="placeholder", payload={"reason": "degenerate extent"})`
+     wherever `cell.kind == "placeholder"` but the data isn't already one —
+     otherwise the draw loop below (step 8) would still hand the ORIGINAL
+     degenerate arrays to `draw_panel`, which trusts `data.kind` over the
+     cell's sizing decision and would call `imshow` with a zero-width/height
+     extent (matplotlib's "identical low and high xlims/ylims" warning). This
+     keeps every downstream consumer of `data_by_id` (the draw dispatch,
+     `n_rendered`, shared-colorbar/scale-bar grouping) in lockstep with what
+     `size_cells` actually decided.
   5. Create one `Figure(facecolor="white")`; add a bare axes per `PanelRef`
      (any kind, incl. placeholder — so it stays click-pickable) and per
      `TextCell` (`set_axis_off()` immediately); `Spacer` leaves get no axes.

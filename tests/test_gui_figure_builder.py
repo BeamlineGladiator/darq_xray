@@ -4,6 +4,7 @@ import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+import pytest  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 _app = QApplication.instance() or QApplication([])
@@ -12,9 +13,37 @@ from dfxm.common.plotting import PlotStyle  # noqa: E402
 from dfxm.compose.recipe import PanelDef, PanelRef, PanelSource, Row  # noqa: E402
 from gui.figure_builder import FigureBuilderWindow  # noqa: E402
 
+# Every FigureBuilderWindow built by a test lives only for that test, but
+# add_panels()/etc. arm its 300 ms render debounce (schedule_preview) — a
+# QTimer parented to the window, so it outlives the test unless stopped. Left
+# alone, that timer is still pending when the file's tests are done; the next
+# test file's QApplication.processEvents() call fires it, running render_now()
+# against whatever (possibly stale/mid-edit, e.g. a deliberately degenerate
+# ROI from a "no mutation" test) recipe state the window was left in — the
+# actual mechanism behind a warning that used to show up attributed to an
+# unrelated test in tests/test_gui_replot_dialog.py. _track()/the autouse
+# fixture below stop the timer and schedule the window's deletion at the end
+# of every test, regardless of which helper created it.
+_live_windows: list[FigureBuilderWindow] = []
+
+
+def _track(w: FigureBuilderWindow) -> FigureBuilderWindow:
+    _live_windows.append(w)
+    return w
+
 
 def _win():
-    return FigureBuilderWindow(lambda: {}, PlotStyle(scale_um_per_cm=10.0))
+    return _track(FigureBuilderWindow(lambda: {}, PlotStyle(scale_um_per_cm=10.0)))
+
+
+@pytest.fixture(autouse=True)
+def _no_leaked_debounce_timers():
+    yield
+    while _live_windows:
+        w = _live_windows.pop()
+        w._debounce.stop()  # never let a pending render fire into a later test
+        w.deleteLater()
+    _app.processEvents()  # let deleteLater actually run before the next test
 
 
 def _panel(pid):
@@ -206,7 +235,7 @@ def test_render_now_populates_preview_and_notes(tmp_path):
 
 
 def test_render_error_lands_in_notes_bar_not_crash(tmp_path):
-    w = FigureBuilderWindow(lambda: {}, PlotStyle())  # NO scale anywhere
+    w = _track(FigureBuilderWindow(lambda: {}, PlotStyle()))  # NO scale anywhere
     w.add_panels(_obl_recipe_panels(tmp_path))
     res = w.render_now()
     assert res is None
@@ -370,6 +399,37 @@ def test_export_now_unexpected_error_reports_to_notes_bar_not_crash(tmp_path, mo
     monkeypatch.setattr("dfxm.compose.render.export_recipe", _raise)
     w.export_now()  # must not raise
     assert "export failed" in w._notes_label.text()
+
+
+# -- lifecycle: closing must not leave a render debounce ticking -------------
+def test_close_stops_pending_debounce_timer(tmp_path):
+    """A schedule_preview() call arms a 300 ms singleShot QTimer; closing the
+    window (the not-dirty path — no Save/Discard prompt) must stop it, or the
+    timer fires render_now() on a closed/hidden window from a later event-loop
+    turn (this is the same leak class the tests worked around via _track/
+    _no_leaked_debounce_timers — closeEvent should not have the same wart in
+    the real app)."""
+    w = _win()
+    w.add_panels(_obl_recipe_panels(tmp_path))  # arms the debounce via schedule_preview
+    w._dirty = False  # isolate: only interested in the not-dirty close path here
+    assert w._debounce.isActive()
+    w.close()
+    assert not w._debounce.isActive()
+
+
+def test_close_with_unsaved_changes_cancel_leaves_debounce_running(tmp_path, monkeypatch):
+    """Cancelling the Save/Discard/Cancel prompt aborts the close, so the
+    timer legitimately stays armed — closeEvent must only stop it on the
+    paths that actually close the window."""
+    from PySide6.QtWidgets import QMessageBox
+
+    w = _win()
+    w.add_panels(_obl_recipe_panels(tmp_path))
+    assert w.is_dirty()
+    assert w._debounce.isActive()
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Cancel)
+    w.close()
+    assert w._debounce.isActive()  # close was aborted — nothing should change
 
 
 # -- task 13: main-window launch wiring ---------------------------------------

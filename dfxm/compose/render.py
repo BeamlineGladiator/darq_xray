@@ -20,7 +20,7 @@ from ..common.plotting import (
     draw_scale_bar,
     style_from_params,
 )
-from .adapters import draw_panel, load_panel
+from .adapters import PanelData, draw_panel, load_panel
 from .layout import SizedCell, measure_cells, place_tree, size_cells
 from .recipe import Col, PanelRef, Row, Spacer, TextCell, iter_leaves, validate_recipe
 
@@ -384,6 +384,21 @@ def render_recipe(
             cell.ax = ax
             axes_by_id[leaf.panel_id] = ax
             cell_by_pid[leaf.panel_id] = cell
+            # size_cells can downgrade a map/slice cell to a placeholder BOX on
+            # its own (degenerate ROI/extent — see layout.py's _map_cell) while
+            # leaving this panel's loaded PanelData.kind untouched (still
+            # "map_layer"/"slice_plane"). Left alone, the per-leaf draw loop
+            # below dispatches on cell.kind == "placeholder" but hands
+            # draw_panel the ORIGINAL (still-degenerate) data — draw_panel then
+            # trusts data.kind, sees a real map/slice, and calls imshow with a
+            # zero-width/height extent (matplotlib's identical-xlim/ylim
+            # warning). Keep data_by_id in lockstep with the cell so every
+            # downstream consumer (draw dispatch, n_rendered, colorbar/scale-
+            # bar grouping) treats it as the placeholder it was sized as.
+            if cell.kind == "placeholder" and data_by_id[leaf.panel_id].kind != "placeholder":
+                data_by_id[leaf.panel_id] = PanelData(
+                    kind="placeholder", payload={"reason": "degenerate extent"}
+                )
         elif isinstance(leaf, TextCell):
             ax = fig.add_axes([0.0, 0.0, 0.01, 0.01])
             ax.set_axis_off()
