@@ -334,29 +334,31 @@ class FigureBuilderWindow(QMainWindow):
 
         self._ov_roi = QLineEdit()
         self._ov_roi.setPlaceholderText("r0,r1,c0,c1 (blank = full)")
-        self._ov_roi.textChanged.connect(self._on_override_edited)
+        self._ov_roi.textChanged.connect(lambda _t: self._on_override_field_edited("roi"))
         form.addRow("ROI crop (px)", self._ov_roi)
 
         self._ov_clim = QLineEdit()
         self._ov_clim.setPlaceholderText("lo,hi (blank half ok; blank both = stored)")
-        self._ov_clim.textChanged.connect(self._on_override_edited)
+        self._ov_clim.textChanged.connect(lambda _t: self._on_override_field_edited("clim"))
         form.addRow("Colour limits", self._ov_clim)
 
         self._ov_cmap = QComboBox()
         self._ov_cmap.addItem("")  # follow style
         self._ov_cmap.addItems(list(CMAP_CHOICES))
-        self._ov_cmap.currentTextChanged.connect(self._on_override_edited)
+        self._ov_cmap.currentTextChanged.connect(lambda _t: self._on_override_field_edited("cmap"))
         form.addRow("Colormap", self._ov_cmap)
 
         self._ov_label = QLineEdit()
         self._ov_label.setPlaceholderText("(blank = auto sequence letter)")
-        self._ov_label.textChanged.connect(self._on_override_edited)
+        self._ov_label.textChanged.connect(lambda _t: self._on_override_field_edited("label"))
         form.addRow("Label", self._ov_label)
 
         self._ov_show_title = QComboBox()
         for text, value in _TRI_STATE:
             self._ov_show_title.addItem(text, value)
-        self._ov_show_title.currentIndexChanged.connect(self._on_override_edited)
+        self._ov_show_title.currentIndexChanged.connect(
+            lambda _i: self._on_override_field_edited("show_title")
+        )
         form.addRow("Show title", self._ov_show_title)
 
         self._ov_scale = QDoubleSpinBox()
@@ -364,13 +366,17 @@ class FigureBuilderWindow(QMainWindow):
         self._ov_scale.setDecimals(3)
         self._ov_scale.setSuffix(" µm/cm")
         self._ov_scale.setSpecialValueText("follow style")
-        self._ov_scale.valueChanged.connect(self._on_override_edited)
+        self._ov_scale.valueChanged.connect(
+            lambda _v: self._on_override_field_edited("scale_um_per_cm")
+        )
         form.addRow("Panel scale", self._ov_scale)
 
         self._ov_colorbar = QComboBox()
         for text, value in _TRI_STATE:
             self._ov_colorbar.addItem(text, value)
-        self._ov_colorbar.currentIndexChanged.connect(self._on_override_edited)
+        self._ov_colorbar.currentIndexChanged.connect(
+            lambda _i: self._on_override_field_edited("colorbar")
+        )
         form.addRow("Colourbar", self._ov_colorbar)
 
         self._override_group.setEnabled(False)
@@ -418,19 +424,31 @@ class FigureBuilderWindow(QMainWindow):
             w.blockSignals(False)
         self._override_group.setEnabled(True)
 
-    def _on_override_edited(self, *_args) -> None:
+    def _on_override_field_edited(self, key: str) -> None:
+        """Submit only the ONE widget the user actually changed.
+
+        Submitting the whole widget set on every edit (the original Task 12
+        shape) meant every other field got silently re-derived from its
+        current (possibly lossy, e.g. clim's %g display) widget text on each
+        unrelated edit — in particular it collapsed an explicitly-suppressed
+        ``PanelDef.label == ""`` back to ``None`` (auto-lettering) the moment
+        any other override field was touched, since "" and None display
+        identically as a blank label box. Submitting one key at a time means
+        :meth:`_apply_panel_overrides` only ever looks at (and only ever
+        mutates) the field that changed.
+        """
         if self._override_panel is None:
             return
-        values = {
-            "roi": self._ov_roi.text(),
-            "clim": self._ov_clim.text(),
-            "cmap": self._ov_cmap.currentText(),
-            "label": self._ov_label.text(),
-            "show_title": self._ov_show_title.currentData(),
-            "scale_um_per_cm": self._ov_scale.value(),
-            "colorbar": self._ov_colorbar.currentData(),
+        getters = {
+            "roi": self._ov_roi.text,
+            "clim": self._ov_clim.text,
+            "cmap": self._ov_cmap.currentText,
+            "label": self._ov_label.text,
+            "show_title": self._ov_show_title.currentData,
+            "scale_um_per_cm": self._ov_scale.value,
+            "colorbar": self._ov_colorbar.currentData,
         }
-        self._apply_panel_overrides(self._override_panel, values)
+        self._apply_panel_overrides(self._override_panel, {key: getters[key]()})
 
     @staticmethod
     def _parse_int(text: str) -> int | None:
@@ -440,51 +458,75 @@ class FigureBuilderWindow(QMainWindow):
             return None
 
     def _apply_panel_overrides(self, panel: PanelDef, values: dict) -> None:
-        """Parse *values* (as read from the override editor, or supplied directly
-        by a test) onto *panel*. Malformed ROI/clim text reports to the notes bar
-        and mutates nothing; every other key is already structurally valid
-        (combo/spinbox/tri-state values), so it is assigned as-is."""
-        roi_text = (values.get("roi") or "").strip()
-        roi = None
-        if roi_text:
-            parts = [p.strip() for p in roi_text.split(",")]
-            ints = [self._parse_int(p) for p in parts]
-            if len(ints) != 4 or any(v is None for v in ints):
-                self._notes_label.setText(
-                    f"invalid ROI text {roi_text!r} — expected 'r0,r1,c0,c1' (four integers)"
-                )
-                return
-            roi = tuple(ints)
+        """Parse and apply only the override keys PRESENT in *values* onto *panel*.
 
-        clim_text = (values.get("clim") or "").strip()
-        clim = None
-        if clim_text:
-            parts = clim_text.split(",")
-            if len(parts) != 2:
-                self._notes_label.setText(
-                    f"invalid clim text {clim_text!r} — expected 'lo,hi' (either half may be blank)"
-                )
-                return
-            lo_s, hi_s = (p.strip() for p in parts)
-            try:
-                lo = float(lo_s) if lo_s else None
-                hi = float(hi_s) if hi_s else None
-            except ValueError:
-                self._notes_label.setText(
-                    f"invalid clim text {clim_text!r} — expected 'lo,hi' (either half may be blank)"
-                )
-                return
-            clim = (lo, hi)
+        This is a partial update by design: the override editor's widgets each
+        submit only their own key via :meth:`_on_override_field_edited` (a test
+        may still hand in all seven keys at once, e.g. to seed every field from
+        a fresh selection). A key absent from *values* is left completely
+        untouched on *panel* — this is what stops an edit to one field (say
+        ROI) from re-deriving and clobbering another (say a ``label`` explicitly
+        set to ``""``, or a ``clim`` more precise than its %g display). Malformed
+        ROI/clim text reports to the notes bar and mutates nothing (including
+        any other key also present in this same call); every other key is
+        already structurally valid (combo/spinbox/tri-state values), so it is
+        assigned as-is.
+        """
+        new_roi = panel.roi
+        if "roi" in values:
+            roi_text = (values.get("roi") or "").strip()
+            if roi_text:
+                parts = [p.strip() for p in roi_text.split(",")]
+                ints = [self._parse_int(p) for p in parts]
+                if len(ints) != 4 or any(v is None for v in ints):
+                    self._notes_label.setText(
+                        f"invalid ROI text {roi_text!r} — expected 'r0,r1,c0,c1' (four integers)"
+                    )
+                    return
+                new_roi = tuple(ints)
+            else:
+                new_roi = None
 
-        scale = values.get("scale_um_per_cm")
+        new_clim = panel.clim
+        if "clim" in values:
+            clim_text = (values.get("clim") or "").strip()
+            if clim_text:
+                parts = clim_text.split(",")
+                if len(parts) != 2:
+                    self._notes_label.setText(
+                        f"invalid clim text {clim_text!r} — expected 'lo,hi' "
+                        "(either half may be blank)"
+                    )
+                    return
+                lo_s, hi_s = (p.strip() for p in parts)
+                try:
+                    lo = float(lo_s) if lo_s else None
+                    hi = float(hi_s) if hi_s else None
+                except ValueError:
+                    self._notes_label.setText(
+                        f"invalid clim text {clim_text!r} — expected 'lo,hi' "
+                        "(either half may be blank)"
+                    )
+                    return
+                new_clim = (lo, hi)
+            else:
+                new_clim = None
 
-        panel.roi = roi
-        panel.clim = clim
-        panel.cmap = values.get("cmap") or None
-        panel.label = values.get("label") or None
-        panel.show_title = values.get("show_title")
-        panel.scale_um_per_cm = float(scale) if scale else None
-        panel.colorbar = values.get("colorbar")
+        if "roi" in values:
+            panel.roi = new_roi
+        if "clim" in values:
+            panel.clim = new_clim
+        if "cmap" in values:
+            panel.cmap = values["cmap"] or None
+        if "label" in values:
+            panel.label = values["label"] or None
+        if "show_title" in values:
+            panel.show_title = values["show_title"]
+        if "scale_um_per_cm" in values:
+            scale = values["scale_um_per_cm"]
+            panel.scale_um_per_cm = float(scale) if scale else None
+        if "colorbar" in values:
+            panel.colorbar = values["colorbar"]
 
         self._dirty = True
         self._rebuild_tree()
@@ -505,6 +547,9 @@ class FigureBuilderWindow(QMainWindow):
         except StageUserError as exc:
             hint = f"  Hint: {exc.hint}" if exc.hint else ""
             self._notes_label.setText(f"export failed: {exc}{hint}")
+            return
+        except Exception as exc:  # noqa: BLE001 — export must never crash the window
+            self._notes_label.setText(f"export failed: {exc}")
             return
         notes = f"; {'; '.join(res.notes)}" if res.notes else ""
         self._notes_label.setText(f"wrote {len(paths)} file(s) → {out}{notes}")

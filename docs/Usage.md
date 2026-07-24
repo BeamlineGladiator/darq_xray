@@ -1346,7 +1346,11 @@ button:
   **colormap** (blank = follow the style), **label** (blank = the automatic
   sequence letter), **show title** and **colourbar** (Follow/On/Off —
   Follow defers to the composed default), and **panel scale** in µm/cm
-  (0 = follow the style's own scale).
+  (0 = follow the style's own scale). Each override field is applied
+  independently — editing one (say ROI crop) never re-reads or resets any of
+  the others, so an explicitly blank label or a colour limit typed more
+  precisely than the box's own display stays exactly as set even after you
+  edit something else in the same panel.
 - **Export…** opens a directory picker and writes the recipe with
   `dfxm.compose.render.export_recipe` (the same formats/DPI the recipe's
   style specifies, reusing the preview's loader cache so nothing already

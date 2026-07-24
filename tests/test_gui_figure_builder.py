@@ -278,3 +278,44 @@ def test_export_now_writes_files(tmp_path, monkeypatch):
     w.export_now()
     assert os.path.exists(out / "untitled.png")
     assert "wrote" in w._notes_label.text()
+
+
+# -- fix wave 1: partial-submit override editor + export never crashes -------
+def test_apply_panel_overrides_unrelated_field_preserves_suppressed_label(tmp_path):
+    w = _win()
+    w.add_panels(_obl_recipe_panels(tmp_path))
+    panel = w.recipe().panels[0]
+    panel.label = ""  # explicit "no label" (distinct from None/auto) — set via
+    # the outline Label… dialog in real use (set_selected_label supports it)
+    w._apply_panel_overrides(panel, {"roi": "0,3,1,4"})  # only the ROI key submitted
+    assert panel.roi == (0, 3, 1, 4)
+    assert panel.label == ""  # must NOT clobber to None (auto-lettering)
+
+
+def test_override_widget_edit_preserves_suppressed_label_and_precise_clim(tmp_path):
+    w = _win()
+    w.add_panels(_obl_recipe_panels(tmp_path))
+    panel = w.recipe().panels[0]
+    panel.label = ""
+    panel.clim = (-0.123456789, 0.987654321)  # more than 6 sig figs (%g would round)
+    w._select_outline_panel(panel.id)  # loads the override editor for this panel
+    w._ov_roi.setText("0,3,1,4")  # the real widget signal path, editing only ROI
+    assert panel.roi == (0, 3, 1, 4)
+    assert panel.label == ""  # unrelated field edit must not touch label
+    assert panel.clim == (-0.123456789, 0.987654321)  # ...or silently round clim
+
+
+def test_export_now_unexpected_error_reports_to_notes_bar_not_crash(tmp_path, monkeypatch):
+    w = _win()
+    w.add_panels(_obl_recipe_panels(tmp_path))
+    out = tmp_path / "out"
+    monkeypatch.setattr(
+        "gui.figure_builder.QFileDialog.getExistingDirectory", lambda *a, **k: str(out)
+    )
+
+    def _raise(*_a, **_k):
+        raise OSError("disk full")
+
+    monkeypatch.setattr("dfxm.compose.render.export_recipe", _raise)
+    w.export_now()  # must not raise
+    assert "export failed" in w._notes_label.text()
