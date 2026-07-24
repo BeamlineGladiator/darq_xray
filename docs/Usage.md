@@ -1349,20 +1349,40 @@ button:
   the recipe's current panels; blank = none designated yet), and a pinned
   total width in cm (0 = auto-sized from the layout). Every edit writes
   straight into `recipe.compose` and schedules a re-render.
-- *Selected panel overrides* — enabled only when the outline selection is a
-  panel; edits its `PanelDef` in place: **ROI crop** as `r0,r1,c0,c1` pixel
-  text (blank = full frame; all four values are required together — a
-  malformed entry reports to the notes bar and changes nothing), **colour
-  limits** as `lo,hi` (either half may be left blank to keep that bound
-  automatic; malformed text likewise reports and changes nothing),
-  **colormap** (blank = follow the style), **label** (blank = the automatic
-  sequence letter), **show title** and **colourbar** (Follow/On/Off —
-  Follow defers to the composed default), and **panel scale** in µm/cm
-  (0 = follow the style's own scale). Each override field is applied
-  independently — editing one (say ROI crop) never re-reads or resets any of
-  the others, so an explicitly blank label or a colour limit typed more
-  precisely than the box's own display stays exactly as set even after you
-  edit something else in the same panel.
+- *Selected node* — a stack of pages, one per outline-node type; the page
+  shown always matches the current tree selection. Selecting nothing shows a
+  short hint ("select a node in the outline to edit it"). Every field on
+  every page applies independently and immediately: editing one never
+  re-reads or resets any other field on the same node, malformed text (a
+  colour-limits or shared-colour-limits box that isn't `lo,hi`, or a
+  malformed ROI) reports to the notes bar and changes nothing, and typing
+  back the value already stored changes nothing at all — no dirty flag, no
+  re-render.
+  - **Panel** — edits its `PanelDef` in place: **ROI crop** as `r0,r1,c0,c1`
+    pixel text (blank = full frame; all four values are required together),
+    **colour limits** as `lo,hi` (either half may be left blank to keep that
+    bound automatic), **colormap** (blank = follow the style), a three-state
+    **Label** control — *Auto letter* (the automatic sequence letter, the
+    default), *No label* (explicitly suppressed), or *Custom…* (a text box
+    appears below, enabled only in this mode) — **show title** and
+    **colourbar** (Follow/On/Off — Follow defers to the composed default),
+    and **panel scale** in µm/cm (0 = follow the style's own scale).
+  - **Row** — a **Group label** control with three states — *Not a group*,
+    *Auto letter* (the panel-group bracket/letter is auto-assigned; this is
+    the same "auto" bookkeeping value `toggle_group_selected`/the outline's
+    Group button write, so re-selecting a row grouped this way always shows
+    *Auto letter* with a blank custom-text box, never a literal "auto"),
+    and *Custom…* (a text box beneath becomes enabled for a literal group
+    label) — a **pinned height** in cm (0 = off, the row sizes itself from
+    its content), a **One colorbar for this group** checkbox
+    (`shared_colorbar`), and **shared colour limits** as `lo,hi`
+    (`shared_clim`; blank = union of the member panels' own ranges).
+  - **Col** — the same group-label control, pinned-height control (here
+    **pinned width**, cm, 0 = off), one-colorbar checkbox, and shared colour
+    limits as Row, plus a **Shared x axis (bottom labels only)** checkbox
+    (`shared_x`).
+  - **Spacer** — its width and height in cm.
+  - **Text** — its text string plus its box's width and height in cm.
 - **Export…** opens a directory picker and writes the recipe with
   `dfxm.compose.render.export_recipe` (the same formats/DPI the recipe's
   current style specifies — exactly what the live preview is showing you,

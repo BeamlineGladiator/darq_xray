@@ -469,3 +469,159 @@ def test_builder_defaults_prefill_stage_output_h5_not_folder():
     for stage in ("strain", "mosaicity", "rocking"):
         h5 = defaults[stage]["h5"]
         assert h5 == "" or h5.endswith(".h5"), f"{stage} default {h5!r} is not an h5 path"
+
+
+# -- node inspector (T4) ------------------------------------------------------
+def _select_child(w, i):
+    w._tree.setCurrentItem(w._tree.topLevelItem(0).child(i))
+
+
+def test_inspector_switches_page_per_node_type():
+    w = _win()
+    w.add_panels([_panel("a")])
+    w._tree.setCurrentItem(None)
+    w.add_row()
+    w._tree.setCurrentItem(None)
+    w.add_col()
+    w._tree.setCurrentItem(None)
+    w.add_spacer()
+    w._tree.setCurrentItem(None)
+    w.add_text()
+    w._tree.setCurrentItem(None)
+    assert w._inspector.currentWidget() is w._page_hint
+    _select_child(w, 0)
+    assert w._inspector.currentWidget() is w._page_panel
+    _select_child(w, 1)
+    assert w._inspector.currentWidget() is w._page_row
+    _select_child(w, 2)
+    assert w._inspector.currentWidget() is w._page_col
+    _select_child(w, 3)
+    assert w._inspector.currentWidget() is w._page_spacer
+    _select_child(w, 4)
+    assert w._inspector.currentWidget() is w._page_text
+
+
+def test_row_page_pin_and_shared_controls_write_fields():
+    w = _win()
+    w.add_row()
+    _select_child(w, 0)
+    row = w.recipe().layout.children[0]
+    w._row_pin_h.setValue(3.5)
+    assert row.pinned_height_cm == 3.5
+    w._row_pin_h.setValue(0.0)
+    assert row.pinned_height_cm is None
+    w._row_shared_cb.setChecked(True)
+    assert row.shared_colorbar is True
+    w._row_shared_clim.setText("-1,2")
+    assert row.shared_clim == (-1.0, 2.0)
+    w._row_shared_clim.setText("")
+    assert row.shared_clim is None
+
+
+def test_col_page_shared_x_and_pin_width():
+    w = _win()
+    w.add_col()
+    _select_child(w, 0)
+    col = w.recipe().layout.children[0]
+    w._col_shared_x.setChecked(True)
+    assert col.shared_x is True
+    w._col_pin_w.setValue(6.0)
+    assert col.pinned_width_cm == 6.0
+
+
+def test_shared_clim_parse_failure_notes_no_mutation():
+    w = _win()
+    w.add_row()
+    _select_child(w, 0)
+    row = w.recipe().layout.children[0]
+    row.shared_clim = (0.0, 1.0)
+    w._dirty = False
+    w._row_shared_clim.setText("nope")
+    assert row.shared_clim == (0.0, 1.0)
+    assert "shared clim" in w._notes_label.text()
+    assert not w.is_dirty()
+
+
+def test_spacer_and_text_pages_edit_boxes():
+    w = _win()
+    w.add_spacer()
+    _select_child(w, 0)
+    sp = w.recipe().layout.children[0]
+    w._spacer_w.setValue(1.25)
+    assert sp.w_cm == 1.25
+    w._tree.setCurrentItem(None)
+    w.add_text()
+    _select_child(w, 1)
+    tx = w.recipe().layout.children[1]
+    w._text_edit.setText("Header")
+    assert tx.text == "Header"
+    w._text_h.setValue(0.75)
+    assert tx.h_cm == 0.75
+
+
+def test_panel_label_three_state_control():
+    w = _win()
+    w.add_panels([_panel("a")])
+    _select_child(w, 0)
+    panel = w.recipe().panels[0]
+    assert panel.label is None
+    w._ov_label_mode.setCurrentIndex(1)  # "No label"
+    assert panel.label == ""
+    w._ov_label_mode.setCurrentIndex(2)  # "Custom…"
+    w._ov_label.setText("Z9")
+    assert panel.label == "Z9"
+    w._ov_label_mode.setCurrentIndex(0)  # back to auto
+    assert panel.label is None
+
+
+def test_group_mode_control_and_no_auto_sentinel_leak(monkeypatch):
+    w = _win()
+    w.add_row()
+    _select_child(w, 0)
+    row = w.recipe().layout.children[0]
+    w._row_group_mode.setCurrentIndex(1)  # Auto letter
+    assert row.group_label == "auto"
+    w._tree.setCurrentItem(None)
+    w.add_spacer()  # a second node to bounce selection off
+    _select_child(w, 1)
+    _select_child(w, 0)  # reload the Row page
+    assert w._row_group_label.text() == ""  # sentinel never shown
+    assert w._row_group_mode.currentData() == "auto"
+    captured = {}
+
+    def fake_get_text(*_a, **kw):
+        captured["prefill"] = kw.get("text", "")
+        return ("", False)
+
+    monkeypatch.setattr("gui.figure_builder.QInputDialog.getText", fake_get_text)
+    w._on_label_selected()
+    assert captured["prefill"] == ""  # the Label… dialog leak, fixed
+    w._row_group_mode.setCurrentIndex(2)  # Custom…
+    w._row_group_label.setText("M1")
+    assert row.group_label == "M1"
+
+
+def test_noop_inspector_edit_does_not_dirty():
+    w = _win()
+    w.add_row()
+    _select_child(w, 0)
+    row = w.recipe().layout.children[0]
+    w._dirty = False
+    w._apply_node_field(row, "shared_colorbar", False)  # already False
+    assert not w.is_dirty()
+    w._tree.setCurrentItem(None)
+    w.add_panels([_panel("a")])
+    panel = w.recipe().panels[0]
+    w._dirty = False
+    w._apply_panel_overrides(panel, {"cmap": ""})  # "" maps to None == current
+    assert not w.is_dirty()
+
+
+def test_inspector_edit_updates_item_text_in_place_without_rebuild():
+    w = _win()
+    w.add_row()
+    _select_child(w, 0)
+    item_before = w._tree.currentItem()
+    w._row_group_mode.setCurrentIndex(1)  # -> "[group]" marker
+    assert w._tree.currentItem() is item_before  # same item object: no rebuild
+    assert "[group]" in item_before.text(0)

@@ -18,6 +18,7 @@ from dataclasses import replace as dc_replace
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QDialog,
     QDoubleSpinBox,
@@ -32,6 +33,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSplitter,
+    QStackedWidget,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
@@ -205,8 +207,8 @@ class FigureBuilderWindow(QMainWindow):
         layout.addWidget(QLabel("<b>Compose</b>"))
         layout.addLayout(self._build_compose_form())
 
-        layout.addWidget(QLabel("<b>Selected panel overrides</b>"))
-        layout.addWidget(self._build_override_editor())
+        layout.addWidget(QLabel("<b>Selected node</b>"))
+        layout.addWidget(self._build_inspector())
 
         export_btn = QPushButton("Export…")
         export_btn.clicked.connect(self.export_now)
@@ -328,7 +330,282 @@ class FigureBuilderWindow(QMainWindow):
         self._update_title()
         self.schedule_preview()
 
-    # -- per-node override editor -------------------------------------------------
+    # -- node inspector -------------------------------------------------------
+    def _build_inspector(self) -> QStackedWidget:
+        self._inspector_node = None
+        self._inspector = QStackedWidget()
+        self._page_hint = QLabel("select a node in the outline to edit it")
+        self._page_hint.setWordWrap(True)
+        self._page_panel = self._build_override_editor()
+        self._page_row = self._build_row_page()
+        self._page_col = self._build_col_page()
+        self._page_spacer = self._build_spacer_page()
+        self._page_text = self._build_text_page()
+        for page in (
+            self._page_hint,
+            self._page_panel,
+            self._page_row,
+            self._page_col,
+            self._page_spacer,
+            self._page_text,
+        ):
+            self._inspector.addWidget(page)
+        self._inspector.setCurrentWidget(self._page_hint)
+        return self._inspector
+
+    def _after_inspector_mutation(self) -> None:
+        """Dirty + retitle + preview + refresh the selected item's text IN PLACE.
+
+        Inspector edits never rebuild the tree: the structure didn't change,
+        and a rebuild would tear down the very widget being typed into."""
+        self._dirty = True
+        item = self._tree.currentItem()
+        if item is not None:
+            item.setText(0, self._node_label(item.data(0, Qt.ItemDataRole.UserRole)))
+        self._update_title()
+        self.schedule_preview()
+
+    def _apply_node_field(self, node, field: str, value) -> None:
+        """Per-key submission for layout-node fields; no-op edits do not dirty."""
+        if node is None or not hasattr(node, field):
+            return
+        if getattr(node, field) == value:
+            return
+        setattr(node, field, value)
+        self._after_inspector_mutation()
+
+    def _apply_pin_spin(self, node, field: str, value: float) -> None:
+        self._apply_node_field(node, field, float(value) if value > 0 else None)
+
+    def _apply_shared_clim_text(self, node, text: str) -> None:
+        t = text.strip()
+        if not t:
+            self._apply_node_field(node, "shared_clim", None)
+            return
+        parts = t.split(",")
+        try:
+            if len(parts) != 2:
+                raise ValueError(t)
+            lo, hi = (float(p) for p in parts)
+        except ValueError:
+            self._notes_label.setText(
+                f"invalid shared clim text {t!r} — expected 'lo,hi' "
+                "(blank = union of member ranges)"
+            )
+            return
+        self._apply_node_field(node, "shared_clim", (lo, hi))
+
+    def _make_group_label_row(self, form: QFormLayout):
+        mode = QComboBox()
+        for text, value in (
+            ("Not a group", "none"),
+            ("Auto letter", "auto"),
+            ("Custom…", "custom"),
+        ):
+            mode.addItem(text, value)
+        edit = QLineEdit()
+        edit.setEnabled(False)
+
+        def apply(*_a):
+            edit.setEnabled(mode.currentData() == "custom")
+            value = {"none": None, "auto": "auto"}.get(mode.currentData(), edit.text() or None)
+            self._apply_node_field(self._inspector_node, "group_label", value)
+
+        mode.currentIndexChanged.connect(apply)
+        edit.textChanged.connect(apply)
+        form.addRow("Group label", mode)
+        form.addRow("", edit)
+        return mode, edit
+
+    @staticmethod
+    def _load_group_label(mode: QComboBox, edit: QLineEdit, value) -> None:
+        # the "auto" sentinel stays internal — always display blank for it
+        idx = 0 if value is None else 1 if value == "auto" else 2
+        mode.setCurrentIndex(idx)
+        edit.setText(value if idx == 2 else "")
+        edit.setEnabled(idx == 2)
+
+    # -- Row page ---------------------------------------------------------------
+    def _build_row_page(self) -> QWidget:
+        page = QWidget()
+        form = QFormLayout(page)
+        self._row_group_mode, self._row_group_label = self._make_group_label_row(form)
+
+        self._row_pin_h = QDoubleSpinBox()
+        self._row_pin_h.setRange(0.0, 1000.0)
+        self._row_pin_h.setDecimals(2)
+        self._row_pin_h.setSuffix(" cm")
+        self._row_pin_h.setSpecialValueText("off")
+        self._row_pin_h.valueChanged.connect(
+            lambda v: self._apply_pin_spin(self._inspector_node, "pinned_height_cm", v)
+        )
+        form.addRow("Pinned height (0 = off)", self._row_pin_h)
+
+        self._row_shared_cb = QCheckBox("One colorbar for this group")
+        self._row_shared_cb.toggled.connect(
+            lambda on: self._apply_node_field(self._inspector_node, "shared_colorbar", bool(on))
+        )
+        form.addRow(self._row_shared_cb)
+
+        self._row_shared_clim = QLineEdit()
+        self._row_shared_clim.setPlaceholderText("lo,hi (blank = union of member ranges)")
+        self._row_shared_clim.textChanged.connect(
+            lambda t: self._apply_shared_clim_text(self._inspector_node, t)
+        )
+        form.addRow("Shared colour limits", self._row_shared_clim)
+        return page
+
+    def _load_row_page(self, row: Row) -> None:
+        widgets = (
+            self._row_group_mode,
+            self._row_group_label,
+            self._row_pin_h,
+            self._row_shared_cb,
+            self._row_shared_clim,
+        )
+        for w in widgets:
+            w.blockSignals(True)
+        self._load_group_label(self._row_group_mode, self._row_group_label, row.group_label)
+        self._row_pin_h.setValue(row.pinned_height_cm or 0.0)
+        self._row_shared_cb.setChecked(row.shared_colorbar)
+        if row.shared_clim is not None:
+            lo, hi = row.shared_clim
+            self._row_shared_clim.setText(f"{lo:g},{hi:g}")
+        else:
+            self._row_shared_clim.setText("")
+        for w in widgets:
+            w.blockSignals(False)
+
+    # -- Col page ---------------------------------------------------------------
+    def _build_col_page(self) -> QWidget:
+        page = QWidget()
+        form = QFormLayout(page)
+        self._col_group_mode, self._col_group_label = self._make_group_label_row(form)
+
+        self._col_pin_w = QDoubleSpinBox()
+        self._col_pin_w.setRange(0.0, 1000.0)
+        self._col_pin_w.setDecimals(2)
+        self._col_pin_w.setSuffix(" cm")
+        self._col_pin_w.setSpecialValueText("off")
+        self._col_pin_w.valueChanged.connect(
+            lambda v: self._apply_pin_spin(self._inspector_node, "pinned_width_cm", v)
+        )
+        form.addRow("Pinned width (0 = off)", self._col_pin_w)
+
+        self._col_shared_x = QCheckBox("Shared x axis (bottom labels only)")
+        self._col_shared_x.toggled.connect(
+            lambda on: self._apply_node_field(self._inspector_node, "shared_x", bool(on))
+        )
+        form.addRow(self._col_shared_x)
+
+        self._col_shared_cb = QCheckBox("One colorbar for this group")
+        self._col_shared_cb.toggled.connect(
+            lambda on: self._apply_node_field(self._inspector_node, "shared_colorbar", bool(on))
+        )
+        form.addRow(self._col_shared_cb)
+
+        self._col_shared_clim = QLineEdit()
+        self._col_shared_clim.setPlaceholderText("lo,hi (blank = union of member ranges)")
+        self._col_shared_clim.textChanged.connect(
+            lambda t: self._apply_shared_clim_text(self._inspector_node, t)
+        )
+        form.addRow("Shared colour limits", self._col_shared_clim)
+        return page
+
+    def _load_col_page(self, col: Col) -> None:
+        widgets = (
+            self._col_group_mode,
+            self._col_group_label,
+            self._col_pin_w,
+            self._col_shared_x,
+            self._col_shared_cb,
+            self._col_shared_clim,
+        )
+        for w in widgets:
+            w.blockSignals(True)
+        self._load_group_label(self._col_group_mode, self._col_group_label, col.group_label)
+        self._col_pin_w.setValue(col.pinned_width_cm or 0.0)
+        self._col_shared_x.setChecked(col.shared_x)
+        self._col_shared_cb.setChecked(col.shared_colorbar)
+        if col.shared_clim is not None:
+            lo, hi = col.shared_clim
+            self._col_shared_clim.setText(f"{lo:g},{hi:g}")
+        else:
+            self._col_shared_clim.setText("")
+        for w in widgets:
+            w.blockSignals(False)
+
+    # -- Spacer page --------------------------------------------------------------
+    def _build_spacer_page(self) -> QWidget:
+        page = QWidget()
+        form = QFormLayout(page)
+        self._spacer_w = QDoubleSpinBox()
+        self._spacer_w.setRange(0.1, 100.0)
+        self._spacer_w.setDecimals(2)
+        self._spacer_w.setSuffix(" cm")
+        self._spacer_w.valueChanged.connect(
+            lambda v: self._apply_node_field(self._inspector_node, "w_cm", float(v))
+        )
+        form.addRow("Width", self._spacer_w)
+
+        self._spacer_h = QDoubleSpinBox()
+        self._spacer_h.setRange(0.1, 100.0)
+        self._spacer_h.setDecimals(2)
+        self._spacer_h.setSuffix(" cm")
+        self._spacer_h.valueChanged.connect(
+            lambda v: self._apply_node_field(self._inspector_node, "h_cm", float(v))
+        )
+        form.addRow("Height", self._spacer_h)
+        return page
+
+    def _load_spacer_page(self, spacer: Spacer) -> None:
+        for w in (self._spacer_w, self._spacer_h):
+            w.blockSignals(True)
+        self._spacer_w.setValue(spacer.w_cm)
+        self._spacer_h.setValue(spacer.h_cm)
+        for w in (self._spacer_w, self._spacer_h):
+            w.blockSignals(False)
+
+    # -- Text page ------------------------------------------------------------
+    def _build_text_page(self) -> QWidget:
+        page = QWidget()
+        form = QFormLayout(page)
+        self._text_edit = QLineEdit()
+        self._text_edit.textChanged.connect(
+            lambda t: self._apply_node_field(self._inspector_node, "text", t)
+        )
+        form.addRow("Text", self._text_edit)
+
+        self._text_w = QDoubleSpinBox()
+        self._text_w.setRange(0.1, 100.0)
+        self._text_w.setDecimals(2)
+        self._text_w.setSuffix(" cm")
+        self._text_w.valueChanged.connect(
+            lambda v: self._apply_node_field(self._inspector_node, "w_cm", float(v))
+        )
+        form.addRow("Width", self._text_w)
+
+        self._text_h = QDoubleSpinBox()
+        self._text_h.setRange(0.1, 100.0)
+        self._text_h.setDecimals(2)
+        self._text_h.setSuffix(" cm")
+        self._text_h.valueChanged.connect(
+            lambda v: self._apply_node_field(self._inspector_node, "h_cm", float(v))
+        )
+        form.addRow("Height", self._text_h)
+        return page
+
+    def _load_text_page(self, text_cell: TextCell) -> None:
+        widgets = (self._text_edit, self._text_w, self._text_h)
+        for w in widgets:
+            w.blockSignals(True)
+        self._text_edit.setText(text_cell.text)
+        self._text_w.setValue(text_cell.w_cm)
+        self._text_h.setValue(text_cell.h_cm)
+        for w in widgets:
+            w.blockSignals(False)
+
+    # -- Panel page (existing override editor) -----------------------------------
     def _build_override_editor(self) -> QWidget:
         self._override_group = QWidget()
         form = QFormLayout(self._override_group)
@@ -349,10 +626,17 @@ class FigureBuilderWindow(QMainWindow):
         self._ov_cmap.currentTextChanged.connect(lambda _t: self._on_override_field_edited("cmap"))
         form.addRow("Colormap", self._ov_cmap)
 
+        self._ov_label_mode = QComboBox()
+        for text, value in (("Auto letter", "auto"), ("No label", "none"), ("Custom…", "custom")):
+            self._ov_label_mode.addItem(text, value)
+        self._ov_label_mode.currentIndexChanged.connect(self._on_ov_label_mode_changed)
+        form.addRow("Label", self._ov_label_mode)
+
         self._ov_label = QLineEdit()
         self._ov_label.setPlaceholderText("(blank = auto sequence letter)")
+        self._ov_label.setEnabled(False)
         self._ov_label.textChanged.connect(lambda _t: self._on_override_field_edited("label"))
-        form.addRow("Label", self._ov_label)
+        form.addRow("", self._ov_label)
 
         self._ov_show_title = QComboBox()
         for text, value in _TRI_STATE:
@@ -380,23 +664,27 @@ class FigureBuilderWindow(QMainWindow):
         )
         form.addRow("Colourbar", self._ov_colorbar)
 
-        self._override_group.setEnabled(False)
         return self._override_group
 
-    def _on_tree_selection_changed(self, *_args) -> None:
-        """Show/enable the override editor for a selected panel; disable otherwise."""
-        node = self._selected_node()
-        panel = None
-        if isinstance(node, PanelRef):
-            panel = self._recipe.panel_by_id().get(node.panel_id)
-        self._override_panel = panel
-        if panel is None:
-            self._override_group.setEnabled(False)
-            return
+    def _on_ov_label_mode_changed(self, _index: int) -> None:
+        self._ov_label.setEnabled(self._ov_label_mode.currentData() == "custom")
+        self._on_override_field_edited("label")
+
+    def _label_override_value(self):
+        """Resolve the panel-label 3-state combo: auto -> None, none -> "", custom -> text."""
+        mode = self._ov_label_mode.currentData()
+        if mode == "auto":
+            return None
+        if mode == "none":
+            return ""
+        return self._ov_label.text()
+
+    def _load_panel_page(self, panel: PanelDef) -> None:
         widgets = (
             self._ov_roi,
             self._ov_clim,
             self._ov_cmap,
+            self._ov_label_mode,
             self._ov_label,
             self._ov_show_title,
             self._ov_scale,
@@ -413,7 +701,11 @@ class FigureBuilderWindow(QMainWindow):
         else:
             self._ov_clim.setText("")
         self._ov_cmap.setCurrentText(panel.cmap or "")
-        self._ov_label.setText(panel.label or "")
+        # tri-state label: None -> auto/mode 0, "" -> suppressed/mode 1, text -> custom/mode 2
+        label_idx = 0 if panel.label is None else 1 if panel.label == "" else 2
+        self._ov_label_mode.setCurrentIndex(label_idx)
+        self._ov_label.setText(panel.label if label_idx == 2 else "")
+        self._ov_label.setEnabled(label_idx == 2)
         self._ov_show_title.setCurrentIndex(
             next(i for i, (_t, v) in enumerate(_TRI_STATE) if v is panel.show_title)
         )
@@ -423,7 +715,32 @@ class FigureBuilderWindow(QMainWindow):
         )
         for w in widgets:
             w.blockSignals(False)
-        self._override_group.setEnabled(True)
+
+    # -- selection dispatcher -----------------------------------------------------
+    def _on_tree_selection_changed(self, *_args) -> None:
+        node = self._selected_node()
+        self._inspector_node = node
+        panel = None
+        if isinstance(node, PanelRef):
+            panel = self._recipe.panel_by_id().get(node.panel_id)
+        self._override_panel = panel
+        if panel is not None:
+            self._load_panel_page(panel)
+            self._inspector.setCurrentWidget(self._page_panel)
+        elif isinstance(node, Row):
+            self._load_row_page(node)
+            self._inspector.setCurrentWidget(self._page_row)
+        elif isinstance(node, Col):
+            self._load_col_page(node)
+            self._inspector.setCurrentWidget(self._page_col)
+        elif isinstance(node, Spacer):
+            self._load_spacer_page(node)
+            self._inspector.setCurrentWidget(self._page_spacer)
+        elif isinstance(node, TextCell):
+            self._load_text_page(node)
+            self._inspector.setCurrentWidget(self._page_text)
+        else:
+            self._inspector.setCurrentWidget(self._page_hint)
 
     def _on_override_field_edited(self, key: str) -> None:
         """Submit only the ONE widget the user actually changed.
@@ -444,7 +761,7 @@ class FigureBuilderWindow(QMainWindow):
             "roi": self._ov_roi.text,
             "clim": self._ov_clim.text,
             "cmap": self._ov_cmap.currentText,
-            "label": self._ov_label.text,
+            "label": self._label_override_value,
             "show_title": self._ov_show_title.currentData,
             "scale_um_per_cm": self._ov_scale.value,
             "colorbar": self._ov_colorbar.currentData,
@@ -471,7 +788,14 @@ class FigureBuilderWindow(QMainWindow):
         ROI/clim text reports to the notes bar and mutates nothing (including
         any other key also present in this same call); every other key is
         already structurally valid (combo/spinbox/tri-state values), so it is
-        assigned as-is.
+        assigned as-is. The ``label`` key is tri-state and assigned VERBATIM —
+        ``None`` (auto sequence letter), ``""`` (suppressed), or text — never
+        coerced with ``or None``. If every submitted key already equals the
+        panel's current value the call is a pure no-op: nothing is set, the
+        window is not marked dirty, and no preview re-render is scheduled.
+        Applying mutates the selected tree item's label text IN PLACE (never
+        a full tree rebuild — that would tear down the very widget being
+        edited).
         """
         new_roi = panel.roi
         if "roi" in values:
@@ -513,27 +837,27 @@ class FigureBuilderWindow(QMainWindow):
             else:
                 new_clim = None
 
+        changes: dict = {}
         if "roi" in values:
-            panel.roi = new_roi
+            changes["roi"] = new_roi
         if "clim" in values:
-            panel.clim = new_clim
+            changes["clim"] = new_clim
         if "cmap" in values:
-            panel.cmap = values["cmap"] or None
+            changes["cmap"] = values["cmap"] or None
         if "label" in values:
-            panel.label = values["label"] or None
+            changes["label"] = values["label"]  # tri-state verbatim: None/""/text
         if "show_title" in values:
-            panel.show_title = values["show_title"]
+            changes["show_title"] = values["show_title"]
         if "scale_um_per_cm" in values:
             scale = values["scale_um_per_cm"]
-            panel.scale_um_per_cm = float(scale) if scale else None
+            changes["scale_um_per_cm"] = float(scale) if scale else None
         if "colorbar" in values:
-            panel.colorbar = values["colorbar"]
-
-        self._dirty = True
-        self._rebuild_tree()
-        self._update_title()
-        self.schedule_preview()
-        self._select_outline_panel(panel.id)
+            changes["colorbar"] = values["colorbar"]
+        if all(getattr(panel, k) == v for k, v in changes.items()):
+            return  # no-op edit — nothing changed, nothing dirties
+        for k, v in changes.items():
+            setattr(panel, k, v)
+        self._after_inspector_mutation()
 
     # -- export -------------------------------------------------------------------
     def export_now(self) -> None:
@@ -850,7 +1174,8 @@ class FigureBuilderWindow(QMainWindow):
             panel = self._recipe.panel_by_id().get(node.panel_id)
             current = (panel.label if panel and panel.label else "") or ""
         elif isinstance(node, (Row, Col)):
-            current = node.group_label or ""
+            # the "auto" sentinel is internal bookkeeping, never user-facing text
+            current = "" if node.group_label in (None, "auto") else node.group_label
         text, ok = QInputDialog.getText(self, "Label", "Label text:", text=current)
         if ok:
             self.set_selected_label(text)
