@@ -182,16 +182,96 @@ def _plot_cell(fig, leaf, w_in, h_in, ylabel="y"):
     return SizedCell(leaf, None, "trace", w_in, h_in, ax=ax)
 
 
+def _place_tree_no_share(fig, layout, cells, *, gutter_in, pad_in):
+    """Test-only stand-in for ``place_tree`` that skips the margin-sharing
+    step (mirrors the bug margin-compensation fixes) — used below to prove
+    the row/col fixtures actually discriminate (rather than passing by
+    fixture coincidence), the same pattern as
+    ``test_stage_profiles.py``'s ``_own_margin_flush``. Never used by
+    production code; kept in lockstep with ``place_tree`` minus sharing."""
+    env: dict[int, tuple[float, float]] = {}
+
+    def _envelope(node):
+        if isinstance(node, Row):
+            child_envs = [_envelope(c) for c in node.children]
+            w = sum(e[0] for e in child_envs) + gutter_in * max(0, len(child_envs) - 1)
+            h = max(e[1] for e in child_envs)
+            env[id(node)] = (w, h)
+            return (w, h)
+        if isinstance(node, Col):
+            child_envs = [_envelope(c) for c in node.children]
+            w = max(e[0] for e in child_envs)
+            h = sum(e[1] for e in child_envs) + gutter_in * max(0, len(child_envs) - 1)
+            env[id(node)] = (w, h)
+            return (w, h)
+        m = cells[id(node)].margins
+        e = (m.left + cells[id(node)].w_in + m.right, m.bottom + cells[id(node)].h_in + m.top)
+        env[id(node)] = e
+        return e
+
+    root_w, root_h = _envelope(layout)
+    fig_w, fig_h = root_w + 2 * pad_in, root_h + 2 * pad_in
+    fig.set_size_inches(fig_w, fig_h, forward=False)
+
+    def _place(node, x, y):
+        if isinstance(node, Row):
+            cx = x
+            for child in node.children:
+                _place(child, cx, y)
+                cx += env[id(child)][0] + gutter_in
+            return
+        if isinstance(node, Col):
+            cy = y
+            for child in node.children:
+                _place(child, x, cy)
+                cy += env[id(child)][1] + gutter_in
+            return
+        c = cells[id(node)]
+        if c.ax is None:
+            return
+        m = c.margins
+        x0 = (x + m.left) / fig_w
+        y0 = (fig_h - y - m.top - c.h_in) / fig_h
+        c.ax.set_position([x0, y0, c.w_in / fig_w, c.h_in / fig_h])
+        if c.sync is not None:
+            c.sync(fig, c.ax)
+
+    _place(layout, pad_in, pad_in)
+    return (fig_w, fig_h)
+
+
 def test_row_shared_top_bottom_margins_and_exact_boxes():
     fig = Figure(facecolor="white")
     a, b = PanelRef("a"), PanelRef("b")
     layout = Row([a, b])
     ca = _plot_cell(fig, a, 2.0, 1.5)
+    # cb gets a title so its natural (pre-share) top margin is genuinely
+    # taller than ca's — without this, both cells' top/bottom margins
+    # coincide by construction (same h_in, same xlabel) and the "shared"
+    # assertion below would pass even if sharing were a no-op.
     cb = _plot_cell(fig, b, 1.2, 1.5, ylabel="a much longer label (units)")
+    cb.ax.set_title("a genuinely taller top margin")
     cells = {id(a): ca, id(b): cb}
     measure_cells(fig, [ca, cb])
+    pre_top_a, pre_top_b = ca.margins.top, cb.margins.top
+    # Discrimination check 1: the fixture must actually produce different
+    # pre-share top margins, else "post-share equal" proves nothing.
+    assert pre_top_b > pre_top_a, (pre_top_a, pre_top_b)
+
+    # Discrimination check 2: an own-margins-only placement (no sharing)
+    # must NOT equalize the tops.
+    fig_ns = Figure(facecolor="white")
+    ca_ns = _plot_cell(fig_ns, a, 2.0, 1.5)
+    cb_ns = _plot_cell(fig_ns, b, 1.2, 1.5, ylabel="a much longer label (units)")
+    cb_ns.ax.set_title("a genuinely taller top margin")
+    measure_cells(fig_ns, [ca_ns, cb_ns])
+    _place_tree_no_share(fig_ns, layout, {id(a): ca_ns, id(b): cb_ns}, gutter_in=0.2, pad_in=0.1)
+    assert ca_ns.margins.top != cb_ns.margins.top
+
+    # Real code: place_tree shares the max top/bottom margin over the row.
     place_tree(fig, layout, cells, gutter_in=0.2, pad_in=0.1)
-    assert ca.margins.top == cb.margins.top and ca.margins.bottom == cb.margins.bottom
+    assert ca.margins.top == cb.margins.top == max(pre_top_a, pre_top_b)
+    assert ca.margins.bottom == cb.margins.bottom
     for c, w in ((ca, 2.0), (cb, 1.2)):
         bw, bh = measured_box_in(fig, c.ax)
         assert abs(bw - w) < 0.01 and abs(bh - 1.5) < 0.01
@@ -208,9 +288,35 @@ def test_col_shared_left_margin_left_aligns_boxes():
     layout = Col([a, b])
     ca = _plot_cell(fig, a, 2.5, 1.0, ylabel="s")
     cb = _plot_cell(fig, b, 1.4, 1.0, ylabel="a very long y label (deg)")
+    # A rotated y-label's bbox width is ~the font line height regardless of
+    # string length, so the ylabel text alone can't make the pre-share left
+    # margins diverge. Give cb a much wider y-data range instead (plain,
+    # unshifted tick labels like "100000" are genuinely wider than "0.2").
+    ca.ax.set_ylim(0, 1)
+    cb.ax.set_ylim(0, 100000)
+    cb.ax.ticklabel_format(axis="y", style="plain", useOffset=False)
     cells = {id(a): ca, id(b): cb}
     measure_cells(fig, [ca, cb])
+    pre_left_a, pre_left_b = ca.margins.left, cb.margins.left
+    # Discrimination check 1: the fixture must actually produce different
+    # pre-share left margins, else "post-share equal" proves nothing.
+    assert pre_left_b > pre_left_a, (pre_left_a, pre_left_b)
+
+    # Discrimination check 2: an own-margins-only placement (no sharing)
+    # must NOT equalize the lefts.
+    fig_ns = Figure(facecolor="white")
+    ca_ns = _plot_cell(fig_ns, a, 2.5, 1.0, ylabel="s")
+    cb_ns = _plot_cell(fig_ns, b, 1.4, 1.0, ylabel="a very long y label (deg)")
+    ca_ns.ax.set_ylim(0, 1)
+    cb_ns.ax.set_ylim(0, 100000)
+    cb_ns.ax.ticklabel_format(axis="y", style="plain", useOffset=False)
+    measure_cells(fig_ns, [ca_ns, cb_ns])
+    _place_tree_no_share(fig_ns, layout, {id(a): ca_ns, id(b): cb_ns}, gutter_in=0.15, pad_in=0.1)
+    assert ca_ns.margins.left != cb_ns.margins.left
+
+    # Real code: place_tree shares the max left/right margin over the col.
     place_tree(fig, layout, cells, gutter_in=0.15, pad_in=0.1)
+    assert ca.margins.left == cb.margins.left == max(pre_left_a, pre_left_b)
     assert abs(ca.ax.get_position().x0 - cb.ax.get_position().x0) < 1e-6
     # no vertical overlap, a above b
     assert ca.ax.get_position().y0 > cb.ax.get_position().y1 - 1e-6
