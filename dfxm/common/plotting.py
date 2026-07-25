@@ -1057,8 +1057,11 @@ def apply_axis_tickfmt(
         if f is not None:
             axis_obj.set_major_formatter(f)
         return
-    bb = ax.dataLim
-    lo, hi = (bb.ymin, bb.ymax) if axis == "y" else (bb.xmin, bb.xmax)
+    # order of magnitude from the autoscaled VIEW range, not dataLim: the 5%
+    # autoscale margin can push the displayed ticks past the data's own decade
+    # (data ±9.8e-4 → view ±1.03e-3), and dataLim would then put the mantissas
+    # outside [1, 10) — e.g. "12.5 ×10⁻⁴" instead of "1.25 ×10⁻³"
+    lo, hi = ax.get_ylim() if axis == "y" else ax.get_xlim()
     maxabs = max(abs(lo), abs(hi))
     oom = int(math.floor(math.log10(maxabs))) if maxabs > 0 and math.isfinite(maxabs) else 0
     if oom == 0:

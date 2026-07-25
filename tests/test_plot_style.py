@@ -913,3 +913,22 @@ def test_apply_axis_tickfmt_scientific_digits_and_auto():
     apply_axis_tickfmt(ax3, PlotStyle(), "strain")
     fig3.canvas.draw()
     assert not any("10^{" in t.get_text() for t in ax3.texts)
+
+
+def test_apply_axis_tickfmt_scientific_uses_view_range_not_datalim():
+    """Data just under a decade boundary: the 5% autoscale margin pushes the
+    VIEW past it, so the exponent must come from the view range — dataLim gave
+    mantissas like 12.5 x10^-4 instead of 1.25 x10^-3."""
+    from dfxm.common.plotting import apply_axis_tickfmt
+
+    fig = Figure()
+    FigureCanvasAgg(fig)
+    ax = fig.add_subplot(111)
+    ax.plot(np.linspace(0.0, 10.0, 50), np.linspace(-9.8e-4, 9.8e-4, 50))
+    apply_axis_tickfmt(ax, PlotStyle(tickfmt_strain="scientific"), "strain")
+    fig.canvas.draw()
+    assert any("10^{-3}" in t.get_text() for t in ax.texts)  # not 10^{-4}
+    labels = [
+        abs(float(t.get_text().replace("−", "-"))) for t in ax.get_yticklabels() if t.get_text()
+    ]
+    assert labels and max(labels) < 10.0  # mantissas stay in conventional range

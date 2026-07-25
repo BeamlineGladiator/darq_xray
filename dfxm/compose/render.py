@@ -294,9 +294,10 @@ def _stretch_shared_bar(node, pids, bar_ax, axes_by_id, data_by_id):
         over = max(0.0, bb.y1 - span_hi)
         if under or over:
             h_px = fig.get_size_inches()[1] * fig.dpi
-            bar_ax.set_position(
-                [pos.x0, pos.y0 + under / h_px, pos.width, pos.height - (under + over) / h_px]
-            )
+            # clamp: a group smaller than its own bar decorations must degrade
+            # to a collapsed bar, never an inverted (negative-height) axes
+            new_h = max(0.0, pos.height - (under + over) / h_px)
+            bar_ax.set_position([pos.x0, pos.y0 + under / h_px, pos.width, new_h])
     else:
         span_lo, span_hi = (
             fig.transFigure.transform((left, 0.0))[0],
@@ -306,9 +307,8 @@ def _stretch_shared_bar(node, pids, bar_ax, axes_by_id, data_by_id):
         over = max(0.0, bb.x1 - span_hi)
         if under or over:
             w_px = fig.get_size_inches()[0] * fig.dpi
-            bar_ax.set_position(
-                [pos.x0 + under / w_px, pos.y0, pos.width - (under + over) / w_px, pos.height]
-            )
+            new_w = max(0.0, pos.width - (under + over) / w_px)
+            bar_ax.set_position([pos.x0 + under / w_px, pos.y0, new_w, pos.height])
 
 
 def _align_axis_labels(fig, layout, axes_by_id, data_by_id):
