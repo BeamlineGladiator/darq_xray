@@ -93,6 +93,12 @@ class PlotStyle:
     colorbar_label: str | None = None  # None -> the figure's own label
     colorbar_fraction: float = 0.046  # matplotlib colorbar `fraction` (thickness)
     colorbar_ticks: int = 0  # 0 -> matplotlib default; >=2 -> N evenly spaced incl min/mid/max
+    # colourbar typography: label / tick-number sizes multiply font_scale (on
+    # their 10 pt / 9 pt bases) independently; labelpad is the gap between the
+    # label and the tick numbers in printed points (None -> matplotlib default)
+    cbar_label_scale: float = 1.0
+    cbar_tick_scale: float = 1.0
+    cbar_labelpad_pt: float | None = None
     # per-group colourbar number format: "auto" | "scientific" | "arb" | a digit count like "2"
     tickfmt_mosa_com: str = "auto"
     tickfmt_mosa_fwhm: str = "auto"
@@ -1011,6 +1017,59 @@ def add_colorbar(
             if f is not None:
                 cb.ax.yaxis.set_major_formatter(f)
 
-    cb.set_label(text, fontsize=10 * style.font_scale)
-    cb.ax.tick_params(labelsize=9 * style.font_scale)
+    cb.set_label(
+        text,
+        fontsize=10 * style.font_scale * style.cbar_label_scale,
+        labelpad=None if style.cbar_labelpad_pt is None else float(style.cbar_labelpad_pt),
+    )
+    cb.ax.tick_params(labelsize=9 * style.font_scale * style.cbar_tick_scale)
     return cb
+
+
+def apply_axis_tickfmt(
+    ax,
+    style: "PlotStyle | None",
+    group: str | None,
+    *,
+    axis: str = "y",
+    exp_fontsize: float | None = None,
+):
+    """Apply the per-group tick number format to a plain axes axis.
+
+    Mirrors :func:`add_colorbar`'s per-group formats for LINE plots (the
+    profiles traces): ``"scientific"`` renders mantissa ticks plus our own
+    ``×10ⁿ`` exponent text (a static artist, like :func:`_apply_scientific` —
+    matplotlib's built-in ``scilimits`` offset resets its order of magnitude
+    under the constrained-layout multi-draw and silently shows nothing); a
+    digit count fixes the decimals; ``"auto"`` leaves matplotlib's default;
+    ``"arb"`` is ignored — hiding the numbers of a value axis carrying a curve
+    has no meaning. *exp_fontsize* sizes the exponent text (default
+    ``9 * font_scale * offset_scale_for(group)``, the colourbar convention).
+    """
+    if style is None:
+        return
+    fmt = style.tickfmt_for(group)
+    if fmt in ("auto", "arb"):
+        return
+    axis_obj = ax.yaxis if axis == "y" else ax.xaxis
+    if fmt != "scientific":
+        f = _tick_formatter(fmt)
+        if f is not None:
+            axis_obj.set_major_formatter(f)
+        return
+    bb = ax.dataLim
+    lo, hi = (bb.ymin, bb.ymax) if axis == "y" else (bb.xmin, bb.xmax)
+    maxabs = max(abs(lo), abs(hi))
+    oom = int(math.floor(math.log10(maxabs))) if maxabs > 0 and math.isfinite(maxabs) else 0
+    if oom == 0:
+        return  # values already O(1) — mantissas would equal the values
+    scale = 10.0**oom
+    axis_obj.set_major_formatter(FuncFormatter(lambda v, _pos, s=scale: f"{v / s:g}"))
+    axis_obj.get_offset_text().set_visible(False)
+    size = exp_fontsize if exp_fontsize is not None else 9 * style.font_scale
+    size = max(size * style.offset_scale_for(group), 0.1)
+    exp = r"$\times\mathdefault{10^{%d}}$" % oom
+    if axis == "y":
+        ax.text(0.0, 1.01, exp, transform=ax.transAxes, ha="left", va="bottom", fontsize=size)
+    else:
+        ax.text(1.01, 0.0, exp, transform=ax.transAxes, ha="left", va="bottom", fontsize=size)

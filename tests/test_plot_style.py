@@ -846,3 +846,70 @@ def test_trace_height_cm_roundtrips_and_defaults():
     # old persisted styles (no field) load with the default
     st_old = style_from_json(style_to_json(PlotStyle()))
     assert trace_height_cm(st_old) == 3.0
+
+
+def _cbar_fig():
+    fig = Figure()
+    FigureCanvasAgg(fig)
+    ax = fig.add_subplot(111)
+    im = ax.imshow(np.linspace(0.0, 1.0, 20).reshape(4, 5))
+    return fig, ax, im
+
+
+def test_cbar_typography_knobs_applied():
+    fig, ax, im = _cbar_fig()
+    st = PlotStyle(cbar_label_scale=2.0, cbar_tick_scale=0.5, cbar_labelpad_pt=17.0)
+    cb = add_colorbar(fig, im, ax, "value", st)
+    assert cb.ax.yaxis.label.get_fontsize() == 20.0  # 10 * font_scale * cbar_label_scale
+    assert cb.ax.yaxis.labelpad == 17.0
+    fig.canvas.draw()
+    ticklabs = [t for t in cb.ax.get_yticklabels() if t.get_text()]
+    assert ticklabs and all(t.get_fontsize() == 4.5 for t in ticklabs)  # 9 * 1.0 * 0.5
+
+
+def test_cbar_typography_defaults_byte_compatible():
+    fig, ax, im = _cbar_fig()
+    default_pad = None
+    cb = add_colorbar(fig, im, ax, "value", PlotStyle())
+    assert cb.ax.yaxis.label.get_fontsize() == 10.0
+    fig.canvas.draw()
+    ticklabs = [t for t in cb.ax.get_yticklabels() if t.get_text()]
+    assert ticklabs and all(t.get_fontsize() == 9.0 for t in ticklabs)
+    default_pad = cb.ax.yaxis.labelpad
+    fig2, ax2, im2 = _cbar_fig()
+    cb2 = add_colorbar(fig2, im2, ax2, "value", PlotStyle(cbar_labelpad_pt=None))
+    assert cb2.ax.yaxis.labelpad == default_pad  # None -> matplotlib default, unchanged
+
+
+def test_apply_axis_tickfmt_scientific_digits_and_auto():
+    from dfxm.common.plotting import apply_axis_tickfmt
+
+    # scientific: mantissa ticks + our own x10^n exponent artist (the built-in
+    # scilimits offset silently vanishes under constrained layout, mpl 3.6)
+    fig = Figure()
+    FigureCanvasAgg(fig)
+    ax = fig.add_subplot(111)
+    ax.plot([0.0, 10.0], [0.0, 50.0])
+    apply_axis_tickfmt(ax, PlotStyle(tickfmt_strain="scientific"), "strain")
+    fig.canvas.draw()
+    assert any("10^{1}" in t.get_text() for t in ax.texts)  # exponent for 0..50
+    assert not ax.yaxis.get_offset_text().get_visible()
+    labels = [t.get_text() for t in ax.get_yticklabels() if t.get_text()]
+    assert labels and all(float(x) <= 6 for x in labels)  # mantissas, not raw values
+    # digits: fixed decimal count
+    fig2 = Figure()
+    FigureCanvasAgg(fig2)
+    ax2 = fig2.add_subplot(111)
+    ax2.plot([0.0, 10.0], [0.0, 50.0])
+    apply_axis_tickfmt(ax2, PlotStyle(tickfmt_mosa_com="2"), "mosa_com")
+    fig2.canvas.draw()
+    texts = [t.get_text() for t in ax2.get_yticklabels() if t.get_text()]
+    assert texts and all("." in t and len(t.split(".")[1]) == 2 for t in texts)
+    # auto: untouched (no offset for plain 0..50)
+    fig3 = Figure()
+    FigureCanvasAgg(fig3)
+    ax3 = fig3.add_subplot(111)
+    ax3.plot([0.0, 10.0], [0.0, 50.0])
+    apply_axis_tickfmt(ax3, PlotStyle(), "strain")
+    fig3.canvas.draw()
+    assert not any("10^{" in t.get_text() for t in ax3.texts)

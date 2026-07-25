@@ -147,6 +147,11 @@ class StyleControls(QWidget):
         self._w_cbar_label.setText(s.colorbar_label or "")
         self._w_cbar_frac.setValue(s.colorbar_fraction)
         self._w_cbar_ticks.setValue(s.colorbar_ticks)
+        self._w_cbar_label_scale.setValue(s.cbar_label_scale)
+        self._w_cbar_tick_scale.setValue(s.cbar_tick_scale)
+        self._w_cbar_labelpad.setText(
+            f"{s.cbar_labelpad_pt:g}" if s.cbar_labelpad_pt is not None else ""
+        )
         for grp, _label in _CBAR_GROUPS:
             cur = getattr(s, f"tickfmt_{grp}")
             self._w_tickfmt[grp].setCurrentIndex(
@@ -210,6 +215,9 @@ class StyleControls(QWidget):
             self._w_cbar_label,
             self._w_cbar_frac,
             self._w_cbar_ticks,
+            self._w_cbar_label_scale,
+            self._w_cbar_tick_scale,
+            self._w_cbar_labelpad,
             self._w_round_clim,
             self._w_fig_width,
             self._w_scale_umcm,
@@ -474,6 +482,43 @@ class StyleControls(QWidget):
             lambda v: (setattr(self._style, "colorbar_ticks", v), self._emit())
         )
         form.addRow("Colourbar ticks", self._w_cbar_ticks)
+
+        self._w_cbar_label_scale = QDoubleSpinBox()
+        self._w_cbar_label_scale.setRange(0.2, 5.0)
+        self._w_cbar_label_scale.setDecimals(2)
+        self._w_cbar_label_scale.setSingleStep(0.1)
+        self._w_cbar_label_scale.setValue(s.cbar_label_scale)
+        self._w_cbar_label_scale.valueChanged.connect(
+            lambda v: (setattr(self._style, "cbar_label_scale", v), self._emit())
+        )
+        form.addRow("Cbar label size ×", self._w_cbar_label_scale)
+
+        self._w_cbar_tick_scale = QDoubleSpinBox()
+        self._w_cbar_tick_scale.setRange(0.2, 5.0)
+        self._w_cbar_tick_scale.setDecimals(2)
+        self._w_cbar_tick_scale.setSingleStep(0.1)
+        self._w_cbar_tick_scale.setValue(s.cbar_tick_scale)
+        self._w_cbar_tick_scale.valueChanged.connect(
+            lambda v: (setattr(self._style, "cbar_tick_scale", v), self._emit())
+        )
+        form.addRow("Cbar tick size ×", self._w_cbar_tick_scale)
+
+        self._w_cbar_labelpad = QLineEdit()
+        self._w_cbar_labelpad.setPlaceholderText("(default)")
+        if s.cbar_labelpad_pt is not None:
+            self._w_cbar_labelpad.setText(f"{s.cbar_labelpad_pt:g}")
+
+        def _set_labelpad(text: str) -> None:
+            t = text.strip()
+            try:
+                pad = float(t) if t else None
+            except ValueError:
+                pad = None
+            self._style.cbar_labelpad_pt = pad
+            self._emit()
+
+        self._w_cbar_labelpad.textChanged.connect(_set_labelpad)
+        form.addRow("Cbar label pad (pt)", self._w_cbar_labelpad)
 
         form.addRow(QLabel("<b>Colourbar — per group</b>"))
         self._w_tickfmt: dict[str, QComboBox] = {}

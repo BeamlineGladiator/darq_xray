@@ -40,6 +40,7 @@ from ..common.plotting import (
     add_colorbar,
     apply_axes_margins,
     apply_axes_mode,
+    apply_axis_tickfmt,
     apply_text_scale,
     box_drift_note,
     draw_scale_bar,
@@ -952,6 +953,10 @@ def _draw_trace_axes(ax, fld, geom, *, linewidth, color, font_scale, style, show
     ax.tick_params(axis="both", labelsize=10 * fs)
     ax.yaxis.get_offset_text().set_fontsize(10 * fs)
     ax.xaxis.get_offset_text().set_fontsize(10 * fs)
+    # value axis follows the field's per-quantity tick format (e.g. scientific
+    # for strain only) — same knobs the colourbars use; the exponent text
+    # follows the TRACE font scale, not the map one
+    apply_axis_tickfmt(ax, style, GROUP_BY_KIND.get(fld["attrs"].get("kind")), exp_fontsize=10 * fs)
 
 
 # Public aliases for the compose adapters (the composer draws into its own axes;

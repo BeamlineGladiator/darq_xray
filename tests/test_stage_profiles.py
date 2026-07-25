@@ -1296,3 +1296,55 @@ def test_render_replot_skips_malformed_job_renders_good_one(tmp_path):
     res = PR.render_replot(str(h5), jobs, None, None, str(tmp_path / "rp"))
     assert len(res.jobs) == 1
     assert any("malformed job spec" in s for s in res.skipped)
+
+
+def test_trace_yaxis_follows_group_tickfmt():
+    """tickfmt_strain='scientific' must reach the strain TRACE y axis (while a
+    field of another group stays on matplotlib's default formatting)."""
+    from dfxm.common.plotting import PlotStyle
+
+    n = 100
+    dist = np.linspace(0.0, 20.0, n)
+
+    def fld(vid, kind):
+        return {
+            "vid": vid,
+            "attrs": {
+                "cbar_label": "value",
+                "kind": kind,
+                "source_volume": "obl.h5",
+                "title": "t",
+                "cmap": "viridis",
+            },
+            "value_mean": np.linspace(0.0, 50.0, n),  # plain range: no auto-offset
+            "value_std": None,
+        }
+
+    geom = {"distance": dist, "L": 20.0}
+    st = PlotStyle(tickfmt_strain="scientific", show_title=False)
+    fig_s = PR.build_trace_figure(
+        fld("strain", "strain"),
+        geom,
+        aspect_wh=(4.0, 3.0),
+        width_in=4.0,
+        linewidth=2.0,
+        color="",
+        font_scale=1.0,
+        style=st,
+    )
+    ax_s = fig_s.axes[0]
+    fig_s.canvas.draw()
+    assert any("10^{1}" in t.get_text() for t in ax_s.texts)  # scientific exponent shown
+    fig_m = PR.build_trace_figure(
+        fld("mosa_com_mu", "mosa_com"),
+        geom,
+        aspect_wh=(4.0, 3.0),
+        width_in=4.0,
+        linewidth=2.0,
+        color="",
+        font_scale=1.0,
+        style=st,
+    )
+    ax_m = fig_m.axes[0]
+    fig_m.canvas.draw()
+    assert not any("10^{" in t.get_text() for t in ax_m.texts)  # other group untouched

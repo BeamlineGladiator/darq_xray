@@ -815,3 +815,23 @@ def test_custom_group_mode_uncommitted_until_text():
     assert row.group_label == "M1"
     w._row_group_label.setText("")
     assert row.group_label == "M1"
+
+
+def test_style_controls_cbar_typography_round_trip():
+    from gui.widgets.export_dialog import StyleControls
+
+    st = PlotStyle(cbar_label_scale=1.7, cbar_tick_scale=0.8, cbar_labelpad_pt=12.0)
+    c = StyleControls(st)
+    assert c._w_cbar_label_scale.value() == 1.7
+    assert c._w_cbar_tick_scale.value() == 0.8
+    assert c._w_cbar_labelpad.text() == "12"
+    st2 = PlotStyle()
+    c.set_style(st2)  # rebind + sync: defaults displayed, no leak from st
+    assert c._w_cbar_label_scale.value() == 1.0
+    assert c._w_cbar_labelpad.text() == ""
+    c._w_cbar_labelpad.setText("7.5")
+    assert st2.cbar_labelpad_pt == 7.5
+    c._w_cbar_label_scale.setValue(2.0)
+    assert st2.cbar_label_scale == 2.0
+    c._w_cbar_labelpad.setText("")
+    assert st2.cbar_labelpad_pt is None
