@@ -266,6 +266,7 @@ def _stretch_shared_bar(node, pids, bar_ax, axes_by_id, data_by_id):
     if not member_axes:
         bar_ax.set_axis_off()
         return
+    fig = bar_ax.figure
     bpos = bar_ax.get_position()
     if isinstance(node, Col):
         top = max(ax.get_position().y1 for ax in member_axes)
@@ -275,6 +276,99 @@ def _stretch_shared_bar(node, pids, bar_ax, axes_by_id, data_by_id):
         left = min(ax.get_position().x0 for ax in member_axes)
         right = max(ax.get_position().x1 for ax in member_axes)
         bar_ax.set_position([left, bpos.y0, right - left, bpos.height])
+    # End tick labels sit centred ON the bar's end ticks, so a bar flush with
+    # the group's box span pokes half a label past each end — past the canvas
+    # edge for an outermost group, or into a neighbouring row's panels
+    # (real-data finding, 2026-07-25). Measure the decorated extent once and
+    # inset the bar ends so every decoration stays inside the group span.
+    fig.canvas.draw()
+    ren = fig.canvas.get_renderer()
+    bb = bar_ax.get_tightbbox(ren)
+    pos = bar_ax.get_position()
+    if isinstance(node, Col):
+        span_lo, span_hi = (
+            fig.transFigure.transform((0.0, bottom))[1],
+            fig.transFigure.transform((0.0, top))[1],
+        )
+        under = max(0.0, span_lo - bb.y0)
+        over = max(0.0, bb.y1 - span_hi)
+        if under or over:
+            h_px = fig.get_size_inches()[1] * fig.dpi
+            bar_ax.set_position(
+                [pos.x0, pos.y0 + under / h_px, pos.width, pos.height - (under + over) / h_px]
+            )
+    else:
+        span_lo, span_hi = (
+            fig.transFigure.transform((left, 0.0))[0],
+            fig.transFigure.transform((right, 0.0))[0],
+        )
+        under = max(0.0, span_lo - bb.x0)
+        over = max(0.0, bb.x1 - span_hi)
+        if under or over:
+            w_px = fig.get_size_inches()[0] * fig.dpi
+            bar_ax.set_position(
+                [pos.x0 + under / w_px, pos.y0, pos.width - (under + over) / w_px, pos.height]
+            )
+
+
+def _align_axis_labels(fig, layout, axes_by_id, data_by_id):
+    """Align y labels within each Col run and x labels within each Row run.
+
+    Margin sharing aligns a stack's panel BOXES, but each matplotlib y label
+    still sits just outside its own panel's tick numbers — panels with
+    different tick widths got visibly staggered labels (real-data finding,
+    2026-07-25). The shared margin already reserves the widest member's
+    decoration space, so aligning inside it cannot overflow the canvas.
+
+    ``Figure.align_ylabels`` only groups gridspec-backed axes and silently
+    ignores the composer's absolutely-placed ones, so the alignment is applied
+    manually: shift every label of a run to the outermost one via
+    ``set_label_coords`` (display-space shift converted to axes fraction).
+    """
+    fig.canvas.draw()
+    ren = fig.canvas.get_renderer()
+
+    def live(children):
+        return [
+            axes_by_id[c.panel_id]
+            for c in children
+            if isinstance(c, PanelRef)
+            and c.panel_id in axes_by_id
+            and data_by_id[c.panel_id].kind != "placeholder"
+        ]
+
+    def align_y(axs):
+        axs = [ax for ax in axs if ax.get_ylabel()]
+        if len(axs) < 2:
+            return
+        target = min(ax.yaxis.label.get_window_extent(ren).x0 for ax in axs)
+        for ax in axs:
+            ext = ax.yaxis.label.get_window_extent(ren)
+            anchor = ax.yaxis.label.get_transform().transform(ax.yaxis.label.get_position())
+            new_x_disp = anchor[0] - (ext.x0 - target)
+            x_axes = ax.transAxes.inverted().transform((new_x_disp, 0.0))[0]
+            ax.yaxis.set_label_coords(x_axes, 0.5)
+
+    def align_x(axs):
+        axs = [ax for ax in axs if ax.get_xlabel()]
+        if len(axs) < 2:
+            return
+        target = min(ax.xaxis.label.get_window_extent(ren).y0 for ax in axs)
+        for ax in axs:
+            ext = ax.xaxis.label.get_window_extent(ren)
+            anchor = ax.xaxis.label.get_transform().transform(ax.xaxis.label.get_position())
+            new_y_disp = anchor[1] - (ext.y0 - target)
+            y_axes = ax.transAxes.inverted().transform((0.0, new_y_disp))[1]
+            ax.xaxis.set_label_coords(0.5, y_axes)
+
+    def walk(node):
+        if isinstance(node, (Row, Col)):
+            axs = live(node.children)
+            (align_y if isinstance(node, Col) else align_x)(axs)
+            for c in node.children:
+                walk(c)
+
+    walk(layout)
 
 
 def _wrap_bar_node(node, bar_leaf):
@@ -518,6 +612,27 @@ def render_recipe(
         if cell is not None and cell.ax is not None:
             _draw_label(cell.ax, text, style, recipe.compose)
 
+    # Shared colorbars are drawn NOW, before the measure pass, so the bar's own
+    # decorations (tick numbers, offset text, vertical label) get measured
+    # margins and reserved space like any panel's. Drawing them after placement
+    # left them with no reserved room — they spilled over the next column's
+    # panels or off the canvas (real-data finding, 2026-07-25). The bar's
+    # cross-dimension is still corrected after placement (`_stretch_shared_bar`).
+    for _node, grp, pids, _bar_leaf, bar_ax in bar_specs:
+        rep_pid = next((pid for pid in pids if im_by_pid.get(pid) is not None), None)
+        if rep_pid is None:
+            bar_ax.set_axis_off()  # all-placeholder group: no bar, no phantom margins
+            continue
+        add_colorbar(
+            fig,
+            im_by_pid[rep_pid],
+            cell_by_pid[rep_pid].ax,
+            _cbar_label(data_by_id[rep_pid]),
+            style,
+            group=grp,
+            cax=bar_ax,
+        )
+
     measure_cells(fig, list(cells.values()), pad_in=0.02)
     gutter_in = recipe.compose.gutter_cm * _IN_PER_CM
     pad_in = recipe.compose.padding_cm * _IN_PER_CM
@@ -561,22 +676,13 @@ def render_recipe(
             axes_by_id[pid], style.scale_bar_length_um, style=style, fixed_scale_um_per_cm=final_eff
         )
 
-    for node, grp, pids, _bar_leaf, bar_ax in bar_specs:
-        # Stretch the bar to the group's REAL placed span before drawing its
-        # content — the provisional box from `_apply_shared_colorbars` only
-        # reserved solver space (see the comment there).
+    for node, _grp, pids, _bar_leaf, bar_ax in bar_specs:
+        # The bar CONTENT was drawn before the measure pass (so its decorations
+        # have reserved margins); here only its cross-dimension is corrected to
+        # the group's real placed span.
         _stretch_shared_bar(node, pids, bar_ax, axes_by_id, data_by_id)
-        rep_pid = next((pid for pid in pids if im_by_pid.get(pid) is not None), None)
-        if rep_pid is not None:
-            add_colorbar(
-                fig,
-                im_by_pid[rep_pid],
-                axes_by_id[rep_pid],
-                _cbar_label(data_by_id[rep_pid]),
-                style,
-                group=grp,
-                cax=bar_ax,
-            )
+
+    _align_axis_labels(fig, recipe.layout, axes_by_id, data_by_id)
 
     if gutter_leaf is not None and gutter_scale is not None:
         # Recompute the shared scale FRESH from final cell sizes (a

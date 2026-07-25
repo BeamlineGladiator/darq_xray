@@ -832,10 +832,18 @@ anywhere (`fig.set_layout_engine("none")` throughout, same as `layout.py`).
      pinned-width re-placement) has given every member axes its REAL final
      position, `_stretch_shared_bar` corrects the bar axes to the group's
      actual placed span (`min`/`max` over the members' `get_position()`, on
-     the shared axis) before its colourbar content is drawn — a group with no
-     non-placeholder member just hides the bar axes (`set_axis_off()`) instead
-     of leaving a blank default-ticked one. The bar's actual colourbar content
-     (`add_colorbar(..., cax=bar_ax)`) is drawn *after* this stretch.
+     the shared axis), then measures the bar's decorated tightbbox once and
+     insets its ends so the end tick labels (centred ON the bar's end ticks)
+     stay INSIDE the group span — a flush bar poked half a label past each
+     end, off-canvas for an outermost group or into a neighbouring row
+     (real-data finding, 2026-07-25). A group with no non-placeholder member
+     just hides the bar axes (`set_axis_off()`) instead of leaving a blank
+     default-ticked one. The bar's actual colourbar content
+     (`add_colorbar(..., cax=bar_ax)`) is drawn *before* the measure pass
+     (step 9) so the bar's own tick numbers, offset text, and vertical label
+     get measured margins — reserved envelope space — like any panel's;
+     drawing it after placement left those decorations with no room at all
+     (they spilled over the next column's panels or off the canvas).
   7. **Scale-bar mode** (`_resolve_scale_bar_kwargs`, now takes the shared
      `notes` list) — per `compose.scale_bar_mode`: `"per-panel"` leaves every
      map's `scale_bar` kwarg as `None` (follows `style.scale_bar`);
@@ -906,12 +914,19 @@ anywhere (`fig.set_layout_engine("none")` throughout, same as `layout.py`).
       (`fixed_scale_um_per_cm = ext_x_um / (cell.w_in * 2.54)`, recomputed
       post-rescale) for every panel `scale_bar_wanted` (step 8) — this is the
       first point a bar's true printed-point thickness is baked in. Then each
-      shared bar's real colourbar content (`_stretch_shared_bar` then
-      `add_colorbar(cax=bar_ax)`, picking the first member with real data as
-      the source image/label) and the gutter scale bar's content
-      (`draw_scale_bar` with an xlim spanning the gutter cell's own final
-      width at a shared µm/cm recomputed fresh from final cell sizes too, same
-      rescale concern as the per-panel bars).
+      shared bar is span-corrected (`_stretch_shared_bar` — its colourbar
+      content was already drawn pre-measure, see step 6; here only its
+      cross-dimension and end-insets are applied), the gutter scale bar's
+      content is drawn (`draw_scale_bar` with an xlim spanning the gutter
+      cell's own final width at a shared µm/cm recomputed fresh from final
+      cell sizes too, same rescale concern as the per-panel bars), and
+      `_align_axis_labels` walks the recipe layout aligning y labels within
+      every `Col` run and x labels within every `Row` run to the outermost
+      member's label position via `set_label_coords` (manual on purpose —
+      `Figure.align_ylabels` only groups gridspec-backed axes and silently
+      ignores the composer's absolutely-placed ones; the shared run margin
+      already reserves the widest member's decoration space, so the shift
+      cannot overflow).
   13. `TextCell` contents (centred text in its now-placed axes).
   14. **Drift guard** — `box_drift_note` per panel axes against its final
       `SizedCell.w_in`/`h_in`, appended to `notes` (never raised).

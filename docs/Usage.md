@@ -1395,13 +1395,22 @@ button:
     text is typed) — a **pinned height** in cm (0 = off, the row sizes itself from
     its content), a **One colorbar for this group** checkbox
     (`shared_colorbar`), and **shared colour limits** as `lo,hi`
-    (`shared_clim`; blank = union of the member panels' own ranges).
+    (`shared_clim`; blank = union of the member panels' own ranges). The
+    shared bar reserves real space for its own tick numbers and label (they
+    can never spill over a neighbouring panel or off the page), and its ends
+    are inset slightly from the group's edges so the end tick numbers stay
+    inside the group's span.
   - **Col** — the same group-label control, pinned-height control (here
     **pinned width**, cm, 0 = off), one-colorbar checkbox, and shared colour
     limits as Row, plus a **Shared x axis (bottom labels only)** checkbox
     (`shared_x`).
   - **Spacer** — its width and height in cm.
   - **Text** — its text string plus its box's width and height in cm.
+
+  Within any column of stacked panels the y-axis labels are automatically
+  aligned to one x position (and x-axis labels within a row to one y), even
+  when the panels' tick numbers have different widths — so e.g. a strain
+  trace's label lines up with its mosaicity neighbours'.
 - **Export…** opens a directory picker and writes the recipe with
   `dfxm.compose.render.export_recipe` (the same formats/DPI the recipe's
   current style specifies — exactly what the live preview is showing you,

@@ -212,14 +212,25 @@ def test_shared_colorbar_unified_clim_and_single_bar(tmp_path):
     cbar_axes = [ax for ax in res.figure.axes if ax not in res.axes_by_id.values()]
     assert len(cbar_axes) == 1
     # the bar must span the group's REAL placed envelope (top of "a" to bottom
-    # of "b"), not a provisional content-box guess that falls short of it.
+    # of "b"), not a provisional content-box guess that falls short of it —
+    # minus the small end-insets that keep its end tick labels INSIDE the
+    # span (2026-07-25: a flush bar poked half a tick label past each end,
+    # off-canvas or into a neighbouring row).
     bar_ax = cbar_axes[0]
     pos_a, pos_b = res.axes_by_id["a"].get_position(), res.axes_by_id["b"].get_position()
     group_top, group_bottom = max(pos_a.y1, pos_b.y1), min(pos_a.y0, pos_b.y0)
+    span = group_top - group_bottom
     bar_pos = bar_ax.get_position()
-    tol = 0.03 * (group_top - group_bottom)
-    assert abs(bar_pos.y1 - group_top) < tol
-    assert abs(bar_pos.y0 - group_bottom) < tol
+    eps = 1e-6
+    assert group_bottom - eps <= bar_pos.y0 and bar_pos.y1 <= group_top + eps  # inside the span
+    assert bar_pos.y1 - bar_pos.y0 > 0.8 * span  # and covering most of it
+    res.figure.canvas.draw()
+    ren = res.figure.canvas.get_renderer()
+    bb = bar_ax.get_tightbbox(ren)
+    h_px = res.figure.get_size_inches()[1] * res.figure.dpi
+    lo = res.figure.transFigure.transform((0.0, group_bottom))[1]
+    hi = res.figure.transFigure.transform((0.0, group_top))[1]
+    assert bb.y0 >= lo - 0.5 and bb.y1 <= hi + 0.5, (bb, lo, hi, h_px)  # decorations inside too
 
 
 def test_one_panel_scale_bar_only_designated_panel(tmp_path):
@@ -424,3 +435,132 @@ def test_export_honours_style_overrides_formats_and_dpi(tmp_path, monkeypatch):
     )
     assert [os.path.splitext(p)[1] for p in paths] == [".svg"]
     assert recorded == {"demo.svg": 72}
+
+
+def test_shared_colorbar_decorations_reserved_not_overlapping(tmp_path):
+    """Real-data finding (2026-07-25): the shared bar was drawn AFTER the
+    measure pass, so its tick numbers + label had no reserved space — they ran
+    off-canvas (rightmost group) or over the next column's panels. The bar must
+    be drawn pre-measure so its decorations are measured like any panel's."""
+    import h5py as _h
+
+    # mirror the real failing conditions: axes_mode "none" (panels reserve no
+    # margins) + a long vertical colorbar label + strain-magnitude ticks.
+    path = tmp_path / "obl.h5"
+    u = np.linspace(-10.0, 10.0, 41)
+    v = np.linspace(-8.0, 8.0, 33)
+    uu, vv = np.meshgrid(u, v)
+    with _h.File(path, "w") as f:
+        g = f.create_group("strain")
+        g.attrs.update(
+            kind="strain",
+            cbar_label="Strain (cot method)",
+            cmap="RdBu_r",
+            title="s",
+            vmin=-0.00085,
+            vmax=0.00085,
+        )
+        sg = g.create_group("obl")
+        sg.create_dataset("slices", data=((uu + vv) * 1e-4)[None, ...].astype("f4"))
+        sg.create_dataset("u_um", data=u)
+        sg.create_dataset("v_um", data=v)
+        sg.create_dataset("offsets_um", data=np.array([0.0]))
+    h5 = str(path)
+    mk = lambda pid: PanelDef(  # noqa: E731
+        pid,
+        PanelSource(h5, "slice_plane", {"volume_id": "strain", "slice_name": "obl", "plane": 0}),
+    )
+    r = FigureRecipe(
+        "sharedbb",
+        {"scale_um_per_cm": 5.0, "show_title": False, "axes_mode": "none"},
+        ComposeStyle(),
+        Row(
+            [
+                Col(
+                    [PanelRef("a"), PanelRef("b")],
+                    shared_colorbar=True,
+                    shared_clim=(-0.00085, 0.00085),
+                ),
+                PanelRef("c"),
+            ]
+        ),
+        [mk("a"), mk("b"), mk("c")],
+    )
+    res = render_recipe(r)
+    fig = res.figure
+    fig.canvas.draw()
+    ren = fig.canvas.get_renderer()
+    bar_ax = next(ax for ax in fig.axes if ax not in res.axes_by_id.values())
+    bb = bar_ax.get_tightbbox(ren)
+    w_px = fig.get_size_inches()[0] * fig.dpi
+    h_px = fig.get_size_inches()[1] * fig.dpi
+    assert bb.x1 <= w_px + 0.5 and bb.y1 <= h_px + 0.5 and bb.x0 >= -0.5 and bb.y0 >= -0.5, (
+        f"bar decorations leave the canvas: {bb} vs {w_px}x{h_px}"
+    )
+    cb = res.axes_by_id["c"].get_window_extent(ren)
+    overlaps = bb.x0 < cb.x1 and cb.x0 < bb.x1 and bb.y0 < cb.y1 and cb.y0 < bb.y1
+    assert not overlaps, f"bar decorations overlap panel c: {bb} vs {cb}"
+
+
+def test_stacked_trace_ylabels_aligned(tmp_path):
+    """Albert's 2026-07-25 real-data finding: in a shared-x trace stack the
+    strain panel's y label sat at a different x than its neighbours (its tick
+    numbers have a different width). Labels in a Col run must share ONE x
+    (fig.align_ylabels)."""
+    import h5py as _h
+
+    path = tmp_path / "obl3.h5"
+    u = np.linspace(-20.0, 20.0, 81)
+    v = np.linspace(-15.0, 15.0, 61)
+    uu, vv = np.meshgrid(u, v)
+    with _h.File(path, "w") as f:
+        for vid, val_scale in (("narrow", 1.0), ("wide", 1e-5)):
+            g = f.create_group(vid)
+            g.attrs.update(
+                kind="raw_sum",
+                cbar_label="value",
+                cmap="gray",
+                title=vid,
+                vmin=-40.0 * val_scale,
+                vmax=40.0 * val_scale,
+            )
+            sg = g.create_group("obl")
+            sg.create_dataset("slices", data=((uu + vv) * val_scale)[None, ...].astype("f4"))
+            sg.create_dataset("u_um", data=u)
+            sg.create_dataset("v_um", data=v)
+            sg.create_dataset("offsets_um", data=np.array([0.0]))
+    job = {
+        "name": "obl",
+        "offset_um": 0.0,
+        "start_uv": [-8.0, -6.0],
+        "end_uv": [8.0, 6.0],
+        "reference": "narrow",
+    }
+    r = FigureRecipe(
+        "align",
+        {"scale_um_per_cm": 5.0, "trace_scale_um_per_cm": 5.0, "show_title": False},
+        ComposeStyle(),
+        Col([PanelRef("tn"), PanelRef("tw")], shared_x=True),
+        [
+            PanelDef(
+                "tn", PanelSource(str(path), "profiles_trace", {"job": job, "field": "narrow"})
+            ),
+            PanelDef("tw", PanelSource(str(path), "profiles_trace", {"job": job, "field": "wide"})),
+        ],
+    )
+    res = render_recipe(r)
+    fig = res.figure
+    fig.canvas.draw()
+    ren = fig.canvas.get_renderer()
+    exts = [res.axes_by_id[pid].yaxis.label.get_window_extent(ren) for pid in ("tn", "tw")]
+    # the fixture must genuinely produce different tick widths, else this test
+    # could pass vacuously — assert the discrimination premise too
+    tick_w = [
+        max(
+            (t.get_window_extent(ren).width for t in res.axes_by_id[pid].get_yticklabels()),
+            default=0.0,
+        )
+        for pid in ("tn", "tw")
+    ]
+    assert abs(tick_w[0] - tick_w[1]) > 5.0, f"fixture not discriminating: tick widths {tick_w}"
+    assert abs(exts[0].x0 - exts[1].x0) < 1.5, f"ylabels not aligned: {[e.x0 for e in exts]}"
