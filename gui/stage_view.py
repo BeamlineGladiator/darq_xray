@@ -133,6 +133,7 @@ class StageView(QWidget):
         btn_row.addWidget(self._cancel_btn)
         # profiles: an interactive line picker (built lazily on click)
         self._pick_btn: QPushButton | None = None
+        self._jobs_marks_btn: QPushButton | None = None
         if stage_name == "profiles":
             self._pick_btn = QPushButton("Pick line…")
             self._pick_btn.clicked.connect(self._on_pick_line)
