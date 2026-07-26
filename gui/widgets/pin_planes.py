@@ -79,7 +79,11 @@ class PinPlanesDialog(QDialog):
             self._panel.set_rows([])
             self._status.setText(f"cannot read: {exc}")
             return
-        self._panel.set_rows(build_slice_rows(catalog))
+        try:
+            marks = _sl.read_marks(self._h5_path)
+        except Exception:  # noqa: BLE001 — marks are cosmetic here
+            marks = {}
+        self._panel.set_rows(build_slice_rows(catalog, marks=marks))
         self._panel.set_all_checked(False)  # pinning = explicit picks, not all
         self._status.setText(f"{len(self._panel._rows)} plane(s) — check the ones to pin")
 

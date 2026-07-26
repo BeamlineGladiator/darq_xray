@@ -65,6 +65,10 @@ def _noop(_frac: float, _msg: str) -> None:
     pass
 
 
+# Root-level group holding starred plane offsets (/marks/<slice_name>); every
+# enumerator of oblique_slices.h5 root groups must skip it.
+MARKS_GROUP = "marks"
+
 _DEFAULT_SLICES = json.dumps(
     [
         {
@@ -222,8 +226,10 @@ STAGE = StageSpec(
             advanced=True,
             group="Calibration",
             help=(
-                "Physical size of one detector pixel along X, in µm — sets the physical scale "
-                "the planes are defined in. From the beamline optics calibration."
+                "Physical size of one detector pixel along X, in µm, from the beamline optics "
+                "calibration — sets the physical scale the planes are defined in and, during "
+                "alignment, converts the sample-Y motor shift (mm) into detector pixels. A wrong "
+                "value misregisters the volumes and puts every plane at the wrong place."
             ),
         ),
         Param(
@@ -236,8 +242,9 @@ STAGE = StageSpec(
             advanced=True,
             group="Calibration",
             help=(
-                "Physical size of one detector pixel along Y, in µm — sets the physical scale "
-                "the planes are defined in. From the beamline optics calibration."
+                "Physical size of one detector pixel along Y, in µm, from the beamline optics "
+                "calibration — sets the physical scale the planes are defined in. A wrong value "
+                "skews every plane's vertical extent."
             ),
         ),
         Param(
@@ -265,7 +272,8 @@ STAGE = StageSpec(
             help=(
                 "Map-frame crop 'c0,c1' (map pixels, relative to the darfix window) used "
                 "during alignment — must match the crop used when the volumes were "
-                "rendered/exported. Pre-filled from the experiment's analysis window."
+                "rendered/exported (blank = full width). Pre-filled from the experiment's "
+                "analysis window."
             ),
         ),
         Param(
@@ -281,7 +289,8 @@ STAGE = StageSpec(
             help=(
                 "Map-frame crop 'r0,r1' (map pixels, relative to the darfix window) used "
                 "during alignment — must match the crop used when the volumes were "
-                "rendered/exported. Pre-filled from the experiment's analysis window."
+                "rendered/exported (blank = full height). Pre-filled from the experiment's "
+                "analysis window."
             ),
         ),
         Param(
@@ -310,6 +319,7 @@ STAGE = StageSpec(
             "range_pct",
             ParamType.FLOAT,
             "Range percentile",
+            unit="%",
             default=99.5,
             advanced=True,
             group="Alignment",
@@ -433,7 +443,8 @@ STAGE = StageSpec(
             help=(
                 "JSON list of pinned single-plane specs, normally written by the Pin planes… "
                 "dialog (exact stored sweep geometry, snapped to stored planes). Only used "
-                "when 'Run pinned planes only' is ticked."
+                "when 'Run pinned planes only' is ticked — blank there raises an error asking "
+                "you to open Pin planes… or untick it."
             ),
         ),
         Param(
@@ -960,16 +971,21 @@ def _find_slice_group(f, slice_name, volume=None):
     Slice geometry is identical across volumes, so any volume that carries the
     slice works; *volume* forces a specific one.
     """
-    vids = [volume] if volume else list(f.keys())
+    vids = [volume] if volume else [k for k in f.keys() if k != MARKS_GROUP]
     for vid in vids:
-        if vid not in f:
+        if vid not in f or not isinstance(f[vid], h5py.Group):
             continue
         g = f[vid]
-        if slice_name in g and "offsets_um" in g[slice_name]:
+        if (
+            slice_name in g
+            and isinstance(g[slice_name], h5py.Group)
+            and "offsets_um" in g[slice_name]
+        ):
             return vid, g[slice_name]
+    volumes = [k for k in f.keys() if k != MARKS_GROUP and isinstance(f[k], h5py.Group)]
     raise StageUserError(
         f"slice {slice_name!r} not found in any volume group of the file",
-        hint=f"volumes present: {', '.join(f.keys()) or '(none)'} — pick a slice "
+        hint=f"volumes present: {', '.join(volumes) or '(none)'} — pick a slice "
         "name from a swept oblique_slices.h5.",
     )
 
@@ -1017,6 +1033,70 @@ def build_pinned_spec(h5_path, slice_name, offsets, *, volume=None) -> list[dict
             }
         )
     return specs
+
+
+# -----------------------------------------------------------------------------
+# Marks (starred planes; shared by the GUI dialogs and the profiles bridge)
+# -----------------------------------------------------------------------------
+def read_marks(h5_path_or_file) -> dict[str, list[float]]:
+    """All marked offsets, ``{slice_name: [offset_um, ...]}`` (sorted).
+
+    Accepts a path or an open ``h5py.File``. A missing ``/marks`` group means
+    no marks; malformed children (non-datasets, non-numeric) are skipped, so a
+    hand-edited file degrades to fewer marks, never an error.
+    """
+
+    def _read(f):
+        out: dict[str, list[float]] = {}
+        mg = f.get(MARKS_GROUP)
+        if not isinstance(mg, h5py.Group):
+            return out
+        for sname, ds in mg.items():
+            if not isinstance(ds, h5py.Dataset):
+                continue
+            try:
+                offs = np.asarray(ds[()], np.float64).ravel()
+            except (TypeError, ValueError):
+                continue
+            out[str(sname)] = sorted(float(o) for o in offs)
+        return out
+
+    if isinstance(h5_path_or_file, h5py.File):
+        return _read(h5_path_or_file)
+    with h5py.File(h5_path_or_file, "r") as f:
+        return _read(f)
+
+
+def write_marks(h5_path, slice_name, offsets_um) -> list[float]:
+    """Replace *slice_name*'s marks with *offsets_um* (snapped to stored planes).
+
+    Offsets snap to the nearest stored plane (the ``resolve_plane_index``
+    rule), collapse duplicates, and are stored sorted; an empty list deletes
+    the dataset (and the ``/marks`` group once it is empty). Returns the
+    snapped offsets actually stored.
+    """
+    try:
+        fh = h5py.File(h5_path, "r+")
+    except OSError as exc:
+        raise StageUserError(
+            f"cannot open {h5_path!r} for writing marks: {exc}",
+            hint="Close any dialog/viewer holding the file open, then retry; "
+            "the file must be an oblique_slices.h5 from a slices run.",
+        ) from exc
+    with fh as f:
+        _vid, sg = _find_slice_group(f, slice_name)
+        stored = sg["offsets_um"][:].astype(np.float64)
+        snapped = sorted(
+            {float(stored[int(np.argmin(np.abs(stored - float(o))))]) for o in offsets_um}
+        )
+        mg = f.require_group(MARKS_GROUP)
+        if slice_name in mg:
+            del mg[slice_name]
+        if snapped:
+            mg.create_dataset(slice_name, data=np.asarray(snapped, np.float64))
+        elif len(mg.keys()) == 0:
+            del f[MARKS_GROUP]
+    return snapped
 
 
 # -----------------------------------------------------------------------------
@@ -1315,8 +1395,13 @@ def figures(result: SlicesResult, params: dict) -> list[FigureSpec]:
     with h5py.File(result.output_h5, "r") as f:
         for vid in f.keys():
             vg = f[vid]
+            if vid == MARKS_GROUP or not isinstance(vg, h5py.Group):
+                continue
             for sname in vg.keys():
-                n_planes = vg[sname]["slices"].shape[0]
+                sub = vg[sname]
+                if not (isinstance(sub, h5py.Group) and "slices" in sub):
+                    continue
+                n_planes = sub["slices"].shape[0]
                 for k in range(n_planes):
 
                     def build(style, vid=vid, sname=sname, k=k):
@@ -1387,7 +1472,7 @@ def replot_catalog(h5_path: str) -> list[ReplotEntry]:
     with h5py.File(h5_path, "r") as f:
         for vid in f.keys():
             vg = f[vid]
-            if not isinstance(vg, h5py.Group):
+            if vid == MARKS_GROUP or not isinstance(vg, h5py.Group):
                 continue
             kind = str(vg.attrs.get("kind", ""))
             group = GROUP_BY_KIND.get(kind, kind)

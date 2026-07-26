@@ -144,8 +144,13 @@ class SliceReplotDialog(QDialog):
             self._status.setText(f"cannot read: {exc}")
             return
         self._clim.set_groups(self._clim_groups(self._catalog))
+        try:
+            marks = _sl.read_marks(self._h5_path)
+        except Exception:  # noqa: BLE001 — marks are cosmetic here
+            marks = {}
         self._panel.set_rows(
-            build_slice_rows(self._catalog), section_labels=self._section_labels(self._catalog)
+            build_slice_rows(self._catalog, marks=marks),
+            section_labels=self._section_labels(self._catalog),
         )
         vids = list(dict.fromkeys(e.volume_id for e in self._catalog))
         self._panel.set_quantities([(vid, _volume_label(vid)) for vid in vids])

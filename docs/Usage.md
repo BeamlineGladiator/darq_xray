@@ -269,7 +269,7 @@ Every stage uses the same layout:
 
 | Area | What it does |
 |---|---|
-| **Parameter form** (left) | Auto-generated from the stage's schema. The few **essential** fields show first; the rest collapse under **Advanced (N settings)**, grouped by theme (Calibration, Data layout, Alignment, Appearance, Output, …). Hover any label for a tooltip. |
+| **Parameter form** (left) | Auto-generated from the stage's schema. The few **essential** fields show first; the rest collapse under **Advanced (N settings)**, grouped by theme (Calibration, Data layout, Alignment, Appearance, Output, …). Hover any label for a tooltip. Scrolling the form never changes a spin box or dropdown any more — a field only reacts to the wheel once you've clicked into it; otherwise the wheel just scrolls the page. |
 | **Help panel** (under the form) | Explains whichever field has focus — what it does, its unit, and the calibration warning where relevant. Idles on a description of the stage. |
 | **Run / Cancel + progress** | Runs the stage in a **separate process**; the bar and step text track progress; **Cancel** truly kills it. Before launching, input paths are checked on disk — a missing one blocks the run and focuses the offending field. |
 | **Status banner** (above the tabs) | Green one-liner on success; on failure, the error in plain language plus an actionable hint (the full traceback stays in **Log**). |
@@ -543,7 +543,7 @@ frame**, anchored to the mosaicity reference so they overlay the other volumes.
 | `roi_x` / `roi_y` | detector-frame crop applied at read time — **start,end** pixels on the raw detector (darfix shows its ROI as origin+size: end = origin + size). Must cover the same detector window as the other volumes, or the slices stage flags a Y-height mismatch. Pre-filled from the experiment's darfix + analysis ROIs — normally leave as-is |
 | `specific_frame_idx` | which frame to extract (blank = central) |
 | `normalize_sum` | divide the summed intensity by frame count |
-| `subtract_background` | subtract per-pixel median background before summing (default on; turn off for a plain intensity sum, e.g. a mosa-scan topograph) |
+| `subtract_background` | subtract each pixel's median across the scan's frames before summing, so only above-background signal accumulates — applies to whichever scan type the run reads (default on; turn off for a plain intensity sum, e.g. a mosa-scan topograph where the background level itself is meaningful) |
 
 **Source scan selector (`source_scan`)**
 
@@ -677,13 +677,13 @@ through the aligned volumes — all in one world frame so the slices co-register
 |---|---|
 | `slices_json` | a JSON list of plane specs (see below) |
 | `use_pinned` | run only the planes in `pinned_slices_json` instead of the full sweep — see [[#Pinned planes (fast re-runs)]] |
-| `pinned_slices_json` | JSON list of pinned single-plane specs, normally written by **Pin planes…**; only used when `use_pinned` is ticked |
+| `pinned_slices_json` | JSON list of pinned single-plane specs, normally written by **Pin planes…**; only used when `use_pinned` is ticked — blank there raises an error asking you to open **Pin planes…** or untick it |
 | `include_*` | which volumes to slice (χ/μ CoM/FWHM, strain, raw rocking sum/specific, mosa-scan sum/specific) |
 | `aligned_mosa_file` | path to `aligned_raw_mosa_volumes.h5`; leave blank to skip the mosa raw fields |
 | `include_mosa_sum` | slice the mosa-scan summed intensity (mapped to the "raw" colour group) |
 | `include_mosa_specific` | slice the mosa-scan specific-frame intensity (mapped to the "raw" colour group) |
 | `center_method` / `range_pct` | CoM colour centring |
-| `align_roi_x` / `align_roi_y` | map-frame crop (`c0,c1` / `r0,r1` map pixels, relative to the darfix window) used during alignment — must match the crop from visualize/paraview runs; pre-filled from the experiment's analysis window |
+| `align_roi_x` / `align_roi_y` | map-frame crop (`c0,c1` / `r0,r1` map pixels, relative to the darfix window) used during alignment — must match the crop from visualize/paraview runs (blank = full width/height); pre-filled from the experiment's analysis window |
 
 > [!tip] Picking the alignment ROI interactively
 > Click **Pick ROI…** (in the button row alongside Run/Cancel) to open a visual
@@ -736,6 +736,8 @@ through the aligned volumes — all in one world frame so the slices co-register
 > spec to override the vertical direction.
 
 > [!tip] Pinning one plane from a sweep
+> Prefer picking visually? **Mark planes…** (below) lets you browse the sweep
+> and star the interesting offsets without typing any JSON.
 > A sweep writes many parallel planes; each plane's offset along the normal is in
 > its PNG filename (`…__p012_+024.00um.png`) and in the `offsets_um` dataset of
 > `oblique_slices.h5`. To re-render **just** the plane you liked, pin the sweep to
@@ -893,6 +895,39 @@ changes made since the original run are reflected in the replot.
 > empty (e.g. `r0 == r1`) are silently skipped and omitted from the returned
 > paths list.
 
+#### Marking interesting planes
+
+Instead of typing offsets into a pin spec, **Mark planes…** lets you browse a
+sweep visually and star the ones worth keeping — the stars are saved directly
+into the `oblique_slices.h5` itself (a root `/marks/<slice name>` group), so
+every plane list in the app (Pin planes…, Replot…) can show which planes were
+already flagged interesting.
+
+1. Click **Mark planes…** on the slices stage panel. It opens on the same
+   chained-output file the **Pin planes…**/**Replot…** buttons use; if that
+   file doesn't exist yet, the Log tab explains you need to run slices first.
+2. Pick a **Slice** (the plane-sweep group) and a **Background** field to view
+   it against, then step through planes with **◀ plane** / **plane ▶**.
+3. Click **★ Mark** to star the plane currently showing (it un-marks if you
+   click it again); the button always reflects whether the *current* plane is
+   starred, and the status line under the image shows how many planes are
+   starred in this slice, plus an **unsaved changes** flag while there's
+   anything to save.
+4. Click **Save** to write the starred offsets for every slice you've touched
+   into `/marks` (each offset snaps to its exact stored plane). Saving briefly
+   closes and reopens the file's read handle — the view doesn't refresh
+   because only `/marks` changed, not the volume data. **Close** with unsaved
+   changes asks for confirmation before discarding them.
+5. Marked planes show as ★ in the **Pin planes…**/**Replot…** plane lists
+   (prefixed onto the row label), and a **★ only** checkbox appears next to
+   the filter box whenever the loaded file has any marks, to narrow the list
+   down to just the starred planes. Marked planes feed **Jobs from marks…** on
+   the [[#8. Line profiles (`profiles`)|profiles]] stage to turn them straight
+   into profile jobs.
+
+Re-running the slices stage rewrites `oblique_slices.h5` from scratch, so
+marks don't survive a fresh sweep — mark planes again after re-running.
+
 ### 8. Line profiles (`profiles`)
 
 Profile a straight line (or a band of parallel lines) across one slice plane —
@@ -913,7 +948,9 @@ strain and misorientation line up.
 
 > [!tip] Don't type coordinates by hand
 > Use **Pick line…** to click the endpoints on the plane — see
-> [[#Line picker (profiles)]].
+> [[#Line picker (profiles)]]. Already starred planes on the slices stage?
+> **Jobs from marks…** turns them into jobs in one guided pass — see
+> [[#Jobs from marks… (profiles)]].
 
 #### Jobs JSON: per-job `fields` and `reference`
 
@@ -1479,14 +1516,46 @@ demand with the *same* pipeline as the rendered PNGs, so they match.
 
 On the **profiles** view, click **Pick line…** to open the picker:
 
-1. Use **◀ plane / plane ▶** to scroll through the slice's planes.
-2. Click two points to set the line endpoints.
-3. The **Fields** row shows one checkbox per volume present in the slice (all
+1. Use **◀ plane / plane ▶** to scroll through the slice's planes. The info
+   line below the image adds a ★ after the offset when the current plane was
+   starred in **Mark planes…**.
+2. The **Background** dropdown switches which field group is displayed while you
+   draw (e.g. draw against `strain` instead of `raw_sum`). Switching the
+   background keeps your picked points — the line stays put over the new image.
+   Whichever group you accept with becomes the job's `reference`.
+3. Click two points to set the line endpoints.
+4. The **Fields** row shows one checkbox per volume present in the slice (all
    checked by default). Untick a field to exclude it from this job's profile —
    the ticked fields are written as a `"fields"` list into `jobs_json` for that job,
    overriding the global `restrict` for this job only.
-4. **Use line** writes `start_uv` / `end_uv` / `offset_um` / `fields` into `jobs_json`.
-5. Press **Run** to profile.
+5. **Use line** writes `start_uv` / `end_uv` / `offset_um` / `fields` /
+   `reference` into `jobs_json`.
+6. Press **Run** to profile.
+
+### Jobs from marks… (profiles)
+
+Once you've starred planes with **Mark planes…** on the slices stage, **Jobs
+from marks…** turns them straight into profile jobs without hand-typing
+offsets:
+
+1. Click **Jobs from marks…** on the profiles view. It reads `/marks` from
+   the same `consolidated_h5` file the stage form points at; if the file is
+   missing or has no marks yet, the Log tab explains what to do first (run
+   slices, then star planes with **Mark planes…**).
+2. A checklist lists every marked plane (`<slice> @ <offset> µm`, sorted by
+   slice then offset), all checked by default. Uncheck anything you don't
+   want to make into a job, then click **OK**.
+3. A **Pick line…** dialog opens once per checked plane, pre-navigated to
+   that exact offset, titled `Pick line (k/n) — <slice> @ <offset> µm` so you
+   always know which mark you're on. Draw the line (and optionally adjust
+   Background/Fields) as usual and click **Use line** — each accepted line
+   *appends* a brand-new job to `jobs_json` (unlike **Pick line…**'s own
+   button, which updates the job matching that slice name, **Jobs from
+   marks…** never touches your existing jobs, so several marks on the same
+   slice each become their own job).
+4. Cancelling any individual line-picker dialog skips just that mark; the
+   Log tab reports how many jobs were added vs. skipped when the loop ends.
+   Press **Run** to profile the new jobs.
 
 ---
 

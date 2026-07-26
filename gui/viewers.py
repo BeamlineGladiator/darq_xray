@@ -58,12 +58,20 @@ def volume_sources(stage_name: str, result, params: dict) -> dict[str, VolumeSou
 
 
 def inject_line_into_jobs(
-    jobs_json: str, slice_name: str, start_uv, end_uv, offset_um: float, fields=None
+    jobs_json: str,
+    slice_name: str,
+    start_uv,
+    end_uv,
+    offset_um: float,
+    fields=None,
+    reference=None,
 ) -> str:
     """Return a new jobs_json with the picked line written into the matching job.
 
     Updates the first job whose ``name`` equals *slice_name* (else the first job);
     if there are no jobs, creates one. ``start_uv``/``end_uv`` are 2-tuples (µm).
+    A truthy *reference* sets the job's ``"reference"`` (the background group the
+    line was drawn against); ``None`` leaves any existing value untouched.
     """
     try:
         jobs = json.loads(jobs_json) if jobs_json.strip() else []
@@ -88,4 +96,42 @@ def inject_line_into_jobs(
         target["fields"] = list(fields)
     else:
         target.pop("fields", None)
+    if reference:
+        target["reference"] = str(reference)
+    return json.dumps(jobs, indent=2)
+
+
+def append_line_job(
+    jobs_json: str,
+    slice_name: str,
+    start_uv,
+    end_uv,
+    offset_um: float,
+    fields=None,
+    reference=None,
+) -> str:
+    """Append ONE complete job to *jobs_json* — never edits existing jobs.
+
+    Unlike :func:`inject_line_into_jobs` (which updates the first job matching
+    the slice name), this always appends, so several marks on one slice each
+    become their own job (the profiles stage de-duplicates output stems for
+    same-named jobs).
+    """
+    try:
+        jobs = json.loads(jobs_json) if jobs_json.strip() else []
+    except json.JSONDecodeError:
+        jobs = []
+    if not isinstance(jobs, list):
+        jobs = []
+    job = {
+        "name": slice_name,
+        "offset_um": round(float(offset_um), 4),
+        "start_uv": [round(float(start_uv[0]), 4), round(float(start_uv[1]), 4)],
+        "end_uv": [round(float(end_uv[0]), 4), round(float(end_uv[1]), 4)],
+    }
+    if fields is not None:
+        job["fields"] = list(fields)
+    if reference:
+        job["reference"] = str(reference)
+    jobs.append(job)
     return json.dumps(jobs, indent=2)

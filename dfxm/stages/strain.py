@@ -150,8 +150,10 @@ STAGE = StageSpec(
             advanced=True,
             group="Calibration",
             help=(
-                "Physical size of one detector pixel along X, in µm — sets the lateral scale "
-                "of every map and volume. From the beamline optics calibration."
+                "Physical size of one detector pixel along X, in µm, from the beamline optics "
+                "calibration. A wrong value does not change the computed strain (that comes "
+                "only from ccmth), but it skews the physical scale of every map, volume, and "
+                "scale bar downstream."
             ),
         ),
         Param(
@@ -164,8 +166,10 @@ STAGE = StageSpec(
             advanced=True,
             group="Calibration",
             help=(
-                "Physical size of one detector pixel along Y, in µm — sets the vertical scale "
-                "of every map and volume. From the beamline optics calibration."
+                "Physical size of one detector pixel along Y, in µm, from the beamline optics "
+                "calibration. A wrong value does not change the computed strain (that comes "
+                "only from ccmth), but it skews the physical scale of every map, volume, and "
+                "scale bar downstream."
             ),
         ),
         Param(

@@ -172,8 +172,10 @@ STAGE = StageSpec(
             advanced=True,
             group="Calibration",
             help=(
-                "Physical size of one detector pixel along X, in µm. "
-                "From the beamline optics calibration."
+                "Physical size of one detector pixel along X, in µm, from the beamline optics "
+                "calibration. This is what converts the sample-Y motor shift (mm) into detector "
+                "pixels during alignment, so a wrong value misaligns layers along X as well as "
+                "scaling every reported distance."
             ),
         ),
         Param(
@@ -186,8 +188,9 @@ STAGE = StageSpec(
             advanced=True,
             group="Calibration",
             help=(
-                "Physical size of one detector pixel along Y, in µm. "
-                "From the beamline optics calibration."
+                "Physical size of one detector pixel along Y, in µm, from the beamline optics "
+                "calibration. A wrong value skews the vertical physical scale of every rendered "
+                "image and volume."
             ),
         ),
         Param(
@@ -274,9 +277,11 @@ STAGE = StageSpec(
             advanced=True,
             group="Alignment",
             help=(
-                "Subtract a per-pixel median background (across the scan's frames) before "
-                "summing. On for the standard rocking sum; turn off for a plain intensity sum "
-                "(e.g. a mosa-scan topograph that keeps the background)."
+                "Before summing, compute each pixel's median across the scan's frames and "
+                "subtract it, so only above-background diffraction signal accumulates. "
+                "Applies to whichever scan type the run reads (rocking or mosaicity source). "
+                "Keep on for the standard rocking sum; turn off for a plain intensity sum, "
+                "e.g. a mosa-scan topograph where the background level itself is meaningful."
             ),
         ),
         Param(
@@ -361,6 +366,7 @@ STAGE = StageSpec(
             "cbar_pct_lo",
             ParamType.FLOAT,
             "Colorbar pct low",
+            unit="%",
             default=1.0,
             advanced=True,
             group="Appearance",
@@ -370,6 +376,7 @@ STAGE = StageSpec(
             "cbar_pct_hi",
             ParamType.FLOAT,
             "Colorbar pct high",
+            unit="%",
             default=99.0,
             advanced=True,
             group="Appearance",

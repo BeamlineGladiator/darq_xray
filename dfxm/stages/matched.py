@@ -128,8 +128,10 @@ STAGE = StageSpec(
             advanced=True,
             group="Calibration",
             help=(
-                "Physical size of one detector pixel along X, in µm. "
-                "From the beamline optics calibration."
+                "Physical size of one detector pixel along X, in µm, from the beamline optics "
+                "calibration. This is what converts the sample-Y motor shift (mm) into detector "
+                "pixels, so a wrong value shifts the saved frame out of pixel-alignment with the "
+                "strain/mosaicity layer images."
             ),
         ),
         Param(
@@ -142,8 +144,8 @@ STAGE = StageSpec(
             advanced=True,
             group="Calibration",
             help=(
-                "Physical size of one detector pixel along Y, in µm. "
-                "From the beamline optics calibration."
+                "Physical size of one detector pixel along Y, in µm, from the beamline optics "
+                "calibration. A wrong value skews the vertical physical scale of the saved frame."
             ),
         ),
         Param(
@@ -190,6 +192,7 @@ STAGE = StageSpec(
             "auto_pct_lo",
             ParamType.FLOAT,
             "Auto pct low",
+            unit="%",
             default=1.0,
             advanced=True,
             group="Appearance",
@@ -199,6 +202,7 @@ STAGE = StageSpec(
             "auto_pct_hi",
             ParamType.FLOAT,
             "Auto pct high",
+            unit="%",
             default=95.0,
             advanced=True,
             group="Appearance",

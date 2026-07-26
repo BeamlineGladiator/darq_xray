@@ -22,21 +22,40 @@ class PlaneRow:
     number: int  # plane/layer number (integer-token filtering)
     offset: float | None  # µm offset / Z (decimal-token filtering); None = unknown
     label: str  # display text, e.g. "p118  -3.72 µm"
+    marked: bool = False  # starred in /marks — cosmetic; filtering-only
 
 
-def build_slice_rows(entries) -> list[PlaneRow]:
-    """Rows from slices ReplotEntry list — one per (slice_name, plane_idx)."""
+def build_slice_rows(entries, marks=None) -> list[PlaneRow]:
+    """Rows from slices ReplotEntry list — one per (slice_name, plane_idx).
+
+    *marks* is the ``read_marks`` mapping (slice_name -> [offset_um, ...]);
+    each marked offset stars its nearest stored plane's row.
+    """
+    marked_idx: dict[str, set[int]] = {}
+    if marks:
+        stored_by_slice: dict[str, list[float]] = {}
+        for e in entries:
+            stored_by_slice.setdefault(e.slice_name, list(e.offsets_um))
+        for sname, offs in marks.items():
+            stored = stored_by_slice.get(sname)
+            if not stored:
+                continue
+            marked_idx[sname] = {
+                min(range(len(stored)), key=lambda i: abs(stored[i] - o)) for o in offs
+            }
     seen: dict[tuple[str, int], PlaneRow] = {}
     for e in entries:
         for k, off in enumerate(e.offsets_um):
             key = (e.slice_name, k)
             if key not in seen:
+                is_marked = k in marked_idx.get(e.slice_name, ())
                 seen[key] = PlaneRow(
                     key=key,
                     section=e.slice_name,
                     number=k,
                     offset=float(off),
-                    label=f"p{k:03d}  {off:+.2f} µm",
+                    label=("★ " if is_marked else "") + f"p{k:03d}  {off:+.2f} µm",
+                    marked=is_marked,
                 )
     return list(seen.values())
 
@@ -90,8 +109,10 @@ def _half_step(offsets: list[float]) -> float:
     return diffs[len(diffs) // 2] / 2.0 if diffs else float("inf")
 
 
-def filter_rows(rows: list[PlaneRow], text: str) -> list[PlaneRow]:
+def filter_rows(rows: list[PlaneRow], text: str, *, marked_only: bool = False) -> list[PlaneRow]:
     """Rows visible under *text*. Blank -> all. Narrows only — never selects."""
+    if marked_only:
+        rows = [r for r in rows if r.marked]
     toks = parse_tokens(text)
     if not toks:
         return list(rows)

@@ -36,7 +36,7 @@ from dfxm.stages.registry import STAGE_TARGETS
 
 from .bindings import experiment_overrides
 from .form_state import FormStateStore
-from .viewers import inject_line_into_jobs, volume_sources
+from .viewers import append_line_job, inject_line_into_jobs, volume_sources
 from .widgets.help_panel import HelpPanel
 from .widgets.log_console import LogConsole
 from .widgets.param_form import ParamForm
@@ -133,10 +133,14 @@ class StageView(QWidget):
         btn_row.addWidget(self._cancel_btn)
         # profiles: an interactive line picker (built lazily on click)
         self._pick_btn: QPushButton | None = None
+        self._jobs_marks_btn: QPushButton | None = None
         if stage_name == "profiles":
             self._pick_btn = QPushButton("Pick line…")
             self._pick_btn.clicked.connect(self._on_pick_line)
             btn_row.addWidget(self._pick_btn)
+            self._jobs_marks_btn = QPushButton("Jobs from marks…")
+            self._jobs_marks_btn.clicked.connect(self._on_jobs_from_marks)
+            btn_row.addWidget(self._jobs_marks_btn)
         # slices/strain/mosaicity/rocking/profiles: re-render layers from an existing h5
         self._replot_btn: QPushButton | None = None
         if stage_name in ("slices", "strain", "mosaicity", "rocking", "profiles"):
@@ -149,6 +153,12 @@ class StageView(QWidget):
             self._pin_btn = QPushButton("Pin planes…")
             self._pin_btn.clicked.connect(self._on_pin_planes)
             btn_row.addWidget(self._pin_btn)
+        # slices: star interesting planes into /marks (built lazily on click)
+        self._mark_btn: QPushButton | None = None
+        if stage_name == "slices":
+            self._mark_btn = QPushButton("Mark planes…")
+            self._mark_btn.clicked.connect(self._on_mark_planes)
+            btn_row.addWidget(self._mark_btn)
         # ROI-grouped stages: one "Pick ROI…" button per distinct roi_group
         self._roi_buttons: dict[str, QPushButton] = {}
         _seen_groups: list[str] = []
@@ -442,15 +452,82 @@ class StageView(QWidget):
             self._tabs.setCurrentWidget(self._log)
             return
         if dlg.exec() and dlg.result:
-            start, end, off, fields = dlg.result
+            start, end, off, fields, reference = dlg.result
             new_jobs = inject_line_into_jobs(
-                vals.get("jobs_json", "") or "[]", slice_name, start, end, off, fields=fields
+                vals.get("jobs_json", "") or "[]",
+                slice_name,
+                start,
+                end,
+                off,
+                fields=fields,
+                reference=reference,
             )
             self._form.set_values({"jobs_json": new_jobs})
             self._log.append(
                 f"Picked line on '{slice_name}' @ {off:+.3f} µm -> jobs_json updated; Run to profile."
             )
             self._tabs.setCurrentWidget(self._log)
+
+    def _on_jobs_from_marks(self) -> None:
+        """One line picker per checked mark; each accepted line appends a job."""
+        vals = self._form.values()
+        h5 = vals.get("consolidated_h5", "")
+        if not h5 or not os.path.exists(h5):
+            self._log.append("Jobs from marks: set a valid 'consolidated_h5' (run slices first).")
+            self._tabs.setCurrentWidget(self._log)
+            return
+        from dfxm.stages import slices as _sl  # local import: lazy, Qt-free
+
+        try:
+            marks = _sl.read_marks(h5)
+        except Exception as exc:  # noqa: BLE001 - unreadable file
+            self._log.append(f"Jobs from marks: cannot read marks: {exc}")
+            self._tabs.setCurrentWidget(self._log)
+            return
+        if not any(marks.values()):
+            self._log.append(
+                "Jobs from marks: no marked planes in this file — star planes with "
+                "'Mark planes…' on the slices stage first."
+            )
+            self._tabs.setCurrentWidget(self._log)
+            return
+        from .widgets.jobs_from_marks import JobsFromMarksDialog  # imported on demand
+        from .widgets.line_picker import LinePickerDialog
+
+        sel_dlg = JobsFromMarksDialog(marks, parent=self)
+        if not sel_dlg.exec() or not sel_dlg.selected:
+            return
+        jobs_json = vals.get("jobs_json", "") or "[]"
+        added = skipped = 0
+        n = len(sel_dlg.selected)
+        for k, (sname, off) in enumerate(sel_dlg.selected, start=1):
+            try:
+                dlg = LinePickerDialog(
+                    h5,
+                    sname,
+                    init_offset=off,
+                    ref_pref=vals.get("reference_volume_id", ""),
+                    parent=self,
+                )
+            except Exception as exc:  # noqa: BLE001 - missing slice / unreadable file
+                self._log.append(f"Jobs from marks: {sname} @ {off:+.2f} µm failed: {exc}")
+                skipped += 1
+                continue
+            dlg.setWindowTitle(f"Pick line ({k}/{n}) — {sname} @ {off:+.2f} µm")
+            if dlg.exec() and dlg.result:
+                start, end, o, fields, reference = dlg.result
+                jobs_json = append_line_job(
+                    jobs_json, sname, start, end, o, fields=fields, reference=reference
+                )
+                added += 1
+            else:
+                skipped += 1
+        if added:
+            self._form.set_values({"jobs_json": jobs_json})
+        self._log.append(
+            f"Jobs from marks: added {added} job(s), skipped {skipped} — Run to profile."
+        )
+        self._tabs.setCurrentWidget(self._log)
 
     # -- interactive replot (lazy) ----------------------------------------
     def _on_replot(self) -> None:
@@ -579,8 +656,8 @@ class StageView(QWidget):
             )
             self._tabs.setCurrentWidget(self._log)
 
-    def _on_pin_planes(self) -> None:
-        """Open Pin planes… and write pinned_slices_json + use_pinned into the form."""
+    def _slices_output_h5(self) -> str:
+        """The slices run's consolidated h5, resolved like the run would."""
         vals = self._form.values()
         out_dir = vals.get("output_dir", "") or os.path.join(
             os.path.dirname(
@@ -588,7 +665,11 @@ class StageView(QWidget):
             ),
             "oblique_slices",
         )
-        h5 = os.path.join(out_dir, vals.get("output_h5_name", "") or "oblique_slices.h5")
+        return os.path.join(out_dir, vals.get("output_h5_name", "") or "oblique_slices.h5")
+
+    def _on_pin_planes(self) -> None:
+        """Open Pin planes… and write pinned_slices_json + use_pinned into the form."""
+        h5 = self._slices_output_h5()
 
         from .widgets.pin_planes import PinPlanesDialog  # imported on demand
 
@@ -598,6 +679,29 @@ class StageView(QWidget):
             self._log.append(
                 "Pinned planes written; 'Run pinned planes only' ticked. Run to render "
                 "(output goes to oblique_slices_pinned.h5 unless you set a name)."
+            )
+            self._tabs.setCurrentWidget(self._log)
+
+    def _on_mark_planes(self) -> None:
+        """Open Mark planes… on the slices output file (marks persist in the h5)."""
+        h5 = self._slices_output_h5()
+        if not os.path.exists(h5):
+            self._log.append(f"Mark planes: no slices file at {h5} — run slices first.")
+            self._tabs.setCurrentWidget(self._log)
+            return
+        from .widgets.mark_planes import MarkPlanesDialog  # imported on demand
+
+        try:
+            dlg = MarkPlanesDialog(h5, parent=self)
+        except Exception as exc:  # noqa: BLE001 - unreadable / empty file
+            self._log.append(f"Mark planes failed: {exc}")
+            self._tabs.setCurrentWidget(self._log)
+            return
+        dlg.exec()
+        if dlg.saved:
+            self._log.append(
+                "Marks saved into the slices file — ★ in plane lists; turn them into "
+                "profile jobs with 'Jobs from marks…' on the profiles stage."
             )
             self._tabs.setCurrentWidget(self._log)
 

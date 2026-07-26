@@ -57,6 +57,7 @@ from ..common.plotting import (
     trace_height_cm,
 )
 from ..config.models import Param, ParamType, StageSpec
+from .slices import MARKS_GROUP
 
 ProgressFn = Callable[[float, str], None]
 
@@ -213,6 +214,7 @@ STAGE = StageSpec(
             "fig_dpi",
             ParamType.INT,
             "Figure DPI",
+            unit="dpi",
             default=200,
             advanced=True,
             group="Appearance",
@@ -418,7 +420,7 @@ def _as_str(v, default=""):
 
 
 def list_volume_ids(f):
-    return [k for k in f.keys() if isinstance(f[k], h5py.Group)]
+    return [k for k in f.keys() if k != MARKS_GROUP and isinstance(f[k], h5py.Group)]
 
 
 def volume_ids_with_slice(f, slice_name):

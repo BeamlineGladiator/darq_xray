@@ -137,8 +137,10 @@ STAGE = StageSpec(
             advanced=True,
             group="Calibration",
             help=(
-                "Physical size of one detector pixel along X, in µm — sets the lateral scale of "
-                "the volumes. From the beamline optics calibration."
+                "Physical size of one detector pixel along X, in µm, from the beamline optics "
+                "calibration. This is what converts the sample-Y motor shift (mm) into detector "
+                "pixels during alignment, so a wrong value misaligns layers along X as well as "
+                "scaling every reported distance."
             ),
         ),
         Param(
@@ -151,8 +153,9 @@ STAGE = StageSpec(
             advanced=True,
             group="Calibration",
             help=(
-                "Physical size of one detector pixel along Y, in µm — sets the vertical scale of "
-                "the volumes. From the beamline optics calibration."
+                "Physical size of one detector pixel along Y, in µm, from the beamline optics "
+                "calibration. A wrong value skews the vertical physical scale of every rendered "
+                "image and volume."
             ),
         ),
         Param(
@@ -215,6 +218,7 @@ STAGE = StageSpec(
             "range_pct",
             ParamType.FLOAT,
             "Range percentile",
+            unit="%",
             default=99.5,
             advanced=True,
             group="Alignment",
