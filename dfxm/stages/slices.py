@@ -982,9 +982,10 @@ def _find_slice_group(f, slice_name, volume=None):
             and "offsets_um" in g[slice_name]
         ):
             return vid, g[slice_name]
+    volumes = [k for k in f.keys() if k != MARKS_GROUP and isinstance(f[k], h5py.Group)]
     raise StageUserError(
         f"slice {slice_name!r} not found in any volume group of the file",
-        hint=f"volumes present: {', '.join(f.keys()) or '(none)'} — pick a slice "
+        hint=f"volumes present: {', '.join(volumes) or '(none)'} — pick a slice "
         "name from a swept oblique_slices.h5.",
     )
 

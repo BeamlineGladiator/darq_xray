@@ -76,8 +76,11 @@ def test_write_marks_replaces_and_deletes(tmp_path):
 
 def test_write_marks_unknown_slice_raises(tmp_path):
     h5 = _mini(tmp_path / "s.h5")
-    with pytest.raises(StageUserError):
+    sl.write_marks(h5, "oblique_full", [0.0])  # creates /marks alongside the volumes
+    with pytest.raises(StageUserError) as ei:
         sl.write_marks(h5, "nope", [0.0])
+    assert "marks" not in ei.value.hint
+    assert "raw_sum" in ei.value.hint
 
 
 def test_read_marks_absent_and_malformed(tmp_path):

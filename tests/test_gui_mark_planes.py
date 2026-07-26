@@ -75,3 +75,34 @@ def test_dialog_loads_existing_marks(tmp_path):
     assert dlg._mark_btn.isChecked()
     assert not dlg._dirty()
     dlg.done(0)
+
+
+def test_save_reopen_failure_warns_once_and_disables_nav(tmp_path, monkeypatch):
+    """write_marks fails AND reopen() also fails: one warning, no crash, nav disabled."""
+    import gui.widgets.mark_planes as mp
+    from dfxm.common.errors import StageUserError
+
+    _app = QApplication.instance() or QApplication([])
+    h5 = _mini(tmp_path / "s.h5")
+    dlg = mp.MarkPlanesDialog(h5)
+    dlg._browser.set_plane(0)
+    dlg._mark_btn.setChecked(True)  # make a mark dirty
+    assert dlg._dirty()
+
+    def _boom_write(*_a, **_k):
+        raise StageUserError("boom", hint="h")
+
+    def _boom_reopen():
+        raise OSError("locked")
+
+    warnings: list[tuple] = []
+    monkeypatch.setattr(mp._sl, "write_marks", _boom_write)
+    monkeypatch.setattr(dlg._browser, "reopen", _boom_reopen)
+    monkeypatch.setattr(mp.QMessageBox, "warning", lambda *a, **k: warnings.append(a) or None)
+
+    dlg._on_save()  # must not raise
+
+    assert warnings, "expected at least one QMessageBox.warning call"
+    assert not dlg.saved
+    for w in (dlg._prev, dlg._next, dlg._mark_btn, dlg._slice_box, dlg._group_box):
+        assert not w.isEnabled()
