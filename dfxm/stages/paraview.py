@@ -130,8 +130,10 @@ STAGE = StageSpec(
             advanced=True,
             group="Calibration",
             help=(
-                "Physical size of one detector pixel along X, in µm — sets the voxel spacing of "
-                "the export. From the beamline optics calibration."
+                "Physical size of one detector pixel along X, in µm, from the beamline optics "
+                "calibration. This is what converts the sample-Y motor shift (mm) into detector "
+                "pixels during alignment, so a wrong value misaligns layers along X as well as "
+                "scaling every exported voxel."
             ),
         ),
         Param(
@@ -144,8 +146,8 @@ STAGE = StageSpec(
             advanced=True,
             group="Calibration",
             help=(
-                "Physical size of one detector pixel along Y, in µm — sets the voxel spacing of "
-                "the export. From the beamline optics calibration."
+                "Physical size of one detector pixel along Y, in µm, from the beamline optics "
+                "calibration. A wrong value skews the vertical voxel spacing of the export."
             ),
         ),
         Param(
@@ -255,8 +257,10 @@ STAGE = StageSpec(
             advanced=True,
             group="Alignment",
             help=(
-                "Pixel position 'x,y' of the darfix crop origin for the mosaicity maps, used "
-                "when anchoring to the reference frame."
+                "Absolute detector pixels 'x,y' — the darfix crop origin used for the mosaicity "
+                "maps, exactly as darfix's ROI widget shows it (copy verbatim, no conversion). "
+                "Used only when 'Anchor origin' is on, to place the world origin in the shared "
+                "raw-detector frame."
             ),
         ),
         Param(
@@ -267,8 +271,10 @@ STAGE = StageSpec(
             advanced=True,
             group="Alignment",
             help=(
-                "Pixel position 'x,y' of the darfix crop origin for the strain maps, used when "
-                "anchoring to the reference frame."
+                "Absolute detector pixels 'x,y' — the darfix crop origin used for the strain "
+                "maps, exactly as darfix's ROI widget shows it (copy verbatim, no conversion). "
+                "Used only when 'Anchor origin' is on, to place the world origin in the shared "
+                "raw-detector frame."
             ),
         ),
         Param(

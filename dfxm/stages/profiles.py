@@ -214,6 +214,7 @@ STAGE = StageSpec(
             "fig_dpi",
             ParamType.INT,
             "Figure DPI",
+            unit="dpi",
             default=200,
             advanced=True,
             group="Appearance",

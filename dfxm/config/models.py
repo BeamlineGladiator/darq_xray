@@ -270,8 +270,10 @@ EXPERIMENT_SCHEMA: tuple[Param, ...] = (
         unit="µm",
         calibration=True,
         help=(
-            "Detector pixel size along X in µm, from the beamline optics calibration. "
-            "Sets the physical scale of every map."
+            "Detector pixel size along X in µm, from the beamline optics calibration. Pre-fills "
+            "every stage's pixel size; several stages use it to convert the sample-Y motor shift "
+            "(mm) into detector pixels, so a wrong value misaligns layers as well as scaling "
+            "every reported distance."
         ),
     ),
     Param(
@@ -281,8 +283,9 @@ EXPERIMENT_SCHEMA: tuple[Param, ...] = (
         unit="µm",
         calibration=True,
         help=(
-            "Detector pixel size along Y in µm, from the beamline optics calibration. "
-            "Sets the physical scale of every map."
+            "Detector pixel size along Y in µm, from the beamline optics calibration. Pre-fills "
+            "every stage's pixel size; a wrong value skews the vertical physical scale of every "
+            "map, volume, and export."
         ),
     ),
     Param(

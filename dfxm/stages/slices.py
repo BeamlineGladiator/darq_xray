@@ -226,8 +226,10 @@ STAGE = StageSpec(
             advanced=True,
             group="Calibration",
             help=(
-                "Physical size of one detector pixel along X, in µm — sets the physical scale "
-                "the planes are defined in. From the beamline optics calibration."
+                "Physical size of one detector pixel along X, in µm, from the beamline optics "
+                "calibration — sets the physical scale the planes are defined in and, during "
+                "alignment, converts the sample-Y motor shift (mm) into detector pixels. A wrong "
+                "value misregisters the volumes and puts every plane at the wrong place."
             ),
         ),
         Param(
@@ -240,8 +242,9 @@ STAGE = StageSpec(
             advanced=True,
             group="Calibration",
             help=(
-                "Physical size of one detector pixel along Y, in µm — sets the physical scale "
-                "the planes are defined in. From the beamline optics calibration."
+                "Physical size of one detector pixel along Y, in µm, from the beamline optics "
+                "calibration — sets the physical scale the planes are defined in. A wrong value "
+                "skews every plane's vertical extent."
             ),
         ),
         Param(
@@ -269,7 +272,8 @@ STAGE = StageSpec(
             help=(
                 "Map-frame crop 'c0,c1' (map pixels, relative to the darfix window) used "
                 "during alignment — must match the crop used when the volumes were "
-                "rendered/exported. Pre-filled from the experiment's analysis window."
+                "rendered/exported (blank = full width). Pre-filled from the experiment's "
+                "analysis window."
             ),
         ),
         Param(
@@ -285,7 +289,8 @@ STAGE = StageSpec(
             help=(
                 "Map-frame crop 'r0,r1' (map pixels, relative to the darfix window) used "
                 "during alignment — must match the crop used when the volumes were "
-                "rendered/exported. Pre-filled from the experiment's analysis window."
+                "rendered/exported (blank = full height). Pre-filled from the experiment's "
+                "analysis window."
             ),
         ),
         Param(
@@ -314,6 +319,7 @@ STAGE = StageSpec(
             "range_pct",
             ParamType.FLOAT,
             "Range percentile",
+            unit="%",
             default=99.5,
             advanced=True,
             group="Alignment",
@@ -437,7 +443,8 @@ STAGE = StageSpec(
             help=(
                 "JSON list of pinned single-plane specs, normally written by the Pin planes… "
                 "dialog (exact stored sweep geometry, snapped to stored planes). Only used "
-                "when 'Run pinned planes only' is ticked."
+                "when 'Run pinned planes only' is ticked — blank there raises an error asking "
+                "you to open Pin planes… or untick it."
             ),
         ),
         Param(
