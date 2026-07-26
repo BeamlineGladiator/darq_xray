@@ -948,7 +948,9 @@ strain and misorientation line up.
 
 > [!tip] Don't type coordinates by hand
 > Use **Pick line…** to click the endpoints on the plane — see
-> [[#Line picker (profiles)]].
+> [[#Line picker (profiles)]]. Already starred planes on the slices stage?
+> **Jobs from marks…** turns them into jobs in one guided pass — see
+> [[#Jobs from marks… (profiles)]].
 
 #### Jobs JSON: per-job `fields` and `reference`
 
@@ -1529,6 +1531,31 @@ On the **profiles** view, click **Pick line…** to open the picker:
 5. **Use line** writes `start_uv` / `end_uv` / `offset_um` / `fields` /
    `reference` into `jobs_json`.
 6. Press **Run** to profile.
+
+### Jobs from marks… (profiles)
+
+Once you've starred planes with **Mark planes…** on the slices stage, **Jobs
+from marks…** turns them straight into profile jobs without hand-typing
+offsets:
+
+1. Click **Jobs from marks…** on the profiles view. It reads `/marks` from
+   the same `consolidated_h5` file the stage form points at; if the file is
+   missing or has no marks yet, the Log tab explains what to do first (run
+   slices, then star planes with **Mark planes…**).
+2. A checklist lists every marked plane (`<slice> @ <offset> µm`, sorted by
+   slice then offset), all checked by default. Uncheck anything you don't
+   want to make into a job, then click **OK**.
+3. A **Pick line…** dialog opens once per checked plane, pre-navigated to
+   that exact offset, titled `Pick line (k/n) — <slice> @ <offset> µm` so you
+   always know which mark you're on. Draw the line (and optionally adjust
+   Background/Fields) as usual and click **Use line** — each accepted line
+   *appends* a brand-new job to `jobs_json` (unlike **Pick line…**'s own
+   button, which updates the job matching that slice name, **Jobs from
+   marks…** never touches your existing jobs, so several marks on the same
+   slice each become their own job).
+4. Cancelling any individual line-picker dialog skips just that mark; the
+   Log tab reports how many jobs were added vs. skipped when the loop ends.
+   Press **Run** to profile the new jobs.
 
 ---
 

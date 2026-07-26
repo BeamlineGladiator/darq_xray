@@ -1157,6 +1157,21 @@ def main() -> int:
     assert _dlg38._browser.slice_name in _marks38 and _marks38[_dlg38._browser.slice_name]
     print("[38] Mark planes… dialog saves /marks; button wired on slices view")
 
+    # [39] Jobs from marks: button wired on the profiles stage view; the
+    # checklist dialog sorts by slice/offset and reports only checked rows.
+    from PySide6.QtCore import Qt as _Qt39
+
+    from gui.widgets.jobs_from_marks import JobsFromMarksDialog as _JFMD39
+
+    assert win._views["profiles"]._jobs_marks_btn is not None, (
+        "profiles view missing _jobs_marks_btn"
+    )
+    _dlg39 = _JFMD39({"s": [0.0, 2.0]})
+    _dlg39._list.item(1).setCheckState(_Qt39.CheckState.Unchecked)  # drop the 2.0 µm row
+    _dlg39._on_ok()
+    assert _dlg39.selected == [("s", 0.0)]
+    print("[39] Jobs from marks: button wired on profiles view; checklist selection")
+
     print("\nGUI SMOKE PASSED")
     return 0
 
