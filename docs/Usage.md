@@ -1480,13 +1480,18 @@ demand with the *same* pipeline as the rendered PNGs, so they match.
 On the **profiles** view, click **Pick line…** to open the picker:
 
 1. Use **◀ plane / plane ▶** to scroll through the slice's planes.
-2. Click two points to set the line endpoints.
-3. The **Fields** row shows one checkbox per volume present in the slice (all
+2. The **Background** dropdown switches which field group is displayed while you
+   draw (e.g. draw against `strain` instead of `raw_sum`). Switching the
+   background keeps your picked points — the line stays put over the new image.
+   Whichever group you accept with becomes the job's `reference`.
+3. Click two points to set the line endpoints.
+4. The **Fields** row shows one checkbox per volume present in the slice (all
    checked by default). Untick a field to exclude it from this job's profile —
    the ticked fields are written as a `"fields"` list into `jobs_json` for that job,
    overriding the global `restrict` for this job only.
-4. **Use line** writes `start_uv` / `end_uv` / `offset_um` / `fields` into `jobs_json`.
-5. Press **Run** to profile.
+5. **Use line** writes `start_uv` / `end_uv` / `offset_um` / `fields` /
+   `reference` into `jobs_json`.
+6. Press **Run** to profile.
 
 ---
 
