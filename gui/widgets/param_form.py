@@ -40,6 +40,7 @@ from PySide6.QtWidgets import (
 from dfxm.config.models import Param, ParamType
 
 from .help_panel import param_help_html
+from .wheel_guard import install_wheel_guard
 
 _FLOAT_RANGE = (-1.0e12, 1.0e12)
 _INT_RANGE = (-(2**31) + 1, 2**31 - 1)
@@ -249,6 +250,7 @@ class ParamForm(QWidget):
 
     def _enum_editor(self, p: Param, value: Any) -> QWidget:
         box = QComboBox()
+        install_wheel_guard(box)
         choices = [str(c) for c in (p.choices or ())]
         box.addItems(choices)
         if value is not None and str(value) in choices:
@@ -266,6 +268,7 @@ class ParamForm(QWidget):
 
     def _int_editor(self, p: Param, value: Any) -> QWidget:
         sb = QSpinBox()
+        install_wheel_guard(sb)
         sb.setRange(*_INT_RANGE)
         if value is not None:
             sb.setValue(int(value))
@@ -274,6 +277,7 @@ class ParamForm(QWidget):
 
     def _float_editor(self, p: Param, value: Any) -> QWidget:
         sb = QDoubleSpinBox()
+        install_wheel_guard(sb)
         sb.setDecimals(6)
         sb.setRange(*_FLOAT_RANGE)
         sb.setSingleStep(0.001)
