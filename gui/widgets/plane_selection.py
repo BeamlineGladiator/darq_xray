@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
+    QCheckBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -40,6 +41,9 @@ class PlaneSelectionPanel(QWidget):
         self._filter.textChanged.connect(self._apply_filter)
         self._no_match = QLabel("no match")
         self._no_match.setVisible(False)
+        self._marked_only = QCheckBox("★ only")
+        self._marked_only.setVisible(False)
+        self._marked_only.toggled.connect(lambda *_: self._apply_filter(self._filter.text()))
 
         self._tree = QTreeWidget()
         self._tree.setHeaderLabels(["Plane"])
@@ -61,6 +65,7 @@ class PlaneSelectionPanel(QWidget):
         frow.addWidget(QLabel("Filter:"))
         frow.addWidget(self._filter, 1)
         frow.addWidget(self._no_match)
+        frow.addWidget(self._marked_only)
         left.addLayout(frow)
         left.addWidget(self._tree, 1)
         left.addLayout(btns)
@@ -90,6 +95,10 @@ class PlaneSelectionPanel(QWidget):
         preserves the exact prior behaviour.
         """
         self._rows = list(rows)
+        has_marks = any(r.marked for r in self._rows)
+        if not has_marks:
+            self._marked_only.setChecked(False)
+        self._marked_only.setVisible(has_marks)
         self._tree.blockSignals(True)
         self._tree.clear()
         self._items.clear()
@@ -128,14 +137,18 @@ class PlaneSelectionPanel(QWidget):
 
     # -- filtering (visibility only; never selects) -----------------------
     def _apply_filter(self, text: str) -> None:
-        visible = {r.key for r in filter_rows(self._rows, text)}
+        visible = {
+            r.key for r in filter_rows(self._rows, text, marked_only=self._marked_only.isChecked())
+        }
         for key, item in self._items.items():
             item.setHidden(key not in visible)
         for i in range(self._tree.topLevelItemCount()):
             top = self._tree.topLevelItem(i)
             if top.childCount():  # section header: hide when all children hidden
                 top.setHidden(all(top.child(j).isHidden() for j in range(top.childCount())))
-        self._no_match.setVisible(bool(text.strip()) and not visible)
+        self._no_match.setVisible(
+            (bool(text.strip()) or self._marked_only.isChecked()) and not visible
+        )
 
     # -- bulk actions ------------------------------------------------------
     def set_all_checked(self, checked: bool) -> None:

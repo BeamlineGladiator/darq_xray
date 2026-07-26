@@ -86,3 +86,17 @@ def test_inject_line_reference_kwarg():
     assert json.loads(out)[0]["reference"] == "strain"
     out = inject_line_into_jobs(base, "oblique_full", (0.0, 0.0), (1.0, 0.0), 0.0)
     assert json.loads(out)[0]["reference"] == "old"  # None leaves it untouched
+
+
+def test_picker_info_shows_star_for_marked_plane(tmp_path):
+    from dfxm.stages import slices as sl
+    from gui.widgets.line_picker import LinePickerDialog
+
+    _app = QApplication.instance() or QApplication([])
+    h5 = _mini(tmp_path / "m.h5")
+    sl.write_marks(h5, "oblique_full", [0.0])
+    dlg = LinePickerDialog(h5, "oblique_full", init_offset=0.0)
+    assert "★" in dlg._info.text()
+    dlg._browser.step(+1)
+    assert "★" not in dlg._info.text()
+    dlg.done(0)

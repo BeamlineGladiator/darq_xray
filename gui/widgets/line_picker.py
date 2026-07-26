@@ -20,6 +20,9 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
+from dfxm.stages import profiles as _pr
+from dfxm.stages import slices as _sl
+
 from .plane_browser import PlaneBrowser
 
 
@@ -44,6 +47,9 @@ class LinePickerDialog(QDialog):
             raise
         self._browser.post_draw = self._post_draw
         self._browser.viewChanged.connect(self._update_info)
+
+        moffs = _sl.read_marks(self._browser.file).get(slice_name, [])
+        self._marked_idx = {_pr.resolve_plane_index(self._browser.offsets, o)[0] for o in moffs}
 
         self.setWindowTitle(f"Pick line — {slice_name} ({self._browser.group_id})")
         self._info = QLabel()
@@ -111,8 +117,10 @@ class LinePickerDialog(QDialog):
         off = self._browser.current_offset()
         n = len(self._browser.offsets)
         pts = " -> ".join(f"({u:.2f}, {v:.2f})" for u, v in self._pts) or "click two points"
+        star = "  ★" if self._browser.plane_index in self._marked_idx else ""
         self._info.setText(
-            f"plane {self._browser.plane_index + 1}/{n}  offset {off:+.3f} µm   |   line: {pts}"
+            f"plane {self._browser.plane_index + 1}/{n}  offset {off:+.3f} µm{star}   |   "
+            f"line: {pts}"
         )
 
     # -- interaction ------------------------------------------------------

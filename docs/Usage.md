@@ -918,9 +918,12 @@ already flagged interesting.
    closes and reopens the file's read handle — the view doesn't refresh
    because only `/marks` changed, not the volume data. **Close** with unsaved
    changes asks for confirmation before discarding them.
-5. Marked planes show as ★ in the **Pin planes…**/**Replot…** plane lists, and
-   feed **Jobs from marks…** on the [[#8. Line profiles (`profiles`)|profiles]]
-   stage to turn them straight into profile jobs.
+5. Marked planes show as ★ in the **Pin planes…**/**Replot…** plane lists
+   (prefixed onto the row label), and a **★ only** checkbox appears next to
+   the filter box whenever the loaded file has any marks, to narrow the list
+   down to just the starred planes. Marked planes feed **Jobs from marks…** on
+   the [[#8. Line profiles (`profiles`)|profiles]] stage to turn them straight
+   into profile jobs.
 
 Re-running the slices stage rewrites `oblique_slices.h5` from scratch, so
 marks don't survive a fresh sweep — mark planes again after re-running.
@@ -1511,7 +1514,9 @@ demand with the *same* pipeline as the rendered PNGs, so they match.
 
 On the **profiles** view, click **Pick line…** to open the picker:
 
-1. Use **◀ plane / plane ▶** to scroll through the slice's planes.
+1. Use **◀ plane / plane ▶** to scroll through the slice's planes. The info
+   line below the image adds a ★ after the offset when the current plane was
+   starred in **Mark planes…**.
 2. The **Background** dropdown switches which field group is displayed while you
    draw (e.g. draw against `strain` instead of `raw_sum`). Switching the
    background keeps your picked points — the line stays put over the new image.
