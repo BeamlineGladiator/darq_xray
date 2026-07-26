@@ -1142,6 +1142,21 @@ def main() -> int:
     assert not fb.is_dirty()
     print("[37] figure builder: open, preview, export, recipe save/load round-trip")
 
+    # [38] Mark planes… dialog: reuses [26]'s file, marks one plane, Save
+    # persists into /marks; the button is wired on the slices stage view.
+    from dfxm.stages import slices as _sl38
+    from gui.widgets.mark_planes import MarkPlanesDialog as _MPD38
+
+    assert win._views["slices"]._mark_btn is not None, "slices view missing _mark_btn"
+    _dlg38 = _MPD38(_h5_path26)  # reuse [26]'s file
+    _dlg38._browser.set_plane(0)
+    _dlg38._mark_btn.setChecked(True)
+    _dlg38._on_save()
+    assert _dlg38.saved
+    _marks38 = _sl38.read_marks(_h5_path26)
+    assert _dlg38._browser.slice_name in _marks38 and _marks38[_dlg38._browser.slice_name]
+    print("[38] Mark planes… dialog saves /marks; button wired on slices view")
+
     print("\nGUI SMOKE PASSED")
     return 0
 

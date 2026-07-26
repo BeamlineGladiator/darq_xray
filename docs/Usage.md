@@ -736,6 +736,8 @@ through the aligned volumes — all in one world frame so the slices co-register
 > spec to override the vertical direction.
 
 > [!tip] Pinning one plane from a sweep
+> Prefer picking visually? **Mark planes…** (below) lets you browse the sweep
+> and star the interesting offsets without typing any JSON.
 > A sweep writes many parallel planes; each plane's offset along the normal is in
 > its PNG filename (`…__p012_+024.00um.png`) and in the `offsets_um` dataset of
 > `oblique_slices.h5`. To re-render **just** the plane you liked, pin the sweep to
@@ -892,6 +894,36 @@ changes made since the original run are reflected in the replot.
 > cropped sub-region rather than starting at zero. Planes whose clamped crop is
 > empty (e.g. `r0 == r1`) are silently skipped and omitted from the returned
 > paths list.
+
+#### Marking interesting planes
+
+Instead of typing offsets into a pin spec, **Mark planes…** lets you browse a
+sweep visually and star the ones worth keeping — the stars are saved directly
+into the `oblique_slices.h5` itself (a root `/marks/<slice name>` group), so
+every plane list in the app (Pin planes…, Replot…) can show which planes were
+already flagged interesting.
+
+1. Click **Mark planes…** on the slices stage panel. It opens on the same
+   chained-output file the **Pin planes…**/**Replot…** buttons use; if that
+   file doesn't exist yet, the Log tab explains you need to run slices first.
+2. Pick a **Slice** (the plane-sweep group) and a **Background** field to view
+   it against, then step through planes with **◀ plane** / **plane ▶**.
+3. Click **★ Mark** to star the plane currently showing (it un-marks if you
+   click it again); the button always reflects whether the *current* plane is
+   starred, and the status line under the image shows how many planes are
+   starred in this slice, plus an **unsaved changes** flag while there's
+   anything to save.
+4. Click **Save** to write the starred offsets for every slice you've touched
+   into `/marks` (each offset snaps to its exact stored plane). Saving briefly
+   closes and reopens the file's read handle — the view doesn't refresh
+   because only `/marks` changed, not the volume data. **Close** with unsaved
+   changes asks for confirmation before discarding them.
+5. Marked planes show as ★ in the **Pin planes…**/**Replot…** plane lists, and
+   feed **Jobs from marks…** on the [[#8. Line profiles (`profiles`)|profiles]]
+   stage to turn them straight into profile jobs.
+
+Re-running the slices stage rewrites `oblique_slices.h5` from scratch, so
+marks don't survive a fresh sweep — mark planes again after re-running.
 
 ### 8. Line profiles (`profiles`)
 

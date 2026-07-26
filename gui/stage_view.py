@@ -149,6 +149,12 @@ class StageView(QWidget):
             self._pin_btn = QPushButton("Pin planes…")
             self._pin_btn.clicked.connect(self._on_pin_planes)
             btn_row.addWidget(self._pin_btn)
+        # slices: star interesting planes into /marks (built lazily on click)
+        self._mark_btn: QPushButton | None = None
+        if stage_name == "slices":
+            self._mark_btn = QPushButton("Mark planes…")
+            self._mark_btn.clicked.connect(self._on_mark_planes)
+            btn_row.addWidget(self._mark_btn)
         # ROI-grouped stages: one "Pick ROI…" button per distinct roi_group
         self._roi_buttons: dict[str, QPushButton] = {}
         _seen_groups: list[str] = []
@@ -585,8 +591,8 @@ class StageView(QWidget):
             )
             self._tabs.setCurrentWidget(self._log)
 
-    def _on_pin_planes(self) -> None:
-        """Open Pin planes… and write pinned_slices_json + use_pinned into the form."""
+    def _slices_output_h5(self) -> str:
+        """The slices run's consolidated h5, resolved like the run would."""
         vals = self._form.values()
         out_dir = vals.get("output_dir", "") or os.path.join(
             os.path.dirname(
@@ -594,7 +600,11 @@ class StageView(QWidget):
             ),
             "oblique_slices",
         )
-        h5 = os.path.join(out_dir, vals.get("output_h5_name", "") or "oblique_slices.h5")
+        return os.path.join(out_dir, vals.get("output_h5_name", "") or "oblique_slices.h5")
+
+    def _on_pin_planes(self) -> None:
+        """Open Pin planes… and write pinned_slices_json + use_pinned into the form."""
+        h5 = self._slices_output_h5()
 
         from .widgets.pin_planes import PinPlanesDialog  # imported on demand
 
@@ -604,6 +614,29 @@ class StageView(QWidget):
             self._log.append(
                 "Pinned planes written; 'Run pinned planes only' ticked. Run to render "
                 "(output goes to oblique_slices_pinned.h5 unless you set a name)."
+            )
+            self._tabs.setCurrentWidget(self._log)
+
+    def _on_mark_planes(self) -> None:
+        """Open Mark planes… on the slices output file (marks persist in the h5)."""
+        h5 = self._slices_output_h5()
+        if not os.path.exists(h5):
+            self._log.append(f"Mark planes: no slices file at {h5} — run slices first.")
+            self._tabs.setCurrentWidget(self._log)
+            return
+        from .widgets.mark_planes import MarkPlanesDialog  # imported on demand
+
+        try:
+            dlg = MarkPlanesDialog(h5, parent=self)
+        except Exception as exc:  # noqa: BLE001 - unreadable / empty file
+            self._log.append(f"Mark planes failed: {exc}")
+            self._tabs.setCurrentWidget(self._log)
+            return
+        dlg.exec()
+        if dlg.saved:
+            self._log.append(
+                "Marks saved into the slices file — ★ in plane lists; turn them into "
+                "profile jobs with 'Jobs from marks…' on the profiles stage."
             )
             self._tabs.setCurrentWidget(self._log)
 
