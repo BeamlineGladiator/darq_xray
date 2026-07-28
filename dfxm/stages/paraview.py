@@ -254,6 +254,7 @@ STAGE = StageSpec(
             ParamType.STR,
             "Mosa darfix origin",
             default="105,230",
+            roi_frame="detector",
             advanced=True,
             group="Alignment",
             help=(
@@ -268,6 +269,7 @@ STAGE = StageSpec(
             ParamType.STR,
             "Strain darfix origin",
             default="105,230",
+            roi_frame="detector",
             advanced=True,
             group="Alignment",
             help=(

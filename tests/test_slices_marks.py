@@ -94,6 +94,15 @@ def test_read_marks_absent_and_malformed(tmp_path):
     assert sl.read_marks(h5) == {"oblique_full": [2.0]}
 
 
+def test_write_marks_unwritable_file_raises_stageusererror(tmp_path):
+    """The OSError branch: an unopenable file surfaces as StageUserError + hint."""
+    missing = tmp_path / "nope" / "oblique_slices.h5"  # parent dir doesn't exist
+    with pytest.raises(StageUserError) as ei:
+        sl.write_marks(str(missing), "oblique_full", [0.0])
+    assert "for writing marks" in str(ei.value)
+    assert ei.value.hint and "Close any dialog" in ei.value.hint
+
+
 def test_readers_skip_marks_group(tmp_path):
     h5 = _mini(tmp_path / "s.h5")
     sl.write_marks(h5, "oblique_full", [0.0])

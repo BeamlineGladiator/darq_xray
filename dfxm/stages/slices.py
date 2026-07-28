@@ -990,6 +990,16 @@ def _find_slice_group(f, slice_name, volume=None):
     )
 
 
+def nearest_plane_index(offsets_um, offset_um) -> int:
+    """Index of the stored plane nearest *offset_um* — THE snap rule.
+
+    Single source of the nearest-plane snap shared by pinning, marks, the
+    GUI plane lists and ``profiles.resolve_plane_index``.
+    """
+    stored = np.asarray(offsets_um, np.float64)
+    return int(np.argmin(np.abs(stored - float(offset_um))))
+
+
 def build_pinned_spec(h5_path, slice_name, offsets, *, volume=None) -> list[dict]:
     """Pinned single-plane spec dicts for *slice_name*, snapped to stored planes.
 
@@ -1012,7 +1022,7 @@ def build_pinned_spec(h5_path, slice_name, offsets, *, volume=None) -> list[dict
         a = dict(sg.attrs)
     specs, seen = [], set()
     for off in offsets:
-        idx = int(np.argmin(np.abs(stored - float(off))))
+        idx = nearest_plane_index(stored, off)
         if idx in seen:
             continue
         seen.add(idx)
@@ -1086,9 +1096,7 @@ def write_marks(h5_path, slice_name, offsets_um) -> list[float]:
     with fh as f:
         _vid, sg = _find_slice_group(f, slice_name)
         stored = sg["offsets_um"][:].astype(np.float64)
-        snapped = sorted(
-            {float(stored[int(np.argmin(np.abs(stored - float(o))))]) for o in offsets_um}
-        )
+        snapped = sorted({float(stored[nearest_plane_index(stored, o)]) for o in offsets_um})
         mg = f.require_group(MARKS_GROUP)
         if slice_name in mg:
             del mg[slice_name]

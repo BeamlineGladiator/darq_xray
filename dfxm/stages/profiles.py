@@ -57,7 +57,7 @@ from ..common.plotting import (
     trace_height_cm,
 )
 from ..config.models import Param, ParamType, StageSpec
-from .slices import MARKS_GROUP
+from .slices import MARKS_GROUP, nearest_plane_index
 
 ProgressFn = Callable[[float, str], None]
 
@@ -502,7 +502,7 @@ def replot_catalog(h5_path: str, jobs: list[dict]) -> list[ReplotJobEntry]:
                 continue
             off = float(job.get("offset_um", 0.0))
             base = job.get("fig_name") or job["name"]
-            entries.append(ReplotJobEntry(ji, name, f"{base}  @ {off:+.2f} µm", present, note))
+            entries.append(ReplotJobEntry(ji, name, f"{base}  @ {off:+.3f} µm", present, note))
     return entries
 
 
@@ -594,7 +594,7 @@ def read_axes(sg):
 
 
 def resolve_plane_index(offsets_um, offset_um):
-    idx = int(np.argmin(np.abs(offsets_um - float(offset_um))))
+    idx = nearest_plane_index(offsets_um, offset_um)
     return idx, float(offsets_um[idx])
 
 
