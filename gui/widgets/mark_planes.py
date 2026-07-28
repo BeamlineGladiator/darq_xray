@@ -147,20 +147,8 @@ class MarkPlanesDialog(QDialog):
         self._mark_btn.setChecked(self._current_marked())
         self._mark_btn.blockSignals(False)
 
-    def _on_save(self) -> None:
-        self._browser.close_file()
-        save_exc: StageUserError | None = None
-        try:
-            for sname in sorted(set(self._baseline) | set(self._marks)):
-                offs = [self._offsets[sname][i] for i in sorted(self._marks.get(sname, set()))]
-                _sl.write_marks(self._path, sname, offs)
-        except StageUserError as exc:
-            save_exc = exc
-        if save_exc is None:
-            # the write is already durable — commit before the reopen attempt so
-            # a reopen failure can't leave a false "unsaved changes" close prompt
-            self._baseline = {k: set(v) for k, v in self._marks.items()}
-            self.saved = True
+    def _reopen_or_disable(self) -> bool:
+        """Reopen the browser's file; on failure warn, disable editing, return False."""
         try:
             self._browser.reopen()
         except Exception:
@@ -180,6 +168,28 @@ class MarkPlanesDialog(QDialog):
             ):
                 w.setEnabled(False)
             self._sync_controls()
+            return False
+        return True
+
+    def _on_save(self) -> None:
+        self._browser.close_file()
+        save_exc: StageUserError | None = None
+        try:
+            for sname in sorted(set(self._baseline) | set(self._marks)):
+                offs = [self._offsets[sname][i] for i in sorted(self._marks.get(sname, set()))]
+                _sl.write_marks(self._path, sname, offs)
+        except StageUserError as exc:
+            save_exc = exc
+        except Exception:
+            # unexpected write failure: restore the read handle, then propagate
+            self._reopen_or_disable()
+            raise
+        if save_exc is None:
+            # the write is already durable — commit before the reopen attempt so
+            # a reopen failure can't leave a false "unsaved changes" close prompt
+            self._baseline = {k: set(v) for k, v in self._marks.items()}
+            self.saved = True
+        if not self._reopen_or_disable():
             return
         if save_exc is not None:
             QMessageBox.warning(
