@@ -14,7 +14,7 @@ from PySide6.QtCore import QEvent, QObject, Qt
 
 
 class _WheelGuard(QObject):
-    def eventFilter(self, obj, event) -> bool:  # noqa: N802 - Qt API
+    def eventFilter(self, obj: QObject, event: QEvent) -> bool:  # noqa: N802 - Qt API
         if event.type() == QEvent.Type.Wheel and not obj.hasFocus():
             event.ignore()
             return True

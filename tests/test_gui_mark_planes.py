@@ -77,6 +77,34 @@ def test_dialog_loads_existing_marks(tmp_path):
     dlg.done(0)
 
 
+def test_save_succeeds_but_reopen_fails_still_commits(tmp_path, monkeypatch):
+    """Write OK + reopen failure: saved=True, not dirty (no false discard prompt)."""
+    import gui.widgets.mark_planes as mp
+
+    _app = QApplication.instance() or QApplication([])
+    h5 = _mini(tmp_path / "s.h5")
+    dlg = mp.MarkPlanesDialog(h5)
+    dlg._browser.set_plane(0)
+    dlg._mark_btn.setChecked(True)
+    assert dlg._dirty()
+
+    def _boom_reopen():
+        raise OSError("locked")
+
+    warnings: list[tuple] = []
+    monkeypatch.setattr(dlg._browser, "reopen", _boom_reopen)
+    monkeypatch.setattr(mp.QMessageBox, "warning", lambda *a, **k: warnings.append(a) or None)
+
+    dlg._on_save()  # write really happens; only the reopen fails
+
+    assert warnings, "expected the reopen-failure warning"
+    assert dlg.saved  # the write is durable — committed before the reopen attempt
+    assert not dlg._dirty()
+    for w in (dlg._prev, dlg._next, dlg._mark_btn, dlg._slice_box, dlg._group_box):
+        assert not w.isEnabled()
+    assert sl.read_marks(h5) == {"oblique_full": [-2.0]}  # really on disk
+
+
 def test_save_reopen_failure_warns_once_and_disables_nav(tmp_path, monkeypatch):
     """write_marks fails AND reopen() also fails: one warning, no crash, nav disabled."""
     import gui.widgets.mark_planes as mp

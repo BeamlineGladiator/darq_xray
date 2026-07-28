@@ -648,6 +648,7 @@ rendering, with a `valid_mask` and NaN sentinels.
 | `roi_x` / `roi_y` | map-frame crop in map pixels (`c0,c1` / `r0,r1`), relative to the darfix window, NOT absolute detector pixels; pre-filled from the experiment's analysis window |
 | `num_pieces_z` | Z pieces — match your `pvserver` MPI rank count |
 | `anchor_origin_to_reference` | place the world origin in the raw-detector frame so all volumes co-register |
+| `mosa_darfix_origin_xy` / `strain_darfix_origin_xy` | the darfix crop origin for the mosaicity / strain maps, in absolute detector pixels `x,y` — copy verbatim from darfix's ROI widget. Only used when `anchor_origin_to_reference` is on; NOT pre-filled from the experiment, so update them by hand for a non-STO2 dataset |
 
 > [!tip] Picking the run-time ROI interactively
 > Click **Pick ROI…** (in the button row alongside Run/Cancel) to open a visual

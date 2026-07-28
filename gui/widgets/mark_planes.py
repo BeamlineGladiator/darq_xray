@@ -49,9 +49,7 @@ class MarkPlanesDialog(QDialog):
             stored = self._offsets.get(sname)
             if not stored:
                 continue
-            self._marks[sname] = {
-                min(range(len(stored)), key=lambda i: abs(stored[i] - o)) for o in offs
-            }
+            self._marks[sname] = {_sl.nearest_plane_index(stored, o) for o in offs}
         self._baseline = {k: set(v) for k, v in self._marks.items()}
 
         self.setWindowTitle(f"Mark planes — {os.path.basename(self._path)}")
@@ -149,6 +147,30 @@ class MarkPlanesDialog(QDialog):
         self._mark_btn.setChecked(self._current_marked())
         self._mark_btn.blockSignals(False)
 
+    def _reopen_or_disable(self) -> bool:
+        """Reopen the browser's file; on failure warn, disable editing, return False."""
+        try:
+            self._browser.reopen()
+        except Exception:
+            QMessageBox.warning(
+                self,
+                "Save marks",
+                "The file could not be re-opened after saving marks (it may be "
+                "locked or was rewritten elsewhere). Close this dialog and reopen "
+                "it to continue.",
+            )
+            for w in (
+                self._prev,
+                self._next,
+                self._mark_btn,
+                self._slice_box,
+                self._group_box,
+            ):
+                w.setEnabled(False)
+            self._sync_controls()
+            return False
+        return True
+
     def _on_save(self) -> None:
         self._browser.close_file()
         save_exc: StageUserError | None = None
@@ -158,26 +180,17 @@ class MarkPlanesDialog(QDialog):
                 _sl.write_marks(self._path, sname, offs)
         except StageUserError as exc:
             save_exc = exc
-        finally:
-            try:
-                self._browser.reopen()
-            except Exception:
-                QMessageBox.warning(
-                    self,
-                    "Save marks",
-                    "The file could not be re-opened after saving marks (it may be "
-                    "locked or was rewritten elsewhere). Close this dialog and reopen "
-                    "it to continue.",
-                )
-                for w in (
-                    self._prev,
-                    self._next,
-                    self._mark_btn,
-                    self._slice_box,
-                    self._group_box,
-                ):
-                    w.setEnabled(False)
-                return
+        except Exception:
+            # unexpected write failure: restore the read handle, then propagate
+            self._reopen_or_disable()
+            raise
+        if save_exc is None:
+            # the write is already durable — commit before the reopen attempt so
+            # a reopen failure can't leave a false "unsaved changes" close prompt
+            self._baseline = {k: set(v) for k, v in self._marks.items()}
+            self.saved = True
+        if not self._reopen_or_disable():
+            return
         if save_exc is not None:
             QMessageBox.warning(
                 self,
@@ -185,8 +198,6 @@ class MarkPlanesDialog(QDialog):
                 f"{save_exc}\n\n{save_exc.hint}" if save_exc.hint else str(save_exc),
             )
             return
-        self._baseline = {k: set(v) for k, v in self._marks.items()}
-        self.saved = True
         self._sync_controls()
 
     # -- close ------------------------------------------------------------

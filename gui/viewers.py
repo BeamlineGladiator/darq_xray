@@ -57,6 +57,28 @@ def volume_sources(stage_name: str, result, params: dict) -> dict[str, VolumeSou
     return sources
 
 
+def _parse_jobs(jobs_json: str) -> list:
+    """Jobs list from a jobs_json string; anything unparseable -> []."""
+    try:
+        jobs = json.loads(jobs_json) if jobs_json.strip() else []
+    except json.JSONDecodeError:
+        jobs = []
+    return jobs if isinstance(jobs, list) else []
+
+
+def _set_line(job: dict, start_uv, end_uv, offset_um, fields, reference) -> None:
+    """Write the picked-line keys into *job* (shared by inject/append)."""
+    job["offset_um"] = round(float(offset_um), 4)
+    job["start_uv"] = [round(float(start_uv[0]), 4), round(float(start_uv[1]), 4)]
+    job["end_uv"] = [round(float(end_uv[0]), 4), round(float(end_uv[1]), 4)]
+    if fields is not None:
+        job["fields"] = list(fields)
+    else:
+        job.pop("fields", None)
+    if reference:
+        job["reference"] = str(reference)
+
+
 def inject_line_into_jobs(
     jobs_json: str,
     slice_name: str,
@@ -73,12 +95,7 @@ def inject_line_into_jobs(
     A truthy *reference* sets the job's ``"reference"`` (the background group the
     line was drawn against); ``None`` leaves any existing value untouched.
     """
-    try:
-        jobs = json.loads(jobs_json) if jobs_json.strip() else []
-    except json.JSONDecodeError:
-        jobs = []
-    if not isinstance(jobs, list):
-        jobs = []
+    jobs = _parse_jobs(jobs_json)
     target = None
     for job in jobs:
         if isinstance(job, dict) and job.get("name") == slice_name:
@@ -89,15 +106,7 @@ def inject_line_into_jobs(
         if target not in jobs:
             jobs.append(target)
         target["name"] = slice_name
-    target["offset_um"] = round(float(offset_um), 4)
-    target["start_uv"] = [round(float(start_uv[0]), 4), round(float(start_uv[1]), 4)]
-    target["end_uv"] = [round(float(end_uv[0]), 4), round(float(end_uv[1]), 4)]
-    if fields is not None:
-        target["fields"] = list(fields)
-    else:
-        target.pop("fields", None)
-    if reference:
-        target["reference"] = str(reference)
+    _set_line(target, start_uv, end_uv, offset_um, fields, reference)
     return json.dumps(jobs, indent=2)
 
 
@@ -117,21 +126,8 @@ def append_line_job(
     become their own job (the profiles stage de-duplicates output stems for
     same-named jobs).
     """
-    try:
-        jobs = json.loads(jobs_json) if jobs_json.strip() else []
-    except json.JSONDecodeError:
-        jobs = []
-    if not isinstance(jobs, list):
-        jobs = []
-    job = {
-        "name": slice_name,
-        "offset_um": round(float(offset_um), 4),
-        "start_uv": [round(float(start_uv[0]), 4), round(float(start_uv[1]), 4)],
-        "end_uv": [round(float(end_uv[0]), 4), round(float(end_uv[1]), 4)],
-    }
-    if fields is not None:
-        job["fields"] = list(fields)
-    if reference:
-        job["reference"] = str(reference)
+    jobs = _parse_jobs(jobs_json)
+    job: dict = {"name": slice_name}
+    _set_line(job, start_uv, end_uv, offset_um, fields, reference)
     jobs.append(job)
     return json.dumps(jobs, indent=2)

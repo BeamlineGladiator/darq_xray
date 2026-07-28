@@ -12,6 +12,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+from dfxm.stages.slices import nearest_plane_index
+
 
 @dataclass(frozen=True)
 class PlaneRow:
@@ -40,9 +42,7 @@ def build_slice_rows(entries, marks=None) -> list[PlaneRow]:
             stored = stored_by_slice.get(sname)
             if not stored:
                 continue
-            marked_idx[sname] = {
-                min(range(len(stored)), key=lambda i: abs(stored[i] - o)) for o in offs
-            }
+            marked_idx[sname] = {nearest_plane_index(stored, o) for o in offs}
     seen: dict[tuple[str, int], PlaneRow] = {}
     for e in entries:
         for k, off in enumerate(e.offsets_um):

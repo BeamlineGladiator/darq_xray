@@ -10,6 +10,7 @@ construction.
 
 from __future__ import annotations
 
+import h5py
 import matplotlib.colors as mcolors
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
@@ -27,8 +28,6 @@ class PlaneBrowser(QWidget):
 
     def __init__(self, h5_path, parent=None) -> None:
         super().__init__(parent)
-        import h5py
-
         self._path = str(h5_path)
         self._f = h5py.File(self._path, "r")
         self.post_draw = None  # callable(ax) for owner overlays, or None
@@ -61,8 +60,6 @@ class PlaneBrowser(QWidget):
 
     def reopen(self) -> None:
         """Re-open after an external write; re-binds the current view."""
-        import h5py
-
         self._f = h5py.File(self._path, "r")
         if self.slice_name and self.group_id:
             self._sg = self._f[f"{self.group_id}/{self.slice_name}"]
@@ -70,8 +67,6 @@ class PlaneBrowser(QWidget):
     # -- navigation -----------------------------------------------------------
     def slice_names(self) -> list[str]:
         """All slice-group names in the file (union across field groups)."""
-        import h5py
-
         names: set[str] = set()
         for vid in _pr.list_volume_ids(self._f):
             g = self._f[vid]
