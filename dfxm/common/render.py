@@ -16,6 +16,7 @@ import os
 import matplotlib.colors as mcolors
 import numpy as np
 from matplotlib.animation import FFMpegWriter, FuncAnimation, PillowWriter
+from matplotlib.figure import Figure
 
 from .plotting import (
     PlotStyle,
@@ -191,6 +192,41 @@ def save_layer_animation(
             want_gif = True
     if want_gif:
         anim.save(base_path + ".gif", writer=PillowWriter(fps=15), dpi=120)
+        written = written or base_path + ".gif"
+    return written
+
+
+def _write_image_video(get_frame, n_frames, base_path, fmt, fps=15):
+    """Assemble RGB frames (``get_frame(i) -> (H, W, 3) uint8``) into MP4/GIF.
+
+    Same container semantics as :func:`save_layer_animation`: try MP4 for
+    ``mp4``/``both`` (ffmpeg), fall back to GIF. Returns the written path.
+    """
+    first = np.asarray(get_frame(0))
+    h, w = first.shape[:2]
+    dpi = 100.0
+    fig = Figure(figsize=(w / dpi, h / dpi), dpi=dpi)
+    ax = fig.add_axes((0, 0, 1, 1))
+    ax.set_axis_off()
+    im = ax.imshow(first)
+
+    def update(frame):
+        if frame:
+            im.set_data(np.asarray(get_frame(frame)))
+        return [im]
+
+    anim = FuncAnimation(fig, update, frames=n_frames, blit=False)
+    written = None
+    want_mp4 = fmt in ("mp4", "both")
+    want_gif = fmt in ("gif", "both")
+    if want_mp4:
+        try:
+            anim.save(base_path + ".mp4", writer=FFMpegWriter(fps=fps), dpi=dpi)
+            written = base_path + ".mp4"
+        except Exception:  # noqa: BLE001 - ffmpeg missing -> fall back to GIF
+            want_gif = True
+    if want_gif:
+        anim.save(base_path + ".gif", writer=PillowWriter(fps=fps), dpi=dpi)
         written = written or base_path + ".gif"
     return written
 
