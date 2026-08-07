@@ -374,3 +374,15 @@ def test_summarize_profiles_reports_trace_count_and_no_companion():
 
 def test_representative_image_stage_without_images_returns_none():
     assert _representative_image("concat", ConcatResult()) is None
+
+
+def test_summarize_visualize_lists_rotation_video():
+    result = VisualizeResult(
+        output_dir="/out",
+        datasets=[
+            DatasetProducts(
+                name="chi", shape=(1, 2, 3), vmin=0.0, vmax=1.0, rotation_video="spin.gif"
+            )
+        ],
+    )
+    assert "spin" in _summarize("visualize", result)
