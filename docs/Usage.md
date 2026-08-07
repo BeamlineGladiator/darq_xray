@@ -610,7 +610,9 @@ Align the stacked mosaicity/strain volumes and render them.
 - **Input:** `stacked_volumes.h5` and/or `stacked_strain_volumes.h5` (+ raw
   motors for alignment).
 - **Output:** per-layer PNGs, a layer animation (MP4→GIF fallback), a 3-D
-  top-view, and an interactive [[#3-D volume viewer|3-D view]].
+  top-view, an optional rotating 3-D orbit video
+  (`<name>_rotation.mp4`/`.gif`), and an interactive
+  [[#3-D volume viewer|3-D view]].
 
 **Essentials:** both volume files, raw root, Map ROI X/Y, output dir
 
@@ -619,6 +621,7 @@ Align the stacked mosaicity/strain volumes and render them.
 | `center_method` | `midrange` / `mean` / `median` (CoM colour centring only) |
 | `roi_x` / `roi_y` | map-frame crop in map pixels (`c0,c1` / `r0,r1`), relative to the darfix window, NOT absolute detector pixels; pre-filled from the experiment's analysis window |
 | `output_format` | `mp4` / `gif` / `both` |
+| `save_rotation` | write a 360° orbiting movie of the 3-D volume render (same look and opacity as the top view; container follows `output_format`). Slow — off by default |
 
 > [!tip] Picking the run-time ROI interactively
 > Click **Pick ROI…** (in the button row alongside Run/Cancel) to open a visual

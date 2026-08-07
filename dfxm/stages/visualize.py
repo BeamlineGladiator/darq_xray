@@ -9,8 +9,8 @@ Center-of-mass + FWHM, and strain) it:
 2. centres CoM volumes (midrange/mean/median) and picks colour limits (strain
    keeps its physical zero, symmetric limits);
 3. writes per-layer PNGs, a layer-by-layer animation (MP4 with GIF fallback),
-   and a 3-D top-view render (best-effort — skipped gracefully without a GL
-   context).
+   a 3-D top-view render, and (optionally) a rotating 3-D orbit video (the 3-D
+   renders are best-effort — skipped gracefully without a GL context).
 
 Mosaicity uses ``magma``; strain uses ``RdBu_r``. Rendering uses the explicit
 Figure/Agg API (no pyplot / matplotlib.use) so the module is import-safe in the
@@ -47,7 +47,7 @@ STAGE = StageSpec(
     description=(
         "Aligns the stacked mosaicity/strain volumes into the shared sample frame "
         "(samy shift + uniform-Z interpolation) and renders per-layer PNGs, a layer "
-        "animation, and a 3-D top view."
+        "animation, a 3-D top view, and an optional rotating 3-D video."
     ),
     params=(
         Param(
@@ -276,6 +276,19 @@ STAGE = StageSpec(
             help="Write the static 3-D top-view image.",
         ),
         Param(
+            "save_rotation",
+            ParamType.BOOL,
+            "Save rotating 3-D video",
+            default=False,
+            advanced=True,
+            group="Output",
+            help=(
+                "Write a movie of the 3-D volume render spinning once around "
+                "(120 frames, ~8 s). Uses the same opacity as the top view and "
+                "the Animation format container. Slow — off by default."
+            ),
+        ),
+        Param(
             "volume_opacity",
             ParamType.FLOAT,
             "3D opacity",
@@ -297,6 +310,7 @@ class DatasetProducts:
     layers_dir: str | None = None
     animation: str | None = None
     top_view: str | None = None
+    rotation_video: str | None = None
     notes: list[str] = field(default_factory=list)
 
 
@@ -486,6 +500,24 @@ def _process_dataset(
             )
         except Exception as exc:  # noqa: BLE001 - no GL / pyvista issue -> note + continue
             prod.notes.append(f"3D top-view skipped: {exc}")
+    if p["save_rotation"]:
+        try:
+            prod.rotation_video = Rnd.save_rotation_video(
+                data,
+                scale_z,
+                sx,
+                sy,
+                vmin,
+                vmax,
+                cmap,
+                float(p["volume_opacity"]),
+                os.path.join(ds_dir, f"{name}_rotation"),
+                p["output_format"],
+            )
+            if prod.rotation_video is None:
+                prod.notes.append("rotation video skipped: volume has no finite voxels")
+        except Exception as exc:  # noqa: BLE001 - no GL / pyvista issue -> note + continue
+            prod.notes.append(f"rotation video skipped: {exc}")
     return prod
 
 

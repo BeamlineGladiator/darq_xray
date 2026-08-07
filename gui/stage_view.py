@@ -996,7 +996,14 @@ def _dataset_lines(datasets, with_shape: bool) -> list[str]:
     lines = []
     for d in datasets:
         made = [
-            n for n, v in (("layers", d.layers_dir), ("anim", d.animation), ("3d", d.top_view)) if v
+            n
+            for n, v in (
+                ("layers", d.layers_dir),
+                ("anim", d.animation),
+                ("3d", d.top_view),
+                ("spin", getattr(d, "rotation_video", None)),
+            )
+            if v
         ]
         shape = f"shape={d.shape} " if with_shape else ""
         lines.append(f"  {d.name}: {shape}[{', '.join(made)}]")
