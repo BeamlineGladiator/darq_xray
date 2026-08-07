@@ -29,3 +29,14 @@ def test_write_image_video_both_prefers_mp4_or_falls_back(tmp_path):
     # mp4 when ffmpeg is on PATH, else the GIF fallback; either way a file exists
     assert written in (base + ".mp4", base + ".gif")
     assert os.path.getsize(base + ".gif") > 0 or written == base + ".mp4"
+
+
+def test_save_rotation_video_empty_volume_returns_none(tmp_path):
+    import pytest
+
+    pytest.importorskip("pyvista")
+    volume = np.full((2, 3, 4), np.nan)
+    out = render.save_rotation_video(
+        volume, 1.0, 0.15, 0.38, 0.0, 1.0, "viridis", 0.85, os.path.join(tmp_path, "r"), "gif"
+    )
+    assert out is None

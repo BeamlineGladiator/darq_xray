@@ -1,4 +1,4 @@
-"""Shared volume rendering — per-layer PNGs, layer animation, 3D top-view.
+"""Shared volume rendering — per-layer PNGs, layer animation, 3D top-view + orbit video.
 
 Generic over the scalar field: the caller passes a ``(Z, Y, X)`` volume, the Z
 coordinates (µm), colour limits, a colormap name and labels. The visualize and
@@ -6,7 +6,8 @@ rocking stages both render through here so there is exactly one renderer.
 
 Uses the explicit :class:`~matplotlib.figure.Figure`/Agg API (never ``pyplot``
 or ``matplotlib.use``) so it is import-safe inside the Qt GUI process. ``pyvista``
-is imported lazily, so a missing GL/driver stack only disables the 3D top-view.
+is imported lazily, so a missing GL/driver stack only disables the 3D top-view
+and rotation video.
 """
 
 from __future__ import annotations
@@ -272,3 +273,37 @@ def save_top_view(volume, scale_z, sx, sy, vmin, vmax, cmap, opacity, path):
     pl.screenshot(path)
     pl.close()
     return path
+
+
+def save_rotation_video(
+    volume, scale_z, sx, sy, vmin, vmax, cmap, opacity, base_path, fmt, *, n_frames=120, fps=15
+):
+    """360° orbit movie of the 3D volume render; returns path or None if empty."""
+    import pyvista as pv
+
+    pv.OFF_SCREEN = True
+    grid = _pyvista_grid(volume, spacing=(sx, sy, scale_z))
+    if grid.n_cells == 0:
+        return None
+    pl = pv.Plotter(off_screen=True)
+    pl.add_mesh(
+        grid,
+        scalars="values",
+        cmap=cmap,
+        clim=[vmin, vmax],
+        opacity=opacity,
+        smooth_shading=True,
+        show_edges=False,
+    )
+    pl.view_isometric()
+    step = 360.0 / n_frames
+
+    def get_frame(i):
+        if i:
+            pl.camera.Azimuth(step)
+        return pl.screenshot(return_img=True)
+
+    try:
+        return _write_image_video(get_frame, n_frames, base_path, fmt, fps=fps)
+    finally:
+        pl.close()
