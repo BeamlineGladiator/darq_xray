@@ -229,7 +229,17 @@ def test_process_dataset_rotation_video_failure_becomes_note(tmp_path, monkeypat
         "save_rotation": True,
     }
     prod = V._process_dataset(
-        np.zeros((2, 4, 5)), [0.0, 1.0], 1.0, "chi", 0.0, 1.0, "viridis", "chi", "deg", p, str(tmp_path)
+        np.zeros((2, 4, 5)),
+        [0.0, 1.0],
+        1.0,
+        "chi",
+        0.0,
+        1.0,
+        "viridis",
+        "chi",
+        "deg",
+        p,
+        str(tmp_path),
     )
     assert prod.rotation_video is None
     assert any("rotation video skipped" in n for n in prod.notes)
