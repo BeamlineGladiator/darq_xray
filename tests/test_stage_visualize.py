@@ -216,6 +216,32 @@ def test_process_dataset_rotation_video(tmp_path, monkeypatch):
     assert calls["fmt"] == "gif"
 
 
+def test_process_dataset_rotation_video_empty_volume_becomes_note(tmp_path, monkeypatch):
+    monkeypatch.setattr(V.Rnd, "save_rotation_video", lambda *a, **kw: None)
+    p = {
+        **V.STAGE.defaults(),
+        "save_layers": False,
+        "save_animation": False,
+        "save_topview": False,
+        "save_rotation": True,
+    }
+    prod = V._process_dataset(
+        np.zeros((2, 4, 5)),
+        [0.0, 1.0],
+        1.0,
+        "chi",
+        0.0,
+        1.0,
+        "viridis",
+        "chi",
+        "deg",
+        p,
+        str(tmp_path),
+    )
+    assert prod.rotation_video is None
+    assert any("no finite voxels" in n for n in prod.notes)
+
+
 def test_process_dataset_rotation_video_failure_becomes_note(tmp_path, monkeypatch):
     def boom(*a, **kw):
         raise RuntimeError("no GL")

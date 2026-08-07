@@ -31,6 +31,20 @@ def test_write_image_video_both_prefers_mp4_or_falls_back(tmp_path):
     assert os.path.getsize(base + ".gif") > 0 or written == base + ".mp4"
 
 
+def test_write_image_video_failed_mp4_is_removed(tmp_path, monkeypatch):
+    class BoomWriter:
+        def __init__(self, *a, **kw):
+            raise RuntimeError("ffmpeg died")
+
+    monkeypatch.setattr(render, "FFMpegWriter", BoomWriter)
+    base = os.path.join(tmp_path, "spin")
+    with open(base + ".mp4", "wb") as fh:
+        fh.write(b"partial")
+    written = render._write_image_video(_gradient_frame, 3, base, "mp4", fps=5)
+    assert written == base + ".gif"
+    assert not os.path.exists(base + ".mp4")
+
+
 def test_save_rotation_video_empty_volume_returns_none(tmp_path):
     import pytest
 

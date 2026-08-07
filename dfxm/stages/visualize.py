@@ -514,6 +514,8 @@ def _process_dataset(
                 os.path.join(ds_dir, f"{name}_rotation"),
                 p["output_format"],
             )
+            if prod.rotation_video is None:
+                prod.notes.append("rotation video skipped: volume has no finite voxels")
         except Exception as exc:  # noqa: BLE001 - no GL / pyvista issue -> note + continue
             prod.notes.append(f"rotation video skipped: {exc}")
     return prod

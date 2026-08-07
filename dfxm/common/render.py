@@ -182,17 +182,28 @@ def save_layer_animation(
         return [im, title_obj]
 
     anim = FuncAnimation(fig, update, frames=z_size, blit=False)
+    return _save_animation(anim, base_path, fmt, fps=15, dpi=120)
+
+
+def _save_animation(anim, base_path, fmt, fps, dpi):
+    """Save a FuncAnimation as MP4 (ffmpeg) with GIF fallback; returns the path.
+
+    ``fmt`` is ``mp4``/``gif``/``both``. A failed MP4 write (ffmpeg missing or
+    dying mid-save) falls back to GIF and removes the partial ``.mp4``.
+    """
     written = None
     want_mp4 = fmt in ("mp4", "both")
     want_gif = fmt in ("gif", "both")
     if want_mp4:
         try:
-            anim.save(base_path + ".mp4", writer=FFMpegWriter(fps=15), dpi=120)
+            anim.save(base_path + ".mp4", writer=FFMpegWriter(fps=fps), dpi=dpi)
             written = base_path + ".mp4"
         except Exception:  # noqa: BLE001 - ffmpeg missing -> fall back to GIF
+            if os.path.exists(base_path + ".mp4"):
+                os.remove(base_path + ".mp4")
             want_gif = True
     if want_gif:
-        anim.save(base_path + ".gif", writer=PillowWriter(fps=15), dpi=120)
+        anim.save(base_path + ".gif", writer=PillowWriter(fps=fps), dpi=dpi)
         written = written or base_path + ".gif"
     return written
 
@@ -200,8 +211,10 @@ def save_layer_animation(
 def _write_image_video(get_frame, n_frames, base_path, fmt, fps=15):
     """Assemble RGB frames (``get_frame(i) -> (H, W, 3) uint8``) into MP4/GIF.
 
-    Same container semantics as :func:`save_layer_animation`: try MP4 for
-    ``mp4``/``both`` (ffmpeg), fall back to GIF. Returns the written path.
+    Same container semantics as :func:`save_layer_animation` (via
+    :func:`_save_animation`). ``get_frame`` must be idempotent in ``i`` — the
+    sequence is replayed in full for ``fmt="both"`` and for the MP4→GIF
+    fallback. Returns the written path.
     """
     first = np.asarray(get_frame(0))
     h, w = first.shape[:2]
@@ -217,19 +230,7 @@ def _write_image_video(get_frame, n_frames, base_path, fmt, fps=15):
         return [im]
 
     anim = FuncAnimation(fig, update, frames=n_frames, blit=False)
-    written = None
-    want_mp4 = fmt in ("mp4", "both")
-    want_gif = fmt in ("gif", "both")
-    if want_mp4:
-        try:
-            anim.save(base_path + ".mp4", writer=FFMpegWriter(fps=fps), dpi=dpi)
-            written = base_path + ".mp4"
-        except Exception:  # noqa: BLE001 - ffmpeg missing -> fall back to GIF
-            want_gif = True
-    if want_gif:
-        anim.save(base_path + ".gif", writer=PillowWriter(fps=fps), dpi=dpi)
-        written = written or base_path + ".gif"
-    return written
+    return _save_animation(anim, base_path, fmt, fps=fps, dpi=dpi)
 
 
 def _pyvista_grid(data, spacing):
@@ -251,8 +252,13 @@ def _pyvista_grid(data, spacing):
     return grid.threshold(value=thresh, scalars="values")
 
 
-def save_top_view(volume, scale_z, sx, sy, vmin, vmax, cmap, opacity, path):
-    """Single top-view (XY) 3D render via pyvista; returns path or None if empty."""
+def _volume_plotter(volume, scale_z, sx, sy, vmin, vmax, cmap, opacity):
+    """Off-screen plotter with the shared volume-mesh styling; None if empty.
+
+    The single setup used by :func:`save_top_view` and
+    :func:`save_rotation_video`, so the video is guaranteed to look like the
+    top-view still (**lazy** ``pyvista`` import).
+    """
     import pyvista as pv
 
     pv.OFF_SCREEN = True
@@ -269,6 +275,14 @@ def save_top_view(volume, scale_z, sx, sy, vmin, vmax, cmap, opacity, path):
         smooth_shading=True,
         show_edges=False,
     )
+    return pl
+
+
+def save_top_view(volume, scale_z, sx, sy, vmin, vmax, cmap, opacity, path):
+    """Single top-view (XY) 3D render via pyvista; returns path or None if empty."""
+    pl = _volume_plotter(volume, scale_z, sx, sy, vmin, vmax, cmap, opacity)
+    if pl is None:
+        return None
     pl.view_xy()
     pl.screenshot(path)
     pl.close()
@@ -279,28 +293,19 @@ def save_rotation_video(
     volume, scale_z, sx, sy, vmin, vmax, cmap, opacity, base_path, fmt, *, n_frames=120, fps=15
 ):
     """360° orbit movie of the 3D volume render; returns path or None if empty."""
-    import pyvista as pv
-
-    pv.OFF_SCREEN = True
-    grid = _pyvista_grid(volume, spacing=(sx, sy, scale_z))
-    if grid.n_cells == 0:
+    pl = _volume_plotter(volume, scale_z, sx, sy, vmin, vmax, cmap, opacity)
+    if pl is None:
         return None
-    pl = pv.Plotter(off_screen=True)
-    pl.add_mesh(
-        grid,
-        scalars="values",
-        cmap=cmap,
-        clim=[vmin, vmax],
-        opacity=opacity,
-        smooth_shading=True,
-        show_edges=False,
-    )
     pl.view_isometric()
+    base_camera = pl.camera_position
     step = 360.0 / n_frames
 
     def get_frame(i):
+        # idempotent: absolute angle from the stored start pose, so the replay
+        # for fmt="both" / the MP4->GIF fallback re-renders the same orbit
+        pl.camera_position = base_camera
         if i:
-            pl.camera.Azimuth(step)
+            pl.camera.Azimuth(i * step)
         return pl.screenshot(return_img=True)
 
     try:
