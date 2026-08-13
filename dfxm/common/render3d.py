@@ -12,6 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import numpy as np
+from matplotlib.figure import Figure
 
 PRESETS = ("front", "top", "side", "iso")
 OPACITY_MAPPINGS = ("linear", "sigmoid", "geom", "geom_r")
@@ -315,3 +316,49 @@ def render_scene_image(scene: Scene3D, camera, *, window_size=(1920, 1080)):
         return np.asarray(img), px_per_um
     finally:
         pl.close()
+
+
+def scene_figure(
+    img,
+    *,
+    px_per_um: float,
+    cbar_label: str,
+    group: str | None = None,
+    clim,
+    log_scale: bool = False,
+    cmap: str = "magma",
+    title: str | None = None,
+    style=None,
+):
+    """Publication-styled figure around a rendered 3-D image (white background).
+
+    The image is drawn in true µm data coordinates (from *px_per_um*, exact
+    under parallel projection), so :func:`~dfxm.common.plotting.draw_scale_bar`
+    needs no estimation. The colorbar comes from a ScalarMappable with the
+    ORIGINAL (non-log) limits — LogNorm when *log_scale* — so log videos and
+    figures label real values. Returns (fig, ax, im); *im* is the AxesImage
+    whose data the rotation video swaps per frame.
+    """
+    import matplotlib.colors as mcolors
+    from matplotlib.cm import ScalarMappable
+
+    from .plotting import PlotStyle, add_colorbar, apply_text_scale, draw_scale_bar, get_cmap
+
+    st = style if style is not None else PlotStyle(scale_bar_color="black", colorbar_fraction=0.046)
+    h, w = np.asarray(img).shape[:2]
+    ext_x, ext_y = w / float(px_per_um), h / float(px_per_um)
+    fig = Figure(figsize=(12, 12 * h / w + 1.0), facecolor="white")
+    ax = fig.add_subplot(111)
+    im = ax.imshow(np.asarray(img), extent=[0, ext_x, 0, ext_y], origin="lower", aspect="equal")
+    ax.set_axis_off()
+    if title:
+        ax.set_title(title)
+    vmin, vmax = float(clim[0]), float(clim[1])
+    norm = mcolors.LogNorm(vmin=vmin, vmax=vmax) if log_scale else mcolors.Normalize(vmin, vmax)
+    sm = ScalarMappable(norm=norm, cmap=get_cmap(cmap))
+    sm.set_array([])
+    fig._scene_mappable = sm  # test/debug hook: the mappable behind the colorbar
+    add_colorbar(fig, sm, ax, cbar_label, st, group=group)
+    draw_scale_bar(ax, st.scale_bar_length_um, style=st)
+    apply_text_scale(ax, st)
+    return fig, ax, im

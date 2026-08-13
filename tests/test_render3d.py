@@ -146,3 +146,39 @@ def test_grid_for_scene_log_uploads_log10_values():
     s = R3.Scene3D(volume=v, spacing=(1, 1, 1), mode="volume", clim=(1.0, 100.0), log_scale=True)
     kind, grid = R3._grid_for_scene(s)
     assert float(grid.cell_data["values"].max()) == pytest.approx(2.0)  # log10(100)
+
+
+# --- compositor (Agg, no pyvista) -----------------------------------------
+
+
+def _fake_render():
+    return np.full((120, 200, 3), 255, dtype=np.uint8)
+
+
+def test_scene_figure_extent_is_micron_true():
+    fig, ax, im = R3.scene_figure(
+        _fake_render(), px_per_um=2.0, cbar_label="Misorientation (°)", clim=(0.0, 1.0)
+    )
+    # 200 px wide at 2 px/µm -> 100 µm x-extent (exact scale-bar basis)
+    assert ax.get_xlim() == (0.0, 100.0)
+    assert ax.get_ylim() == (0.0, 60.0)
+    assert len(fig.axes) == 2  # image + colorbar
+
+
+def test_scene_figure_log_uses_lognorm():
+    from matplotlib.colors import LogNorm
+
+    fig, ax, im = R3.scene_figure(
+        _fake_render(), px_per_um=2.0, cbar_label="I", clim=(1.0, 100.0), log_scale=True
+    )
+    # the colorbar was built from a ScalarMappable with LogNorm
+    assert isinstance(fig._scene_mappable.norm, LogNorm)
+
+
+def test_scene_figure_saves_png(tmp_path):
+    fig, ax, im = R3.scene_figure(
+        _fake_render(), px_per_um=2.0, cbar_label="ε", group="strain", clim=(-1e-3, 1e-3)
+    )
+    out = tmp_path / "f.png"
+    fig.savefig(out, dpi=100)
+    assert out.stat().st_size > 0
