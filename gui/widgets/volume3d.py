@@ -2,12 +2,10 @@
 
 Nothing is loaded or rendered (and pyvista is never imported) until the user
 picks a volume and clicks "Render 3-D" — the sources handed in by the stage view
-are callables invoked only then.
+are VolumeSourceSpecs whose ``load`` callable is invoked only then.
 """
 
 from __future__ import annotations
-
-from collections.abc import Callable
 
 from PySide6.QtWidgets import (
     QComboBox,
@@ -18,6 +16,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ..viewers import VolumeSourceSpec
 from .pv_canvas import PvCanvas
 
 
@@ -26,7 +25,7 @@ class Volume3DPanel(QWidget):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self._sources: dict[str, Callable[[], tuple]] = {}
+        self._sources: dict[str, VolumeSourceSpec] = {}
 
         self._combo = QComboBox()
         self._render_btn = QPushButton("Render 3-D")
@@ -46,8 +45,8 @@ class Volume3DPanel(QWidget):
         lay.addWidget(self._canvas, 1)
         self._set_enabled(False)
 
-    def set_sources(self, sources: dict[str, Callable[[], tuple]]) -> None:
-        """Install lazy volume sources (name -> callable). Does not render."""
+    def set_sources(self, sources: dict[str, VolumeSourceSpec]) -> None:
+        """Install lazy volume sources (name -> VolumeSourceSpec). Does not render."""
         self._sources = dict(sources)
         self._combo.clear()
         self._combo.addItems(list(self._sources))
@@ -68,10 +67,11 @@ class Volume3DPanel(QWidget):
         self._status.setText(f"loading '{name}' …")
         self._render_btn.setEnabled(False)
         try:
-            vol, spacing, cmap, clim = self._sources[name]()
-            ok = self._canvas.show_volume(vol, spacing, cmap=cmap, clim=clim)
+            spec = self._sources[name]
+            lv = spec.load()
+            ok = self._canvas.show_volume(lv.volume, lv.spacing, cmap=lv.cmap, clim=lv.clim)
             self._status.setText(
-                f"{name}: shape {tuple(vol.shape)}"
+                f"{name}: shape {tuple(lv.volume.shape)}"
                 if ok
                 else f"{name}: 3-D unavailable (no OpenGL context)"
             )

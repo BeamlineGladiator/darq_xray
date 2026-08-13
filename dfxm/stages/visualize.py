@@ -712,11 +712,12 @@ def available_fields(params: dict) -> list[str]:
 
 
 def aligned_field(params: dict, name: str):
-    """Align a single field for display. Returns (volume, spacing_xyz, cmap, clim).
+    """Align a single field for display. Returns (volume, spacing_xyz, cmap, clim, meta).
 
     Reuses the exact alignment + centering the stage applies, so the 3-D view
     matches the rendered PNGs. Heavy (loads + aligns one volume) — the GUI calls
-    it only when the user asks to render.
+    it only when the user asks to render. ``meta`` is
+    ``{"cbar_label": str, "group": str | None}``.
     """
     p = {**STAGE.defaults(), **params}
     scale_x, scale_y = float(p["pixel_size_x_um"]), float(p["pixel_size_y_um"])
@@ -734,6 +735,7 @@ def aligned_field(params: dict, name: str):
         )
         vmin, vmax = _symmetric_range(data)
         cmap = resolve_cmap(None, "strain")
+        meta = {"cbar_label": "Strain (ε)", "group": "strain"}
     else:
         datasets = load_mosa_datasets(p["mosa_volume_file"])
         if name not in datasets:
@@ -754,9 +756,10 @@ def aligned_field(params: dict, name: str):
             )
         else:
             vmin, vmax = _colorbar_range(data)
-        _, _, group = _display_info(name)
+        _t, label, group = _display_info(name)
         cmap = resolve_cmap(None, group)
-    return data, (scale_x, scale_y, scale_z), cmap, (float(vmin), float(vmax))
+        meta = {"cbar_label": label, "group": group}
+    return data, (scale_x, scale_y, scale_z), cmap, (float(vmin), float(vmax)), meta
 
 
 def _make_build(loader, z, vn, vx, cmap_group, ex, ey, t, cb):

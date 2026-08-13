@@ -66,13 +66,15 @@ def test_available_fields_and_aligned_field(tmp_path):
         "strain",
     }
 
-    vol, spacing, cmap, clim = V.aligned_field(p, "chi_Center_of_mass")
+    vol, spacing, cmap, clim, meta = V.aligned_field(p, "chi_Center_of_mass")
     assert vol.ndim == 3 and vol.shape[2] >= NX  # X canvas expanded by samy shift
     assert spacing[0] == pytest.approx(0.152) and spacing[2] > 0
     assert cmap == "fast" and clim[0] == pytest.approx(-clim[1])  # midrange -> symmetric
+    assert meta == {"cbar_label": "Misorientation (°)", "group": "mosa_com"}
 
-    sv, _sp, scmap, _sc = V.aligned_field(p, "strain")
+    sv, _sp, scmap, _sc, smeta = V.aligned_field(p, "strain")
     assert scmap == "RdBu_r" and sv.ndim == 3
+    assert smeta == {"cbar_label": "Strain (ε)", "group": "strain"}
 
 
 def test_aligned_field_unknown_raises(tmp_path):
@@ -82,16 +84,8 @@ def test_aligned_field_unknown_raises(tmp_path):
 
 
 # -- gui.viewers.volume_sources ----------------------------------------------
-def test_volume_sources_visualize_lazy(tmp_path):
-    proc, raw = _setup_volumes(tmp_path)
-    p = _params(proc, raw)
-    sources = viewers.volume_sources("visualize", None, p)
-    assert set(sources) == set(V.available_fields(p))
-    vol, spacing, cmap, clim = sources["strain"]()  # invoking the callable does the work
-    assert vol.ndim == 3 and cmap == "RdBu_r"
-
-
-def test_volume_sources_rocking_reads_attrs(tmp_path):
+def _make_aligned_h5(tmp_path):
+    """Build a synthetic aligned_raw_rocking_volumes.h5 and return its path."""
     aligned = tmp_path / "aligned_raw_rocking_volumes.h5"
     with h5py.File(aligned, "w") as f:
         f.create_dataset(
@@ -101,12 +95,53 @@ def test_volume_sources_rocking_reads_attrs(tmp_path):
         f.attrs["scale_x_um_per_px"] = 0.152
         f.attrs["scale_y_um_per_px"] = 0.385
         f.attrs["scale_z_um_per_px"] = 1.5
-    result = types.SimpleNamespace(aligned_path=str(aligned))
+    return str(aligned)
+
+
+def _result_with(**kw):
+    return types.SimpleNamespace(**kw)
+
+
+def test_volume_sources_visualize_lazy(tmp_path):
+    proc, raw = _setup_volumes(tmp_path)
+    p = _params(proc, raw)
+    sources = viewers.volume_sources("visualize", None, p)
+    assert set(sources) == set(V.available_fields(p))
+    loaded = sources["strain"].load()  # invoking the loader does the work
+    assert loaded.volume.ndim == 3 and loaded.cmap == "RdBu_r"
+    assert loaded.cbar_label == "Strain (ε)" and loaded.group == "strain"
+
+
+def test_visualize_source_spec_loader_is_jsonable(monkeypatch):
+    monkeypatch.setattr("dfxm.stages.visualize.available_fields", lambda p: ["chi_Center_of_mass"])
+    params = {"mosa_volume_file": "/x/maps.h5"}
+    sources = viewers.volume_sources("visualize", object(), params)
+    spec = sources["chi_Center_of_mass"]
+    assert spec.loader["kind"] == "visualize_field"
+    assert spec.loader["field"] == "chi_Center_of_mass"
+    assert spec.loader["stage_params"] == params
+    json.dumps(spec.loader)  # must not raise
+
+
+def test_volume_sources_rocking_reads_attrs(tmp_path):
+    aligned = _make_aligned_h5(tmp_path)
+    result = _result_with(aligned_path=aligned)
     sources = viewers.volume_sources("rocking", result, {})
     assert set(sources) == {"sum_intensity", "specific_frame"}
-    vol, spacing, cmap, clim = sources["sum_intensity"]()
-    assert spacing == (0.152, 0.385, 1.5) and cmap == "gray"
-    assert clim is not None and clim[0] < clim[1]
+    loaded = sources["sum_intensity"].load()
+    assert loaded.spacing == (0.152, 0.385, 1.5) and loaded.cmap == "gray"
+    assert loaded.clim is not None and loaded.clim[0] < loaded.clim[1]
+
+
+def test_rocking_source_spec_carries_meta_and_loader(tmp_path):
+    path = _make_aligned_h5(tmp_path)
+    sources = viewers.volume_sources("rocking", _result_with(aligned_path=path), {})
+    spec = sources["sum_intensity"]
+    assert spec.loader == {"kind": "h5_dataset", "path": path, "dataset": "sum_intensity"}
+    loaded = spec.load()
+    assert loaded.group == "raw"
+    assert loaded.cbar_label == "Intensity"
+    assert loaded.volume.ndim == 3
 
 
 def test_volume_sources_empty_for_other_stages():
