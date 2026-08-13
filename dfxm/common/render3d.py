@@ -82,8 +82,8 @@ class Scene3D:
     cmap: str = "magma"
     clim: tuple | None = None  # None -> auto_clim
     log_scale: bool = False
-    opacity: float = 0.85  # surface/isosurface modes
-    opacity_mapping: str = "linear"  # volume mode transfer function
+    opacity: float = 0.85  # scalar transparency, honoured by EVERY mode
+    opacity_mapping: str = "linear"  # volume mode transfer function, scaled by opacity
     threshold: tuple | None = None  # (tmin, tmax) value window
     clip: tuple | None = None  # ((ox, oy, oz), (nx, ny, nz)) µm
     downsample: int = 1
@@ -208,6 +208,21 @@ def _contour_meshes(grid, clim, n_isosurfaces):
     return [(float(lv), point_grid.contour([float(lv)], scalars="values")) for lv in levels]
 
 
+def _volume_opacity(scene: Scene3D):
+    """The named opacity mapping as a 256-step curve scaled by ``scene.opacity``.
+
+    Volume mode cannot just hand ``opacity_mapping`` to ``add_volume``: the name
+    alone always maps to the full 0–255 alpha ramp, so the scalar opacity (the
+    stages' ``volume_opacity``) would be a silent no-op and only surface /
+    isosurface modes would honour it. Building the curve explicitly and scaling
+    it makes one opacity knob mean the same thing in every render mode.
+    """
+    import pyvista as pv
+
+    curve = np.asarray(pv.opacity_transfer_function(scene.opacity_mapping, 256), dtype=float)
+    return np.clip(curve * float(scene.opacity), 0.0, 255.0)
+
+
 def populate(plotter, scene: Scene3D, *, scalar_bar_title=None) -> bool:
     """Build the scene's actors into *plotter* (works for QtInteractor too).
 
@@ -229,7 +244,7 @@ def populate(plotter, scene: Scene3D, *, scalar_bar_title=None) -> bool:
     if kind == "volume":
         plotter.add_volume(
             grid,
-            opacity=scene.opacity_mapping,
+            opacity=_volume_opacity(scene),
             shade=True,
             ambient=0.3,
             diffuse=0.6,
@@ -440,19 +455,25 @@ def _orbit_frames(scene: Scene3D, *, elevation, zoom, base_camera, window_size):
 
     pv.OFF_SCREEN = True
     pl = pv.Plotter(off_screen=True, window_size=list(window_size))
-    if not populate(pl, scene):
+    # Not try/FINALLY: on success the plotter must stay OPEN for the returned
+    # closure — only the failure paths (and the empty scene) close it here.
+    try:
+        if not populate(pl, scene):
+            pl.close()
+            return None
+        if base_camera is None:
+            apply_camera(pl, CameraSpec(preset="front", zoom=zoom))
+            base = tuple(tuple(float(c) for c in v) for v in pl.camera_position)
+            elev = float(elevation)
+        else:
+            base = tuple(tuple(float(c) for c in v) for v in base_camera)
+            elev = 0.0
+        pl.enable_parallel_projection()
+        pl.show(auto_close=False)
+        px_per_um = window_size[1] / (2.0 * float(pl.camera.parallel_scale))
+    except BaseException:
         pl.close()
-        return None
-    if base_camera is None:
-        apply_camera(pl, CameraSpec(preset="front", zoom=zoom))
-        base = tuple(tuple(float(c) for c in v) for v in pl.camera_position)
-        elev = float(elevation)
-    else:
-        base = tuple(tuple(float(c) for c in v) for v in base_camera)
-        elev = 0.0
-    pl.enable_parallel_projection()
-    pl.show(auto_close=False)
-    px_per_um = window_size[1] / (2.0 * float(pl.camera.parallel_scale))
+        raise
     orbit: dict = {"n": None, "poses": None}
 
     def get_frame(i):

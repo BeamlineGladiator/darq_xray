@@ -52,6 +52,42 @@ def test_orbit_frames_actually_rotate():
         get_frame.close()
 
 
+def test_orbit_frames_closes_the_plotter_when_setup_fails(monkeypatch):
+    """A failure during camera setup must not leak the off-screen plotter."""
+    seen = []
+    real_populate = R3.populate
+
+    def spy(plotter, scene, **kw):
+        seen.append(plotter)
+        return real_populate(plotter, scene, **kw)
+
+    def boom(*a, **kw):
+        raise RuntimeError("camera setup failed")
+
+    monkeypatch.setattr(R3, "populate", spy)
+    monkeypatch.setattr(R3, "apply_camera", boom)
+    with pytest.raises(RuntimeError, match="camera setup failed"):
+        R3._orbit_frames(_scene(), elevation=20.0, zoom=1.2, base_camera=None, window_size=(64, 48))
+    assert len(seen) == 1
+    assert seen[0].render_window is None  # closed
+
+
+def test_volume_mode_opacity_changes_the_render():
+    """Scene3D.opacity must scale volume-mode transparency, not just meshes.
+
+    The volume branch used to pass the *mapping name* straight to add_volume, so
+    the scalar opacity (the stages' ``volume_opacity`` param) was a silent no-op.
+    """
+    imgs = []
+    for opacity in (0.1, 0.9):
+        scene = _scene()
+        scene.opacity = opacity
+        got = R3.render_scene_image(scene, R3.CameraSpec(preset="iso"), window_size=(160, 120))
+        assert got is not None
+        imgs.append(np.asarray(got[0], dtype=float))
+    assert np.abs(imgs[0] - imgs[1]).mean() > 1.0
+
+
 def test_save_rotation_video_end_to_end(tmp_path):
     out = R3.save_rotation_video(
         _scene(),
