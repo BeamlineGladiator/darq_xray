@@ -1548,6 +1548,19 @@ change re-renders immediately):
 | **Opacity mapping** | volume-mode transfer function (`linear`, `sigmoid`, `geom`, `geom_r`), scaled by **Opacity** |
 | **Background** | `theme` (follows the app's light/dark palette), or a fixed `white`/`black` |
 
+Below the appearance controls, a second group of structural and camera
+controls (also every change re-renders — threshold/clip/downsample rebuild the
+scene, camera/bounds just re-render the existing one):
+
+| Control | Effect |
+| --- | --- |
+| **Value threshold** + min/max | when checked, NaNs out voxels outside the `[min, max]` value window before rendering |
+| **Downsample** | block-averages the volume 1–16× in Y/X (Z untouched) before rendering — a quick way to preview a large volume responsively |
+| **Clip plane** + **Clip axis** (X/Y/Z) + **Flip clip direction** | NaNs out the half of the volume on one side of an axis-aligned plane through the volume's centre; **Flip clip direction** swaps which half is kept. This is a v1 (axis presets + flip only) — not a live draggable plane widget |
+| **Camera preset** (Front / Top / Side / Iso) | snaps the interactive camera to that preset (offsets reset to 0/0/1×) |
+| **Azimuth / Elevation / Zoom** + **Apply camera pose** | applies a custom offset on top of the `front` preset. These three fields always show the *last applied* pose, not wherever your mouse has since orbited the view — video/image exports use the live plotter camera, not these fields |
+| **Show bounds axes (µm)** | toggles a `pyvista` bounding box with µm-labelled X/Y/Z axes around the volume |
+
 ### Line picker (profiles)
 
 On the **profiles** view, click **Pick line…** to open the picker:

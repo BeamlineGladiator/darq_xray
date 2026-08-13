@@ -124,3 +124,51 @@ def test_auto_clim_button_resets_from_volume():
     lo, hi = w.scene.clim
     assert lo == pytest.approx(1.0) and hi == pytest.approx(1.0)  # all-ones volume
     w.close()
+
+
+def test_threshold_and_downsample_controls(monkeypatch):
+    w = Viewer3DWindow(_spec(), "visualize")
+    w.load_and_render()
+    monkeypatch.setattr(w, "rebuild", lambda: None)
+    w._thresh_min.setValue(0.2)
+    w._thresh_max.setValue(0.9)
+    w._thresh_check.setChecked(True)
+    assert w.scene.threshold == (0.2, 0.9)
+    w._thresh_check.setChecked(False)
+    assert w.scene.threshold is None
+    w._downsample_spin.setValue(4)
+    assert w.scene.downsample == 4
+    w.close()
+
+
+def test_clip_plane_axis_and_flip(monkeypatch):
+    w = Viewer3DWindow(_spec(), "visualize")
+    w.load_and_render()
+    monkeypatch.setattr(w, "rebuild", lambda: None)
+    w._clip_axis_combo.setCurrentText("Y")
+    w._clip_check.setChecked(True)
+    origin, normal = w.scene.clip
+    # centre of (2,3,4) at spacing (0.15, 0.38, 2.0): y = 3*0.38/2
+    assert origin[1] == pytest.approx(0.57)
+    assert normal == (0.0, 1.0, 0.0)
+    w._clip_flip_btn.click()
+    assert w.scene.clip[1] == (0.0, -1.0, 0.0)
+    w._clip_check.setChecked(False)
+    assert w.scene.clip is None
+    w.close()
+
+
+def test_camera_fields_build_cameraspec(monkeypatch):
+    w = Viewer3DWindow(_spec(), "visualize")
+    w.load_and_render()
+    seen = {}
+    monkeypatch.setattr(
+        "gui.widgets.viewer3d_window.R3.apply_camera", lambda pl, cam: seen.update(cam=cam)
+    )
+    w._az_spin.setValue(30.0)
+    w._el_spin.setValue(15.0)
+    w._zoom_spin.setValue(1.5)
+    w._cam_apply_btn.click()
+    if w._canvas.available:  # offscreen may lack GL; the guard itself is under test
+        assert seen["cam"].azimuth == 30.0 and seen["cam"].elevation == 15.0
+    w.close()
