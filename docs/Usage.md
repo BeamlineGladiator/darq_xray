@@ -1535,6 +1535,19 @@ never accumulates in the main window no matter how many volumes you've viewed.
 For `visualize` the volume is aligned on demand with the *same* pipeline as the
 rendered PNGs, so they match.
 
+The pop-out window's right-hand panel holds the appearance controls (every
+change re-renders immediately):
+
+| Control | Effect |
+| --- | --- |
+| **Render mode** | `volume` (true volumetric, shaded), `surface` (legacy NaN-thresholded mesh), or `isosurface` (stacked contour shells) — same modes as the visualize/rocking `render_mode` param |
+| **Colormap** | matplotlib names (`magma`, `viridis`, `plasma`, `inferno`, `RdBu_r`, `gray`) plus `fast`, the pipeline's ParaView-Fast colormap |
+| **Colour min / max** | manual colour range; **Auto colour range** resets both to the volume's 1st/99th percentile |
+| **Log colour scale** | logarithmic colour mapping; disabled (with a tooltip) whenever the current colour range isn't all-positive — matches the log-scale guard on the visualize/rocking stages |
+| **Opacity** | overall transparency (0–100%), honoured by every render mode |
+| **Opacity mapping** | volume-mode transfer function (`linear`, `sigmoid`, `geom`, `geom_r`), scaled by **Opacity** |
+| **Background** | `theme` (follows the app's light/dark palette), or a fixed `white`/`black` |
+
 ### Line picker (profiles)
 
 On the **profiles** view, click **Pick line…** to open the picker:

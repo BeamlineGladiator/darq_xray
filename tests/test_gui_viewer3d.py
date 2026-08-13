@@ -85,3 +85,42 @@ def test_launcher_surfaces_load_failure_without_raising():
     assert "open failed" in panel._status.text()
     assert "boom" in panel._status.text()
     assert len(panel._windows) == 0
+
+
+def test_controls_mutate_scene_and_trigger_rebuild(monkeypatch):
+    w = Viewer3DWindow(_spec(), "visualize")
+    w.load_and_render()
+    calls = []
+    monkeypatch.setattr(w, "rebuild", lambda: calls.append(1))
+    w._mode_combo.setCurrentText("isosurface")
+    assert w.scene.mode == "isosurface"
+    w._clim_min.setValue(0.2)
+    w._clim_max.setValue(0.8)
+    assert w.scene.clim == (0.2, 0.8)
+    w._opacity_slider.setValue(40)
+    assert w.scene.opacity == pytest.approx(0.4)
+    w._mapping_combo.setCurrentText("sigmoid")
+    assert w.scene.opacity_mapping == "sigmoid"
+    assert len(calls) >= 4
+    w.close()
+
+
+def test_log_checkbox_guard():
+    w = Viewer3DWindow(_spec(), "visualize")  # clim (0.0, 1.0) -> vmin not > 0
+    w.load_and_render()
+    assert not w._log_check.isEnabled()
+    w._clim_min.setValue(0.1)
+    assert w._log_check.isEnabled()
+    w._log_check.setChecked(True)
+    assert w.scene.log_scale is True
+    w.close()
+
+
+def test_auto_clim_button_resets_from_volume():
+    w = Viewer3DWindow(_spec(), "visualize")
+    w.load_and_render()
+    w._clim_min.setValue(0.4)
+    w._clim_auto_btn.click()
+    lo, hi = w.scene.clim
+    assert lo == pytest.approx(1.0) and hi == pytest.approx(1.0)  # all-ones volume
+    w.close()
