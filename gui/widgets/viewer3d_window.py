@@ -8,14 +8,19 @@ through ``render3d.populate`` so the view matches the stage's exports exactly.
 
 from __future__ import annotations
 
-from PySide6.QtCore import QSignalBlocker, Qt
+from PySide6.QtCore import QSignalBlocker, Qt, QTimer
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
+    QDialog,
+    QDialogButtonBox,
     QDoubleSpinBox,
+    QFileDialog,
     QFormLayout,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
+    QProgressDialog,
     QPushButton,
     QScrollArea,
     QSlider,
@@ -26,6 +31,7 @@ from PySide6.QtWidgets import (
 
 from dfxm.common import cmaps as _cmaps
 from dfxm.common import render3d as R3
+from dfxm.runner import Done, Failed, Progress, StageRunner
 
 from ..theme import ThemeController
 from ..viewers import LoadedVolume, VolumeSourceSpec
@@ -56,6 +62,9 @@ class Viewer3DWindow(QWidget):
         self._status = QLabel("")
         self._status.setWordWrap(True)
         self._clip_flipped = False
+        self._video_runner: StageRunner | None = None
+        self._video_timer: QTimer | None = None
+        self._video_progress: QProgressDialog | None = None
 
         self._controls = QWidget()
         self._build_controls()
@@ -64,7 +73,20 @@ class Viewer3DWindow(QWidget):
         controls_scroll.setWidgetResizable(True)
         controls_scroll.setFixedWidth(280)
 
+        toolbar = QHBoxLayout()
+        self._fig_btn = QPushButton("Save figure…")
+        self._shot_btn = QPushButton("Save screenshot…")
+        self._video_btn = QPushButton("Save rotation video…")
+        self._fig_btn.clicked.connect(self._on_save_figure)
+        self._shot_btn.clicked.connect(self._on_save_screenshot)
+        self._video_btn.clicked.connect(self._on_save_video)
+        for btn in (self._fig_btn, self._shot_btn, self._video_btn):
+            btn.setEnabled(False)  # re-enabled by rebuild() once GL availability is known
+            toolbar.addWidget(btn)
+        toolbar.addStretch(1)
+
         centre = QVBoxLayout()
+        centre.addLayout(toolbar)
         centre.addWidget(self._canvas, 1)
         centre.addWidget(self._status)
         lay = QHBoxLayout(self)
@@ -402,6 +424,7 @@ class Viewer3DWindow(QWidget):
         if self.scene is None or not self._canvas.ensure():
             if not self._canvas.available:
                 self._status.setText("3-D unavailable (no OpenGL context) — controls disabled")
+            self._sync_export_enabled()
             return
         pl = self._canvas.plotter
         pl.clear()
@@ -416,8 +439,270 @@ class Viewer3DWindow(QWidget):
         if self._bounds_check.isChecked():
             pl.show_bounds(xtitle="X (µm)", ytitle="Y (µm)", ztitle="Z (µm)")
         pl.render()
+        self._sync_export_enabled()
+
+    def _sync_export_enabled(self) -> None:
+        """Export buttons need a live GL canvas (screenshot reads it directly;
+        figure/video are gated the same way for a single, predictable rule)."""
+        ok = self._canvas.available
+        self._fig_btn.setEnabled(ok)
+        self._shot_btn.setEnabled(ok)
+        self._video_btn.setEnabled(ok and self._video_runner is None)
+
+    # -- exports ------------------------------------------------------------
+    def _video_job_params(self, base_path: str, fmt: str, n_frames: int, fps: int) -> dict:
+        s = self.scene
+        base_cam = None
+        if self._canvas.available:
+            base_cam = [list(v) for v in self._canvas.plotter.camera_position]
+        return {
+            "loader": self._spec.loader,
+            "scene": {
+                "mode": s.mode,
+                "cmap": s.cmap,
+                "clim": list(s.resolved_clim()),
+                "log_scale": s.log_scale,
+                "opacity": s.opacity,
+                "opacity_mapping": s.opacity_mapping,
+                "threshold": list(s.threshold) if s.threshold else None,
+                "clip": [list(s.clip[0]), list(s.clip[1])] if s.clip else None,
+                "downsample": s.downsample,
+                "background": s.background,
+            },
+            "base_camera": base_cam,
+            "elevation": 0.0 if base_cam else 20.0,
+            "zoom": 1.2,
+            "n_frames": int(n_frames),
+            "fps": int(fps),
+            "base_path": base_path,
+            "fmt": fmt,
+            "cbar_label": self.loaded.cbar_label,
+            "group": self.loaded.group,
+            "style_json": self._style_json,
+        }
+
+    def _save_figure_to(self, path: str, *, window_size=(1920, 1080)) -> None:
+        cam = (
+            tuple(tuple(v) for v in self._canvas.plotter.camera_position)
+            if self._canvas.available
+            else R3.CameraSpec(preset="front")
+        )
+        # render_scene_image sets the process-global pv.OFF_SCREEN = True and
+        # never restores it (flagged in Task 2's review). This method runs IN
+        # the GUI process, so without saving/restoring the flag here, opening
+        # another interactive viewer window after a figure export would get an
+        # off-screen (headless) interactor instead of a live one.
+        import pyvista as pv
+
+        prev_off_screen = pv.OFF_SCREEN
+        try:
+            got = R3.render_scene_image(self.scene, cam, window_size=window_size)
+        finally:
+            pv.OFF_SCREEN = prev_off_screen
+        if got is None:
+            self._status.setText("nothing to export (empty scene)")
+            return
+        img, px_per_um = got
+        from dfxm.common.plotting import style_from_json
+
+        fig, _ax, _im = R3.scene_figure(
+            img,
+            px_per_um=px_per_um,
+            cbar_label=self.loaded.cbar_label,
+            group=self.loaded.group,
+            clim=self.scene.resolved_clim(),
+            log_scale=self.scene.log_scale,
+            cmap=self.scene.cmap,
+            style=style_from_json(self._style_json),
+        )
+        fig.savefig(path, dpi=150, facecolor="white", bbox_inches="tight")
+        self._status.setText(f"figure saved to {path}")
+
+    def _prompt_window_size(self) -> tuple[int, int] | None:
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Figure size (px)")
+        form = QFormLayout(dlg)
+        w_spin = QSpinBox()
+        w_spin.setRange(64, 8192)
+        w_spin.setValue(1920)
+        install_wheel_guard(w_spin)
+        h_spin = QSpinBox()
+        h_spin.setRange(64, 8192)
+        h_spin.setValue(1080)
+        install_wheel_guard(h_spin)
+        form.addRow("Width (px)", w_spin)
+        form.addRow("Height (px)", h_spin)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(dlg.accept)
+        buttons.rejected.connect(dlg.reject)
+        form.addRow(buttons)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return None
+        return w_spin.value(), h_spin.value()
+
+    def _on_save_figure(self) -> None:
+        path, _filt = QFileDialog.getSaveFileName(self, "Save figure", "", "PNG (*.png)")
+        if not path:
+            return
+        size = self._prompt_window_size()
+        if size is None:
+            return
+        try:
+            self._save_figure_to(path, window_size=size)
+        except Exception as exc:  # noqa: BLE001 - surface in the status label
+            self._status.setText(f"save figure failed: {exc}")
+
+    def _on_save_screenshot(self) -> None:
+        if not self._canvas.available:
+            return
+        path, _filt = QFileDialog.getSaveFileName(self, "Save screenshot", "", "PNG (*.png)")
+        if not path:
+            return
+        try:
+            self._canvas.plotter.screenshot(path)
+        except Exception as exc:  # noqa: BLE001 - surface in the status label
+            self._status.setText(f"save screenshot failed: {exc}")
+            return
+        self._status.setText(f"screenshot saved to {path}")
+
+    def _prompt_video_params(self) -> tuple[str, str, int, int] | None:
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Save rotation video")
+        form = QFormLayout(dlg)
+
+        path_edit = QLineEdit()
+        browse_btn = QPushButton("Browse…")
+
+        def _browse() -> None:
+            path, _filt = QFileDialog.getSaveFileName(dlg, "Rotation video base path")
+            if path:
+                path_edit.setText(path)
+
+        browse_btn.clicked.connect(_browse)
+        path_row = QHBoxLayout()
+        path_row.addWidget(path_edit, 1)
+        path_row.addWidget(browse_btn)
+        path_widget = QWidget()
+        path_widget.setLayout(path_row)
+        form.addRow("Base path", path_widget)
+
+        fmt_combo = QComboBox()
+        fmt_combo.addItems(["mp4", "gif"])
+        install_wheel_guard(fmt_combo)
+        form.addRow("Format", fmt_combo)
+
+        frames_spin = QSpinBox()
+        frames_spin.setRange(1, 3600)
+        frames_spin.setValue(180)
+        install_wheel_guard(frames_spin)
+        form.addRow("Frames", frames_spin)
+
+        fps_spin = QSpinBox()
+        fps_spin.setRange(1, 120)
+        fps_spin.setValue(15)
+        install_wheel_guard(fps_spin)
+        form.addRow("FPS", fps_spin)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(dlg.accept)
+        buttons.rejected.connect(dlg.reject)
+        form.addRow(buttons)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return None
+        base_path = path_edit.text().strip()
+        if not base_path:
+            return None
+        return base_path, fmt_combo.currentText(), frames_spin.value(), fps_spin.value()
+
+    def _on_save_video(self) -> None:
+        if self._video_runner is not None:
+            return  # already running
+        params = self._prompt_video_params()
+        if params is None:
+            return
+        base_path, fmt, n_frames, fps = params
+        job = self._video_job_params(base_path, fmt, n_frames, fps)
+
+        self._video_progress = QProgressDialog("Rendering rotation video…", "Cancel", 0, 100, self)
+        self._video_progress.setWindowModality(Qt.WindowModality.WindowModal)
+        self._video_progress.setMinimumDuration(0)
+        self._video_progress.setAutoClose(False)
+        self._video_progress.setAutoReset(False)
+        self._video_progress.canceled.connect(self._cancel_video)
+
+        self._video_runner = StageRunner("dfxm.viewer_jobs:rotation_video_job", job)
+        self._video_runner.start()
+        self._video_btn.setEnabled(False)
+        self._video_timer = QTimer(self)
+        self._video_timer.setInterval(200)
+        self._video_timer.timeout.connect(self._poll_video)
+        self._video_timer.start()
+
+    def _poll_video(self) -> None:
+        runner = self._video_runner
+        if runner is None:
+            if self._video_timer is not None:
+                self._video_timer.stop()
+            return
+        for msg in runner.poll():
+            self._handle_video_msg(msg)
+        # Mirror stage_view._poll: once the child has exited but we never saw a
+        # Done/Failed, drain once more and, failing that, report an abnormal exit.
+        if self._video_timer is not None and self._video_timer.isActive() and not runner.is_alive():
+            for msg in runner.poll():
+                self._handle_video_msg(msg)
+            if self._video_timer is not None and self._video_timer.isActive():
+                self._finish_video_failed(Failed("worker exited without a result", ""))
+
+    def _handle_video_msg(self, msg) -> None:
+        if isinstance(msg, Progress):
+            if self._video_progress is not None:
+                self._video_progress.setValue(max(0, min(100, int(round(msg.frac * 100)))))
+                if msg.text:
+                    self._video_progress.setLabelText(msg.text)
+        elif isinstance(msg, Done):
+            self._finish_video_ok(msg.result)
+        elif isinstance(msg, Failed):
+            self._finish_video_failed(msg)
+
+    def _finish_video_ok(self, result) -> None:
+        self._stop_video_timer()
+        path = result.get("video") if isinstance(result, dict) else result
+        self._status.setText(f"rotation video saved to {path}")
+        self._video_btn.setEnabled(self._canvas.available)
+        self._video_runner = None
+
+    def _finish_video_failed(self, failure: Failed) -> None:
+        self._stop_video_timer()
+        self._status.setText(f"rotation video failed: {failure.error}")
+        self._video_btn.setEnabled(self._canvas.available)
+        self._video_runner = None
+
+    def _cancel_video(self) -> None:
+        if self._video_runner is not None:
+            self._video_runner.cancel()
+        self._stop_video_timer()
+        self._status.setText("rotation video cancelled")
+        self._video_btn.setEnabled(self._canvas.available)
+        self._video_runner = None
+
+    def _stop_video_timer(self) -> None:
+        if self._video_timer is not None:
+            self._video_timer.stop()
+            self._video_timer = None
+        if self._video_progress is not None:
+            self._video_progress.close()
+            self._video_progress = None
 
     def closeEvent(self, event) -> None:  # noqa: N802 - Qt override
+        if self._video_runner is not None:
+            self._video_runner.cancel()
+            self._stop_video_timer()
+            self._video_runner = None
         if self._canvas.plotter is not None:
             self._canvas.plotter.close()
         self.loaded = None

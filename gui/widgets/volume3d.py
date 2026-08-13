@@ -31,6 +31,7 @@ class Volume3DPanel(QWidget):
         self._sources: dict[str, VolumeSourceSpec] = {}
         self._windows: list[Viewer3DWindow] = []
         self._stage_name = ""
+        self._style_json = ""
 
         self._combo = QComboBox()
         self._open_btn = QPushButton("Open 3D viewer…")
@@ -49,10 +50,18 @@ class Volume3DPanel(QWidget):
         lay.addStretch(1)
         self._set_enabled(False)
 
-    def set_sources(self, sources: dict[str, VolumeSourceSpec], stage_name: str = "") -> None:
-        """Install lazy volume sources (name -> VolumeSourceSpec). Does not open anything."""
+    def set_sources(
+        self, sources: dict[str, VolumeSourceSpec], stage_name: str = "", style_json: str = ""
+    ) -> None:
+        """Install lazy volume sources (name -> VolumeSourceSpec). Does not open anything.
+
+        *style_json* (the session's current publication style, JSON-serialized) is
+        threaded into every window opened from here, so exported figures/videos
+        match the app's publication style rather than a hard-coded default.
+        """
         self._sources = dict(sources)
         self._stage_name = stage_name
+        self._style_json = style_json
         self._combo.clear()
         self._combo.addItems(list(self._sources))
         has = bool(self._sources)
@@ -69,7 +78,7 @@ class Volume3DPanel(QWidget):
         spec = self._sources.get(self._combo.currentText())
         if spec is None:
             return
-        w = Viewer3DWindow(spec, self._stage_name or "stage")
+        w = Viewer3DWindow(spec, self._stage_name or "stage", style_json=self._style_json)
         self._windows.append(w)
         w.destroyed.connect(
             lambda *_a, _w=w: self._windows.remove(_w) if _w in self._windows else None

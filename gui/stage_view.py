@@ -820,8 +820,16 @@ class StageView(QWidget):
         if self._vol3d is not None:
             # lazy: install source callables only; nothing loads/renders until
             # the user picks a volume and clicks Open 3D viewer….
+            style_json = ""
+            window = self.window()
+            if hasattr(window, "global_plot_style"):
+                from dfxm.common.plotting import style_to_json
+
+                style_json = style_to_json(window.global_plot_style())
             self._vol3d.set_sources(
-                volume_sources(self._stage_name, result, self._last_params), self._stage_name
+                volume_sources(self._stage_name, result, self._last_params),
+                self._stage_name,
+                style_json=style_json,
             )
         self._export_btn.setEnabled(True)
         self._export_all_btn.setEnabled(True)

@@ -1561,6 +1561,18 @@ scene, camera/bounds just re-render the existing one):
 | **Azimuth / Elevation / Zoom** + **Apply camera pose** | applies a custom offset on top of the `front` preset. These three fields always show the *last applied* pose, not wherever your mouse has since orbited the view — video/image exports use the live plotter camera, not these fields |
 | **Show bounds axes (µm)** | toggles a `pyvista` bounding box with µm-labelled X/Y/Z axes around the volume |
 
+#### Exports
+
+A toolbar above the 3-D view has three buttons. All three need a live GL
+canvas — on a machine with no OpenGL context they're disabled, same as the
+rest of the window's controls:
+
+| Button | Produces |
+| --- | --- |
+| **Save figure…** | A publication-styled PNG: prompts for a save path, then a width×height in pixels (default 1920×1080), off-screen re-renders the current scene at that size from the *live* camera pose, and composites it through the same colorbar/scale-bar figure builder the visualize/rocking top-view and rotation-video exports use — so it looks like the interactive view, on a white background, with the session's publication style |
+| **Save screenshot…** | A raw PNG of exactly what's on screen right now (`plotter.screenshot`) — no compositing, no colorbar, fastest option |
+| **Save rotation video…** | A 360° orbit MP4/GIF, prompting for a base path, format, frame count (default 180) and FPS (default 15). Rendering runs in a **child process** (`dfxm.viewer_jobs.rotation_video_job` via `StageRunner`, the same mechanism stage runs use) so the GUI stays responsive; a progress dialog tracks it and **Cancel** terminates the child. The orbit starts from the live camera pose if the canvas is available, otherwise from the `front` preset. The video reuses the window's current appearance/structure settings and the session's publication style |
+
 ### Line picker (profiles)
 
 On the **profiles** view, click **Pick line…** to open the picker:

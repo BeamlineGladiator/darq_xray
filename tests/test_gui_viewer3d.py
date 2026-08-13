@@ -172,3 +172,44 @@ def test_camera_fields_build_cameraspec(monkeypatch):
     if w._canvas.available:  # offscreen may lack GL; the guard itself is under test
         assert seen["cam"].azimuth == 30.0 and seen["cam"].elevation == 15.0
     w.close()
+
+
+def test_video_job_params_round_trip_jsonable():
+    import json
+
+    w = Viewer3DWindow(_spec(), "visualize")
+    w.load_and_render()
+    w.scene.mode = "surface"
+    w.scene.downsample = 2
+    job = w._video_job_params("/tmp/out/orbit", "mp4", 90, 15)
+    json.dumps(job)  # JSON-able end to end
+    assert job["loader"] == w._spec.loader
+    assert job["scene"]["mode"] == "surface" and job["scene"]["downsample"] == 2
+    assert job["cbar_label"] == "Intensity" and job["group"] == "raw"
+    assert job["n_frames"] == 90 and job["base_path"] == "/tmp/out/orbit"
+    # no GL offscreen -> orbit around the default pose
+    assert job["base_camera"] is None or len(job["base_camera"]) == 3
+    w.close()
+
+
+def test_save_figure_writes_png(tmp_path, monkeypatch):
+    w = Viewer3DWindow(_spec(), "visualize")
+    w.load_and_render()
+    fake_img = np.full((60, 80, 3), 200, dtype=np.uint8)
+    monkeypatch.setattr(
+        "gui.widgets.viewer3d_window.R3.render_scene_image",
+        lambda scene, cam, window_size: (fake_img, 2.0),
+    )
+    out = tmp_path / "fig.png"
+    w._save_figure_to(str(out), window_size=(80, 60))
+    assert out.stat().st_size > 0
+    w.close()
+
+
+def test_export_buttons_disabled_without_gl():
+    w = Viewer3DWindow(_spec(), "visualize")
+    w.load_and_render()
+    if not w._canvas.available:
+        assert not w._fig_btn.isEnabled()
+        assert not w._video_btn.isEnabled()
+    w.close()
