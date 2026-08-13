@@ -193,12 +193,14 @@ def test_visualize_make_build_threads_group(monkeypatch):
 def test_process_dataset_rotation_video(tmp_path, monkeypatch):
     calls = {}
 
-    def fake_rotation(data, scale_z, sx, sy, vmin, vmax, cmap, opacity, base_path, fmt, **kw):
+    def fake_rotation(scene, base_path, fmt, **kw):
         calls["base_path"] = base_path
         calls["fmt"] = fmt
+        calls["cbar_label"] = kw.get("cbar_label")
+        calls["spacing"] = scene.spacing
         return base_path + ".gif"
 
-    monkeypatch.setattr(V.Rnd, "save_rotation_video", fake_rotation)
+    monkeypatch.setattr(V.R3, "save_rotation_video", fake_rotation)
     p = {
         **V.STAGE.defaults(),
         "save_layers": False,
@@ -214,10 +216,13 @@ def test_process_dataset_rotation_video(tmp_path, monkeypatch):
     assert prod.rotation_video == calls["base_path"] + ".gif"
     assert calls["base_path"].endswith(os.path.join("chi", "chi_rotation"))
     assert calls["fmt"] == "gif"
+    # the stage hands render3d a Scene3D carrying the physical spacing + labels
+    assert calls["cbar_label"] == "deg"
+    assert calls["spacing"][2] == 1.0
 
 
 def test_process_dataset_rotation_video_empty_volume_becomes_note(tmp_path, monkeypatch):
-    monkeypatch.setattr(V.Rnd, "save_rotation_video", lambda *a, **kw: None)
+    monkeypatch.setattr(V.R3, "save_rotation_video", lambda *a, **kw: None)
     p = {
         **V.STAGE.defaults(),
         "save_layers": False,
@@ -246,7 +251,7 @@ def test_process_dataset_rotation_video_failure_becomes_note(tmp_path, monkeypat
     def boom(*a, **kw):
         raise RuntimeError("no GL")
 
-    monkeypatch.setattr(V.Rnd, "save_rotation_video", boom)
+    monkeypatch.setattr(V.R3, "save_rotation_video", boom)
     p = {
         **V.STAGE.defaults(),
         "save_layers": False,
@@ -269,3 +274,140 @@ def test_process_dataset_rotation_video_failure_becomes_note(tmp_path, monkeypat
     )
     assert prod.rotation_video is None
     assert any("rotation video skipped" in n for n in prod.notes)
+
+
+def _oversize_params():
+    return {
+        **V.STAGE.defaults(),
+        "save_layers": False,
+        "save_animation": False,
+        "save_topview": True,
+        "save_rotation": False,
+    }
+
+
+def _run_process(p, tmp_path, nx=5):
+    return V._process_dataset(
+        np.zeros((2, 4, nx)),
+        [0.0, 1.0],
+        1.0,
+        "chi",
+        0.0,
+        1.0,
+        "viridis",
+        "chi",
+        "deg",
+        p,
+        str(tmp_path),
+    )
+
+
+def test_oversize_volume_becomes_a_note(tmp_path, monkeypatch):
+    """Wider than the GL 3-D texture limit -> add_volume draws NOTHING and says
+    nothing; the stage must not report success with a blank product."""
+    monkeypatch.setattr(V.R3, "save_top_view", lambda scene, path, **kw: path)
+    monkeypatch.setattr(V.R3, "volume_texture_limit", lambda *a, **kw: 4)
+    prod = _run_process(_oversize_params(), tmp_path)
+    assert any("texture limit" in n for n in prod.notes)
+
+
+def test_no_oversize_note_for_a_small_volume_or_unknown_limit(tmp_path, monkeypatch):
+    monkeypatch.setattr(V.R3, "save_top_view", lambda scene, path, **kw: path)
+    monkeypatch.setattr(V.R3, "volume_texture_limit", lambda *a, **kw: 4096)
+    assert not _run_process(_oversize_params(), tmp_path).notes
+    monkeypatch.setattr(V.R3, "volume_texture_limit", lambda *a, **kw: None)  # no GL
+    assert not _run_process(_oversize_params(), tmp_path).notes
+
+
+def test_scene_carries_new_3d_params(tmp_path, monkeypatch):
+    captured = {}
+
+    def fake_top(scene, path, **kw):
+        captured["scene"] = scene
+        return path
+
+    monkeypatch.setattr(V.R3, "save_top_view", fake_top)
+    p = {
+        **V.STAGE.defaults(),
+        "save_layers": False,
+        "save_animation": False,
+        "save_topview": True,
+        "save_rotation": False,
+        "render_mode": "isosurface",
+        "opacity_mapping": "sigmoid",
+        "rotation_frames": 24,
+    }
+    V._process_dataset(
+        np.zeros((2, 4, 5)),
+        [0.0, 1.0],
+        1.0,
+        "chi",
+        0.0,
+        1.0,
+        "viridis",
+        "chi",
+        "deg",
+        p,
+        str(tmp_path),
+    )
+    assert captured["scene"].mode == "isosurface"
+    assert captured["scene"].opacity_mapping == "sigmoid"
+
+
+def test_log_scale_guard_falls_back_with_note(tmp_path, monkeypatch):
+    monkeypatch.setattr(V.R3, "save_top_view", lambda scene, path, **kw: path)
+    p = {
+        **V.STAGE.defaults(),
+        "save_layers": False,
+        "save_animation": False,
+        "save_topview": True,
+        "save_rotation": False,
+        "log_scale": True,
+    }
+    # vmin/vmax straddle zero -> log mapping is invalid -> guard falls back + notes
+    prod = V._process_dataset(
+        np.zeros((2, 4, 5)),
+        [0.0, 1.0],
+        1.0,
+        "chi",
+        -1.0,
+        1.0,
+        "viridis",
+        "chi",
+        "deg",
+        p,
+        str(tmp_path),
+    )
+    assert any("log scale skipped" in n for n in prod.notes)
+
+
+def test_rotation_frames_passed_through(tmp_path, monkeypatch):
+    seen = {}
+
+    def fake_rotation(scene, base, fmt, **kw):
+        seen.update(kw)
+        return base + ".gif"
+
+    monkeypatch.setattr(V.R3, "save_rotation_video", fake_rotation)
+    p = {
+        **V.STAGE.defaults(),
+        "save_layers": False,
+        "save_animation": False,
+        "save_topview": False,
+        "save_rotation": True,
+        "rotation_frames": 24,
+    }
+    V._process_dataset(
+        np.zeros((2, 4, 5)),
+        [0.0, 1.0],
+        1.0,
+        "chi",
+        0.0,
+        1.0,
+        "viridis",
+        "chi",
+        "deg",
+        p,
+        str(tmp_path),
+    )
+    assert seen["n_frames"] == 24

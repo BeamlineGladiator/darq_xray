@@ -532,7 +532,8 @@ frame**, anchored to the mosaicity reference so they overlay the other volumes.
   and, in rocking mode, the samz union range).
 - **Output:** `aligned_raw_rocking_volumes.h5` (rocking mode) or
   `aligned_raw_mosa_volumes.h5` (mosaicity mode) + per-layer PNGs, animation,
-  3-D top-view.
+  3-D top-view (a styled figure with colourbar and scale bar, like the
+  [[#5. Visualize volumes (`visualize`)|visualize]] one).
 
 **Essentials:** raw root, ROI X/Y, specific frame, output dir
 
@@ -622,6 +623,34 @@ Align the stacked mosaicity/strain volumes and render them.
 | `roi_x` / `roi_y` | map-frame crop in map pixels (`c0,c1` / `r0,r1`), relative to the darfix window, NOT absolute detector pixels; pre-filled from the experiment's analysis window |
 | `output_format` | `mp4` / `gif` / `both` |
 | `save_rotation` | write a 360° orbiting movie of the 3-D volume render (same look and opacity as the top view; container follows `output_format`). Slow — off by default |
+| `render_mode` | how the 3-D top view and rotation video draw the volume: `volume` (default — true volumetric rendering, shaded, transfer-function opacity), `surface` (the legacy NaN-thresholded mesh), or `isosurface` (stacked contour shells) |
+| `opacity_mapping` | opacity transfer function used by `render_mode=volume`: `linear` (default), `sigmoid` (emphasises mid-range values), `geom` (high values), `geom_r` (low values). Ignored by `surface`/`isosurface` |
+| `rotation_frames` | frames in one 360° orbit of the rotation video (default 180, 15 fps) |
+| `log_scale` | logarithmic colour mapping for the 3-D top view and rotation video. Falls back to linear — with a note recorded on the dataset — whenever the colour range includes zero or negative values (e.g. Center-of-mass and strain, which straddle zero) |
+
+> [!note] The 3-D top view and the orbit video are publication figures
+> Both are rendered in `render_mode` (`volume` by default — true volumetric
+> rendering shaded by `opacity_mapping`; `surface`/`isosurface` are lighter
+> legacy looks) and then composed into a styled figure — white background, the
+> dataset's colourbar (with your Colormaps/publication-style settings), and a
+> µm scale bar that is exact, not estimated (the render uses a parallel
+> projection, so the µm-per-pixel is known). The NaN padding the alignment adds
+> around the sample is fully transparent in `volume` mode for any colour range
+> — including the zero-centred ranges of Center-of-mass and strain, where it
+> used to render as a haze of mid-colormap fog around the data. The video keeps that colourbar and
+> scale bar in every frame, and each frame is rendered at an absolute camera
+> pose along the orbit, so the movie really does turn all the way round.
+
+> [!warning] "3-D volume render exceeds this machine's GL 3-D texture limit"
+> `render_mode=volume` uploads the whole volume as one 3-D texture, and every
+> graphics stack caps its size (2048 px per axis on software/llvmpipe GL —
+> narrower than a typical 2891 px-wide aligned volume). Over that cap the
+> renderer draws **nothing**, so the top view and the orbit video would be blank
+> images with no error. The stage now detects this and records it in the
+> dataset's notes (shown in the run summary); the same hint appears in the 3-D
+> viewer's status line. Crop the map ROI (or raise **Downsample** in the 3-D
+> viewer) until the largest axis fits, or render on a machine with a real GPU.
+> Nothing is downsampled automatically — the products keep full resolution.
 
 > [!tip] Picking the run-time ROI interactively
 > Click **Pick ROI…** (in the button row alongside Run/Cancel) to open a visual
@@ -1511,10 +1540,58 @@ and a hint print to stderr in every `2` case.
 
 ### 3-D volume viewer
 
-On the **visualize** and **rocking** stage views, after a run open the **3D** tab,
-pick a volume from the dropdown, and click **Render 3-D** to rotate/zoom the
-aligned volume (NaN padding is hidden). For `visualize` the volume is aligned on
-demand with the *same* pipeline as the rendered PNGs, so they match.
+On the **visualize** and **rocking** stage views, after a run open the **3D**
+tab — it's now a small **launcher**: pick a volume from the dropdown and click
+**Open 3D viewer…** to pop out an independent window for that volume, with its
+own GL context and controls. Opening several volumes opens several windows;
+closing a window frees its GPU context and drops the loaded volume, so memory
+never accumulates in the main window no matter how many volumes you've viewed.
+For `visualize` the volume is aligned on demand with the *same* pipeline as the
+rendered PNGs, so they match.
+
+The pop-out window's right-hand panel holds the appearance controls (every
+change re-renders immediately):
+
+| Control | Effect |
+| --- | --- |
+| **Render mode** | `volume` (true volumetric, shaded), `surface` (legacy NaN-thresholded mesh), or `isosurface` (stacked contour shells) — same modes as the visualize/rocking `render_mode` param |
+| **Colormap** | matplotlib names (`magma`, `viridis`, `plasma`, `inferno`, `RdBu_r`, `gray`) plus `fast`, the pipeline's ParaView-Fast colormap |
+| **Colour min / max** | manual colour range; **Auto colour range** resets both to the volume's 1st/99th percentile |
+| **Log colour scale** | logarithmic colour mapping; disabled (with a tooltip) whenever the current colour range isn't all-positive — matches the log-scale guard on the visualize/rocking stages |
+| **Opacity** | overall transparency (0–100%), honoured by every render mode |
+| **Opacity mapping** | volume-mode transfer function (`linear`, `sigmoid`, `geom`, `geom_r`), scaled by **Opacity** |
+| **Background** | `theme` (follows the app's light/dark palette), or a fixed `white`/`black` |
+
+Below the appearance controls, a second group of structural and camera
+controls (also every change re-renders — threshold/clip/downsample rebuild the
+scene, camera/bounds just re-render the existing one):
+
+| Control | Effect |
+| --- | --- |
+| **Value threshold** + min/max | when checked, NaNs out voxels outside the `[min, max]` value window before rendering |
+| **Downsample** | block-averages the volume 1–16× in Y/X (Z untouched) before rendering — a quick way to preview a large volume responsively |
+| **Clip plane** + **Clip axis** (X/Y/Z) + **Flip clip direction** | NaNs out the half of the volume on one side of an axis-aligned plane through the volume's centre; **Flip clip direction** swaps which half is kept. This is a v1 (axis presets + flip only) — not a live draggable plane widget |
+| **Camera preset** (Front / Top / Side / Iso) | snaps the interactive camera to that preset (offsets reset to 0/0/1×) |
+| **Azimuth / Elevation / Zoom** + **Apply camera pose** | applies a custom offset on top of the `front` preset. These three fields always show the *last applied* pose, not wherever your mouse has since orbited the view — video/image exports use the live plotter camera, not these fields |
+| **Show bounds axes (µm)** | toggles a `pyvista` bounding box with µm-labelled X/Y/Z axes around the volume |
+
+The status line under the view reports the loaded volume's shape — and, when
+the volume is wider than this machine's GL 3-D texture limit (so `volume` mode
+can only draw a blank canvas), says so and names the limit. Raise **Downsample**
+until it fits, or switch **Render mode** to `surface`/`isosurface`, which upload
+geometry instead of a 3-D texture.
+
+#### Exports
+
+A toolbar above the 3-D view has three buttons. All three need a live GL
+canvas — on a machine with no OpenGL context they're disabled, same as the
+rest of the window's controls:
+
+| Button | Produces |
+| --- | --- |
+| **Save figure…** | A publication-styled PNG: prompts for a save path, then a width×height in pixels (default 1920×1080), off-screen re-renders the current scene at that size from the *live* camera pose, and composites it through the same colorbar/scale-bar figure builder the visualize/rocking top-view and rotation-video exports use — so it looks like the interactive view, on a white background, with the session's publication style |
+| **Save screenshot…** | A raw PNG of exactly what's on screen right now (`plotter.screenshot`) — no compositing, no colorbar, fastest option |
+| **Save rotation video…** | A 360° orbit MP4/GIF, prompting for a base path, format, frame count (default 180) and FPS (default 15). Rendering runs in a **child process** (`dfxm.viewer_jobs.rotation_video_job` via `StageRunner`, the same mechanism stage runs use) so the GUI stays responsive; a progress dialog tracks it and **Cancel** terminates the child. The orbit starts from the live camera pose if the canvas is available, otherwise from the `front` preset — including how far you have zoomed/dollied in, so the movie is framed like the view (and like **Save figure…**). The video reuses the window's current appearance/structure settings and the session's publication style. If the scene turns out to be empty, the status line says "nothing to export"; a failed job shows the error and its hint |
 
 ### Line picker (profiles)
 

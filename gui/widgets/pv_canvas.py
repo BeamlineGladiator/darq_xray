@@ -2,14 +2,13 @@
 
 ``pyvistaqt`` needs a working OpenGL/VTK context (often missing on a headless box
 or plain X forwarding) and importing it is not cheap. So the ``QtInteractor`` is
-built only on the first :meth:`ensure` / :meth:`show_volume` call, never at
-construction — nothing about pyvista is touched until the user actually asks for
-a 3-D render. Any import/GL failure degrades to a placeholder label.
+built only on the first :meth:`ensure` call, never at construction — nothing
+about pyvista is touched until the user actually asks for a 3-D render. Any
+import/GL failure degrades to a placeholder label.
 """
 
 from __future__ import annotations
 
-import numpy as np
 from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
 
 from ..theme import ThemeController
@@ -64,42 +63,3 @@ class PvCanvas(QWidget):
     def clear(self) -> None:
         if self._plotter is not None:
             self._plotter.clear()
-
-    # -- rendering --------------------------------------------------------
-    def show_volume(self, volume, spacing, cmap="magma", clim=None, opacity="linear") -> bool:
-        """Volume-render a (Z, Y, X) array; NaN voxels are thresholded out.
-
-        Returns True if rendered, False if 3-D is unavailable (placeholder shown).
-        """
-        if not self.ensure():
-            return False
-        import pyvista as pv
-
-        self._plotter.clear()
-        dt = np.transpose(np.asarray(volume, dtype=float), (2, 1, 0))  # -> (X, Y, Z)
-        finite = dt[np.isfinite(dt)]
-        sentinel = (
-            (float(np.min(finite)) - 1000.0 * (float(np.ptp(finite)) + 1.0))
-            if finite.size
-            else -1e30
-        )
-        dc = np.where(np.isfinite(dt), dt, sentinel)
-        grid = pv.ImageData()
-        grid.dimensions = np.array(dc.shape) + 1
-        grid.spacing = tuple(float(s) for s in spacing)
-        grid.origin = (0.0, 0.0, 0.0)
-        grid.cell_data["values"] = dc.flatten(order="F")
-        thresh = sentinel * 0.5 if sentinel < 0 else sentinel + 1.0
-        mesh = grid.threshold(value=thresh, scalars="values")
-        if mesh.n_cells:
-            self._plotter.add_mesh(
-                mesh,
-                scalars="values",
-                cmap=cmap,
-                clim=list(clim) if clim is not None else None,
-                opacity=opacity,
-                show_edges=False,
-            )
-            self._plotter.reset_camera()
-        self._plotter.render()
-        return True

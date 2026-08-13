@@ -1,9 +1,11 @@
 """GUI glue for the lazy interactive viewers.
 
-* :func:`volume_sources` returns, per stage, a mapping ``name -> callable`` where
-  each callable loads (and, for the visualize stage, aligns) ONE volume ready for
-  3-D rendering. The callables are invoked only when the user clicks "Render 3-D",
-  so nothing heavy (volume load / alignment / pyvista) happens otherwise.
+* :func:`volume_sources` returns, per stage, a mapping ``name -> VolumeSourceSpec``
+  where each spec's ``load`` callable loads (and, for the visualize stage,
+  aligns) ONE volume ready for 3-D rendering, plus a JSON-able ``loader`` recipe
+  describing how to reload it without pickling arrays. The ``load`` callables
+  are invoked only when the user clicks "Render 3-D", so nothing heavy (volume
+  load / alignment / pyvista) happens otherwise.
 * :func:`inject_line_into_jobs` writes a picked line back into a profiles
   ``jobs_json`` string (pure; unit-tested).
 """
@@ -13,16 +15,40 @@ from __future__ import annotations
 import json
 import os
 from collections.abc import Callable
+from dataclasses import dataclass
 
 import h5py
 import numpy as np
 
-# A source returns (volume (Z,Y,X), spacing_xyz µm, cmap name, clim or None).
-VolumeSource = Callable[[], tuple]
+
+@dataclass
+class LoadedVolume:
+    """One loaded, ready-to-render 3-D volume plus its display metadata."""
+
+    volume: "np.ndarray"
+    spacing: tuple
+    cmap: str
+    clim: tuple | None
+    cbar_label: str
+    group: str | None
 
 
-def _rocking_source(aligned_path: str, dataset: str) -> VolumeSource:
-    def _load():
+@dataclass
+class VolumeSourceSpec:
+    """One openable 3-D volume: a lazy loader + a JSON-able reload recipe.
+
+    ``loader`` lets the viewer's child-process video job reload the same
+    volume without pickling arrays: ``{"kind": "visualize_field", "stage_params",
+    "field"}`` or ``{"kind": "h5_dataset", "path", "dataset"}``.
+    """
+
+    name: str
+    load: Callable[[], LoadedVolume]
+    loader: dict
+
+
+def _rocking_source(aligned_path: str, dataset: str) -> Callable[[], LoadedVolume]:
+    def _load() -> LoadedVolume:
         with h5py.File(aligned_path, "r") as f:
             vol = f[dataset][:].astype(float)
             sx = float(f.attrs.get("scale_x_um_per_px", 1.0))
@@ -36,24 +62,57 @@ def _rocking_source(aligned_path: str, dataset: str) -> VolumeSource:
         )
         from dfxm.common.plotting import resolve_cmap
 
-        return vol, (sx, sy, sz), resolve_cmap(None, "raw"), clim
+        return LoadedVolume(
+            volume=vol,
+            spacing=(sx, sy, sz),
+            cmap=resolve_cmap(None, "raw"),
+            clim=clim,
+            cbar_label="Intensity",
+            group="raw",
+        )
 
     return _load
 
 
-def volume_sources(stage_name: str, result, params: dict) -> dict[str, VolumeSource]:
+def _visualize_load(params: dict, name: str) -> LoadedVolume:
+    from dfxm.stages import visualize
+
+    vol, spacing, cmap, clim, meta = visualize.aligned_field(params, name)
+    return LoadedVolume(
+        volume=vol,
+        spacing=spacing,
+        cmap=cmap,
+        clim=clim,
+        cbar_label=meta["cbar_label"],
+        group=meta["group"],
+    )
+
+
+def volume_sources(stage_name: str, result, params: dict) -> dict[str, VolumeSourceSpec]:
     """Lazy 3-D volume sources for a finished stage run (empty for most stages)."""
-    sources: dict[str, VolumeSource] = {}
+    sources: dict[str, VolumeSourceSpec] = {}
     if stage_name == "rocking":
         path = getattr(result, "aligned_path", None)
         if path and os.path.exists(path):
             for ds in ("sum_intensity", "specific_frame"):
-                sources[ds] = _rocking_source(path, ds)
+                sources[ds] = VolumeSourceSpec(
+                    name=ds,
+                    load=_rocking_source(path, ds),
+                    loader={"kind": "h5_dataset", "path": path, "dataset": ds},
+                )
     elif stage_name == "visualize":
         from dfxm.stages import visualize
 
         for name in visualize.available_fields(params):
-            sources[name] = lambda n=name: visualize.aligned_field(params, n)
+            sources[name] = VolumeSourceSpec(
+                name=name,
+                load=lambda n=name: _visualize_load(params, n),
+                loader={
+                    "kind": "visualize_field",
+                    "stage_params": dict(params),
+                    "field": name,
+                },
+            )
     return sources
 
 

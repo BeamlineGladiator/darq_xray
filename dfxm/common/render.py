@@ -1,13 +1,14 @@
-"""Shared volume rendering — per-layer PNGs, layer animation, 3D top-view + orbit video.
+"""Shared volume rendering, 2-D only — per-layer PNGs and the layer animation.
 
 Generic over the scalar field: the caller passes a ``(Z, Y, X)`` volume, the Z
 coordinates (µm), colour limits, a colormap name and labels. The visualize and
 rocking stages both render through here so there is exactly one renderer.
 
 Uses the explicit :class:`~matplotlib.figure.Figure`/Agg API (never ``pyplot``
-or ``matplotlib.use``) so it is import-safe inside the Qt GUI process. ``pyvista``
-is imported lazily, so a missing GL/driver stack only disables the 3D top-view
-and rotation video.
+or ``matplotlib.use``) so it is import-safe inside the Qt GUI process. Nothing
+here touches ``pyvista``: all 3-D rendering (top view, rotation video, the GUI
+viewer) lives in :mod:`dfxm.common.render3d`, which reuses this module's
+:func:`_save_animation` for its MP4/GIF container policy.
 """
 
 from __future__ import annotations
@@ -15,9 +16,7 @@ from __future__ import annotations
 import os
 
 import matplotlib.colors as mcolors
-import numpy as np
 from matplotlib.animation import FFMpegWriter, FuncAnimation, PillowWriter
-from matplotlib.figure import Figure
 
 from .plotting import (
     PlotStyle,
@@ -206,109 +205,3 @@ def _save_animation(anim, base_path, fmt, fps, dpi):
         anim.save(base_path + ".gif", writer=PillowWriter(fps=fps), dpi=dpi)
         written = written or base_path + ".gif"
     return written
-
-
-def _write_image_video(get_frame, n_frames, base_path, fmt, fps=15):
-    """Assemble RGB frames (``get_frame(i) -> (H, W, 3) uint8``) into MP4/GIF.
-
-    Same container semantics as :func:`save_layer_animation` (via
-    :func:`_save_animation`). ``get_frame`` must be idempotent in ``i`` — the
-    sequence is replayed in full for ``fmt="both"`` and for the MP4→GIF
-    fallback. Returns the written path.
-    """
-    first = np.asarray(get_frame(0))
-    h, w = first.shape[:2]
-    dpi = 100.0
-    fig = Figure(figsize=(w / dpi, h / dpi), dpi=dpi)
-    ax = fig.add_axes((0, 0, 1, 1))
-    ax.set_axis_off()
-    im = ax.imshow(first)
-
-    def update(frame):
-        if frame:
-            im.set_data(np.asarray(get_frame(frame)))
-        return [im]
-
-    anim = FuncAnimation(fig, update, frames=n_frames, blit=False)
-    return _save_animation(anim, base_path, fmt, fps=fps, dpi=dpi)
-
-
-def _pyvista_grid(data, spacing):
-    """ImageData grid with NaN voxels thresholded out (lazy pyvista import)."""
-    import pyvista as pv
-
-    dt = np.transpose(data, (2, 1, 0))
-    finite = dt[np.isfinite(dt)]
-    sentinel = (
-        (float(np.min(finite)) - 1000.0 * (float(np.ptp(finite)) + 1.0)) if finite.size else -1e30
-    )
-    dc = np.where(np.isfinite(dt), dt, sentinel)
-    grid = pv.ImageData()
-    grid.dimensions = np.array(dc.shape) + 1
-    grid.spacing = spacing
-    grid.origin = (0, 0, 0)
-    grid.cell_data["values"] = dc.flatten(order="F")
-    thresh = sentinel * 0.5 if sentinel < 0 else sentinel + 1.0
-    return grid.threshold(value=thresh, scalars="values")
-
-
-def _volume_plotter(volume, scale_z, sx, sy, vmin, vmax, cmap, opacity):
-    """Off-screen plotter with the shared volume-mesh styling; None if empty.
-
-    The single setup used by :func:`save_top_view` and
-    :func:`save_rotation_video`, so the video is guaranteed to look like the
-    top-view still (**lazy** ``pyvista`` import).
-    """
-    import pyvista as pv
-
-    pv.OFF_SCREEN = True
-    grid = _pyvista_grid(volume, spacing=(sx, sy, scale_z))
-    if grid.n_cells == 0:
-        return None
-    pl = pv.Plotter(off_screen=True)
-    pl.add_mesh(
-        grid,
-        scalars="values",
-        cmap=cmap,
-        clim=[vmin, vmax],
-        opacity=opacity,
-        smooth_shading=True,
-        show_edges=False,
-    )
-    return pl
-
-
-def save_top_view(volume, scale_z, sx, sy, vmin, vmax, cmap, opacity, path):
-    """Single top-view (XY) 3D render via pyvista; returns path or None if empty."""
-    pl = _volume_plotter(volume, scale_z, sx, sy, vmin, vmax, cmap, opacity)
-    if pl is None:
-        return None
-    pl.view_xy()
-    pl.screenshot(path)
-    pl.close()
-    return path
-
-
-def save_rotation_video(
-    volume, scale_z, sx, sy, vmin, vmax, cmap, opacity, base_path, fmt, *, n_frames=120, fps=15
-):
-    """360° orbit movie of the 3D volume render; returns path or None if empty."""
-    pl = _volume_plotter(volume, scale_z, sx, sy, vmin, vmax, cmap, opacity)
-    if pl is None:
-        return None
-    pl.view_isometric()
-    base_camera = pl.camera_position
-    step = 360.0 / n_frames
-
-    def get_frame(i):
-        # idempotent: absolute angle from the stored start pose, so the replay
-        # for fmt="both" / the MP4->GIF fallback re-renders the same orbit
-        pl.camera_position = base_camera
-        if i:
-            pl.camera.Azimuth(i * step)
-        return pl.screenshot(return_img=True)
-
-    try:
-        return _write_image_video(get_frame, n_frames, base_path, fmt, fps=fps)
-    finally:
-        pl.close()

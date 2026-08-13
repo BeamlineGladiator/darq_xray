@@ -1172,6 +1172,28 @@ def main() -> int:
     assert _dlg39.selected == [("s", 0.0)]
     print("[39] Jobs from marks: button wired on profiles view; checklist selection")
 
+    # [40] 3-D viewer: launcher on the visualize view opens a Viewer3DWindow;
+    # controls mutate the scene; close prunes the window list (offscreen: the
+    # GL canvas degrades to its placeholder and export buttons disable).
+    from gui.viewers import LoadedVolume as _LV40
+    from gui.viewers import VolumeSourceSpec as _VSS40
+
+    _lv40 = _LV40(np.ones((2, 3, 4)), (0.15, 0.38, 2.0), "magma", (0.5, 1.0), "I", "raw")
+    _spec40 = _VSS40(
+        "smoke_vol", lambda: _lv40, {"kind": "h5_dataset", "path": "/x", "dataset": "d"}
+    )
+    _panel40 = win._views["visualize"]._vol3d
+    _panel40.set_sources({"smoke_vol": _spec40}, "visualize")
+    _panel40._open_btn.click()
+    assert len(_panel40._windows) == 1
+    _win40 = _panel40._windows[0]
+    _win40._mode_combo.setCurrentText("surface")
+    assert _win40.scene.mode == "surface"
+    _win40.close()
+    app.processEvents()
+    assert len(_panel40._windows) == 0
+    print("[40] 3-D viewer: launcher opens window, controls live, close frees")
+
     print("\nGUI SMOKE PASSED")
     return 0
 

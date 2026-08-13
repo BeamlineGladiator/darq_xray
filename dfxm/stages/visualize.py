@@ -28,6 +28,7 @@ import numpy as np
 
 from ..common import alignment as A
 from ..common import render as Rnd
+from ..common import render3d as R3
 from ..common.figures import FigureSpec, register
 from ..common.plotting import apply_round_clim, resolve_cmap, style_from_params
 from ..common.raster import extract_motor_positions
@@ -284,8 +285,9 @@ STAGE = StageSpec(
             group="Output",
             help=(
                 "Write a movie of the 3-D volume render spinning once around "
-                "(120 frames, ~8 s). Uses the same opacity as the top view and "
-                "the Animation format container. Slow — off by default."
+                "(one 360° orbit; frame count from 'Rotation frames'). Uses the "
+                "same opacity as the top view and the Animation format container. "
+                "Slow — off by default."
             ),
         ),
         Param(
@@ -295,7 +297,62 @@ STAGE = StageSpec(
             default=0.85,
             advanced=True,
             group="Appearance",
-            help="Opacity of the rendered 3-D top view, 0–1.",
+            help=(
+                "Opacity of the rendered 3-D top view and rotation video, 0–1. "
+                "Scales the render's opacity in every render mode (volume mode: "
+                "scales the transfer function)."
+            ),
+        ),
+        Param(
+            "render_mode",
+            ParamType.ENUM,
+            "3D render mode",
+            default="volume",
+            choices=("volume", "surface", "isosurface"),
+            advanced=True,
+            group="Appearance",
+            help=(
+                "How the 3-D top view and rotation video draw the volume: 'volume' is "
+                "true volumetric rendering (shaded, transfer-function opacity), "
+                "'surface' the legacy NaN-thresholded mesh, 'isosurface' stacked "
+                "contour shells."
+            ),
+        ),
+        Param(
+            "opacity_mapping",
+            ParamType.ENUM,
+            "3D opacity mapping",
+            default="linear",
+            choices=("linear", "sigmoid", "geom", "geom_r"),
+            advanced=True,
+            group="Appearance",
+            help=(
+                "Opacity transfer function for volumetric 3-D rendering: linear, "
+                "sigmoid (emphasises mid-range values), geom (high values), geom_r "
+                "(low values). Ignored by the surface and isosurface modes."
+            ),
+        ),
+        Param(
+            "rotation_frames",
+            ParamType.INT,
+            "Rotation frames",
+            default=180,
+            advanced=True,
+            group="Output",
+            help="Frames in one 360-degree orbit of the rotation video (15 fps).",
+        ),
+        Param(
+            "log_scale",
+            ParamType.BOOL,
+            "Log colour scale (3D)",
+            default=False,
+            advanced=True,
+            group="Appearance",
+            help=(
+                "Logarithmic colour mapping for the 3-D top view and rotation video. "
+                "Falls back to linear (with a note) when the colour range includes "
+                "zero or negative values."
+            ),
         ),
     ),
 )
@@ -485,34 +542,47 @@ def _process_dataset(
             style=style,
             group=group,
         )
+    log_scale = bool(p["log_scale"])
+    if log_scale and not R3.log_valid((vmin, vmax)):
+        log_scale = False
+        prod.notes.append("log scale skipped: colour range includes non-positive values")
+    scene = R3.Scene3D(
+        volume=data,
+        spacing=(sx, sy, scale_z),
+        mode=str(p["render_mode"]),
+        cmap=cmap,
+        clim=(float(vmin), float(vmax)),
+        log_scale=log_scale,
+        opacity=float(p["volume_opacity"]),
+        opacity_mapping=str(p["opacity_mapping"]),
+    )
+    if p["save_topview"] or p["save_rotation"]:
+        # A volume wider than the GL 3-D texture limit renders blank without any
+        # error — say so instead of shipping empty products (no auto-downsample).
+        note = R3.oversize_note(scene, R3.volume_texture_limit())
+        if note:
+            prod.notes.append(note)
     if p["save_topview"]:
         try:
-            prod.top_view = Rnd.save_top_view(
-                data,
-                scale_z,
-                sx,
-                sy,
-                vmin,
-                vmax,
-                cmap,
-                float(p["volume_opacity"]),
+            prod.top_view = R3.save_top_view(
+                scene,
                 os.path.join(ds_dir, f"{name}_top_view.png"),
+                cbar_label=cbar,
+                group=group,
+                style=style,
             )
         except Exception as exc:  # noqa: BLE001 - no GL / pyvista issue -> note + continue
             prod.notes.append(f"3D top-view skipped: {exc}")
     if p["save_rotation"]:
         try:
-            prod.rotation_video = Rnd.save_rotation_video(
-                data,
-                scale_z,
-                sx,
-                sy,
-                vmin,
-                vmax,
-                cmap,
-                float(p["volume_opacity"]),
+            prod.rotation_video = R3.save_rotation_video(
+                scene,
                 os.path.join(ds_dir, f"{name}_rotation"),
                 p["output_format"],
+                cbar_label=cbar,
+                group=group,
+                style=style,
+                n_frames=int(p["rotation_frames"]),
             )
             if prod.rotation_video is None:
                 prod.notes.append("rotation video skipped: volume has no finite voxels")
@@ -648,11 +718,12 @@ def available_fields(params: dict) -> list[str]:
 
 
 def aligned_field(params: dict, name: str):
-    """Align a single field for display. Returns (volume, spacing_xyz, cmap, clim).
+    """Align a single field for display. Returns (volume, spacing_xyz, cmap, clim, meta).
 
     Reuses the exact alignment + centering the stage applies, so the 3-D view
     matches the rendered PNGs. Heavy (loads + aligns one volume) — the GUI calls
-    it only when the user asks to render.
+    it only when the user asks to render. ``meta`` is
+    ``{"cbar_label": str, "group": str | None}``.
     """
     p = {**STAGE.defaults(), **params}
     scale_x, scale_y = float(p["pixel_size_x_um"]), float(p["pixel_size_y_um"])
@@ -670,6 +741,7 @@ def aligned_field(params: dict, name: str):
         )
         vmin, vmax = _symmetric_range(data)
         cmap = resolve_cmap(None, "strain")
+        meta = {"cbar_label": "Strain (ε)", "group": "strain"}
     else:
         datasets = load_mosa_datasets(p["mosa_volume_file"])
         if name not in datasets:
@@ -690,9 +762,10 @@ def aligned_field(params: dict, name: str):
             )
         else:
             vmin, vmax = _colorbar_range(data)
-        _, _, group = _display_info(name)
+        _t, label, group = _display_info(name)
         cmap = resolve_cmap(None, group)
-    return data, (scale_x, scale_y, scale_z), cmap, (float(vmin), float(vmax))
+        meta = {"cbar_label": label, "group": group}
+    return data, (scale_x, scale_y, scale_z), cmap, (float(vmin), float(vmax)), meta
 
 
 def _make_build(loader, z, vn, vx, cmap_group, ex, ey, t, cb):
