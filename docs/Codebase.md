@@ -27,6 +27,7 @@ aliases: [Codebase Reference, Architecture, Code Map, Every Part Explained]
     - [[#`dfxm/stages` — the nine analysis stages]]
     - [[#`dfxm/compose` — publication figure composer]]
     - [[#`dfxm/runner.py` — the process worker]]
+    - [[#`dfxm/viewer_jobs.py` — child-process viewer jobs]]
 - [[#Layer 2 — `gui/` PySide6 application]]
 - [[#Layer 3 — `tests/`]]
 - [[#Data & artifact flow]]
@@ -85,7 +86,8 @@ dfxm_pipeline/
 │   ├── config/            #   typed config models + YAML presets
 │   ├── common/            #   shared primitives (sort, h5io, alignment, plotting, figures, …)
 │   ├── stages/            #   the 9 analysis stages + registry
-│   └── runner.py          #   run a stage in a child process
+│   ├── runner.py          #   run a stage in a child process
+│   └── viewer_jobs.py     #   child-process viewer jobs (e.g. rotation video)
 ├── gui/                   # Layer 2 — PySide6 desktop app
 │   └── widgets/           #   reusable Qt widgets (incl. export_dialog)
 ├── tests/                 # Layer 3 — pytest suite + fixtures
@@ -1033,6 +1035,20 @@ Runs a stage in a **child process** and streams messages back; UI-agnostic.
 | `_QueueWriter` | stdout/stderr shim → emits one `Log` per completed line. |
 | `_worker(q, target, params)` | Child entry point: resolve the target, run it with a `progress` callback that posts `Progress`, post `Done`/`Failed`. |
 | `StageRunner` | Parent side: `start()`, `poll()` (drain queued messages), `is_alive()`, `cancel()` (SIGTERM→kill), `join()`, `finished/result/failure` props, and `run_blocking()` (used by CLI/tests). Requires a `"module:function"` target under `spawn`. |
+
+### `dfxm/viewer_jobs.py` — child-process viewer jobs
+
+Qt-free jobs the GUI runs in a child process via [[#`dfxm/runner.py` — the process worker]]
+(`StageRunner("dfxm.viewer_jobs:rotation_video_job", params)`), so a rotation-video render
+never blocks the UI. Sits **above** `dfxm/common` and `dfxm/stages` in the layering (it may
+import both — `dfxm/common` itself must never import `dfxm/stages`); `gui/viewers.py` builds
+the JSON-able `loader` recipe (`{"kind": "visualize_field", "stage_params", "field"}` or
+`{"kind": "h5_dataset", "path", "dataset"}`), the runner resolves the target in the child.
+
+| Symbol | What it does |
+|---|---|
+| `_load_volume(loader)` | `(volume, spacing)` from a JSON-able loader spec. `"h5_dataset"` reads the named dataset plus its `scale_x/y/z_um_per_px` attrs (defaulting to `1.0`), matching `gui.viewers._rocking_source`; `"visualize_field"` calls `visualize.aligned_field(stage_params, field)` (lazily imported) and keeps only the first two of its 5-tuple. Raises `ValueError` on an unknown `kind`. |
+| `rotation_video_job(params, progress=None)` | Loads the volume via `_load_volume`, builds a `render3d.Scene3D` from `params["scene"]` (`clim`/`threshold`/`clip` coerced from JSON lists to tuples, `None` when absent), resolves `base_camera` (a JSON `[[ex,ey,ez],[fx,fy,fz],[ux,uy,uz]]` or `None`) to a tuple-of-tuples of floats, and calls `render3d.save_rotation_video` with the style parsed via `plotting.style_from_json(params.get("style_json") or "")` (`None` is a valid style — "follow the default look"). Returns `{"video": path | None}`; `save_rotation_video` owns its own plotter cleanup, so this function does no extra plotter management. |
 
 ---
 
