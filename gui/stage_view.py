@@ -819,8 +819,10 @@ class StageView(QWidget):
             self._tabs.setCurrentWidget(self._results)
         if self._vol3d is not None:
             # lazy: install source callables only; nothing loads/renders until
-            # the user picks a volume and clicks Render 3-D.
-            self._vol3d.set_sources(volume_sources(self._stage_name, result, self._last_params))
+            # the user picks a volume and clicks Open 3D viewer….
+            self._vol3d.set_sources(
+                volume_sources(self._stage_name, result, self._last_params), self._stage_name
+            )
         self._export_btn.setEnabled(True)
         self._export_all_btn.setEnabled(True)
         self._set_running(False)

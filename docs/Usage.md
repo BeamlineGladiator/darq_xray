@@ -1526,10 +1526,14 @@ and a hint print to stderr in every `2` case.
 
 ### 3-D volume viewer
 
-On the **visualize** and **rocking** stage views, after a run open the **3D** tab,
-pick a volume from the dropdown, and click **Render 3-D** to rotate/zoom the
-aligned volume (NaN padding is hidden). For `visualize` the volume is aligned on
-demand with the *same* pipeline as the rendered PNGs, so they match.
+On the **visualize** and **rocking** stage views, after a run open the **3D**
+tab — it's now a small **launcher**: pick a volume from the dropdown and click
+**Open 3D viewer…** to pop out an independent window for that volume, with its
+own GL context and controls. Opening several volumes opens several windows;
+closing a window frees its GPU context and drops the loaded volume, so memory
+never accumulates in the main window no matter how many volumes you've viewed.
+For `visualize` the volume is aligned on demand with the *same* pipeline as the
+rendered PNGs, so they match.
 
 ### Line picker (profiles)
 
