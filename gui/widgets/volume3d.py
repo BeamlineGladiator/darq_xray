@@ -75,4 +75,12 @@ class Volume3DPanel(QWidget):
             lambda *_a, _w=w: self._windows.remove(_w) if _w in self._windows else None
         )
         w.show()
-        w.load_and_render()
+        try:
+            w.load_and_render()
+        except Exception as exc:  # noqa: BLE001 - surface any load/render error in the UI
+            self._status.setText(f"open failed: {exc}")
+            if w in self._windows:
+                self._windows.remove(w)
+            w.close()
+            return
+        self._status.setText(f"opened '{spec.name}'")

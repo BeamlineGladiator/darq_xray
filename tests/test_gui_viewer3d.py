@@ -66,3 +66,22 @@ def test_launcher_disabled_without_sources():
     panel = Volume3DPanel()
     panel.set_sources({})
     assert not panel._open_btn.isEnabled()
+
+
+def _broken_spec(name="broken"):
+    def _load():
+        raise RuntimeError("boom")
+
+    return VolumeSourceSpec(
+        name=name, load=_load, loader={"kind": "h5_dataset", "path": "/x", "dataset": name}
+    )
+
+
+def test_launcher_surfaces_load_failure_without_raising():
+    panel = Volume3DPanel()
+    panel.set_sources({"broken": _broken_spec()})
+    panel._combo.setCurrentText("broken")
+    panel._open_btn.click()  # must not raise
+    assert "open failed" in panel._status.text()
+    assert "boom" in panel._status.text()
+    assert len(panel._windows) == 0
