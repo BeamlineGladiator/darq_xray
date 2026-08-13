@@ -623,15 +623,20 @@ Align the stacked mosaicity/strain volumes and render them.
 | `roi_x` / `roi_y` | map-frame crop in map pixels (`c0,c1` / `r0,r1`), relative to the darfix window, NOT absolute detector pixels; pre-filled from the experiment's analysis window |
 | `output_format` | `mp4` / `gif` / `both` |
 | `save_rotation` | write a 360° orbiting movie of the 3-D volume render (same look and opacity as the top view; container follows `output_format`). Slow — off by default |
+| `render_mode` | how the 3-D top view and rotation video draw the volume: `volume` (default — true volumetric rendering, shaded, transfer-function opacity), `surface` (the legacy NaN-thresholded mesh), or `isosurface` (stacked contour shells) |
+| `opacity_mapping` | opacity transfer function used by `render_mode=volume`: `linear` (default), `sigmoid` (emphasises mid-range values), `geom` (high values), `geom_r` (low values). Ignored by `surface`/`isosurface` |
+| `rotation_frames` | frames in one 360° orbit of the rotation video (default 180, 15 fps) |
+| `log_scale` | logarithmic colour mapping for the 3-D top view and rotation video. Falls back to linear — with a note recorded on the dataset — whenever the colour range includes zero or negative values (e.g. Center-of-mass and strain, which straddle zero) |
 
 > [!note] The 3-D top view and the orbit video are publication figures
-> Both are rendered as **volume** renders and then composed into a styled figure —
-> white background, the dataset's colourbar (with your Colormaps/publication-style
-> settings), and a µm scale bar that is exact, not estimated (the render uses a
-> parallel projection, so the µm-per-pixel is known). The video keeps that
-> colourbar and scale bar in every frame, and each frame is rendered at an
-> absolute camera pose along the orbit, so the movie really does turn all the way
-> round.
+> Both are rendered in `render_mode` (`volume` by default — true volumetric
+> rendering shaded by `opacity_mapping`; `surface`/`isosurface` are lighter
+> legacy looks) and then composed into a styled figure — white background, the
+> dataset's colourbar (with your Colormaps/publication-style settings), and a
+> µm scale bar that is exact, not estimated (the render uses a parallel
+> projection, so the µm-per-pixel is known). The video keeps that colourbar and
+> scale bar in every frame, and each frame is rendered at an absolute camera
+> pose along the orbit, so the movie really does turn all the way round.
 
 > [!tip] Picking the run-time ROI interactively
 > Click **Pick ROI…** (in the button row alongside Run/Cancel) to open a visual

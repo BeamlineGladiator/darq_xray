@@ -274,3 +274,97 @@ def test_process_dataset_rotation_video_failure_becomes_note(tmp_path, monkeypat
     )
     assert prod.rotation_video is None
     assert any("rotation video skipped" in n for n in prod.notes)
+
+
+def test_scene_carries_new_3d_params(tmp_path, monkeypatch):
+    captured = {}
+
+    def fake_top(scene, path, **kw):
+        captured["scene"] = scene
+        return path
+
+    monkeypatch.setattr(V.R3, "save_top_view", fake_top)
+    p = {
+        **V.STAGE.defaults(),
+        "save_layers": False,
+        "save_animation": False,
+        "save_topview": True,
+        "save_rotation": False,
+        "render_mode": "isosurface",
+        "opacity_mapping": "sigmoid",
+        "rotation_frames": 24,
+    }
+    V._process_dataset(
+        np.zeros((2, 4, 5)),
+        [0.0, 1.0],
+        1.0,
+        "chi",
+        0.0,
+        1.0,
+        "viridis",
+        "chi",
+        "deg",
+        p,
+        str(tmp_path),
+    )
+    assert captured["scene"].mode == "isosurface"
+    assert captured["scene"].opacity_mapping == "sigmoid"
+
+
+def test_log_scale_guard_falls_back_with_note(tmp_path, monkeypatch):
+    monkeypatch.setattr(V.R3, "save_top_view", lambda scene, path, **kw: path)
+    p = {
+        **V.STAGE.defaults(),
+        "save_layers": False,
+        "save_animation": False,
+        "save_topview": True,
+        "save_rotation": False,
+        "log_scale": True,
+    }
+    # vmin/vmax straddle zero -> log mapping is invalid -> guard falls back + notes
+    prod = V._process_dataset(
+        np.zeros((2, 4, 5)),
+        [0.0, 1.0],
+        1.0,
+        "chi",
+        -1.0,
+        1.0,
+        "viridis",
+        "chi",
+        "deg",
+        p,
+        str(tmp_path),
+    )
+    assert any("log scale skipped" in n for n in prod.notes)
+
+
+def test_rotation_frames_passed_through(tmp_path, monkeypatch):
+    seen = {}
+
+    def fake_rotation(scene, base, fmt, **kw):
+        seen.update(kw)
+        return base + ".gif"
+
+    monkeypatch.setattr(V.R3, "save_rotation_video", fake_rotation)
+    p = {
+        **V.STAGE.defaults(),
+        "save_layers": False,
+        "save_animation": False,
+        "save_topview": False,
+        "save_rotation": True,
+        "rotation_frames": 24,
+    }
+    V._process_dataset(
+        np.zeros((2, 4, 5)),
+        [0.0, 1.0],
+        1.0,
+        "chi",
+        0.0,
+        1.0,
+        "viridis",
+        "chi",
+        "deg",
+        p,
+        str(tmp_path),
+    )
+    assert seen["n_frames"] == 24
