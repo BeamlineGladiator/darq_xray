@@ -120,6 +120,26 @@ def test_grid_for_scene_empty_returns_none():
     assert R3._grid_for_scene(s) is None
 
 
+def test_contour_meshes_convert_cell_data_to_point_data():
+    # regression: VTK's contour filter rejects cell data ("Contour filter only
+    # works on point data"), so isosurface mode must interpolate to points.
+    pytest.importorskip("pyvista")
+    s = R3.Scene3D(volume=_vol(), spacing=(1, 1, 1), mode="isosurface", clim=(5.0, 40.0))
+    kind, grid = R3._grid_for_scene(s)
+    assert kind == "mesh"
+    assert list(grid.point_data.keys()) == []  # scalars live on the cells
+    contours = R3._contour_meshes(grid, (5.0, 40.0), 3)
+    assert len(contours) == 3  # interior levels only
+    assert all(mesh.n_points > 0 for _level, mesh in contours)
+
+
+def test_contour_meshes_no_levels_when_none_requested():
+    pytest.importorskip("pyvista")
+    s = R3.Scene3D(volume=_vol(), spacing=(1, 1, 1), mode="isosurface")
+    _kind, grid = R3._grid_for_scene(s)
+    assert R3._contour_meshes(grid, (5.0, 40.0), 0) == []
+
+
 def test_grid_for_scene_log_uploads_log10_values():
     pytest.importorskip("pyvista")
     v = np.full((1, 2, 2), 100.0)

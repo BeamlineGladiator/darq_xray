@@ -190,6 +190,23 @@ def _display_clim(scene: Scene3D):
     return (float(vmin), float(vmax)), (vmin, vmax)
 
 
+def _contour_meshes(grid, clim, n_isosurfaces):
+    """[(level, contour mesh)] at evenly spaced interior levels of *clim*.
+
+    ``_grid_for_scene`` uploads the scalars as CELL data (the sentinel
+    threshold needs them there), but VTK's contour filter only accepts POINT
+    data — so the scalars are interpolated to points once, before the level
+    loop. Meshes are returned for every level, empty ones included, so callers
+    can ramp opacity over the full level list.
+    """
+    lo, hi = float(clim[0]), float(clim[1])
+    levels = np.linspace(lo, hi, int(n_isosurfaces) + 2)[1:-1]
+    if levels.size == 0:
+        return []
+    point_grid = grid.cell_data_to_point_data()
+    return [(float(lv), point_grid.contour([float(lv)], scalars="values")) for lv in levels]
+
+
 def populate(plotter, scene: Scene3D, *, scalar_bar_title=None) -> bool:
     """Build the scene's actors into *plotter* (works for QtInteractor too).
 
@@ -221,14 +238,12 @@ def populate(plotter, scene: Scene3D, *, scalar_bar_title=None) -> bool:
             **common,
         )
     elif scene.mode == "isosurface":
-        lo, hi = clim
-        levels = np.linspace(lo, hi, scene.n_isosurfaces + 2)[1:-1]
-        for i, level in enumerate(levels):
-            contour = grid.contour([float(level)], scalars="values")
+        contours = _contour_meshes(grid, clim, scene.n_isosurfaces)
+        for i, (_level, contour) in enumerate(contours):
             if contour.n_points:
                 plotter.add_mesh(
                     contour,
-                    opacity=scene.opacity * (i + 1) / len(levels),
+                    opacity=scene.opacity * (i + 1) / len(contours),
                     smooth_shading=True,
                     show_scalar_bar=sb is not None,
                     scalar_bar_args=sb,
