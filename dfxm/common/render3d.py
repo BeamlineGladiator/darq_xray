@@ -144,3 +144,159 @@ def orbit_positions(base_camera, elevation_deg: float, n_frames: int):
                 e = _rotate(e - focal, horiz, float(elevation_deg)) + focal
         out.append((tuple(e), tuple(focal), tuple(np.asarray(base_camera[2], dtype=float))))
     return out
+
+
+def _grid_for_scene(scene: Scene3D):
+    """(kind, grid) for the scene — ("volume", ImageData) or ("mesh", mesh).
+
+    Lazy pyvista import. Returns None when no finite voxel survives
+    :meth:`Scene3D.prepared`. Volume mode uploads NaN as 0 so padding is
+    transparent under the opacity transfer function (the old standalone
+    script's approach); surface/isosurface modes threshold NaN out via the
+    sentinel trick (previously ``render._pyvista_grid``).
+    """
+    import pyvista as pv
+
+    vol, spacing = scene.prepared()
+    dt = np.transpose(vol, (2, 1, 0))  # (Z,Y,X) -> (X,Y,Z)
+    finite = dt[np.isfinite(dt)]
+    if finite.size == 0:
+        return None
+    if scene.log_scale:
+        dt = np.where(dt > 0, dt, np.nan)
+        dt = np.log10(dt)
+        finite = dt[np.isfinite(dt)]
+        if finite.size == 0:
+            return None
+    grid = pv.ImageData()
+    grid.dimensions = np.array(dt.shape) + 1
+    grid.spacing = tuple(float(s) for s in spacing)
+    grid.origin = (0.0, 0.0, 0.0)
+    if scene.mode == "volume":
+        grid.cell_data["values"] = np.nan_to_num(dt, nan=0.0).flatten(order="F")
+        return ("volume", grid)
+    sentinel = float(np.min(finite)) - 1000.0 * (float(np.ptp(finite)) + 1.0)
+    dc = np.where(np.isfinite(dt), dt, sentinel)
+    grid.cell_data["values"] = dc.flatten(order="F")
+    thresh = sentinel * 0.5 if sentinel < 0 else sentinel + 1.0
+    return ("mesh", grid.threshold(value=thresh, scalars="values"))
+
+
+def _display_clim(scene: Scene3D):
+    """clim in uploaded-scalar space (log10 when log_scale) + original clim."""
+    vmin, vmax = scene.resolved_clim()
+    if scene.log_scale:
+        return (float(np.log10(vmin)), float(np.log10(vmax))), (vmin, vmax)
+    return (float(vmin), float(vmax)), (vmin, vmax)
+
+
+def populate(plotter, scene: Scene3D, *, scalar_bar_title=None) -> bool:
+    """Build the scene's actors into *plotter* (works for QtInteractor too).
+
+    Returns False (adding nothing) when the scene has no finite voxels.
+    ``scalar_bar_title=None`` suppresses the pyvista scalar bar (exports add a
+    matplotlib colorbar instead); a string shows the interactive scalar bar.
+    """
+    built = _grid_for_scene(scene)
+    if built is None:
+        return False
+    kind, grid = built
+    clim, _ = _display_clim(scene)
+    sb = (
+        {"title": scalar_bar_title + (" (log10)" if scene.log_scale else "")}
+        if scalar_bar_title
+        else None
+    )
+    common = dict(scalars="values", cmap=scene.cmap, clim=list(clim))
+    if kind == "volume":
+        plotter.add_volume(
+            grid,
+            opacity=scene.opacity_mapping,
+            shade=True,
+            ambient=0.3,
+            diffuse=0.6,
+            specular=0.2,
+            show_scalar_bar=sb is not None,
+            scalar_bar_args=sb,
+            **common,
+        )
+    elif scene.mode == "isosurface":
+        lo, hi = clim
+        levels = np.linspace(lo, hi, scene.n_isosurfaces + 2)[1:-1]
+        for i, level in enumerate(levels):
+            contour = grid.contour([float(level)], scalars="values")
+            if contour.n_points:
+                plotter.add_mesh(
+                    contour,
+                    opacity=scene.opacity * (i + 1) / len(levels),
+                    smooth_shading=True,
+                    show_scalar_bar=sb is not None,
+                    scalar_bar_args=sb,
+                    **common,
+                )
+    else:
+        plotter.add_mesh(
+            grid,
+            opacity=scene.opacity,
+            smooth_shading=True,
+            show_edges=False,
+            show_scalar_bar=sb is not None,
+            scalar_bar_args=sb,
+            **common,
+        )
+    plotter.set_background(scene.background)
+    return True
+
+
+def _top_camera(bounds):
+    """The old script's top view: eye above in +Y, Z up (bounds = pyvista tuple)."""
+    cx = 0.5 * (bounds[0] + bounds[1])
+    cy = 0.5 * (bounds[2] + bounds[3])
+    cz = 0.5 * (bounds[4] + bounds[5])
+    dist = 1.5 * max(bounds[1] - bounds[0], bounds[5] - bounds[4])
+    return ((cx, cy + dist, cz), (cx, cy, cz), (0.0, 0.0, 1.0))
+
+
+def apply_camera(plotter, cam: CameraSpec) -> None:
+    """Apply a CameraSpec with the proven recipe (preset reset, then offsets)."""
+    if cam.preset == "top":
+        plotter.camera_position = _top_camera(plotter.bounds)
+    elif cam.preset == "side":
+        plotter.camera_position = "yz"
+    elif cam.preset == "iso":
+        plotter.view_isometric()
+    else:  # "front"
+        plotter.camera_position = "xy"
+    if cam.azimuth:
+        plotter.camera.azimuth = float(cam.azimuth)
+    if cam.elevation:
+        plotter.camera.elevation = float(cam.elevation)
+    if cam.zoom and cam.zoom != 1.0:
+        plotter.camera.zoom(float(cam.zoom))
+
+
+def render_scene_image(scene: Scene3D, camera, *, window_size=(1920, 1080)):
+    """One off-screen render -> (rgb array, px_per_um). None if scene empty.
+
+    Uses parallel projection so px-per-µm follows exactly from the camera's
+    parallel scale (the compositor's scale bar is exact, not estimated).
+    *camera* is a CameraSpec or an explicit (eye, focal, up) triple.
+    """
+    import pyvista as pv
+
+    pv.OFF_SCREEN = True
+    pl = pv.Plotter(off_screen=True, window_size=list(window_size))
+    try:
+        if not populate(pl, scene):
+            return None
+        if isinstance(camera, CameraSpec):
+            apply_camera(pl, camera)
+        else:
+            pl.camera_position = camera
+        pl.enable_parallel_projection()
+        pl.show(auto_close=False)
+        img = pl.screenshot(return_img=True)
+        px_per_um = window_size[1] / (2.0 * float(pl.camera.parallel_scale))
+        return np.asarray(img), px_per_um
+    finally:
+        pl.close()

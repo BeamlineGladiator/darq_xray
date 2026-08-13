@@ -88,3 +88,41 @@ def test_orbit_positions_elevation_tilts_eye():
     # elevation lifts the eye along +y (view-up side), distance preserved
     assert poses[0][0][1] > 0.0
     assert np.linalg.norm(np.array(poses[0][0])) == pytest.approx(10.0)
+
+
+# --- pyvista-dependent (no GL needed: grid building only) -----------------
+
+
+def test_grid_for_scene_surface_thresholds_nans():
+    pytest.importorskip("pyvista")
+    v = _vol()
+    s = R3.Scene3D(volume=v, spacing=(1, 1, 1), mode="surface")
+    kind, mesh = R3._grid_for_scene(s)
+    assert kind == "mesh"
+    assert mesh.n_cells == 47  # 48 voxels, 1 NaN thresholded out
+
+
+def test_grid_for_scene_volume_keeps_grid_shape():
+    pytest.importorskip("pyvista")
+    v = _vol()
+    s = R3.Scene3D(volume=v, spacing=(1.0, 2.0, 3.0), mode="volume")
+    kind, grid = R3._grid_for_scene(s)
+    assert kind == "volume"
+    assert tuple(grid.dimensions) == (7, 5, 3)  # cells+1 in (X, Y, Z)
+    assert grid.spacing == (1.0, 2.0, 3.0)
+    # NaN voxel uploaded as 0 (transparent under the transfer function)
+    assert float(grid.cell_data["values"].min()) == 0.0
+
+
+def test_grid_for_scene_empty_returns_none():
+    pytest.importorskip("pyvista")
+    s = R3.Scene3D(volume=np.full((2, 3, 4), np.nan), spacing=(1, 1, 1))
+    assert R3._grid_for_scene(s) is None
+
+
+def test_grid_for_scene_log_uploads_log10_values():
+    pytest.importorskip("pyvista")
+    v = np.full((1, 2, 2), 100.0)
+    s = R3.Scene3D(volume=v, spacing=(1, 1, 1), mode="volume", clim=(1.0, 100.0), log_scale=True)
+    kind, grid = R3._grid_for_scene(s)
+    assert float(grid.cell_data["values"].max()) == pytest.approx(2.0)  # log10(100)
