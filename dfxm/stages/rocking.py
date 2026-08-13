@@ -31,6 +31,7 @@ import numpy as np
 
 from ..common import alignment as A
 from ..common import render as Rnd
+from ..common import render3d as R3
 from ..common.errors import StageUserError
 from ..common.figures import (
     FigureSpec,
@@ -661,16 +662,19 @@ def _render(
         )
     if p["save_topview"]:
         try:
-            prod.top_view = Rnd.save_top_view(
-                vol,
-                scale_z,
-                sx,
-                sy,
-                vmin,
-                vmax,
-                cmap,
-                float(p["volume_opacity"]),
+            prod.top_view = R3.save_top_view(
+                R3.Scene3D(
+                    volume=vol,
+                    spacing=(sx, sy, scale_z),
+                    cmap=cmap,
+                    clim=(float(vmin), float(vmax)),
+                    opacity=float(p["volume_opacity"]),
+                    mode="volume",
+                ),
                 os.path.join(ds_dir, f"{name}_top_view.png"),
+                cbar_label=cbar,
+                group=group,
+                style=style,
             )
         except Exception as exc:  # noqa: BLE001 - no GL -> note + continue
             prod.notes.append(f"3D top-view skipped: {exc}")

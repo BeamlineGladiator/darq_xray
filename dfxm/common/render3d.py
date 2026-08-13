@@ -370,3 +370,180 @@ def scene_figure(
         draw_scale_bar(ax, st.scale_bar_length_um, style=st)
     apply_text_scale(ax, st)
     return fig, ax, im
+
+
+def _video_from_frames(
+    get_frame,
+    n_frames,
+    base_path,
+    fmt,
+    *,
+    fps,
+    cbar_label,
+    group,
+    clim,
+    log_scale,
+    cmap,
+    px_per_um,
+    style,
+):
+    """Assemble RGB frames into a styled MP4/GIF (colorbar in every frame).
+
+    Builds the :func:`scene_figure` ONCE from frame 0 and swaps only the image
+    per frame — so the colorbar, scale bar and figure geometry are identical in
+    every frame (they must be: the frames all share one (H, W)). ``get_frame``
+    must be idempotent in ``i`` — the animation is replayed for ``fmt="both"``
+    and for the MP4→GIF fallback (see ``render._save_animation``).
+    """
+    from matplotlib.animation import FuncAnimation
+
+    from .render import _save_animation
+
+    fig, _ax, im = scene_figure(
+        np.asarray(get_frame(0)),
+        px_per_um=px_per_um,
+        cbar_label=cbar_label,
+        group=group,
+        clim=clim,
+        log_scale=log_scale,
+        cmap=cmap,
+        style=style,
+    )
+
+    def update(frame):
+        if frame:
+            im.set_data(np.asarray(get_frame(frame)))
+        return [im]
+
+    anim = FuncAnimation(fig, update, frames=n_frames, blit=False)
+    return _save_animation(anim, base_path, fmt, fps=fps, dpi=100)
+
+
+def _orbit_frames(scene: Scene3D, *, elevation, zoom, base_camera, window_size):
+    """``(get_frame, px_per_um)`` closure rendering absolute-pose orbit frames.
+
+    ONE off-screen plotter, built once and reused for every frame (so every
+    frame shares the same ``window_size`` and therefore the same image shape);
+    each frame assigns an ABSOLUTE ``camera_position`` from
+    :func:`orbit_positions` — never incremental vtk ``Azimuth()`` calls, which
+    made the old video re-render the same pose over and over ("the rotation
+    video doesn't rotate"). Returns ``None`` (plotter closed) when the scene has
+    no finite voxels.
+
+    ``base_camera`` — an explicit ``(eye, focal, up)`` triple — orbits around
+    that pose instead of the ``"front"`` preset. The orbit table is regenerated
+    whenever the caller changes ``get_frame.n_frames`` (default 360), so one
+    closure serves any frame count while staying idempotent in ``i``. The caller
+    owns the plotter's lifetime through ``get_frame.close()``.
+    """
+    import pyvista as pv
+
+    pv.OFF_SCREEN = True
+    pl = pv.Plotter(off_screen=True, window_size=list(window_size))
+    if not populate(pl, scene):
+        pl.close()
+        return None
+    if base_camera is None:
+        apply_camera(pl, CameraSpec(preset="front", zoom=zoom))
+        base = tuple(tuple(float(c) for c in v) for v in pl.camera_position)
+        elev = float(elevation)
+    else:
+        base = tuple(tuple(float(c) for c in v) for v in base_camera)
+        elev = 0.0
+    pl.enable_parallel_projection()
+    pl.show(auto_close=False)
+    px_per_um = window_size[1] / (2.0 * float(pl.camera.parallel_scale))
+    orbit: dict = {"n": None, "poses": None}
+
+    def get_frame(i):
+        n = max(1, int(get_frame.n_frames))
+        if orbit["n"] != n:
+            orbit["n"], orbit["poses"] = n, orbit_positions(base, elev, n)
+        pl.camera_position = orbit["poses"][int(i) % n]
+        # Explicit render: after the first one, pyvista's screenshot() only grabs
+        # the window buffer, so without this every frame is a copy of frame 0 —
+        # the second half of the "video doesn't rotate" bug.
+        pl.render()
+        return pl.screenshot(return_img=True)
+
+    get_frame.n_frames = 360  # the caller overwrites this with the real count
+    get_frame.close = pl.close
+    return get_frame, px_per_um
+
+
+def save_top_view(
+    scene: Scene3D, path, *, cbar_label, group=None, style=None, window_size=(1920, 1080)
+):
+    """Styled top-view figure (colorbar + scale bar); returns path or None if empty."""
+    got = render_scene_image(scene, CameraSpec(preset="top"), window_size=window_size)
+    if got is None:
+        return None
+    img, px_per_um = got
+    fig, _ax, _im = scene_figure(
+        img,
+        px_per_um=px_per_um,
+        cbar_label=cbar_label,
+        group=group,
+        clim=scene.resolved_clim(),
+        log_scale=scene.log_scale,
+        cmap=scene.cmap,
+        style=style,
+    )
+    fig.savefig(path, dpi=150, facecolor="white", bbox_inches="tight")
+    return path
+
+
+def save_rotation_video(
+    scene: Scene3D,
+    base_path,
+    fmt,
+    *,
+    cbar_label,
+    group=None,
+    style=None,
+    n_frames=180,
+    fps=15,
+    elevation=20.0,
+    zoom=1.2,
+    base_camera=None,
+    window_size=(1280, 960),
+    progress=None,
+):
+    """360° orbit movie, publication-styled; returns path or None if empty.
+
+    ``base_camera`` (an explicit (eye, focal, up) triple, e.g. the GUI viewer's
+    live pose) orbits around that pose instead of the front preset. ``progress``
+    is an optional ``(frac, msg)`` callable reporting per-frame progress.
+    """
+    got = _orbit_frames(
+        scene, elevation=elevation, zoom=zoom, base_camera=base_camera, window_size=window_size
+    )
+    if got is None:
+        return None
+    frames, px_per_um = got
+    n = int(n_frames)
+    frames.n_frames = n
+    get_frame = frames
+    if progress is not None:
+
+        def get_frame(i, _inner=frames):  # noqa: F811 - deliberate progress wrapper
+            progress(min(0.99, i / max(1, n)), f"rendering orbit frame {i}/{n}")
+            return _inner(i)
+
+    try:
+        return _video_from_frames(
+            get_frame,
+            n,
+            base_path,
+            fmt,
+            fps=fps,
+            cbar_label=cbar_label,
+            group=group,
+            clim=scene.resolved_clim(),
+            log_scale=scene.log_scale,
+            cmap=scene.cmap,
+            px_per_um=px_per_um,
+            style=style,
+        )
+    finally:
+        frames.close()

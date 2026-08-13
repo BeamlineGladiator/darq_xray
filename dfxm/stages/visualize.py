@@ -28,6 +28,7 @@ import numpy as np
 
 from ..common import alignment as A
 from ..common import render as Rnd
+from ..common import render3d as R3
 from ..common.figures import FigureSpec, register
 from ..common.plotting import apply_round_clim, resolve_cmap, style_from_params
 from ..common.raster import extract_motor_positions
@@ -485,34 +486,34 @@ def _process_dataset(
             style=style,
             group=group,
         )
+    scene = R3.Scene3D(
+        volume=data,
+        spacing=(sx, sy, scale_z),
+        cmap=cmap,
+        clim=(float(vmin), float(vmax)),
+        opacity=float(p["volume_opacity"]),
+        mode="volume",
+    )
     if p["save_topview"]:
         try:
-            prod.top_view = Rnd.save_top_view(
-                data,
-                scale_z,
-                sx,
-                sy,
-                vmin,
-                vmax,
-                cmap,
-                float(p["volume_opacity"]),
+            prod.top_view = R3.save_top_view(
+                scene,
                 os.path.join(ds_dir, f"{name}_top_view.png"),
+                cbar_label=cbar,
+                group=group,
+                style=style,
             )
         except Exception as exc:  # noqa: BLE001 - no GL / pyvista issue -> note + continue
             prod.notes.append(f"3D top-view skipped: {exc}")
     if p["save_rotation"]:
         try:
-            prod.rotation_video = Rnd.save_rotation_video(
-                data,
-                scale_z,
-                sx,
-                sy,
-                vmin,
-                vmax,
-                cmap,
-                float(p["volume_opacity"]),
+            prod.rotation_video = R3.save_rotation_video(
+                scene,
                 os.path.join(ds_dir, f"{name}_rotation"),
                 p["output_format"],
+                cbar_label=cbar,
+                group=group,
+                style=style,
             )
             if prod.rotation_video is None:
                 prod.notes.append("rotation video skipped: volume has no finite voxels")

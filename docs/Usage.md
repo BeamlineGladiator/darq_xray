@@ -532,7 +532,8 @@ frame**, anchored to the mosaicity reference so they overlay the other volumes.
   and, in rocking mode, the samz union range).
 - **Output:** `aligned_raw_rocking_volumes.h5` (rocking mode) or
   `aligned_raw_mosa_volumes.h5` (mosaicity mode) + per-layer PNGs, animation,
-  3-D top-view.
+  3-D top-view (a styled figure with colourbar and scale bar, like the
+  [[#5. Visualize volumes (`visualize`)|visualize]] one).
 
 **Essentials:** raw root, ROI X/Y, specific frame, output dir
 
@@ -622,6 +623,15 @@ Align the stacked mosaicity/strain volumes and render them.
 | `roi_x` / `roi_y` | map-frame crop in map pixels (`c0,c1` / `r0,r1`), relative to the darfix window, NOT absolute detector pixels; pre-filled from the experiment's analysis window |
 | `output_format` | `mp4` / `gif` / `both` |
 | `save_rotation` | write a 360° orbiting movie of the 3-D volume render (same look and opacity as the top view; container follows `output_format`). Slow — off by default |
+
+> [!note] The 3-D top view and the orbit video are publication figures
+> Both are rendered as **volume** renders and then composed into a styled figure —
+> white background, the dataset's colourbar (with your Colormaps/publication-style
+> settings), and a µm scale bar that is exact, not estimated (the render uses a
+> parallel projection, so the µm-per-pixel is known). The video keeps that
+> colourbar and scale bar in every frame, and each frame is rendered at an
+> absolute camera pose along the orbit, so the movie really does turn all the way
+> round.
 
 > [!tip] Picking the run-time ROI interactively
 > Click **Pick ROI…** (in the button row alongside Run/Cancel) to open a visual

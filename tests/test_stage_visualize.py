@@ -193,12 +193,14 @@ def test_visualize_make_build_threads_group(monkeypatch):
 def test_process_dataset_rotation_video(tmp_path, monkeypatch):
     calls = {}
 
-    def fake_rotation(data, scale_z, sx, sy, vmin, vmax, cmap, opacity, base_path, fmt, **kw):
+    def fake_rotation(scene, base_path, fmt, **kw):
         calls["base_path"] = base_path
         calls["fmt"] = fmt
+        calls["cbar_label"] = kw.get("cbar_label")
+        calls["spacing"] = scene.spacing
         return base_path + ".gif"
 
-    monkeypatch.setattr(V.Rnd, "save_rotation_video", fake_rotation)
+    monkeypatch.setattr(V.R3, "save_rotation_video", fake_rotation)
     p = {
         **V.STAGE.defaults(),
         "save_layers": False,
@@ -214,10 +216,13 @@ def test_process_dataset_rotation_video(tmp_path, monkeypatch):
     assert prod.rotation_video == calls["base_path"] + ".gif"
     assert calls["base_path"].endswith(os.path.join("chi", "chi_rotation"))
     assert calls["fmt"] == "gif"
+    # the stage hands render3d a Scene3D carrying the physical spacing + labels
+    assert calls["cbar_label"] == "deg"
+    assert calls["spacing"][2] == 1.0
 
 
 def test_process_dataset_rotation_video_empty_volume_becomes_note(tmp_path, monkeypatch):
-    monkeypatch.setattr(V.Rnd, "save_rotation_video", lambda *a, **kw: None)
+    monkeypatch.setattr(V.R3, "save_rotation_video", lambda *a, **kw: None)
     p = {
         **V.STAGE.defaults(),
         "save_layers": False,
@@ -246,7 +251,7 @@ def test_process_dataset_rotation_video_failure_becomes_note(tmp_path, monkeypat
     def boom(*a, **kw):
         raise RuntimeError("no GL")
 
-    monkeypatch.setattr(V.Rnd, "save_rotation_video", boom)
+    monkeypatch.setattr(V.R3, "save_rotation_video", boom)
     p = {
         **V.STAGE.defaults(),
         "save_layers": False,
