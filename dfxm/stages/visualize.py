@@ -556,6 +556,12 @@ def _process_dataset(
         opacity=float(p["volume_opacity"]),
         opacity_mapping=str(p["opacity_mapping"]),
     )
+    if p["save_topview"] or p["save_rotation"]:
+        # A volume wider than the GL 3-D texture limit renders blank without any
+        # error — say so instead of shipping empty products (no auto-downsample).
+        note = R3.oversize_note(scene, R3.volume_texture_limit())
+        if note:
+            prod.notes.append(note)
     if p["save_topview"]:
         try:
             prod.top_view = R3.save_top_view(

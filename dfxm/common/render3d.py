@@ -18,6 +18,13 @@ PRESETS = ("front", "top", "side", "iso")
 OPACITY_MAPPINGS = ("linear", "sigmoid", "geom", "geom_r")
 RENDER_MODES = ("volume", "surface", "isosurface")
 
+# Volume mode's opacity transfer function: 256 steps (pyvista's LookupTable size,
+# so the curve is used verbatim — no resampling), of which the bottom few are
+# forced to zero alpha to give the NaN sentinel a fully transparent band. See
+# _volume_scalars / _volume_opacity.
+_VOLUME_OPACITY_STEPS = 256
+_VOLUME_CLEAR_STEPS = 2
+
 
 def downsample_volume(vol: np.ndarray, factor: int) -> np.ndarray:
     """Block-average (nanmean) over factor×factor Y/X blocks; Z untouched."""
@@ -92,6 +99,12 @@ class Scene3D:
     def resolved_clim(self):
         return self.clim if self.clim is not None else auto_clim(self.volume)
 
+    def prepared_shape(self):
+        """(Z, Y, X) of :meth:`prepared` without building it (masking keeps the shape)."""
+        z, y, x = (int(n) for n in self.volume.shape)
+        f = max(1, int(self.downsample))
+        return (z, y // f, x // f)
+
     def prepared(self):
         """Volume after downsample -> threshold -> clip, plus adjusted spacing."""
         vol = downsample_volume(self.volume, int(self.downsample))
@@ -147,14 +160,51 @@ def orbit_positions(base_camera, elevation_deg: float, n_frames: int):
     return out
 
 
+def _display_clim(scene: Scene3D):
+    """clim in uploaded-scalar space (log10 when log_scale) + original clim."""
+    vmin, vmax = scene.resolved_clim()
+    if scene.log_scale:
+        return (float(np.log10(vmin)), float(np.log10(vmax))), (vmin, vmax)
+    return (float(vmin), float(vmax)), (vmin, vmax)
+
+
+def _volume_scalars(dt: np.ndarray, clim) -> np.ndarray:
+    """Volume-mode upload array: NaN padding as a transparent sentinel.
+
+    NaN used to be uploaded as ``0.0`` ("transparent under the transfer
+    function") — only true when ``0`` sits below the colour range. With the
+    symmetric clims that CoM/strain volumes default to (e.g. ``(-1, 1)``), and
+    in log space (``0`` = a value of 1), zero is MID-range, so the heavily
+    NaN-padded borders rendered as a semi-opaque slab of mid-colormap fog.
+
+    Instead NaN goes to a sentinel a full span BELOW the colour range and the
+    real data is clipped into ``[vmin + _VOLUME_CLEAR_STEPS steps, vmax]``.
+    VTK's piecewise opacity function clamps below-range scalars to its first
+    point, so zeroing the bottom :data:`_VOLUME_CLEAR_STEPS` entries of
+    :func:`_volume_opacity` makes the whole sentinel band fully transparent for
+    EVERY mapping — including ``geom_r``, which is high-alpha at low scalars and
+    would otherwise paint the padding solid. Clipping the real data keeps it out
+    of that band, so below-range voxels still render with the lowest data alpha,
+    exactly as clim clamping did before.
+    """
+    lo, hi = float(clim[0]), float(clim[1])
+    span = hi - lo
+    if not np.isfinite(span) or span <= 0.0:  # degenerate/inverted clim
+        base = min(lo, hi)
+        span = max(abs(span) if np.isfinite(span) else 0.0, abs(base), 1.0)
+        return np.where(np.isfinite(dt), dt, base - span)
+    floor = lo + _VOLUME_CLEAR_STEPS * span / (_VOLUME_OPACITY_STEPS - 1)
+    return np.where(np.isfinite(dt), np.clip(dt, floor, hi), lo - span)
+
+
 def _grid_for_scene(scene: Scene3D):
     """(kind, grid) for the scene — ("volume", ImageData) or ("mesh", mesh).
 
     Lazy pyvista import. Returns None when no finite voxel survives
-    :meth:`Scene3D.prepared`. Volume mode uploads NaN as 0 so padding is
-    transparent under the opacity transfer function (the old standalone
-    script's approach); surface/isosurface modes threshold NaN out via the
-    sentinel trick (previously ``render._pyvista_grid``).
+    :meth:`Scene3D.prepared`. Volume mode uploads NaN as a below-range sentinel
+    that the opacity transfer function makes fully transparent
+    (:func:`_volume_scalars`); surface/isosurface modes threshold NaN out via
+    their own sentinel trick (previously ``render._pyvista_grid``).
     """
     import pyvista as pv
 
@@ -174,21 +224,14 @@ def _grid_for_scene(scene: Scene3D):
     grid.spacing = tuple(float(s) for s in spacing)
     grid.origin = (0.0, 0.0, 0.0)
     if scene.mode == "volume":
-        grid.cell_data["values"] = np.nan_to_num(dt, nan=0.0).flatten(order="F")
+        clim, _ = _display_clim(scene)
+        grid.cell_data["values"] = _volume_scalars(dt, clim).flatten(order="F")
         return ("volume", grid)
     sentinel = float(np.min(finite)) - 1000.0 * (float(np.ptp(finite)) + 1.0)
     dc = np.where(np.isfinite(dt), dt, sentinel)
     grid.cell_data["values"] = dc.flatten(order="F")
     thresh = sentinel * 0.5 if sentinel < 0 else sentinel + 1.0
     return ("mesh", grid.threshold(value=thresh, scalars="values"))
-
-
-def _display_clim(scene: Scene3D):
-    """clim in uploaded-scalar space (log10 when log_scale) + original clim."""
-    vmin, vmax = scene.resolved_clim()
-    if scene.log_scale:
-        return (float(np.log10(vmin)), float(np.log10(vmax))), (vmin, vmax)
-    return (float(vmin), float(vmax)), (vmin, vmax)
 
 
 def _contour_meshes(grid, clim, n_isosurfaces):
@@ -216,11 +259,21 @@ def _volume_opacity(scene: Scene3D):
     stages' ``volume_opacity``) would be a silent no-op and only surface /
     isosurface modes would honour it. Building the curve explicitly and scaling
     it makes one opacity knob mean the same thing in every render mode.
+
+    The bottom :data:`_VOLUME_CLEAR_STEPS` entries are forced to zero alpha:
+    that is the transparent band the NaN sentinel of :func:`_volume_scalars`
+    lands in (VTK clamps below-range scalars to the first point of the opacity
+    function). The length is exactly pyvista's LookupTable size, so the curve is
+    applied verbatim — a resampled curve would smear the zero band away.
     """
     import pyvista as pv
 
-    curve = np.asarray(pv.opacity_transfer_function(scene.opacity_mapping, 256), dtype=float)
-    return np.clip(curve * float(scene.opacity), 0.0, 255.0)
+    curve = np.asarray(
+        pv.opacity_transfer_function(scene.opacity_mapping, _VOLUME_OPACITY_STEPS), dtype=float
+    )
+    curve = np.clip(curve * float(scene.opacity), 0.0, 255.0)
+    curve[:_VOLUME_CLEAR_STEPS] = 0.0
+    return curve
 
 
 def populate(plotter, scene: Scene3D, *, scalar_bar_title=None) -> bool:
@@ -277,6 +330,87 @@ def populate(plotter, scene: Scene3D, *, scalar_bar_title=None) -> bool:
         )
     plotter.set_background(scene.background)
     return True
+
+
+_TEXTURE_LIMIT: dict = {}  # process-level cache: the GL stack never changes mid-run
+
+
+def _query_texture_limit(plotter) -> int | None:
+    """GL_MAX_3D_TEXTURE_SIZE for *plotter*'s render window, or None if unqueryable.
+
+    Without a live context (offscreen Qt with no GL) VTK answers -1, which this
+    reports as "unknown" — never a note, never a crash.
+    """
+    try:
+        from vtkmodules.vtkRenderingOpenGL2 import vtkTextureObject
+
+        window = plotter.render_window
+        if window is None:
+            return None
+        limit = int(vtkTextureObject.GetMaximumTextureSize3D(window))
+    except Exception:  # noqa: BLE001 - no GL / no vtk / old vtk -> "unknown"
+        return None
+    return limit if limit > 0 else None
+
+
+def volume_texture_limit(plotter=None) -> int | None:
+    """Largest 3-D texture edge this GL stack accepts (None when unknown).
+
+    Volume mode uploads the grid as ONE 3-D texture; when a dimension exceeds
+    ``GL_MAX_3D_TEXTURE_SIZE`` (2048 on llvmpipe/software GL, versus e.g. an
+    STO2 volume's 2891 px width) VTK logs "Invalid texture dimensions" to the
+    console and renders NOTHING — a silently blank product. Pass the viewer's
+    live *plotter* to query its window; with no plotter a tiny off-screen probe
+    plotter is created once per process and the answer cached. Returns None
+    (→ no note, never a crash) wherever GL or the vtk API is unavailable.
+    """
+    if plotter is not None:
+        return _query_texture_limit(plotter)
+    if "limit" not in _TEXTURE_LIMIT:
+        _TEXTURE_LIMIT["limit"] = _probe_texture_limit()
+    return _TEXTURE_LIMIT["limit"]
+
+
+def _probe_texture_limit() -> int | None:
+    """Create a throwaway off-screen plotter just to read the texture limit."""
+    try:
+        import pyvista as pv
+    except Exception:  # noqa: BLE001 - no pyvista -> unknown
+        return None
+    prev_off_screen = pv.OFF_SCREEN
+    pl = None
+    try:
+        pv.OFF_SCREEN = True
+        pl = pv.Plotter(off_screen=True, window_size=[16, 16])
+        pl.show(auto_close=False)  # the context must exist before the query
+        return _query_texture_limit(pl)
+    except Exception:  # noqa: BLE001 - any GL/driver failure -> unknown
+        return None
+    finally:
+        pv.OFF_SCREEN = prev_off_screen
+        if pl is not None:
+            pl.close()
+
+
+def oversize_note(scene: Scene3D, limit) -> str | None:
+    """Warning text when *scene* is too big for the GL 3-D texture *limit*.
+
+    ``None`` when the scene fits, when *limit* is unknown (None) or when the
+    mode is surface/isosurface (those upload geometry, not a 3-D texture). The
+    texture is sized in POINTS — one more than the voxel count per axis — so a
+    volume as wide as the limit already fails (empirically: 2047 px renders,
+    2048 px is blank at a 2048 limit).
+    """
+    if limit is None or scene.mode != "volume":
+        return None
+    biggest = max(scene.prepared_shape())
+    if biggest + 1 <= int(limit):
+        return None
+    return (
+        f"3-D volume render exceeds this machine's GL 3-D texture limit "
+        f"({biggest} voxels along one axis, limit {int(limit)}) — the volume renders "
+        f"BLANK; crop the ROI (or raise Downsample in the 3-D viewer) to get under it."
+    )
 
 
 def _top_camera(bounds):
@@ -467,6 +601,13 @@ def _orbit_frames(scene: Scene3D, *, elevation, zoom, base_camera, window_size):
             elev = float(elevation)
         else:
             base = tuple(tuple(float(c) for c in v) for v in base_camera)
+            # Assign the pose BEFORE enabling parallel projection: the parallel
+            # scale (and therefore px_per_um below) is derived from the camera's
+            # current distance, so without this the video froze at the
+            # populate-reset default zoom while "Save figure…"
+            # (render_scene_image) honoured the live pose — the two export paths
+            # disagreed for the same view.
+            pl.camera_position = base
             elev = 0.0
         pl.enable_parallel_projection()
         pl.show(auto_close=False)

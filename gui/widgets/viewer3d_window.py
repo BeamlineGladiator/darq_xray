@@ -429,11 +429,16 @@ class Viewer3DWindow(QWidget):
         pl = self._canvas.plotter
         pl.clear()
         ok = R3.populate(pl, self.scene, scalar_bar_title=self.loaded.cbar_label)
-        self._status.setText(
+        status = (
             f"{self._spec.name}: shape {tuple(self.scene.volume.shape)}"
             if ok
             else "nothing to show (no finite voxels after threshold/clip)"
         )
+        # Too big for this machine's 3-D texture -> VTK renders nothing, silently.
+        oversize = R3.oversize_note(self.scene, R3.volume_texture_limit(pl)) if ok else None
+        if oversize:
+            status += f" — {oversize}"
+        self._status.setText(status)
         # pl.clear() above also drops the bounds axes actor — re-apply it here
         # so toggling structural controls doesn't silently hide the bounds.
         if self._bounds_check.isChecked():
@@ -672,13 +677,21 @@ class Viewer3DWindow(QWidget):
     def _finish_video_ok(self, result) -> None:
         self._stop_video_timer()
         path = result.get("video") if isinstance(result, dict) else result
-        self._status.setText(f"rotation video saved to {path}")
+        # None = the job ran fine but had nothing to render (empty scene) —
+        # "saved to None" would read as a success with a broken path.
+        self._status.setText(
+            f"rotation video saved to {path}" if path else "nothing to export (empty scene)"
+        )
         self._video_btn.setEnabled(self._canvas.available)
         self._video_runner = None
 
     def _finish_video_failed(self, failure: Failed) -> None:
         self._stop_video_timer()
-        self._status.setText(f"rotation video failed: {failure.error}")
+        # Mirror stage_view._finish_failed: a StageUserError's hint is the half
+        # that tells the user what to do about it.
+        hint = getattr(failure, "hint", "")
+        text = f"rotation video failed: {failure.error}"
+        self._status.setText(f"{text} — {hint}" if hint else text)
         self._video_btn.setEnabled(self._canvas.available)
         self._video_runner = None
 

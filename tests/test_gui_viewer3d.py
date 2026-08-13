@@ -206,6 +206,39 @@ def test_save_figure_writes_png(tmp_path, monkeypatch):
     w.close()
 
 
+def test_finish_video_ok_reports_an_empty_scene():
+    w = Viewer3DWindow(_spec(), "visualize")
+    w.load_and_render()
+    w._finish_video_ok({"video": "/tmp/orbit.gif"})
+    assert w._status.text() == "rotation video saved to /tmp/orbit.gif"
+    w._finish_video_ok({"video": None})  # empty scene -> not "saved to None"
+    assert "nothing to export" in w._status.text()
+    assert "None" not in w._status.text()
+    w.close()
+
+
+def test_finish_video_failed_shows_the_hint():
+    from dfxm.runner import Failed
+
+    w = Viewer3DWindow(_spec(), "visualize")
+    w.load_and_render()
+    w._finish_video_failed(Failed("no GL", "", "Install a GPU driver"))
+    assert "no GL" in w._status.text() and "Install a GPU driver" in w._status.text()
+    w._finish_video_failed(Failed("plain", ""))
+    assert w._status.text() == "rotation video failed: plain"
+    w.close()
+
+
+def test_rebuild_hints_at_an_oversize_volume(monkeypatch):
+    w = Viewer3DWindow(_spec(), "visualize")
+    w.load_and_render()
+    monkeypatch.setattr("gui.widgets.viewer3d_window.R3.volume_texture_limit", lambda *a, **kw: 2)
+    w.rebuild()
+    if w._canvas.available:  # the status line only carries a scene when GL is up
+        assert "texture limit" in w._status.text()
+    w.close()
+
+
 def test_export_buttons_disabled_without_gl():
     w = Viewer3DWindow(_spec(), "visualize")
     w.load_and_render()

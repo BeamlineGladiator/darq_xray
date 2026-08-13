@@ -634,9 +634,23 @@ Align the stacked mosaicity/strain volumes and render them.
 > legacy looks) and then composed into a styled figure — white background, the
 > dataset's colourbar (with your Colormaps/publication-style settings), and a
 > µm scale bar that is exact, not estimated (the render uses a parallel
-> projection, so the µm-per-pixel is known). The video keeps that colourbar and
+> projection, so the µm-per-pixel is known). The NaN padding the alignment adds
+> around the sample is fully transparent in `volume` mode for any colour range
+> — including the zero-centred ranges of Center-of-mass and strain, where it
+> used to render as a haze of mid-colormap fog around the data. The video keeps that colourbar and
 > scale bar in every frame, and each frame is rendered at an absolute camera
 > pose along the orbit, so the movie really does turn all the way round.
+
+> [!warning] "3-D volume render exceeds this machine's GL 3-D texture limit"
+> `render_mode=volume` uploads the whole volume as one 3-D texture, and every
+> graphics stack caps its size (2048 px per axis on software/llvmpipe GL —
+> narrower than a typical 2891 px-wide aligned volume). Over that cap the
+> renderer draws **nothing**, so the top view and the orbit video would be blank
+> images with no error. The stage now detects this and records it in the
+> dataset's notes (shown in the run summary); the same hint appears in the 3-D
+> viewer's status line. Crop the map ROI (or raise **Downsample** in the 3-D
+> viewer) until the largest axis fits, or render on a machine with a real GPU.
+> Nothing is downsampled automatically — the products keep full resolution.
 
 > [!tip] Picking the run-time ROI interactively
 > Click **Pick ROI…** (in the button row alongside Run/Cancel) to open a visual
@@ -1561,6 +1575,12 @@ scene, camera/bounds just re-render the existing one):
 | **Azimuth / Elevation / Zoom** + **Apply camera pose** | applies a custom offset on top of the `front` preset. These three fields always show the *last applied* pose, not wherever your mouse has since orbited the view — video/image exports use the live plotter camera, not these fields |
 | **Show bounds axes (µm)** | toggles a `pyvista` bounding box with µm-labelled X/Y/Z axes around the volume |
 
+The status line under the view reports the loaded volume's shape — and, when
+the volume is wider than this machine's GL 3-D texture limit (so `volume` mode
+can only draw a blank canvas), says so and names the limit. Raise **Downsample**
+until it fits, or switch **Render mode** to `surface`/`isosurface`, which upload
+geometry instead of a 3-D texture.
+
 #### Exports
 
 A toolbar above the 3-D view has three buttons. All three need a live GL
@@ -1571,7 +1591,7 @@ rest of the window's controls:
 | --- | --- |
 | **Save figure…** | A publication-styled PNG: prompts for a save path, then a width×height in pixels (default 1920×1080), off-screen re-renders the current scene at that size from the *live* camera pose, and composites it through the same colorbar/scale-bar figure builder the visualize/rocking top-view and rotation-video exports use — so it looks like the interactive view, on a white background, with the session's publication style |
 | **Save screenshot…** | A raw PNG of exactly what's on screen right now (`plotter.screenshot`) — no compositing, no colorbar, fastest option |
-| **Save rotation video…** | A 360° orbit MP4/GIF, prompting for a base path, format, frame count (default 180) and FPS (default 15). Rendering runs in a **child process** (`dfxm.viewer_jobs.rotation_video_job` via `StageRunner`, the same mechanism stage runs use) so the GUI stays responsive; a progress dialog tracks it and **Cancel** terminates the child. The orbit starts from the live camera pose if the canvas is available, otherwise from the `front` preset. The video reuses the window's current appearance/structure settings and the session's publication style |
+| **Save rotation video…** | A 360° orbit MP4/GIF, prompting for a base path, format, frame count (default 180) and FPS (default 15). Rendering runs in a **child process** (`dfxm.viewer_jobs.rotation_video_job` via `StageRunner`, the same mechanism stage runs use) so the GUI stays responsive; a progress dialog tracks it and **Cancel** terminates the child. The orbit starts from the live camera pose if the canvas is available, otherwise from the `front` preset — including how far you have zoomed/dollied in, so the movie is framed like the view (and like **Save figure…**). The video reuses the window's current appearance/structure settings and the session's publication style. If the scene turns out to be empty, the status line says "nothing to export"; a failed job shows the error and its hint |
 
 ### Line picker (profiles)
 

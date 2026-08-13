@@ -105,13 +105,14 @@ def test_grid_for_scene_surface_thresholds_nans():
 def test_grid_for_scene_volume_keeps_grid_shape():
     pytest.importorskip("pyvista")
     v = _vol()
-    s = R3.Scene3D(volume=v, spacing=(1.0, 2.0, 3.0), mode="volume")
+    s = R3.Scene3D(volume=v, spacing=(1.0, 2.0, 3.0), mode="volume", clim=(0.0, 47.0))
     kind, grid = R3._grid_for_scene(s)
     assert kind == "volume"
     assert tuple(grid.dimensions) == (7, 5, 3)  # cells+1 in (X, Y, Z)
     assert grid.spacing == (1.0, 2.0, 3.0)
-    # NaN voxel uploaded as 0 (transparent under the transfer function)
-    assert float(grid.cell_data["values"].min()) == 0.0
+    # NaN voxel uploaded BELOW the colour range (the zero-alpha sentinel band),
+    # never as 0.0 — which is mid-range for the symmetric clims CoM/strain use.
+    assert float(grid.cell_data["values"].min()) < 0.0
 
 
 def test_grid_for_scene_empty_returns_none():
@@ -146,6 +147,60 @@ def test_grid_for_scene_log_uploads_log10_values():
     s = R3.Scene3D(volume=v, spacing=(1, 1, 1), mode="volume", clim=(1.0, 100.0), log_scale=True)
     kind, grid = R3._grid_for_scene(s)
     assert float(grid.cell_data["values"].max()) == pytest.approx(2.0)  # log10(100)
+
+
+# --- NaN padding must be transparent for ANY clim -------------------------
+
+
+def test_volume_scalars_send_nan_below_the_colour_range():
+    dt = np.array([-1.0, 0.0, 1.0, np.nan])
+    out = R3._volume_scalars(dt, (-1.0, 1.0))
+    assert out[3] < -1.0  # NaN -> sentinel below vmin, NOT 0.0 (mid-range here)
+    assert out[2] == pytest.approx(1.0)
+    # real data is clipped into the visible band, clear of the sentinel's
+    # zero-alpha steps, so below-range voxels keep the lowest data alpha
+    assert -1.0 < out[0] < -1.0 + 0.05
+    assert out[0] < out[1] < out[2]
+
+
+def test_volume_scalars_survive_a_degenerate_clim():
+    dt = np.array([0.5, np.nan])
+    out = R3._volume_scalars(dt, (0.5, 0.5))
+    assert np.isfinite(out).all() and out[1] < 0.5
+
+
+def test_volume_opacity_zeroes_the_sentinel_band():
+    pytest.importorskip("pyvista")
+    for mapping in R3.OPACITY_MAPPINGS:
+        curve = R3._volume_opacity(
+            R3.Scene3D(volume=_vol(), spacing=(1, 1, 1), opacity_mapping=mapping)
+        )
+        assert len(curve) == R3._VOLUME_OPACITY_STEPS
+        # geom_r is high-alpha at LOW scalars: without this the padding is solid
+        assert not curve[: R3._VOLUME_CLEAR_STEPS].any()
+        assert curve[R3._VOLUME_CLEAR_STEPS :].max() > 0.0
+
+
+# --- oversize 3-D texture note --------------------------------------------
+
+
+def test_prepared_shape_matches_prepared():
+    s = R3.Scene3D(volume=np.zeros((2, 8, 9)), spacing=(1, 1, 1), downsample=2)
+    assert s.prepared_shape() == s.prepared()[0].shape == (2, 4, 4)
+
+
+def test_oversize_note_fires_only_for_oversize_volume_mode_scenes():
+    big = R3.Scene3D(volume=np.zeros((2, 3, 2048)), spacing=(1, 1, 1))
+    note = R3.oversize_note(big, 2048)
+    assert note and "texture" in note and "2048" in note
+    assert (
+        R3.oversize_note(R3.Scene3D(volume=np.zeros((2, 3, 2046)), spacing=(1, 1, 1)), 2048) is None
+    )
+    assert R3.oversize_note(big, None) is None  # limit unknown -> no note, no crash
+    big.mode = "surface"
+    assert R3.oversize_note(big, 2048) is None
+    big.mode, big.downsample = "volume", 2  # downsampling can bring it back in range
+    assert R3.oversize_note(big, 2048) is None
 
 
 # --- compositor (Agg, no pyvista) -----------------------------------------

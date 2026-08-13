@@ -661,16 +661,22 @@ def _render(
             group=group,
         )
     if p["save_topview"]:
+        scene = R3.Scene3D(
+            volume=vol,
+            spacing=(sx, sy, scale_z),
+            cmap=cmap,
+            clim=(float(vmin), float(vmax)),
+            opacity=float(p["volume_opacity"]),
+            mode="volume",
+        )
+        # A volume wider than the GL 3-D texture limit renders blank without any
+        # error — say so instead of shipping an empty top view.
+        note = R3.oversize_note(scene, R3.volume_texture_limit())
+        if note:
+            prod.notes.append(note)
         try:
             prod.top_view = R3.save_top_view(
-                R3.Scene3D(
-                    volume=vol,
-                    spacing=(sx, sy, scale_z),
-                    cmap=cmap,
-                    clim=(float(vmin), float(vmax)),
-                    opacity=float(p["volume_opacity"]),
-                    mode="volume",
-                ),
+                scene,
                 os.path.join(ds_dir, f"{name}_top_view.png"),
                 cbar_label=cbar,
                 group=group,

@@ -204,6 +204,45 @@ def test_figures_use_raw_group(tmp_path):
     assert fig.axes[0].images[0].cmap.name == "gray"
 
 
+def test_oversize_volume_becomes_a_note(tmp_path, monkeypatch):
+    """A volume wider than the GL 3-D texture limit renders blank silently."""
+    import numpy as np
+
+    monkeypatch.setattr(RK.R3, "save_top_view", lambda scene, path, **kw: path)
+    monkeypatch.setattr(RK.R3, "volume_texture_limit", lambda *a, **kw: 4)
+    p = {**RK.STAGE.defaults(), "save_layers": False, "save_animation": False, "save_topview": True}
+    res = RK.RockingResult(output_dir=str(tmp_path))
+    RK._render(
+        res,
+        np.zeros((2, 4, 5)),
+        np.arange(2.0),
+        1.0,
+        "sum_intensity",
+        p,
+        str(tmp_path),
+        "gray",
+        "t",
+        "I",
+    )
+    assert any("texture limit" in n for n in res.datasets[0].notes)
+
+    monkeypatch.setattr(RK.R3, "volume_texture_limit", lambda *a, **kw: 4096)
+    res2 = RK.RockingResult(output_dir=str(tmp_path))
+    RK._render(
+        res2,
+        np.zeros((2, 4, 5)),
+        np.arange(2.0),
+        1.0,
+        "sum_intensity",
+        p,
+        str(tmp_path),
+        "gray",
+        "t",
+        "I",
+    )
+    assert not res2.datasets[0].notes
+
+
 # -- replot_catalog + render_replot -------------------------------------------
 
 

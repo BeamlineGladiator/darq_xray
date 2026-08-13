@@ -276,6 +276,49 @@ def test_process_dataset_rotation_video_failure_becomes_note(tmp_path, monkeypat
     assert any("rotation video skipped" in n for n in prod.notes)
 
 
+def _oversize_params():
+    return {
+        **V.STAGE.defaults(),
+        "save_layers": False,
+        "save_animation": False,
+        "save_topview": True,
+        "save_rotation": False,
+    }
+
+
+def _run_process(p, tmp_path, nx=5):
+    return V._process_dataset(
+        np.zeros((2, 4, nx)),
+        [0.0, 1.0],
+        1.0,
+        "chi",
+        0.0,
+        1.0,
+        "viridis",
+        "chi",
+        "deg",
+        p,
+        str(tmp_path),
+    )
+
+
+def test_oversize_volume_becomes_a_note(tmp_path, monkeypatch):
+    """Wider than the GL 3-D texture limit -> add_volume draws NOTHING and says
+    nothing; the stage must not report success with a blank product."""
+    monkeypatch.setattr(V.R3, "save_top_view", lambda scene, path, **kw: path)
+    monkeypatch.setattr(V.R3, "volume_texture_limit", lambda *a, **kw: 4)
+    prod = _run_process(_oversize_params(), tmp_path)
+    assert any("texture limit" in n for n in prod.notes)
+
+
+def test_no_oversize_note_for_a_small_volume_or_unknown_limit(tmp_path, monkeypatch):
+    monkeypatch.setattr(V.R3, "save_top_view", lambda scene, path, **kw: path)
+    monkeypatch.setattr(V.R3, "volume_texture_limit", lambda *a, **kw: 4096)
+    assert not _run_process(_oversize_params(), tmp_path).notes
+    monkeypatch.setattr(V.R3, "volume_texture_limit", lambda *a, **kw: None)  # no GL
+    assert not _run_process(_oversize_params(), tmp_path).notes
+
+
 def test_scene_carries_new_3d_params(tmp_path, monkeypatch):
     captured = {}
 
