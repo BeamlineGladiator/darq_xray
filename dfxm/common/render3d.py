@@ -338,6 +338,12 @@ def scene_figure(
     ORIGINAL (non-log) limits — LogNorm when *log_scale* — so log videos and
     figures label real values. Returns (fig, ax, im); *im* is the AxesImage
     whose data the rotation video swaps per frame.
+
+    ``origin="upper"``: a pyvista screenshot's row 0 is the TOP of the render,
+    so the image must be drawn top-row-first (``origin="lower"`` published every
+    3-D figure and video frame upside-down). The µm extent is unchanged either
+    way, so the scale bar stays exact. Colorbar and scale bar honour the style's
+    ``colorbar``/``scale_bar`` flags, like ``render.draw_map_layer``.
     """
     import matplotlib.colors as mcolors
     from matplotlib.cm import ScalarMappable
@@ -349,7 +355,7 @@ def scene_figure(
     ext_x, ext_y = w / float(px_per_um), h / float(px_per_um)
     fig = Figure(figsize=(12, 12 * h / w + 1.0), facecolor="white")
     ax = fig.add_subplot(111)
-    im = ax.imshow(np.asarray(img), extent=[0, ext_x, 0, ext_y], origin="lower", aspect="equal")
+    im = ax.imshow(np.asarray(img), extent=[0, ext_x, 0, ext_y], origin="upper", aspect="equal")
     ax.set_axis_off()
     if title:
         ax.set_title(title)
@@ -358,7 +364,9 @@ def scene_figure(
     sm = ScalarMappable(norm=norm, cmap=get_cmap(cmap))
     sm.set_array([])
     fig._scene_mappable = sm  # test/debug hook: the mappable behind the colorbar
-    add_colorbar(fig, sm, ax, cbar_label, st, group=group)
-    draw_scale_bar(ax, st.scale_bar_length_um, style=st)
+    if st.colorbar:
+        add_colorbar(fig, sm, ax, cbar_label, st, group=group)
+    if st.scale_bar:
+        draw_scale_bar(ax, st.scale_bar_length_um, style=st)
     apply_text_scale(ax, st)
     return fig, ax, im

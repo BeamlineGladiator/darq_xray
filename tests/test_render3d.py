@@ -182,3 +182,37 @@ def test_scene_figure_saves_png(tmp_path):
     out = tmp_path / "f.png"
     fig.savefig(out, dpi=100)
     assert out.stat().st_size > 0
+
+
+def test_scene_figure_does_not_flip_the_render():
+    # regression: a pyvista screenshot has row 0 at the TOP of the render, so the
+    # compositor must use origin="upper" — origin="lower" published every 3-D
+    # figure and video frame upside-down.
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+
+    img = np.zeros((40, 40, 3), dtype=np.uint8)
+    img[:10, :, :] = 255  # white band on the render's TOP rows
+    fig, ax, im = R3.scene_figure(img, px_per_um=1.0, cbar_label="x", clim=(0.0, 1.0))
+    FigureCanvasAgg(fig)
+    fig.canvas.draw()
+    buf = np.asarray(fig.canvas.buffer_rgba())
+    bb = ax.get_window_extent()
+    hbuf = buf.shape[0]
+    sub = buf[int(hbuf - bb.y1) : int(hbuf - bb.y0), int(bb.x0) : int(bb.x1), :3].astype(float)
+    rows = sub.mean(axis=(1, 2))
+    half = len(rows) // 2
+    assert rows[:half].mean() > rows[half:].mean()  # the band stayed at the top
+    assert ax.get_ylim() == (0.0, 40.0)  # µm y-limits unaffected by the origin
+
+
+def test_scene_figure_honours_style_decoration_flags():
+    from matplotlib.offsetbox import AnchoredOffsetbox
+
+    from dfxm.common.plotting import PlotStyle
+
+    st = PlotStyle(scale_bar=False, colorbar=False, scale_bar_color="black")
+    fig, ax, im = R3.scene_figure(
+        _fake_render(), px_per_um=2.0, cbar_label="x", clim=(0.0, 1.0), style=st
+    )
+    assert len(fig.axes) == 1  # image only — no colorbar axes
+    assert not [a for a in ax.artists if isinstance(a, AnchoredOffsetbox)]  # no scale bar
