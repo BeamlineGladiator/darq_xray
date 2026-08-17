@@ -21,10 +21,19 @@ from ..common.plotting import (
     style_from_params,
 )
 from .adapters import PanelData, draw_panel, load_panel
-from .layout import SizedCell, measure_cells, place_tree, size_cells
+from .layout import (
+    SizedCell,
+    autoscale_traces,
+    measure_cells,
+    place_tree,
+    size_cells,
+    trace_column_targets,
+)
 from .recipe import Col, PanelRef, Row, Spacer, TextCell, iter_leaves, validate_recipe
 
 _IN_PER_CM = 1.0 / 2.54
+_MAX_COLLISION_TEXTS = 400  # cost guard: skip the pairwise pass beyond this
+_TRACE_TINY_FRACTION = 0.4  # "microscopic trace" threshold for the advisory
 
 _MIXED_GROUP_HINT = (
     "Group only panels of one quantity (e.g. all strain) under a shared bar, "
@@ -444,6 +453,188 @@ def _align_axis_labels(fig, layout, axes_by_id, data_by_id):
     walk(layout)
 
 
+def _view_filtered_tick_labels(axis):
+    """Major-tick label artists of *axis* whose tick actually falls inside the
+    current view interval.
+
+    ``Axis.get_xticklabels()``/``get_yticklabels()`` return a label for every
+    tick the *locator* proposed, including ones matplotlib never draws
+    because they land outside the axes' current xlim/ylim (e.g. a locator
+    that proposes 0, 25, ..., 125 for a `set_xlim(0, 123)` axes — "125" is
+    never rendered but was still being collected, producing a phantom text
+    extent and inflating the collision count / false-positive rate). Filter
+    by ``get_view_interval()`` instead."""
+    lo, hi = sorted(axis.get_view_interval())
+    out = []
+    for tick in axis.get_major_ticks():
+        loc = tick.get_loc()
+        if not (lo <= loc <= hi):
+            continue
+        if tick.label1.get_visible():
+            out.append(tick.label1)
+        if tick.label2.get_visible():
+            out.append(tick.label2)
+    return out
+
+
+def _axes_texts(ax):
+    """Visible, non-empty text artists on *ax*: title, x/y axis labels, tick
+    labels actually drawn within the current view interval, and
+    annotations/free texts (panel letters are annotations on the panel axes;
+    a colorbar axes' label + tick numbers are its own axis artists, so bar
+    axes need no special casing)."""
+    arts = [ax.title, ax.xaxis.label, ax.yaxis.label]
+    arts += _view_filtered_tick_labels(ax.xaxis) + _view_filtered_tick_labels(ax.yaxis)
+    arts += list(ax.texts)
+    return [t for t in arts if t.get_visible() and t.get_text().strip()]
+
+
+def _overlap_area(a, b) -> float:
+    """Positive intersection area of two bboxes, else 0 (inverted/degenerate
+    boxes — e.g. a tiny text shrunk past nothing by the 1 pt inset — never
+    count)."""
+    w = min(a.x1, b.x1) - max(a.x0, b.x0)
+    h = min(a.y1, b.y1) - max(a.y0, b.y0)
+    return w * h if (w > 0.0 and h > 0.0) else 0.0
+
+
+def _detect_text_collisions(
+    fig, axes_by_owner, pre_suggestions=(), *, owner_group=None, bar_owners=()
+) -> list[str]:
+    """Advisory cross-panel text-overlap check on the FINAL geometry.
+
+    *axes_by_owner* maps a display name (panel ``title or id``, or a bar
+    name) to its axes. A collision is two text artists with DIFFERENT parent
+    axes whose window extents, each shrunk by 1 pt (hairline touches
+    ignored), intersect with positive area; same-axes overlaps are
+    matplotlib's own tick-layout business and are ignored. Prefilter: only
+    text pairs whose parent axes' ``get_tightbbox`` boxes (expanded by 2 pt)
+    intersect are compared. Returns at most ONE summary note (``[]`` when
+    clean); a figure with more than ``_MAX_COLLISION_TEXTS`` text artists
+    returns a skip note instead of running the O(n²) pass. Never an error.
+
+    *owner_group* optionally maps an owner name to a GROUP key. Two owners
+    sharing a group are treated like the same-axes exemption above:
+    collisions BETWEEN them are ignored entirely (never even counted),
+    though each still gets compared against every owner in a DIFFERENT
+    group. An owner absent from the map (or ``owner_group=None``) is its own
+    singleton group, i.e. unchanged behaviour. The caller uses this to group
+    a panel with its own per-panel colorbar axes under one key (both mean
+    "this panel's own decoration") — a panel's own per-panel colorbar
+    routinely sits close enough that its bottom "×10ⁿ" offset text collides
+    with that SAME panel's own last x-tick label, a real, pre-existing
+    ``dfxm/common/plotting.py`` ``_apply_scientific`` layout defect (default
+    ``offset_pos="bottom"``), not a genuine cross-panel collision; without
+    this exemption, per-panel-colorbar coverage (F2) would make nearly every
+    real per-panel-colorbar figure emit a noisy, wrong-advice note. A panel
+    vs. a DIFFERENT panel's own colorbar, or one colorbar vs. another, is
+    still fully checked.
+
+    *bar_owners* is the set of owner names that are actual shared/united
+    colorbar axes, supplied by the caller (never inferred from the display
+    name — a panel legitimately titled "... colorbar" must not be
+    misclassified, and a per-panel colorbar is deliberately NOT in this set
+    so a genuine collision between two DIFFERENT panels' own colorbars still
+    reports). When EVERY owner involved in the collision is in *bar_owners*,
+    the note is dropped entirely rather than raised — two shared/united bars
+    only collide when the bars themselves overlap, which the united-bar
+    overlap check already reports (with a more specific `colorbar_pos`
+    suggestion); a generic "increase gutter; reduce font scale" note on top
+    of that would be redundant noise, not new information.
+    """
+    collected = []
+    n_texts = 0
+    for owner, ax in axes_by_owner.items():
+        texts = _axes_texts(ax)
+        n_texts += len(texts)
+        collected.append((owner, ax, texts))
+    if n_texts > _MAX_COLLISION_TEXTS:
+        return [f"text-collision check skipped ({n_texts} text artists)"]
+
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+
+    if fig.canvas is None or not hasattr(fig.canvas, "get_renderer"):
+        FigureCanvasAgg(fig)
+    fig.canvas.draw()
+    ren = fig.canvas.get_renderer()
+    pad = fig.dpi / 72.0  # 1 pt in pixels
+
+    def _group(owner):
+        return owner_group.get(owner, owner) if owner_group else owner
+
+    groups = []
+    for owner, ax, texts in collected:
+        if not texts:
+            continue
+        bb = ax.get_tightbbox(ren)
+        if bb is None:
+            continue
+        exts = [t.get_window_extent(ren).padded(-pad) for t in texts]
+        groups.append((owner, bb.padded(2.0 * pad), exts))
+
+    n_collisions = 0
+    involved: list[str] = []
+    for i, (owner_a, bb_a, exts_a) in enumerate(groups):
+        for owner_b, bb_b, exts_b in groups[i + 1 :]:
+            if _group(owner_a) == _group(owner_b):
+                continue  # same owner group (e.g. a panel + its own colorbar) — not a real collision
+            if _overlap_area(bb_a, bb_b) <= 0.0:
+                continue  # prefilter: distant axes never compared text-by-text
+            hits = sum(1 for ea in exts_a for eb in exts_b if _overlap_area(ea, eb) > 0.0)
+            if hits:
+                n_collisions += hits
+                for owner in (owner_a, owner_b):
+                    if owner not in involved:
+                        involved.append(owner)
+    if not n_collisions:
+        return []
+    if involved and all(name in bar_owners for name in involved):
+        return []  # bar-vs-bar overlap: the united-bar note covers it
+    if len(involved) == 1:  # unreachable in practice, defensive
+        names = involved[0]
+    else:
+        names = ", ".join(involved[:-1]) + " and " + involved[-1]
+    suggestions = [*pre_suggestions, "increase gutter", "reduce font scale"]
+    return [
+        f"text overlaps between panels {names} ({n_collisions} collision(s)) — "
+        + "; ".join(suggestions)
+    ]
+
+
+def _tiny_trace_pids(recipe, cells) -> list[str]:
+    """Panel ids of trace cells rendered under ``_TRACE_TINY_FRACTION`` (40%)
+    of their column's widest map width, when ``compose.trace_autoscale`` is
+    off (an autoscaled trace is matched to that width and so is never tiny by
+    construction).
+
+    Drives two things: the collision note's conditional lead suggestion
+    (`_collision_presuggestions`) and the STANDALONE tiny-trace advisory
+    `render_recipe` appends when no text actually collides. The standalone
+    note exists because the collision advisory alone practically never fires
+    for this case — the layout engine reserves each axes its own measured
+    tightbbox, so a microscopic trace sitting fully inside its own reserved
+    box next to a full-size map rarely produces a text-artist OVERLAP even
+    though the trace itself is a real problem worth flagging.
+    """
+    if recipe.compose.trace_autoscale:
+        return []
+    targets = trace_column_targets(recipe, cells)
+    pids = []
+    for leaf in iter_leaves(recipe.layout):
+        target = targets.get(id(leaf))
+        if target is None:
+            continue
+        if cells[id(leaf)].w_in < _TRACE_TINY_FRACTION * target:
+            pids.append(leaf.panel_id)
+    return pids
+
+
+def _collision_presuggestions(recipe, cells) -> list[str]:
+    """Conditional lead suggestion for the collision note: recommend enabling
+    trace autoscale when some trace rendered tiny (see `_tiny_trace_pids`)."""
+    return ["enable trace autoscale"] if _tiny_trace_pids(recipe, cells) else []
+
+
 def _wrap_bar_node(node, bar_leaf):
     """A Col group's bar sits beside it (Row); a Row group's bar sits below (Col)."""
     if isinstance(node, Col):
@@ -566,6 +757,8 @@ def render_recipe(
     data_by_id = {pid: load_panel(panels_by_id[pid], cache=loader_cache) for pid in live_pids}
 
     cells = size_cells(recipe, style, data_by_id, notes)
+    if recipe.compose.trace_autoscale:
+        autoscale_traces(recipe, cells, data_by_id, notes)
 
     fig = Figure(facecolor="white")
 
@@ -874,6 +1067,82 @@ def render_recipe(
         note = box_drift_note(f"panel {pid}", fig, ax, cell.w_in, cell.h_in)
         if note:
             notes.append(note)
+
+    # Text-collision advisory — very last, on the FINAL geometry (after
+    # _align_axis_labels and the gutter/scale-bar draws). Runs on export too
+    # via this shared path. Owners are display names: panel title-or-id
+    # (uniquified — two panels sharing a title must not shadow each other in
+    # the check), that panel's own per-panel colorbar axes (`cell.extras`,
+    # when it has one) keyed "<panel> colorbar", each shared/united bar axes,
+    # and each TextCell leaf's axes keyed "text". `owner_group` groups a
+    # panel with its OWN per-panel colorbar (same pid) so
+    # `_detect_text_collisions` exempts that pair like a same-axes overlap
+    # (F7 — a panel's own colorbar offset text routinely collides with that
+    # same panel's own last x-tick label, a pre-existing plotting.py layout
+    # defect, not a real cross-panel problem); `bar_owner_names` is the set
+    # of ACTUAL shared/united bar owners, used (not name-pattern-matched,
+    # F8) to drop the note when a collision is bar-vs-bar only.
+    owners: dict[str, object] = {}
+    owner_group: dict[str, str] = {}
+    bar_owner_names: set[str] = set()
+
+    def _owner_key(base):
+        name, k = base, 2
+        while name in owners:
+            name = f"{base} #{k}"
+            k += 1
+        return name
+
+    for pid, ax in axes_by_id.items():
+        name = panels_by_id[pid].title or pid
+        panel_key = _owner_key(name)
+        owners[panel_key] = ax
+        group = f"panel:{pid}"
+        owner_group[panel_key] = group
+        for cax in cell_by_pid[pid].extras:
+            cbar_key = _owner_key(f"{name} colorbar")
+            owners[cbar_key] = cax
+            owner_group[cbar_key] = group
+    for _node, grp, _pids, _bar_leaf, bar_ax in bar_specs:
+        key = _owner_key(f"colorbar ({grp})" if grp else "colorbar")
+        owners[key] = bar_ax
+        bar_owner_names.add(key)
+    for grp, _pids, _bar_leaf, bar_ax in united_specs:
+        key = _owner_key(f"colorbar ({grp})" if grp else "colorbar")
+        owners[key] = bar_ax
+        bar_owner_names.add(key)
+    for leaf in leaves:
+        if isinstance(leaf, TextCell) and cells[id(leaf)].ax is not None:
+            owners[_owner_key("text")] = cells[id(leaf)].ax
+
+    # Tiny-trace advisory: `_tiny_trace_pids` also feeds the collision note's
+    # conditional lead suggestion, but the collision check itself practically
+    # never fires for this case (each axes reserves its own tightbbox, so a
+    # microscopic trace next to a full-size map rarely produces a text
+    # OVERLAP) — so a standalone note covers it whenever the collision check
+    # came back clean (F1: otherwise this advisory was effectively
+    # unreachable).
+    tiny_pids = _tiny_trace_pids(recipe, cells)
+    collision_notes = _detect_text_collisions(
+        fig,
+        owners,
+        ["enable trace autoscale"] if tiny_pids else [],
+        owner_group=owner_group,
+        bar_owners=bar_owner_names,
+    )
+    notes.extend(collision_notes)
+    if tiny_pids and not collision_notes:
+        labels = [panels_by_id[pid].title or pid for pid in tiny_pids]
+        if len(labels) == 1:
+            w_cm = cell_by_pid[tiny_pids[0]].w_in * 2.54
+            desc = f"{labels[0]} ({w_cm:.3g} cm)"
+        else:
+            desc = ", ".join(labels)
+        notes.append(
+            f"panel(s) {desc}: trace rendered under "
+            f"{int(_TRACE_TINY_FRACTION * 100)}% of the column's map width — "
+            "consider enabling trace autoscale"
+        )
 
     return ComposeResult(
         figure=fig, notes=notes, n_panels=n_panels, n_rendered=n_rendered, axes_by_id=axes_by_id

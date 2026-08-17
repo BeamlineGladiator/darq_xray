@@ -1198,7 +1198,20 @@ def main() -> int:
     _pdlg40.accept()
     assert _pdlg40.selected_panels and _pdlg40.selected_layout is not None
     assert _pdlg40.selected_panels[0].title  # picker captured a data name
-    print("[40] figure builder: arranger + Arrange… + united mode + two-step Add panels")
+    # trace-autoscale toggle: recipe -> widget -> recipe, and a re-render each way
+    fb.recipe().compose.trace_autoscale = True
+    fb._load_compose_into_widgets()
+    assert fb._compose_trace_autoscale.isChecked()
+    _res40b = fb.render_now()
+    assert _res40b is not None and _res40b.n_rendered == 1, fb._notes_label.text()
+    fb._compose_trace_autoscale.setChecked(False)  # widget -> recipe via _on_compose_edited
+    assert fb.recipe().compose.trace_autoscale is False
+    _res40c = fb.render_now()
+    assert _res40c is not None and _res40c.n_rendered == 1, fb._notes_label.text()
+    print(
+        "[40] figure builder: arranger + Arrange… + united mode + two-step Add panels"
+        " + trace-autoscale toggle"
+    )
 
     # [41] 3-D viewer: launcher on the visualize view opens a Viewer3DWindow;
     # controls mutate the scene; close prunes the window list (offscreen: the

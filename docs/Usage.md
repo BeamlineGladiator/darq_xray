@@ -1483,6 +1483,36 @@ to size from) — the error message plus its hint, without ever crashing the
 window. Deleting the last panel clears the live preview canvas outright
 (rather than leaving the last-rendered figure showing behind the "add panels
 to preview" note) — the note always describes exactly what's on screen.
+The notes bar can also carry a **text-overlap advisory**: after every render
+(and every export — same code path) the composer checks whether visible text
+from different panels overlaps in the final figure — titles, axis and tick
+labels (only the ones actually drawn within the panel's current view range —
+a tick the locator proposed but that fell off the visible axis range is never
+counted), panel letters, colorbar text (including each panel's own private
+colorbar, not just a shared/united one — but a panel's own colorbar is
+checked only against OTHER panels/bars, never against that SAME panel; a
+panel's own colorbar sitting right beside it is expected to run close, and
+the pre-existing case where its "×10ⁿ" offset label brushes that same
+panel's own last tick number is a separate, known plotting quirk, not
+something this advisory reports), and any text-panel caption — and, if so,
+appends one note naming the colliding panels with suggested fixes —
+*enable trace autoscale* (offered when a trace panel rendered far narrower
+than its column's maps and that option is off), *increase gutter*, and
+*reduce font scale*. If the ONLY thing colliding is two shared/united
+colorbars (e.g. two "one per quantity" bars stretched into the same corner),
+that generic note is skipped — the more specific *united bars … overlap*
+note (above) already covers it; a genuine collision between two DIFFERENT
+panels' own private colorbars still reports normally. It is advisory only,
+never an error, and on a figure with an unusually large number of text
+artists (over 400) the check skips itself with a note rather than slow the
+render down.
+
+A trace panel rendered under 40% of its column's map width also gets its own
+**standalone advisory** — `"panel(s) {name(s)}: trace rendered under 40% of
+the column's map width — consider enabling trace autoscale"` — even when
+nothing actually overlaps: a microscopic trace panel still reserves its own
+space cleanly, so the text-overlap check above rarely fires for it on its
+own; this note catches the case anyway.
 Clicking a panel in the preview selects that panel's node in the
 outline tree, mirroring the selection you'd otherwise make by hand before
 Label…/Delete/↑/↓. The outline keeps the node you're editing selected across
@@ -1517,8 +1547,15 @@ button:
   if the recipe has none) and refreshes every control from it.
 - *Compose* — the composer-level knobs on `recipe.compose`: the label
   template (must contain an `A`/`a` placeholder), the label font scale, the
-  gutter and padding (cm), then two headed groups, then a pinned total width
-  in cm (0 = auto-sized from the layout):
+  gutter and padding (cm), an **Autoscale traces to column width**
+  checkbox (off by default — when on, every trace panel is rescaled with its
+  box ratio kept so its width matches the widest map panel in its own
+  column, falling back to the widest map anywhere in the figure when its
+  column has none; a figure with no maps leaves traces untouched, and a
+  trace sized by a pinned row height or column width keeps its pin — pins
+  always win over autoscale; each rescale is reported in the notes bar with
+  the implied µm/cm), then two headed groups, then a pinned total width in
+  cm (0 = auto-sized from the layout):
   - **Colourbars** — *Colourbar mode*, "Per panel" (default — each map/slice
     panel keeps its own bar, or a `Row`/`Col`'s "one colorbar for this group"
     flag gives its members one together) or "One per quantity" (`united`:

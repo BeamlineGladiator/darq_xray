@@ -17,6 +17,7 @@ from dfxm.compose.recipe import (
     PanelRef,
     PanelSource,
     Row,
+    TextCell,
 )
 from dfxm.compose.render import export_recipe, render_recipe
 
@@ -738,3 +739,280 @@ def test_united_orthogonal_position_produces_no_overlap_note(tmp_path):
     h5 = _write_obl(tmp_path / "obl.h5")
     res = render_recipe(_two_column_two_quantity_recipe(h5, pos="bottom"))
     assert not any("overlap" in n for n in res.notes)
+
+
+# -- trace autoscale + text-collision advisory (2026-08-17 spec) ---------------
+
+
+def test_render_trace_autoscale_matches_column_map_width_and_notes(tmp_path):
+    h5 = _write_obl(tmp_path / "obl.h5")
+    pm = PanelDef(
+        "m",
+        PanelSource(h5, "slice_plane", {"volume_id": "raw_sum", "slice_name": "obl", "plane": 0}),
+    )
+    pt = PanelDef("t", PanelSource(h5, "profiles_trace", {"job": JOB, "field": "strain"}))
+    r = FigureRecipe(
+        "auto",
+        {"scale_um_per_cm": 10.0, "trace_scale_um_per_cm": 2.0, "show_title": False},
+        ComposeStyle(trace_autoscale=True),
+        Col([PanelRef("m"), PanelRef("t")]),
+        [pm, pt],
+    )
+    res = render_recipe(r)
+    from dfxm.common.plotting import measured_box_in
+
+    wm, _hm = measured_box_in(res.figure, res.axes_by_id["m"])
+    wt, _ht = measured_box_in(res.figure, res.axes_by_id["t"])
+    assert abs(wt - wm) < 0.01 * wm  # trace matched to the column's map width
+    assert any("autoscaled to column width" in n for n in res.notes)
+
+    r.compose.trace_autoscale = False
+    res_off = render_recipe(r)
+    wt_off, _ = measured_box_in(res_off.figure, res_off.axes_by_id["t"])
+    # discriminates: flag off keeps the physical trace box (~5.8 cm vs 2 cm)
+    assert abs(wt_off - wm) > 0.05 * wm
+    assert not any("autoscaled" in n for n in res_off.notes)
+
+
+def _fig_with_two_axes():
+    from matplotlib.figure import Figure
+
+    fig = Figure(figsize=(4.0, 2.0), facecolor="white")
+    ax1 = fig.add_axes([0.1, 0.2, 0.35, 0.6])
+    ax2 = fig.add_axes([0.55, 0.2, 0.35, 0.6])
+    return fig, ax1, ax2
+
+
+def test_collision_detector_flags_cross_axes_overlap_with_suggestions():
+    from dfxm.compose.render import _detect_text_collisions
+
+    fig, ax1, ax2 = _fig_with_two_axes()
+    # two texts from DIFFERENT axes pinned to the same figure spot -> collide
+    ax1.text(0.5, 0.5, "left panel text", transform=fig.transFigure)
+    ax2.text(0.5, 0.5, "right panel text", transform=fig.transFigure)
+    notes = _detect_text_collisions(fig, {"A": ax1, "B": ax2}, ["enable trace autoscale"])
+    assert len(notes) == 1
+    assert "text overlaps between panels A and B" in notes[0]
+    assert "collision(s)" in notes[0]
+    assert "enable trace autoscale" in notes[0]
+    assert "increase gutter" in notes[0] and "reduce font scale" in notes[0]
+
+
+def test_collision_detector_ignores_same_axes_overlaps_and_clean_figures():
+    from dfxm.compose.render import _detect_text_collisions
+
+    fig, ax1, ax2 = _fig_with_two_axes()
+    # overlapping texts on the SAME axes: matplotlib's business, not ours
+    ax1.text(0.2, 0.5, "one", transform=fig.transFigure)
+    ax1.text(0.2, 0.5, "two", transform=fig.transFigure)
+    assert _detect_text_collisions(fig, {"A": ax1, "B": ax2}) == []
+
+
+def test_collision_detector_cost_guard_skips_past_400_texts():
+    from dfxm.compose.render import _detect_text_collisions
+
+    fig, ax1, ax2 = _fig_with_two_axes()
+    for i in range(401):
+        ax1.text(0.1, 0.1, f"t{i}")
+    notes = _detect_text_collisions(fig, {"A": ax1, "B": ax2})
+    assert len(notes) == 1
+    assert "text-collision check skipped (" in notes[0] and "text artists" in notes[0]
+
+
+def test_detect_text_collisions_owner_group_exempts_same_group_pair():
+    """F7: two owners sharing a group (e.g. a panel and its own per-panel
+    colorbar) must be exempted like a same-axes overlap, even though their
+    text genuinely intersects."""
+    from dfxm.compose.render import _detect_text_collisions
+
+    fig, ax1, ax2 = _fig_with_two_axes()
+    ax1.text(0.5, 0.5, "own decoration", transform=fig.transFigure)
+    ax2.text(0.5, 0.5, "own decoration too", transform=fig.transFigure)
+    notes = _detect_text_collisions(
+        fig,
+        {"m": ax1, "m colorbar": ax2},
+        owner_group={"m": "panel:m", "m colorbar": "panel:m"},
+    )
+    assert notes == []
+
+    # a DIFFERENT group still gets compared and reports normally
+    notes2 = _detect_text_collisions(
+        fig,
+        {"m": ax1, "n colorbar": ax2},
+        owner_group={"m": "panel:m", "n colorbar": "panel:n"},
+    )
+    assert notes2 and "text overlaps" in notes2[0]
+
+
+def test_detect_text_collisions_bar_owners_is_an_explicit_set_not_a_name_pattern():
+    """F8: the bar-vs-bar drop must come from the caller-supplied *bar_owners*
+    set, never from matching the display name — a panel legitimately titled
+    "... colorbar" must still report a real collision, and a per-panel
+    colorbar (never added to bar_owners by render_recipe) colliding with a
+    DIFFERENT panel's own colorbar must still report too."""
+    from dfxm.compose.render import _detect_text_collisions
+
+    fig, ax1, ax2 = _fig_with_two_axes()
+    ax1.text(0.5, 0.5, "left", transform=fig.transFigure)
+    ax2.text(0.5, 0.5, "right", transform=fig.transFigure)
+
+    # "weird colorbar" LOOKS like a bar owner by name but isn't in bar_owners
+    notes = _detect_text_collisions(fig, {"weird colorbar": ax1, "b": ax2}, bar_owners=set())
+    assert notes and "text overlaps" in notes[0]
+
+    # both owners genuinely ARE actual bar owners -> note dropped
+    notes2 = _detect_text_collisions(
+        fig,
+        {"colorbar (a)": ax1, "colorbar (b)": ax2},
+        bar_owners={"colorbar (a)", "colorbar (b)"},
+    )
+    assert notes2 == []
+
+
+def test_collision_presuggestions_trace_tiny_only_when_flag_off():
+    from dfxm.common.plotting import PlotStyle
+    from dfxm.compose.adapters import PanelData
+    from dfxm.compose.layout import size_cells
+    from dfxm.compose.render import _collision_presuggestions
+
+    m, t = PanelRef("m"), PanelRef("t")
+    layout = Col([m, t])
+    pm = PanelDef("m", PanelSource("/x.h5", "map_layer", {}))
+    pt = PanelDef("t", PanelSource("/x.h5", "profiles_trace", {}))
+    r = FigureRecipe("s", {}, ComposeStyle(), layout, [pm, pt])
+    data = {
+        "m": PanelData(kind="map_layer", ext_x_um=20.0, ext_y_um=10.0),
+        "t": PanelData(kind="profiles_trace", length_um=1.0),
+    }
+    style = PlotStyle(scale_um_per_cm=10.0, trace_scale_um_per_cm=5.0, trace_height_cm=2.0)
+    cells = size_cells(r, style, data, [])
+    # trace box 0.2 cm wide < 40% of the column's 2 cm map -> suggest autoscale
+    assert _collision_presuggestions(r, cells) == ["enable trace autoscale"]
+    r.compose.trace_autoscale = True
+    assert _collision_presuggestions(r, cells) == []
+
+
+def test_render_runs_collision_check_at_end_and_clean_figure_has_no_note(tmp_path, monkeypatch):
+    h5 = _write_obl(tmp_path / "obl.h5")
+    # Default colorbars ON: F7 groups a panel with its OWN per-panel colorbar
+    # axes (same pid) so their own-decoration collision (a real, separate,
+    # pre-existing plotting.py offset-text-vs-tick-label defect — out of
+    # scope for this fix wave) is exempted, exactly like a same-axes overlap.
+    # This fixture must therefore stay clean WITH colorbars on, proving F7's
+    # grouping actually suppresses that defect rather than just hiding it
+    # behind a disabled colorbar (the earlier `colorbar=False` workaround).
+    res = render_recipe(_two_panel_recipe(h5))
+    assert not any("text overlaps" in n for n in res.notes)  # spacious -> clean
+
+    import dfxm.compose.render as render_mod
+
+    seen = {}
+
+    def _spy(fig, axes_by_owner, pre_suggestions=(), **kwargs):
+        seen["owners"] = dict(axes_by_owner)
+        return ["SENTINEL-COLLISION-NOTE"]
+
+    monkeypatch.setattr(render_mod, "_detect_text_collisions", _spy)
+    res2 = render_recipe(_two_panel_recipe(h5))
+    assert "SENTINEL-COLLISION-NOTE" in res2.notes
+    assert set(seen["owners"]) >= {"a", "b"}  # owners keyed by panel title-or-id
+    assert "a colorbar" in seen["owners"] or "b colorbar" in seen["owners"]  # F2 coverage intact
+
+
+# -- review fix wave (2026-08-17): tiny-trace advisory, tick-label view filter,
+# -- owner coverage, colorbar-only collision suppression -----------------------
+
+
+def test_render_tiny_trace_standalone_advisory_note(tmp_path):
+    """F1: the collision detector alone almost never fires for a microscopic
+    trace next to a full-size map (each axes reserves its own tightbbox, so
+    nothing actually OVERLAPS) — render_recipe must append a standalone
+    tiny-trace note when the collision check comes back clean."""
+    h5 = _write_obl(tmp_path / "obl.h5")
+    pm = PanelDef(
+        "m",
+        PanelSource(h5, "slice_plane", {"volume_id": "raw_sum", "slice_name": "obl", "plane": 0}),
+    )
+    pt = PanelDef("t", PanelSource(h5, "profiles_trace", {"job": JOB, "field": "strain"}))
+    r = FigureRecipe(
+        "tiny",
+        {"scale_um_per_cm": 10.0, "trace_scale_um_per_cm": 60.0, "show_title": False},
+        ComposeStyle(),
+        Col([PanelRef("m"), PanelRef("t")]),
+        [pm, pt],
+    )
+    res = render_recipe(r)
+    assert not any("text overlaps" in n for n in res.notes)  # spacious two-cell column -> clean
+    assert any(
+        "trace rendered under 40% of the column's map width" in n
+        and "consider enabling trace autoscale" in n
+        for n in res.notes
+    )
+
+    r.compose.trace_autoscale = True
+    res_on = render_recipe(r)
+    assert not any("trace rendered under" in n for n in res_on.notes)
+    assert any("autoscaled to column width" in n for n in res_on.notes)
+
+
+def test_owners_include_per_panel_colorbar_and_text_cell_axes(tmp_path, monkeypatch):
+    """F2: the collision-check owners map used to skip per-panel colorbar axes
+    (`cell.extras`) and TextCell leaves entirely — both must be covered now."""
+    h5 = _write_obl(tmp_path / "obl.h5")
+    r = _two_panel_recipe(h5)
+    r.layout = Row([PanelRef("a"), PanelRef("b"), TextCell("caption")])
+
+    import dfxm.compose.render as render_mod
+
+    seen = {}
+
+    def _spy(fig, axes_by_owner, pre_suggestions=(), **kwargs):
+        seen["owners"] = dict(axes_by_owner)
+        return []
+
+    monkeypatch.setattr(render_mod, "_detect_text_collisions", _spy)
+    render_recipe(r)
+    owners = seen["owners"]
+    assert "a colorbar" in owners and "b colorbar" in owners  # default style.colorbar=True
+    assert "text" in owners
+
+
+def test_axes_texts_filters_tick_labels_outside_view_interval():
+    """F3: get_xticklabels()/get_yticklabels() include labels for ticks the
+    locator proposed but matplotlib never draws (outside the view interval) —
+    _axes_texts must filter by the axis's actual view interval."""
+    from dfxm.compose.render import _axes_texts
+
+    fig, ax1, _ax2 = _fig_with_two_axes()
+    ax1.set_xlim(0, 123)
+    fig.canvas.draw()
+    texts = [t.get_text() for t in _axes_texts(ax1)]
+    assert "125" not in texts
+
+
+def test_united_overlapping_bars_suppress_redundant_text_collision_note(tmp_path):
+    """F4: when the ONLY text collision is colorbar-vs-colorbar, the generic
+    "increase gutter; reduce font scale" note is redundant with the more
+    specific united-bar overlap note already produced — it must not appear."""
+    h5 = _write_obl(tmp_path / "obl.h5")
+    res = render_recipe(_two_column_two_quantity_recipe(h5, pos="right"))
+    assert any("overlap" in n for n in res.notes)  # the united-bar overlap note survives
+    assert not any("text overlaps" in n for n in res.notes)  # generic note dropped
+
+
+def test_shared_x_stack_tight_gutter_no_false_positive_text_collision(tmp_path):
+    """F6: a tight-but-typical shared-x trace stack must not false-positive."""
+    h5 = _write_obl(tmp_path / "obl.h5")
+    pt = [
+        PanelDef(f"t{i}", PanelSource(h5, "profiles_trace", {"job": JOB, "field": vid}))
+        for i, vid in enumerate(["raw_sum", "strain"])
+    ]
+    r = FigureRecipe(
+        "tightgutter",
+        {"trace_scale_um_per_cm": 5.0, "trace_height_cm": 2.0, "show_title": False},
+        ComposeStyle(gutter_cm=0.1),
+        Col([PanelRef("t0"), PanelRef("t1")], shared_x=True),
+        pt,
+    )
+    res = render_recipe(r)
+    assert not any("text overlaps" in n for n in res.notes)

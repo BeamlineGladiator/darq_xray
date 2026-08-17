@@ -255,6 +255,11 @@ class FigureBuilderWindow(QMainWindow):
         self._compose_padding.valueChanged.connect(self._on_compose_edited)
         form.addRow("Padding", self._compose_padding)
 
+        self._compose_trace_autoscale = QCheckBox("Autoscale traces to column width")
+        self._compose_trace_autoscale.setChecked(c.trace_autoscale)
+        self._compose_trace_autoscale.toggled.connect(self._on_compose_edited)
+        form.addRow(self._compose_trace_autoscale)
+
         form.addRow(QLabel("<b>Colourbars</b>"))
         self._compose_cbar_mode = QComboBox()
         for text, value in (("Per panel", "per-panel"), ("One per quantity", "united")):
@@ -319,6 +324,7 @@ class FigureBuilderWindow(QMainWindow):
             self._compose_font_scale,
             self._compose_gutter,
             self._compose_padding,
+            self._compose_trace_autoscale,
             self._compose_cbar_mode,
             self._compose_cbar_pos,
             self._compose_scale_bar_mode,
@@ -331,6 +337,7 @@ class FigureBuilderWindow(QMainWindow):
         self._compose_font_scale.setValue(c.label_font_scale)
         self._compose_gutter.setValue(c.gutter_cm)
         self._compose_padding.setValue(c.padding_cm)
+        self._compose_trace_autoscale.setChecked(c.trace_autoscale)
         self._compose_cbar_mode.setCurrentIndex(
             max(0, self._compose_cbar_mode.findData(c.colorbar_mode))
         )
@@ -351,6 +358,7 @@ class FigureBuilderWindow(QMainWindow):
         c.label_font_scale = self._compose_font_scale.value()
         c.gutter_cm = self._compose_gutter.value()
         c.padding_cm = self._compose_padding.value()
+        c.trace_autoscale = self._compose_trace_autoscale.isChecked()
         c.scale_bar_mode = self._compose_scale_bar_mode.currentText()
         c.scale_bar_panel = self._compose_scale_bar_panel.currentData() or None
         c.colorbar_mode = self._compose_cbar_mode.currentData()

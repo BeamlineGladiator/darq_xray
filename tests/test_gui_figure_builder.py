@@ -1065,6 +1065,20 @@ def test_compose_colorbar_widgets_reload_from_recipe():
     assert w._compose_cbar_pos.isEnabled()
 
 
+def test_compose_trace_autoscale_checkbox_writes_field_and_reloads():
+    w = _win()
+    assert w.recipe().compose.trace_autoscale is False
+    assert not w._compose_trace_autoscale.isChecked()
+    w._compose_trace_autoscale.setChecked(True)  # toggled -> _on_compose_edited
+    assert w.recipe().compose.trace_autoscale is True
+    assert w.is_dirty()
+    # reload path: recipe -> widget, signals blocked, no write-back
+    w.recipe().compose.trace_autoscale = False
+    w._load_compose_into_widgets()
+    assert not w._compose_trace_autoscale.isChecked()
+    assert w.recipe().compose.trace_autoscale is False
+
+
 def test_scale_bar_corner_combo_is_style_scale_bar_loc_both_ways():
     w = _win()
     w._compose_scale_bar_loc.setCurrentText("upper left")
