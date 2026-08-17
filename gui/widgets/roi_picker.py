@@ -41,6 +41,8 @@ from PySide6.QtWidgets import (  # noqa: E402
     QVBoxLayout,
 )
 
+from .busy import busy_cursor  # noqa: E402
+
 
 class ROIPickerDialog(QDialog):
     """Drag a rectangle on a preview plane; read back half-open pixel bounds."""
@@ -97,7 +99,8 @@ class ROIPickerDialog(QDialog):
         prev_shape = self._current_shape()
         idx = max(0, self._combo.currentIndex())
         try:
-            arr, sx, sy = self._previews[idx][1]()
+            with busy_cursor("loading preview…", widget=self._readout):
+                arr, sx, sy = self._previews[idx][1]()
         except Exception as exc:  # noqa: BLE001 — bad path/dataset: show, don't crash
             self._arr = None
             self._readout.setText(f"cannot preview: {exc}")

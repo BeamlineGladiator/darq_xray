@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
 from dfxm.common.errors import StageUserError
 from dfxm.stages import slices as _sl
 
+from .busy import busy_cursor
 from .plane_browser import PlaneBrowser
 
 
@@ -109,7 +110,8 @@ class MarkPlanesDialog(QDialog):
 
     # -- slots ----------------------------------------------------------------
     def _on_slice_changed(self, sname: str) -> None:
-        self._browser.open_slice(sname)
+        with busy_cursor():
+            self._browser.open_slice(sname)
         self._group_box.blockSignals(True)
         self._group_box.clear()
         self._group_box.addItems(self._browser.present)
@@ -175,9 +177,10 @@ class MarkPlanesDialog(QDialog):
         self._browser.close_file()
         save_exc: StageUserError | None = None
         try:
-            for sname in sorted(set(self._baseline) | set(self._marks)):
-                offs = [self._offsets[sname][i] for i in sorted(self._marks.get(sname, set()))]
-                _sl.write_marks(self._path, sname, offs)
+            with busy_cursor():
+                for sname in sorted(set(self._baseline) | set(self._marks)):
+                    offs = [self._offsets[sname][i] for i in sorted(self._marks.get(sname, set()))]
+                    _sl.write_marks(self._path, sname, offs)
         except StageUserError as exc:
             save_exc = exc
         except Exception:

@@ -56,7 +56,7 @@ from dfxm.compose.recipe import (
     recipe_to_json,
 )
 
-from .widgets.busy import BusyOverlay, keep_alive
+from .widgets.busy import BusyOverlay, busy_cursor, keep_alive
 from .widgets.export_dialog import StyleControls
 from .widgets.panel_picker import AddPanelDialog
 
@@ -1453,10 +1453,11 @@ class FigureBuilderWindow(QMainWindow):
 
     # -- recipe file I/O --------------------------------------------------------
     def load_recipe_file(self, path: str) -> None:
-        with open(path, encoding="utf-8") as f:
-            text = f.read()
         base_dir = os.path.dirname(os.path.abspath(path)) or None
-        recipe = recipe_from_json(text, base_dir=base_dir)
+        with busy_cursor("Opening recipe…", widget=self._notes_label):
+            with open(path, encoding="utf-8") as f:
+                text = f.read()
+            recipe = recipe_from_json(text, base_dir=base_dir)
         if not recipe.name:
             recipe.name = os.path.splitext(os.path.basename(path))[0]
         self._recipe = recipe

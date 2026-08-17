@@ -322,7 +322,11 @@ system **wait cursor** for shorter synchronous operations (a load, a read or
 write). A stage **Run**'s progress bar and step text are unchanged, gaining a
 `~… left` estimate once far enough along to be trustworthy (see the
 stage-panel table above). Either indicator always clears itself once the work
-finishes, errors, or is cancelled.
+finishes, errors, or is cancelled. The nine synchronous load/save spots in the
+app that were previously silent — Pick line…, Jobs from marks…, Mark planes…
+(opening, changing slice, and Save), Pick ROI… previews, Initialize from
+data…, opening a figure-builder recipe, and opening a pop-out 3-D viewer —
+all show the wait cursor for the duration of the load/save.
 
 ---
 

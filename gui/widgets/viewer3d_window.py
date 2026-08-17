@@ -35,6 +35,7 @@ from dfxm.runner import Done, Failed, Progress, StageRunner
 
 from ..theme import ThemeController
 from ..viewers import LoadedVolume, VolumeSourceSpec
+from .busy import busy_cursor
 from .pv_canvas import PvCanvas
 from .wheel_guard import install_wheel_guard
 
@@ -405,7 +406,8 @@ class Viewer3DWindow(QWidget):
     # -- lifecycle --------------------------------------------------------
     def load_and_render(self) -> None:
         """Load the volume (heavy) and do the first render."""
-        self.loaded = self._spec.load()
+        with busy_cursor("Loading volume…", widget=self._status):
+            self.loaded = self._spec.load()
         self.scene = R3.Scene3D(
             volume=self.loaded.volume,
             spacing=self.loaded.spacing,

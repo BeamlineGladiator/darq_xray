@@ -37,6 +37,7 @@ from dfxm.stages.registry import STAGE_TARGETS
 from .bindings import experiment_overrides
 from .form_state import FormStateStore
 from .viewers import append_line_job, inject_line_into_jobs, volume_sources
+from .widgets.busy import busy_cursor
 from .widgets.help_panel import HelpPanel
 from .widgets.log_console import LogConsole
 from .widgets.param_form import ParamForm
@@ -440,13 +441,14 @@ class StageView(QWidget):
         from .widgets.line_picker import LinePickerDialog  # imported on demand
 
         try:
-            dlg = LinePickerDialog(
-                h5,
-                slice_name,
-                init_offset=offset,
-                ref_pref=vals.get("reference_volume_id", ""),
-                parent=self,
-            )
+            with busy_cursor("Loading slice planes…"):
+                dlg = LinePickerDialog(
+                    h5,
+                    slice_name,
+                    init_offset=offset,
+                    ref_pref=vals.get("reference_volume_id", ""),
+                    parent=self,
+                )
         except Exception as exc:  # noqa: BLE001 - missing slice / unreadable file
             self._log.append(f"Pick line failed: {exc}")
             self._tabs.setCurrentWidget(self._log)
@@ -479,7 +481,8 @@ class StageView(QWidget):
         from dfxm.stages import slices as _sl  # local import: lazy, Qt-free
 
         try:
-            marks = _sl.read_marks(h5)
+            with busy_cursor():
+                marks = _sl.read_marks(h5)
         except Exception as exc:  # noqa: BLE001 - unreadable file
             self._log.append(f"Jobs from marks: cannot read marks: {exc}")
             self._tabs.setCurrentWidget(self._log)
@@ -502,13 +505,14 @@ class StageView(QWidget):
         n = len(sel_dlg.selected)
         for k, (sname, off) in enumerate(sel_dlg.selected, start=1):
             try:
-                dlg = LinePickerDialog(
-                    h5,
-                    sname,
-                    init_offset=off,
-                    ref_pref=vals.get("reference_volume_id", ""),
-                    parent=self,
-                )
+                with busy_cursor():
+                    dlg = LinePickerDialog(
+                        h5,
+                        sname,
+                        init_offset=off,
+                        ref_pref=vals.get("reference_volume_id", ""),
+                        parent=self,
+                    )
             except Exception as exc:  # noqa: BLE001 - missing slice / unreadable file
                 self._log.append(f"Jobs from marks: {sname} @ {off:+.2f} µm failed: {exc}")
                 skipped += 1
@@ -692,7 +696,8 @@ class StageView(QWidget):
         from .widgets.mark_planes import MarkPlanesDialog  # imported on demand
 
         try:
-            dlg = MarkPlanesDialog(h5, parent=self)
+            with busy_cursor():
+                dlg = MarkPlanesDialog(h5, parent=self)
         except Exception as exc:  # noqa: BLE001 - unreadable / empty file
             self._log.append(f"Mark planes failed: {exc}")
             self._tabs.setCurrentWidget(self._log)

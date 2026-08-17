@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
 from dfxm.config import presets
 from dfxm.config.models import EXPERIMENT_SCHEMA, Experiment
 
+from .widgets.busy import busy_cursor
 from .widgets.help_panel import HelpPanel
 from .widgets.param_form import ParamForm
 
@@ -228,9 +229,6 @@ class ExperimentDialog(QDialog):
         return detect_experiment(Experiment.from_dict(vals))
 
     def _on_initialize_from_data(self) -> None:
-        from PySide6.QtCore import Qt
-        from PySide6.QtWidgets import QApplication
-
         vals = self._form.values()
         raw = (vals.get("raw_root") or "").strip()
         if not raw or not os.path.isdir(raw):
@@ -241,11 +239,8 @@ class ExperimentDialog(QDialog):
                 "starts from the raw scan tree.",
             )
             return
-        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
-        try:
+        with busy_cursor():
             detections = self._detect(vals)
-        finally:
-            QApplication.restoreOverrideCursor()
 
         from .widgets.detect_review import DetectReviewDialog
 
