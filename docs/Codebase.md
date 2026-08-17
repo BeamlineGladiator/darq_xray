@@ -921,7 +921,47 @@ anywhere (`fig.set_layout_engine("none")` throughout, same as `layout.py`).
      get measured margins — reserved envelope space — like any panel's;
      drawing it after placement left those decorations with no room at all
      (they spilled over the next column's panels or off the canvas).
-  7. **Scale-bar mode** (`_resolve_scale_bar_kwargs`, now takes the shared
+  7. **United-colorbar transform** (`_apply_united_colorbars`) — the
+     alternative to step 6 when `compose.colorbar_mode == "united"` (default
+     `"per-panel"` takes step 6 instead; never both). Ignores any
+     `shared_colorbar` node flags found anywhere in the layout — a note is
+     appended (`"united colorbars override {n} group flag(s)"`) when any exist
+     — since a per-quantity bar supersedes a per-node one. Walks every
+     `PanelRef` leaf (depth-first) and partitions the live, non-placeholder
+     `map_layer`/`slice_plane`/`profiles_ref` ones by `PanelData.group`
+     (first-seen order decides each group's bar position in the final
+     `Col`/`Row` of bars); a panel whose `PanelDef.colorbar is True` is pulled
+     out of grouping entirely and keeps its own private `cax` (an explicit
+     per-panel override outranks the mode) — its id lands in a returned
+     `forced_pids` set instead of a group. `group=None` panels (and every
+     `profiles_trace`) are left alone — untouched by this pass, still governed
+     by `style.colorbar` per-panel as usual. Per group: colour limits unify as
+     `(min(vmins), max(vmaxs))` over the members, each panel's own `clim`
+     override still respected first (same rule as the shared-colorbar path);
+     members are rewritten via `dc_replace(clim=unified)` and added to
+     `no_colorbar_pids` (suppressing their per-panel bar); one bar cell is
+     built per group the same provisional way as a shared-colorbar bar (a
+     `Spacer` sized from `colorbar_fraction * first_member.w_in/h_in + 0.1`,
+     `first_member` = the group's first placed member). Unlike the
+     shared-colorbar path, a united bar is never wrapped beside its own
+     group's node in the tree — instead `render_recipe` wraps the WHOLE
+     working layout exactly once after all shared/united bars are built:
+     `Row([working_layout, Col(united_bars)])` for `compose.colorbar_pos ==
+     "right"`, or `Col([working_layout, Row(united_bars)])` for `"bottom"` —
+     one edge-aligned stack of bars, one per quantity, alongside every panel
+     rather than one per group's own row/column. Zero eligible panels (e.g. a
+     recipe of only traces) is not an error: no wrap happens and a note is
+     appended (`"united colorbars: no eligible panels — nothing to unite"`).
+     Returns `(no_colorbar_pids, united_specs, forced_pids)`; each
+     `united_specs` entry is `(group, member_pids, bar_leaf, bar_ax)` — the
+     same shape `_apply_shared_colorbars`' `bar_specs` uses minus the leading
+     node (a united bar has no single owning node to stretch against). United
+     bars are drawn pre-measure exactly like shared bars (same reserved-margin
+     rule, step 6's rationale) but are **not** stretched by
+     `_stretch_shared_bar` in this task — they stay at their provisional
+     placed size; stretching a united bar to its group's real final span is
+     Task 5's `_stretch_bar_to_span` follow-up.
+  8. **Scale-bar mode** (`_resolve_scale_bar_kwargs`, now takes the shared
      `notes` list) — per `compose.scale_bar_mode`: `"per-panel"` leaves every
      map's `scale_bar` kwarg as `None` (follows `style.scale_bar`);
      `"one-panel"` validates `compose.scale_bar_panel` in three steps before

@@ -564,3 +564,109 @@ def test_stacked_trace_ylabels_aligned(tmp_path):
     ]
     assert abs(tick_w[0] - tick_w[1]) > 5.0, f"fixture not discriminating: tick widths {tick_w}"
     assert abs(exts[0].x0 - exts[1].x0) < 1.5, f"ylabels not aligned: {[e.x0 for e in exts]}"
+
+
+# -- united colorbars (colorbar_mode="united") --------------------------------
+def _united_recipe(h5, *, pos="right"):
+    def mk(pid, vid):
+        return PanelDef(
+            pid,
+            PanelSource(h5, "slice_plane", {"volume_id": vid, "slice_name": "obl", "plane": 0}),
+        )
+
+    return FigureRecipe(
+        "united",
+        {"scale_um_per_cm": 10.0, "show_title": False},
+        ComposeStyle(colorbar_mode="united", colorbar_pos=pos),
+        Row([PanelRef("a"), PanelRef("b"), PanelRef("c")]),
+        [mk("a", "strain"), mk("b", "raw_sum"), mk("c", "strain")],
+    )
+
+
+def test_united_one_bar_per_quantity_and_clims_unified(tmp_path):
+    h5 = _write_obl(tmp_path / "obl.h5")
+    r = _united_recipe(h5)
+    r.panels[2].clim = (-20.0, 5.0)  # "c" widens the strain union
+    res = render_recipe(r)
+    extra = [ax for ax in res.figure.axes if ax not in res.axes_by_id.values()]
+    assert len(extra) == 2  # one strain bar + one raw bar, no per-panel bars
+    for pid in ("a", "c"):
+        im = res.axes_by_id[pid].images[0]
+        assert (im.norm.vmin, im.norm.vmax) == (-20.0, 10.0)
+    imb = res.axes_by_id["b"].images[0]
+    assert (imb.norm.vmin, imb.norm.vmax) == (-10.0, 10.0)  # raw group untouched
+
+
+def test_united_right_and_bottom_wrapping(tmp_path):
+    h5 = _write_obl(tmp_path / "obl.h5")
+    res_r = render_recipe(_united_recipe(h5, pos="right"))
+    panels = list(res_r.axes_by_id.values())
+    max_x1 = max(ax.get_position().x1 for ax in panels)
+    extra = [ax for ax in res_r.figure.axes if ax not in panels]
+    assert extra and all(ax.get_position().x0 >= max_x1 - 1e-6 for ax in extra)
+    res_b = render_recipe(_united_recipe(h5, pos="bottom"))
+    panels_b = list(res_b.axes_by_id.values())
+    min_y0 = min(ax.get_position().y0 for ax in panels_b)
+    extra_b = [ax for ax in res_b.figure.axes if ax not in panels_b]
+    assert extra_b and all(ax.get_position().y1 <= min_y0 + 1e-6 for ax in extra_b)
+
+
+def test_united_ignores_group_flags_with_note(tmp_path):
+    h5 = _write_obl(tmp_path / "obl.h5")
+    r = _united_recipe(h5)
+    r.layout = Row([Col([PanelRef("a"), PanelRef("c")], shared_colorbar=True), PanelRef("b")])
+    res = render_recipe(r)
+    assert any("override 1 group flag" in n for n in res.notes)
+    extra = [ax for ax in res.figure.axes if ax not in res.axes_by_id.values()]
+    assert len(extra) == 2  # united bars only — the flagged Col added no bar
+
+
+def test_united_panel_colorbar_true_forces_own_bar(tmp_path):
+    h5 = _write_obl(tmp_path / "obl.h5")
+    r = _united_recipe(h5)
+    r.panels[0].colorbar = True  # "a" keeps its own bar, excluded from the union
+    r.panels[2].clim = (-20.0, 5.0)
+    res = render_recipe(r)
+    ima = res.axes_by_id["a"].images[0]
+    assert (ima.norm.vmin, ima.norm.vmax) == (-10.0, 10.0)  # NOT unified with "c"
+    imc = res.axes_by_id["c"].images[0]
+    assert (imc.norm.vmin, imc.norm.vmax) == (-20.0, 5.0)  # union of {c} alone
+    extra = [ax for ax in res.figure.axes if ax not in res.axes_by_id.values()]
+    assert len(extra) == 3  # a's own cax + strain united bar + raw united bar
+
+
+def test_united_trace_panels_keep_per_panel_behaviour(tmp_path):
+    h5 = _write_obl(tmp_path / "obl.h5")
+    p1 = PanelDef(
+        "a",
+        PanelSource(h5, "slice_plane", {"volume_id": "strain", "slice_name": "obl", "plane": 0}),
+    )
+    p2 = PanelDef("t", PanelSource(h5, "profiles_trace", {"job": JOB, "field": "strain"}))
+    r = FigureRecipe(
+        "mix",
+        {"scale_um_per_cm": 10.0, "trace_scale_um_per_cm": 5.0, "show_title": False},
+        ComposeStyle(colorbar_mode="united"),
+        Row([PanelRef("a"), PanelRef("t")]),
+        [p1, p2],
+    )
+    res = render_recipe(r)
+    extra = [ax for ax in res.figure.axes if ax not in res.axes_by_id.values()]
+    assert len(extra) == 1  # one united strain bar; the trace contributes nothing
+
+
+def test_united_zero_groupable_panels_note_no_error(tmp_path):
+    h5 = _write_obl(tmp_path / "obl.h5")
+    pt = [
+        PanelDef(f"t{i}", PanelSource(h5, "profiles_trace", {"job": JOB, "field": vid}))
+        for i, vid in enumerate(["raw_sum", "strain"])
+    ]
+    r = FigureRecipe(
+        "tunited",
+        {"trace_scale_um_per_cm": 5.0, "trace_height_cm": 2.0, "show_title": False},
+        ComposeStyle(colorbar_mode="united"),
+        Col([PanelRef("t0"), PanelRef("t1")]),
+        pt,
+    )
+    res = render_recipe(r)
+    assert res.n_rendered == 2
+    assert any("nothing to unite" in n for n in res.notes)

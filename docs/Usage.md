@@ -1350,8 +1350,18 @@ a composed figure looks consistent with the per-stage exports above.
 
 - **Recipe** — one JSON file (`dfxm.compose.recipe.FigureRecipe`) describing
   a figure: a name, a `PlotStyle` override dict, composer-level settings
-  (label lettering, gutter/padding, scale-bar mode, an optional pinned total
-  width), a **layout tree**, and the list of **panels** the layout refers to.
+  (label lettering, gutter/padding, scale-bar mode, a colourbar mode, an
+  optional pinned total width), a **layout tree**, and the list of **panels**
+  the layout refers to. The colourbar mode is `per-panel` (default — today's
+  behaviour: each map/slice panel gets its own bar, or a `Row`/`Col`'s
+  `shared_colorbar` flag gives its members one bar together) or `united`: one
+  bar per **quantity** (strain, mosaicity, …) placed along one edge of the
+  whole figure (`colorbar_pos`, `right` or `bottom`), reachable from a saved
+  recipe file or the headless CLI, not yet from the in-app editor's compose
+  pane. In `united` mode, any `shared_colorbar` flags on rows/columns are
+  ignored (a note explains why — the per-quantity bar supersedes them), and a
+  panel's own **Colourbar** override set to On still forces that panel to keep
+  its private bar, excluded from the union.
 - **Panels** — each panel (`PanelDef`) points at one dataset inside a stage's
   output h5 (`strain`/`mosaicity`/`rocking` map layer, an `oblique_slices.h5`
   plane, or a `profiles` job's reference image/line trace) plus optional

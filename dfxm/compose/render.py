@@ -250,6 +250,66 @@ def _apply_shared_colorbars(recipe, style, panels_by_id, data_by_id, cells, fig)
     return no_colorbar_pids, bar_specs
 
 
+def _apply_united_colorbars(recipe, style, panels_by_id, data_by_id, cells, fig, notes):
+    """One bar per quantity group (``colorbar_mode == "united"``).
+
+    Partitions live, non-placeholder map/slice/ref panels by ``data.group``
+    (first-seen DFS order). ``group=None`` panels and traces keep their
+    per-panel behaviour; a ``panel.colorbar is True`` override excludes the
+    panel from grouping (it keeps its own bar — explicit override outranks
+    the mode). Per group: clim unified as the union of member effective
+    ranges (per-panel ``clim`` overrides respected, like the shared path),
+    members rewritten via ``dc_replace`` and their per-panel bars suppressed,
+    and one provisional bar leaf built (cross-dimension corrected after
+    placement, see ``_stretch_bar_to_span``). Returns
+    ``(no_colorbar_pids, united_specs, forced_pids)`` with each spec
+    ``(group, member_pids, bar_leaf, bar_ax)``.
+    """
+    no_colorbar_pids: set[str] = set()
+    forced_pids: set[str] = set()
+    groups: dict[str, list] = {}
+    for leaf in _panel_leaves(recipe.layout):
+        pid = leaf.panel_id
+        d = data_by_id[pid]
+        if d.kind not in ("map_layer", "slice_plane", "profiles_ref"):
+            continue
+        if panels_by_id[pid].colorbar is True:
+            forced_pids.add(pid)
+            continue
+        if d.group is None:
+            continue
+        groups.setdefault(d.group, []).append(leaf)
+
+    united_specs = []
+    for grp, members in groups.items():
+        pids = [m.panel_id for m in members]
+        vmins, vmaxs = [], []
+        for pid in pids:
+            d = data_by_id[pid]
+            lo, hi = panels_by_id[pid].clim if panels_by_id[pid].clim is not None else (None, None)
+            vmins.append(lo if lo is not None else d.vmin)
+            vmaxs.append(hi if hi is not None else d.vmax)
+        unified = (min(vmins), max(vmaxs))
+        for pid in pids:
+            panels_by_id[pid] = dc_replace(panels_by_id[pid], clim=unified)
+            no_colorbar_pids.add(pid)
+        first = cells[id(members[0])]
+        if recipe.compose.colorbar_pos == "right":
+            bar_w_in = style.colorbar_fraction * first.w_in + 0.1
+            bar_h_in = first.h_in
+        else:
+            bar_w_in = first.w_in
+            bar_h_in = style.colorbar_fraction * first.h_in + 0.1
+        bar_leaf = Spacer(bar_w_in / _IN_PER_CM, bar_h_in / _IN_PER_CM)
+        bar_ax = fig.add_axes([0.0, 0.0, 0.01, 0.01])
+        cells[id(bar_leaf)] = SizedCell(bar_leaf, None, "spacer", bar_w_in, bar_h_in, ax=bar_ax)
+        united_specs.append((grp, pids, bar_leaf, bar_ax))
+
+    if not united_specs:
+        notes.append("united colorbars: no eligible panels — nothing to unite")
+    return no_colorbar_pids, united_specs, forced_pids
+
+
 def _stretch_shared_bar(node, pids, bar_ax, axes_by_id, data_by_id):
     """Stretch/reposition *bar_ax* to the group's REAL placed span.
 
@@ -533,9 +593,20 @@ def render_recipe(
         if isinstance(leaf, PanelRef) and data_by_id[leaf.panel_id].kind != "placeholder"
     )
 
-    no_colorbar_pids, bar_specs = _apply_shared_colorbars(
-        recipe, style, panels_by_id, data_by_id, cells, fig
-    )
+    united = recipe.compose.colorbar_mode == "united"
+    if united:
+        n_flagged = sum(1 for _ in _find_shared_bar_nodes(recipe.layout))
+        if n_flagged:
+            notes.append(f"united colorbars override {n_flagged} group flag(s)")
+        no_colorbar_pids, united_specs, forced_pids = _apply_united_colorbars(
+            recipe, style, panels_by_id, data_by_id, cells, fig, notes
+        )
+        bar_specs = []
+    else:
+        no_colorbar_pids, bar_specs = _apply_shared_colorbars(
+            recipe, style, panels_by_id, data_by_id, cells, fig
+        )
+        united_specs, forced_pids = [], set()
     bar_map = {id(node): bar_leaf for node, _grp, _pids, bar_leaf, _ax in bar_specs}
 
     scale_bar_by_pid, gutter_leaf, gutter_scale = _resolve_scale_bar_kwargs(
@@ -554,6 +625,12 @@ def render_recipe(
         )
 
     working_layout = _build_working_layout(recipe.layout, bar_map)
+    if united and united_specs:
+        united_bars = [spec[2] for spec in united_specs]
+        if recipe.compose.colorbar_pos == "right":
+            working_layout = Row([working_layout, Col(united_bars)])
+        else:
+            working_layout = Col([working_layout, Row(united_bars)])
     if gutter_leaf is not None:
         working_layout = Col([working_layout, gutter_leaf])
 
@@ -580,7 +657,13 @@ def render_recipe(
             scale_bar_pref = scale_bar_by_pid.get(pid)
             scale_bar_wanted[pid] = style.scale_bar if scale_bar_pref is None else scale_bar_pref
             cax = None
-            if pid in no_colorbar_pids:
+            if pid in forced_pids:
+                # explicit panel-level override outranks united mode
+                colorbar_kw = True
+                cax = fig.add_axes([0.0, 0.0, 0.01, 0.01])
+                cell.extras = (cax,)
+                cell.sync = _make_cax_sync(cax, style, cell)
+            elif pid in no_colorbar_pids:
                 colorbar_kw = False
             else:
                 colorbar_kw = None
@@ -622,6 +705,22 @@ def render_recipe(
         rep_pid = next((pid for pid in pids if im_by_pid.get(pid) is not None), None)
         if rep_pid is None:
             bar_ax.set_axis_off()  # all-placeholder group: no bar, no phantom margins
+            continue
+        add_colorbar(
+            fig,
+            im_by_pid[rep_pid],
+            cell_by_pid[rep_pid].ax,
+            _cbar_label(data_by_id[rep_pid]),
+            style,
+            group=grp,
+            cax=bar_ax,
+        )
+
+    # United bars are drawn pre-measure too — same reserved-margin rule.
+    for grp, pids, _bar_leaf, bar_ax in united_specs:
+        rep_pid = next((pid for pid in pids if im_by_pid.get(pid) is not None), None)
+        if rep_pid is None:
+            bar_ax.set_axis_off()
             continue
         add_colorbar(
             fig,
