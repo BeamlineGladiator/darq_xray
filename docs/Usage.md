@@ -443,6 +443,15 @@ is disabled while nothing is selected. A checked layer that doesn't exist for a
 checked quantity is silently skipped rather than erroring; the status line
 reports `skipped N combo(s)` after rendering.
 
+**Render** runs the batch on a background thread (see
+[Busy indication](#busy-indication)): a spinner overlay covers the dialog with
+a `{i}/{N}` progress bar and, once far enough along, a `~… left` ETA; **Render**
+and **Close** are disabled until the batch finishes. Clicking **Cancel** on the
+overlay (or pressing Esc / **Close**, which is gated the same way while a
+batch is running) stops the batch **after the item currently rendering
+completes** — any PNGs already written stay on disk, and the status line is
+prefixed `cancelled — ` alongside the usual `wrote N PNG(s) → …` summary.
+
 `strain.replot_catalog(h5_path)` reads a `stacked_strain_volumes.h5` and returns
 a single `ReplotGroup` (key `"strain"`) with one item per stored layer (names
 come from `source_folders` in the file's attributes).
@@ -512,7 +521,11 @@ CoM and FWHM) is a **quantity** checkbox on the right. Both open **everything
 checked**; the **Filter** box narrows which layer rows are visible without
 changing what's checked, and **Check all visible** selects exactly the filtered
 subset. **Render** is disabled while nothing is selected, and a checked layer
-missing from one dataset is skipped (reported, not an error).
+missing from one dataset is skipped (reported, not an error). **Render** runs
+in the background with the same progress-overlay/ETA/cancel-after-current-item
+behaviour as the strain dialog — see
+[Replotting strain layers without re-running](#replotting-strain-layers-without-re-running)
+and [Busy indication](#busy-indication).
 
 `mosaicity.replot_catalog(h5_path)` enumerates the 3-D datasets present in a
 `stacked_volumes.h5` and returns one `ReplotGroup` per dataset (χ/μ CoM and
@@ -595,6 +608,11 @@ layers are listed **once** on the left (flat, no sections); `sum_intensity` and
 without changing what's checked, and **Check all visible** selects exactly the
 filtered subset. **Render** is disabled while nothing is selected, and a
 checked layer missing from one product is skipped (reported, not an error).
+**Render** runs in the background with the same
+progress-overlay/ETA/cancel-after-current-item behaviour as the strain dialog
+— see
+[Replotting strain layers without re-running](#replotting-strain-layers-without-re-running)
+and [Busy indication](#busy-indication).
 
 `rocking.replot_catalog(h5_path)` enumerates the 3-D datasets present and returns
 one `ReplotGroup` per dataset (`sum_intensity` and `specific_frame`).

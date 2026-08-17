@@ -953,6 +953,14 @@ def main() -> int:
     assert _sels31["specific_frame"] == [0]  # layer 1 skipped for this product, no error
     _dlg31._panel._filter.setText("999")
     assert _dlg31._panel._no_match.isVisible()
+
+    from tests.qt_helpers import wait_batch_idle
+
+    _dlg31._on_render()
+    assert _dlg31._batch.running and _dlg31._batch._overlay.active, "replot overlay missing"
+    wait_batch_idle(_dlg31)
+    assert not _dlg31._batch._overlay.active
+    assert "wrote" in _dlg31._status.text()
     print("[31] generic replot dialog planes-first: product selection + filter")
 
     # [32] Pin planes… dialog: reuses [26]'s file, checks one plane, emits a
