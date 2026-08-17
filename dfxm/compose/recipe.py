@@ -26,6 +26,7 @@ class ComposeStyle:
     pinned_width_cm: float | None = None
     colorbar_mode: str = "per-panel"  # one of COLORBAR_MODES
     colorbar_pos: str = "right"  # one of COLORBAR_POSITIONS (united mode only)
+    trace_autoscale: bool = False  # autoscale trace cells to their column's map width
 
 
 @dataclass

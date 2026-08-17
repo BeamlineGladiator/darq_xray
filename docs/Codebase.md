@@ -533,9 +533,12 @@ other `dfxm/compose` module builds on.
   `gutter_cm`, `padding_cm`, `scale_bar_mode`, `scale_bar_panel`, `pinned_width_cm`,
   `colorbar_mode` (default `"per-panel"`, one of `COLORBAR_MODES` — `"united"` is
   for a later task's single shared colorbar pass), `colorbar_pos` (default
-  `"right"`, one of `COLORBAR_POSITIONS` — only meaningful in `"united"` mode).
-  Both are additive fields: absent in old recipe JSON → the defaults above via
-  `ComposeStyle(**d.get("compose", {}))`, no loader change needed.
+  `"right"`, one of `COLORBAR_POSITIONS` — only meaningful in `"united"` mode),
+  and `trace_autoscale` (bool, default `False` — when true, `render_recipe`
+  runs `layout.autoscale_traces` right after `size_cells`, rescaling each
+  trace cell to its column's widest map width; a bool needs no validation).
+  All three are additive fields: absent in old recipe JSON → the defaults
+  above via `ComposeStyle(**d.get("compose", {}))`, no loader change needed.
 - `PanelSource` — `h5_path`, `kind` (one of `PANEL_KINDS`), `selector` (kind-specific
   selection key, e.g. stage/field/plane).
 - `PanelDef` — one panel: `id`, `source: PanelSource`, plus per-panel overrides

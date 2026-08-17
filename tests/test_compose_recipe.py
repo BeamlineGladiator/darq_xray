@@ -207,3 +207,18 @@ def test_colorbar_mode_fields_round_trip_and_old_recipe_defaults():
     d["compose"].pop("colorbar_pos")
     r3 = recipe_from_json(json.dumps(d))
     assert r3.compose.colorbar_mode == "per-panel" and r3.compose.colorbar_pos == "right"
+
+
+def test_trace_autoscale_round_trips_and_old_recipe_defaults():
+    import json
+
+    r = _mini_recipe()
+    r.compose.trace_autoscale = True
+    r2 = recipe_from_json(recipe_to_json(r))
+    assert r2.compose.trace_autoscale is True
+    # an old (pre-trace_autoscale) recipe JSON still loads, defaulting False
+    d = json.loads(recipe_to_json(_mini_recipe()))
+    d["compose"].pop("trace_autoscale")
+    r3 = recipe_from_json(json.dumps(d))
+    assert r3.compose.trace_autoscale is False
+    assert r3.version == 1
