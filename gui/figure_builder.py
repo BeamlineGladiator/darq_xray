@@ -93,7 +93,13 @@ class _ComposeWorker(QThread):
         try:
             recipe = recipe_from_json(self._recipe_json)
             if self._kind == "export":
-                payload = export_recipe(recipe, self._out_dir, loader_cache=self._cache)
+                paths, res = export_recipe(recipe, self._out_dir, loader_cache=self._cache)
+                # Carry the requested out_dir through explicitly (not derived
+                # from paths[0]) so the result slot reports the directory the
+                # user chose even when nothing was written (e.g. every format
+                # unchecked -> paths == []) — parity with the old synchronous
+                # export_now, which always printed the chosen dir.
+                payload = (paths, res, self._out_dir)
             else:
                 payload = render_recipe(recipe, loader_cache=self._cache)
         except Exception as exc:  # noqa: BLE001 — delivered to the GUI as data
@@ -1263,8 +1269,7 @@ class FigureBuilderWindow(QMainWindow):
             self._last_outcome = None
             return
         if kind == "export":
-            paths, res = payload
-            out = os.path.dirname(paths[0]) if paths else ""
+            paths, res, out = payload  # out = the dir the user chose, not derived from paths
             notes = f"; {'; '.join(res.notes)}" if res.notes else ""
             self._notes_label.setText(f"wrote {len(paths)} file(s) → {out}{notes}")
             self._last_outcome = res

@@ -364,6 +364,31 @@ def test_export_now_writes_files(tmp_path, monkeypatch):
     assert "wrote" in w._notes_label.text()
 
 
+def test_export_now_zero_files_written_still_reports_chosen_dir(tmp_path, monkeypatch):
+    """All export formats unchecked -> export_recipe returns paths=[] — the
+    notes bar must still name the directory the user chose (review finding on
+    e4386ed: the async _on_worker_result briefly derived the reported dir
+    from os.path.dirname(paths[0]), which is empty when paths == [] — parity
+    with the old synchronous export_now, which always printed the chosen
+    `out` directly, never one derived from paths[0])."""
+    from matplotlib.figure import Figure
+
+    from dfxm.compose.render import ComposeResult
+
+    w = _win()
+    w.add_panels(_obl_recipe_panels(tmp_path))
+    out = tmp_path / "out"
+    monkeypatch.setattr(
+        "gui.figure_builder.QFileDialog.getExistingDirectory", lambda *a, **k: str(out)
+    )
+    monkeypatch.setattr(
+        "dfxm.compose.render.export_recipe",
+        lambda *a, **k: ([], ComposeResult(figure=Figure())),
+    )
+    export_and_wait(w)
+    assert w._notes_label.text() == f"wrote 0 file(s) → {out}"
+
+
 # -- fix wave 1: partial-submit override editor + export never crashes -------
 def test_apply_panel_overrides_unrelated_field_preserves_suppressed_label(tmp_path):
     w = _win()
