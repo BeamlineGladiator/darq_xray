@@ -215,6 +215,16 @@ pairs). The rule tying them together is `detector = darfix_origin + map`.
 | `analysis_detector_window(darfix_roi, analysis_roi_x, analysis_roi_y)` | The analysis window in absolute detector pixels (what rocking crops) → `(det_x, det_y)`, each `(start, end) \| None`. A blank analysis axis falls back to the full darfix window; no darfix window at all → `(None, None)`. Malformed input raises `ValueError` — use `validate_rois` for user-facing messages instead. |
 | `validate_rois(darfix_roi, analysis_roi_x, analysis_roi_y)` | Human-readable problems with the three experiment ROI fields (`[]` = all fine): malformed text, a non-positive darfix width/height, `end <= start` or `start < 0` on an analysis pair, or an analysis end past the darfix window's own size. |
 
+#### `eta.py` (new)
+Qt-free ETA estimation for progress readouts. Pure module — no Qt, no I/O.
+
+| Symbol | What it does |
+|---|---|
+| `format_eta(elapsed_s, frac)` | One-shot human remaining-time estimate from a single `(elapsed_s, frac)` sample: `""` when `frac < 0.05`, `elapsed_s < 2.0`, or `frac >= 1.0` (too early/noisy/finished to say anything); else `"~{s} s left"` under 90 s remaining, else `"~{m} min left"`. |
+| `EtaEstimator(clock=time.monotonic)` | Smoothed estimator for a running progress reporter. `reset()` starts a new `t0` and forgets prior samples; `update(frac)` clamps `frac` to `[0, 1]`, ignores a regressing fraction (never poisons the estimate), and EMA-smooths the raw remaining-time extrapolation (`0.7` weight on the previous smoothed value); `eta_text()` returns `""` until the same 5 %-done / 2 s-elapsed thresholds as `format_eta` are met, else the formatted remaining time. |
+
+Consumed by the GUI's busy overlay/progress text (`gui/widgets/busy.py`, `gui/stage_view.py`) but importable and testable without Qt.
+
 #### `alignment.py`
 The **single source of truth** for putting volumes into the shared world frame.
 The fixed order is `abs(FWHM) → ROI → samy X-shift → uniform-Z interp → centre`.
