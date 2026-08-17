@@ -913,9 +913,18 @@ anywhere (`fig.set_layout_engine("none")` throughout, same as `layout.py`).
      insets its ends so the end tick labels (centred ON the bar's end ticks)
      stay INSIDE the group span — a flush bar poked half a label past each
      end, off-canvas for an outermost group or into a neighbouring row
-     (real-data finding, 2026-07-25). A group with no non-placeholder member
-     just hides the bar axes (`set_axis_off()`) instead of leaving a blank
-     default-ticked one. The bar's actual colourbar content
+     (real-data finding, 2026-07-25). `_stretch_shared_bar(node, pids,
+     bar_ax, axes_by_id, data_by_id)` (Task 5, behaviour-preserving refactor)
+     keeps its exact signature but is now a thin delegate: it filters out
+     placeholder members and calls the generic
+     `_stretch_bar_to_span(bar_ax, member_axes, vertical)` — the extracted
+     body above, with the `isinstance(node, Col)` check passed in as
+     `vertical` instead of read from `node` — so the stretch/inset logic (the
+     same end-inset clamp and collapsed-bar degradation) is shared with the
+     united-colorbar path (step 7) rather than duplicated. A group with no
+     non-placeholder member just hides the bar axes (`set_axis_off()`)
+     instead of leaving a blank default-ticked one. The bar's actual
+     colourbar content
      (`add_colorbar(..., cax=bar_ax)`) is drawn *before* the measure pass
      (step 11) so the bar's own tick numbers, offset text, and vertical label
      get measured margins — reserved envelope space — like any panel's;
@@ -955,12 +964,12 @@ anywhere (`fig.set_layout_engine("none")` throughout, same as `layout.py`).
      Returns `(no_colorbar_pids, united_specs, forced_pids)`; each
      `united_specs` entry is `(group, member_pids, bar_leaf, bar_ax)` — the
      same shape `_apply_shared_colorbars`' `bar_specs` uses minus the leading
-     node (a united bar has no single owning node to stretch against). United
-     bars are drawn pre-measure exactly like shared bars (same reserved-margin
-     rule, step 6's rationale) but are **not** stretched by
-     `_stretch_shared_bar` in this task — they stay at their provisional
-     placed size; stretching a united bar to its group's real final span is
-     Task 5's `_stretch_bar_to_span` follow-up.
+     node (a united bar has no single owning node to stretch against — its
+     members can be scattered anywhere in the layout, not one contiguous
+     Row/Col group). United bars are drawn pre-measure exactly like shared
+     bars (same reserved-margin rule, step 6's rationale) and, after
+     placement, are stretched to their members' union span the same way a
+     shared bar is (step 13, Task 5's `_stretch_bar_to_span`).
   8. **Scale-bar mode** (`_resolve_scale_bar_kwargs`, now takes the shared
      `notes` list) — per `compose.scale_bar_mode`: `"per-panel"` leaves every
      map's `scale_bar` kwarg as `None` (follows `style.scale_bar`);
@@ -1033,7 +1042,14 @@ anywhere (`fig.set_layout_engine("none")` throughout, same as `layout.py`).
       first point a bar's true printed-point thickness is baked in. Then each
       shared bar is span-corrected (`_stretch_shared_bar` — its colourbar
       content was already drawn pre-measure, see step 6; here only its
-      cross-dimension and end-insets are applied), the gutter scale bar's
+      cross-dimension and end-insets are applied), each **united** bar is
+      likewise stretched (Task 5) by calling `_stretch_bar_to_span(bar_ax,
+      member_axes, vertical=recipe.compose.colorbar_pos == "right")` directly
+      over ALL of its `united_specs` member axes looked up fresh from
+      `axes_by_id` — since those members can be scattered anywhere in the
+      layout rather than one contiguous group, the union span is simply
+      `min`/`max` over every member's final `get_position()`, no owning node
+      needed — the gutter scale bar's
       content is drawn (`draw_scale_bar` with an xlim spanning the gutter
       cell's own final width at a shared µm/cm recomputed fresh from final
       cell sizes too, same rescale concern as the per-panel bars), and

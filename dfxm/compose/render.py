@@ -310,25 +310,36 @@ def _apply_united_colorbars(recipe, style, panels_by_id, data_by_id, cells, fig,
     return no_colorbar_pids, united_specs, forced_pids
 
 
-def _stretch_shared_bar(node, pids, bar_ax, axes_by_id, data_by_id):
-    """Stretch/reposition *bar_ax* to the group's REAL placed span.
+def _stretch_bar_to_span(bar_ax, member_axes, vertical: bool):
+    """Stretch/reposition *bar_ax* to the union span of *member_axes* along the
+    bar's long axis (``vertical=True`` -> y span, else x span).
 
-    `_apply_shared_colorbars` sizes the bar leaf from a content-box sum before
-    placement (a provisional reservation — see the comment there); the real
-    placed envelope of a Row/Col of panels also includes each member's own
-    measured decoration margins (tick labels, title, etc.), which
-    `place_tree`'s margin-sharing can make asymmetric besides. Calling this
-    once placement is final (member axes have their true
-    ``get_position()``) makes the bar span exactly the group's real top/bottom
-    (a Col group) or left/right (a Row group) instead of drifting short.
+    `_apply_shared_colorbars`/`_apply_united_colorbars` size the bar leaf from
+    a content-box sum before placement (a provisional reservation — see the
+    comments there); the real placed envelope of the member axes also
+    includes each member's own measured decoration margins (tick labels,
+    title, etc.), which `place_tree`'s margin-sharing can make asymmetric
+    besides. Calling this once placement is final (member axes have their
+    true ``get_position()``) makes the bar span exactly the members' real
+    top/bottom (``vertical=True``) or left/right (``vertical=False``) instead
+    of drifting short. Members may be scattered anywhere in the figure
+    (united mode), not just a contiguous Row/Col group.
+
+    End tick labels sit centred ON the bar's end ticks, so a bar flush with
+    the members' span pokes half a label past each end — past the canvas edge
+    for an outermost group, or into a neighbouring row's panels (real-data
+    finding, 2026-07-25). Measure the decorated extent once and inset the bar
+    ends so every decoration stays inside the span — the same end-inset
+    clamp as the original shared-bar fix, and the same collapsed-bar
+    degradation (a span smaller than the bar's own decorations degrades to a
+    collapsed bar, never an inverted/negative-size axes).
     """
-    member_axes = [axes_by_id[pid] for pid in pids if data_by_id[pid].kind != "placeholder"]
     if not member_axes:
         bar_ax.set_axis_off()
         return
     fig = bar_ax.figure
     bpos = bar_ax.get_position()
-    if isinstance(node, Col):
+    if vertical:
         top = max(ax.get_position().y1 for ax in member_axes)
         bottom = min(ax.get_position().y0 for ax in member_axes)
         bar_ax.set_position([bpos.x0, bottom, bpos.width, top - bottom])
@@ -336,16 +347,11 @@ def _stretch_shared_bar(node, pids, bar_ax, axes_by_id, data_by_id):
         left = min(ax.get_position().x0 for ax in member_axes)
         right = max(ax.get_position().x1 for ax in member_axes)
         bar_ax.set_position([left, bpos.y0, right - left, bpos.height])
-    # End tick labels sit centred ON the bar's end ticks, so a bar flush with
-    # the group's box span pokes half a label past each end — past the canvas
-    # edge for an outermost group, or into a neighbouring row's panels
-    # (real-data finding, 2026-07-25). Measure the decorated extent once and
-    # inset the bar ends so every decoration stays inside the group span.
     fig.canvas.draw()
     ren = fig.canvas.get_renderer()
     bb = bar_ax.get_tightbbox(ren)
     pos = bar_ax.get_position()
-    if isinstance(node, Col):
+    if vertical:
         span_lo, span_hi = (
             fig.transFigure.transform((0.0, bottom))[1],
             fig.transFigure.transform((0.0, top))[1],
@@ -354,7 +360,7 @@ def _stretch_shared_bar(node, pids, bar_ax, axes_by_id, data_by_id):
         over = max(0.0, bb.y1 - span_hi)
         if under or over:
             h_px = fig.get_size_inches()[1] * fig.dpi
-            # clamp: a group smaller than its own bar decorations must degrade
+            # clamp: a span smaller than the bar's own decorations degrades
             # to a collapsed bar, never an inverted (negative-height) axes
             new_h = max(0.0, pos.height - (under + over) / h_px)
             bar_ax.set_position([pos.x0, pos.y0 + under / h_px, pos.width, new_h])
@@ -369,6 +375,13 @@ def _stretch_shared_bar(node, pids, bar_ax, axes_by_id, data_by_id):
             w_px = fig.get_size_inches()[0] * fig.dpi
             new_w = max(0.0, pos.width - (under + over) / w_px)
             bar_ax.set_position([pos.x0 + under / w_px, pos.y0, new_w, pos.height])
+
+
+def _stretch_shared_bar(node, pids, bar_ax, axes_by_id, data_by_id):
+    """Shared-group form of :func:`_stretch_bar_to_span`: a Col group's bar is
+    vertical, a Row group's horizontal; placeholder members are skipped."""
+    member_axes = [axes_by_id[pid] for pid in pids if data_by_id[pid].kind != "placeholder"]
+    _stretch_bar_to_span(bar_ax, member_axes, isinstance(node, Col))
 
 
 def _align_axis_labels(fig, layout, axes_by_id, data_by_id):
@@ -780,6 +793,13 @@ def render_recipe(
         # have reserved margins); here only its cross-dimension is corrected to
         # the group's real placed span.
         _stretch_shared_bar(node, pids, bar_ax, axes_by_id, data_by_id)
+
+    for _grp, pids, _bar_leaf, bar_ax in united_specs:
+        # United members can be scattered anywhere in the layout (not a
+        # contiguous Row/Col group), so the stretch target is the union span
+        # of ALL member axes rather than one group's placed envelope.
+        member_axes = [axes_by_id[pid] for pid in pids]
+        _stretch_bar_to_span(bar_ax, member_axes, recipe.compose.colorbar_pos == "right")
 
     _align_axis_labels(fig, recipe.layout, axes_by_id, data_by_id)
 

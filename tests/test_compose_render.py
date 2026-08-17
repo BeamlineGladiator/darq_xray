@@ -670,3 +670,33 @@ def test_united_zero_groupable_panels_note_no_error(tmp_path):
     res = render_recipe(r)
     assert res.n_rendered == 2
     assert any("nothing to unite" in n for n in res.notes)
+
+
+def test_united_bar_stretches_to_scattered_members_union_span(tmp_path):
+    h5 = _write_obl(tmp_path / "obl.h5")
+
+    def mk(pid, vid):
+        return PanelDef(
+            pid,
+            PanelSource(h5, "slice_plane", {"volume_id": vid, "slice_name": "obl", "plane": 0}),
+        )
+
+    # vertical stack: strain (top), raw (middle), strain (bottom) — the strain
+    # bar must span from the top panel's top to the bottom panel's bottom,
+    # bridging the raw panel between them.
+    r = FigureRecipe(
+        "span",
+        {"scale_um_per_cm": 10.0, "show_title": False},
+        ComposeStyle(colorbar_mode="united", colorbar_pos="right"),
+        Col([PanelRef("a"), PanelRef("b"), PanelRef("c")]),
+        [mk("a", "strain"), mk("b", "raw_sum"), mk("c", "strain")],
+    )
+    res = render_recipe(r)
+    top = res.axes_by_id["a"].get_position().y1
+    bottom = res.axes_by_id["c"].get_position().y0
+    extra = [ax for ax in res.figure.axes if ax not in res.axes_by_id.values()]
+    strain_bar = max(extra, key=lambda ax: ax.get_position().height)
+    bp = strain_bar.get_position()
+    eps = 1e-6
+    assert bottom - eps <= bp.y0 and bp.y1 <= top + eps  # inside the union span
+    assert bp.height > 0.8 * (top - bottom)  # and covering most of it
