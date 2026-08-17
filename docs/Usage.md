@@ -311,6 +311,19 @@ crop in the right frame (map pixels vs. detector pixels are the classic mix-up).
 The marker clears itself as soon as the field matches the experiment again, and
 it only appears when the experiment actually has ROIs configured.
 
+### Busy indication
+
+Two visual cues mark the app as working: an animated **spinner overlay** — a
+translucent panel with a rotating arc and a status line, covering whatever it
+is rendering and blocking input to it until the work finishes (a **Cancel**
+button appears on it wherever the operation can actually be stopped
+mid-batch) — for renders that run long enough to animate visibly, and the
+system **wait cursor** for shorter synchronous operations (a load, a read or
+write). A stage **Run**'s progress bar and step text are unchanged, gaining a
+`~… left` estimate once far enough along to be trustworthy (see the
+stage-panel table above). Either indicator always clears itself once the work
+finishes, errors, or is cancelled.
+
 ---
 
 ## The pipeline at a glance

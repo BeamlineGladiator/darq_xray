@@ -1,0 +1,176 @@
+"""Shared busy-indication vocabulary: overlay spinner, wait cursor, thread pins.
+
+Everything user-visible about "the app is working" lives here (spec
+2026-08-17-busy-indication-design.md): :class:`BusyOverlay` (animated
+indeterminate spinner or determinate progress over a host widget),
+:func:`busy_cursor` (honest wait-cursor for short synchronous blocks) and
+:func:`keep_alive` (pins running QThreads so they are never garbage-collected
+mid-flight). Batch machinery (:class:`BatchWorker`/:class:`DialogBatchRunner`)
+is added by the replot-threading tasks.
+"""
+
+from __future__ import annotations
+
+from contextlib import contextmanager
+
+from PySide6.QtCore import QEvent, Qt, QTimer, Signal
+from PySide6.QtGui import QColor, QPainter, QPen
+from PySide6.QtWidgets import (
+    QApplication,
+    QLabel,
+    QProgressBar,
+    QPushButton,
+    QVBoxLayout,
+    QWidget,
+)
+
+from ..theme import ThemeController
+
+# Running QThreads pinned here until their finished signal fires — a running
+# QThread that gets garbage-collected aborts the process.
+_LIVE_WORKERS: set = set()
+
+
+def keep_alive(worker) -> None:
+    """Pin *worker* (a QThread) until it finishes."""
+    _LIVE_WORKERS.add(worker)
+    worker.finished.connect(lambda w=worker: _LIVE_WORKERS.discard(w))
+
+
+@contextmanager
+def busy_cursor(text: str = "", widget=None):
+    """Wait-cursor (and optional status text) around a short synchronous block.
+
+    Forces one ``processEvents()`` so the cursor/text actually appear BEFORE
+    the block runs; always restores the cursor, including on raise. The status
+    text is deliberately left for the call site's completion message to
+    overwrite.
+    """
+    app = QApplication.instance()
+    if app is not None:
+        app.setOverrideCursor(Qt.CursorShape.WaitCursor)
+    if widget is not None and text:
+        widget.setText(text)
+    if app is not None:
+        app.processEvents()
+    try:
+        yield
+    finally:
+        if app is not None:
+            app.restoreOverrideCursor()
+
+
+class BusyOverlay(QWidget):
+    """Translucent, input-swallowing overlay over a host widget.
+
+    Indeterminate mode (``start``): a rotating KIT-green arc painted in
+    :meth:`paintEvent`, driven by a 50 ms QTimer, plus a one-line text label.
+    Determinate mode (``set_progress``): a progress bar plus a
+    ``"{done}/{total} — {eta}"`` sub-label. ``stop()`` in EVERY finish path —
+    success, error, cancel, close — is the call sites' contract.
+    """
+
+    cancelRequested = Signal()
+
+    def __init__(self, host: QWidget, cancellable: bool = False) -> None:
+        super().__init__(host)
+        self._host = host
+        self._cancellable = cancellable
+        self._angle = 0
+        self._determinate = False
+        self._timer = QTimer(self)
+        self._timer.setInterval(50)
+        self._timer.timeout.connect(self._spin)
+
+        self._label = QLabel("", self)
+        self._label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._sub = QLabel("", self)
+        self._sub.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._bar = QProgressBar(self)
+        self._bar.setFixedWidth(220)
+        self._bar.setTextVisible(False)
+        self._bar.hide()
+        self._cancel_btn = QPushButton("Cancel", self)
+        self._cancel_btn.clicked.connect(self.cancelRequested.emit)
+        self._cancel_btn.hide()
+
+        lay = QVBoxLayout(self)
+        lay.addStretch(2)
+        lay.addSpacing(56)  # room for the painted arc above the label
+        lay.addWidget(self._label)
+        lay.addWidget(self._bar, 0, Qt.AlignmentFlag.AlignHCenter)
+        lay.addWidget(self._sub)
+        lay.addWidget(self._cancel_btn, 0, Qt.AlignmentFlag.AlignHCenter)
+        lay.addStretch(3)
+
+        host.installEventFilter(self)
+        self.hide()
+
+    @property
+    def active(self) -> bool:
+        return self.isVisible()
+
+    def start(self, text: str) -> None:
+        self._determinate = False
+        self._label.setText(text)
+        self._sub.setText("")
+        self._bar.hide()
+        self._cancel_btn.setVisible(self._cancellable)
+        self.setGeometry(self._host.rect())
+        self.raise_()
+        self.show()
+        self._timer.start()
+
+    def set_text(self, text: str) -> None:
+        self._label.setText(text)
+
+    def set_progress(self, done: int, total: int, eta_text: str = "") -> None:
+        self._determinate = True
+        self._bar.setRange(0, max(1, int(total)))
+        self._bar.setValue(int(done))
+        self._bar.show()
+        self._sub.setText(f"{done}/{total} — {eta_text}" if eta_text else f"{done}/{total}")
+        self.update()
+
+    def stop(self) -> None:
+        self._timer.stop()
+        self.hide()
+
+    # -- internals --------------------------------------------------------
+    def _spin(self) -> None:
+        self._angle = (self._angle - 12) % 360
+        self.update()
+
+    def paintEvent(self, event) -> None:  # noqa: N802 — Qt override
+        p = ThemeController.instance().palette
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        bg = QColor(p.surface)
+        bg.setAlpha(190)
+        painter.fillRect(self.rect(), bg)
+        if not self._determinate:
+            pen = QPen(QColor(p.accent), 4)
+            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+            painter.setPen(pen)
+            r = 18
+            cx, cy = self.width() // 2, self.height() // 2 - 44
+            painter.drawArc(cx - r, cy - r, 2 * r, 2 * r, self._angle * 16, 100 * 16)
+        painter.end()
+
+    def eventFilter(self, obj, event) -> bool:  # noqa: N802 — Qt override
+        if obj is self._host and event.type() == QEvent.Type.Resize and self.isVisible():
+            self.setGeometry(self._host.rect())
+        return False
+
+    # swallow interaction with the host while active
+    def mousePressEvent(self, event) -> None:  # noqa: N802 — Qt override
+        event.accept()
+
+    def mouseReleaseEvent(self, event) -> None:  # noqa: N802 — Qt override
+        event.accept()
+
+    def mouseDoubleClickEvent(self, event) -> None:  # noqa: N802 — Qt override
+        event.accept()
+
+    def wheelEvent(self, event) -> None:  # noqa: N802 — Qt override
+        event.accept()
