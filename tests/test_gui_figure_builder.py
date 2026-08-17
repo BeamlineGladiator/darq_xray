@@ -835,3 +835,72 @@ def test_style_controls_cbar_typography_round_trip():
     assert st2.cbar_label_scale == 2.0
     c._w_cbar_labelpad.setText("")
     assert st2.cbar_labelpad_pt is None
+
+
+# -- panel titles (picker capture + display sites) ----------------------------
+def test_panel_picker_slice_leaves_carry_titles(tmp_path):
+    import h5py
+    import numpy as np
+    from PySide6.QtCore import Qt
+
+    from gui.widgets.panel_picker import AddPanelDialog
+
+    h5 = tmp_path / "obl.h5"
+    with h5py.File(h5, "w") as f:
+        g = f.create_group("strain")
+        g.attrs.update(kind="strain", cbar_label="v", cmap="RdBu_r", title="s", vmin=-1, vmax=1)
+        sg = g.create_group("obl")
+        sg.create_dataset("slices", data=np.zeros((1, 4, 5), "f4"))
+        sg.create_dataset("u_um", data=np.linspace(0, 1, 5))
+        sg.create_dataset("v_um", data=np.linspace(0, 1, 4))
+        sg.create_dataset("offsets_um", data=np.array([0.0]))
+    dlg = AddPanelDialog({"slices": {"h5": str(h5), "sx": 0.5, "sy": 0.5, "jobs": []}})
+    dlg._stage.setCurrentText("slices")
+    dlg._reload()
+    leaf = dlg._tree.topLevelItem(0).child(0)
+    data = leaf.data(0, Qt.ItemDataRole.UserRole)
+    assert data["title"] == "strain/obl / plane 0  @ +0.00 µm"
+    dlg._check_all()
+    panels = dlg._build_panels()
+    assert panels[0].title == "strain/obl / plane 0  @ +0.00 µm"
+
+
+def test_panel_picker_map_titles_from_fake_catalog():
+    from PySide6.QtCore import Qt
+
+    from gui.widgets.panel_picker import AddPanelDialog
+
+    class _Grp:
+        key = "/chi/Center of mass"
+        label = "Mosa χ COM"
+        item_labels = ["z=0", "z=1"]
+
+    dlg = AddPanelDialog({})
+    dlg._stage.setCurrentText("mosaicity")
+    dlg._tree.clear()
+    dlg._build_map_tree("mosaicity", [_Grp()])
+    leaf = dlg._tree.topLevelItem(0).child(1)
+    assert leaf.data(0, Qt.ItemDataRole.UserRole)["title"] == "mosaicity: Mosa χ COM / z=1"
+
+
+def test_outline_and_scale_bar_combo_show_titles_store_ids():
+    w = _win()
+    p = _panel("a")
+    p.title = "strain: eps / z=0"
+    w.add_panels([p])
+    assert "strain: eps / z=0" in w._tree.topLevelItem(0).child(0).text(0)
+    assert "Panel: a" not in w._tree.topLevelItem(0).child(0).text(0)
+    combo = w._compose_scale_bar_panel
+    idx = combo.findData("a")
+    assert idx > 0 and combo.itemText(idx) == "strain: eps / z=0"
+    combo.setCurrentIndex(idx)
+    assert w.recipe().compose.scale_bar_panel == "a"  # data (id), not display text
+
+
+def test_outline_title_fallback_is_id_and_label_off_survives():
+    w = _win()
+    w.add_panels([_panel("a")])  # no title
+    w.recipe().panels[0].label = ""
+    w._rebuild_tree()
+    text = w._tree.topLevelItem(0).child(0).text(0)
+    assert "Panel: a" in text and "label off" in text

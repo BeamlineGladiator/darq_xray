@@ -279,10 +279,10 @@ class FigureBuilderWindow(QMainWindow):
         target = self._recipe.compose.scale_bar_panel or ""
         combo.blockSignals(True)
         combo.clear()
-        combo.addItem("")  # "" = no single panel designated
+        combo.addItem("", "")  # "" = no single panel designated
         for p in self._recipe.panels:
-            combo.addItem(p.id)
-        idx = combo.findText(target)
+            combo.addItem(p.title or p.id, p.id)
+        idx = combo.findData(target)
         combo.setCurrentIndex(idx if idx >= 0 else 0)
         combo.blockSignals(False)
 
@@ -316,7 +316,7 @@ class FigureBuilderWindow(QMainWindow):
         c.gutter_cm = self._compose_gutter.value()
         c.padding_cm = self._compose_padding.value()
         c.scale_bar_mode = self._compose_scale_bar_mode.currentText()
-        c.scale_bar_panel = self._compose_scale_bar_panel.currentText() or None
+        c.scale_bar_panel = self._compose_scale_bar_panel.currentData() or None
         pinned = self._compose_pinned_width.value()
         c.pinned_width_cm = pinned if pinned > 0 else None
         self._dirty = True
@@ -914,10 +914,11 @@ class FigureBuilderWindow(QMainWindow):
             return "Col" + (" [group]" if node.group_label else "")
         if isinstance(node, PanelRef):
             panel = self._recipe.panel_by_id().get(node.panel_id)
+            shown = (panel.title if panel and panel.title else None) or node.panel_id
             if panel is not None and panel.label == "":
-                return f"Panel: {node.panel_id} (label off)"
+                return f"Panel: {shown} (label off)"
             suffix = f" ({panel.label})" if panel and panel.label else ""
-            return f"Panel: {node.panel_id}{suffix}"
+            return f"Panel: {shown}{suffix}"
         if isinstance(node, Spacer):
             return f"Spacer {node.w_cm:g}×{node.h_cm:g} cm"
         if isinstance(node, TextCell):

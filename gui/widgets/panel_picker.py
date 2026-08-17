@@ -158,7 +158,13 @@ class AddPanelDialog(QDialog):
                 if sy is not None:
                     selector["sy"] = sy
                 child.setData(
-                    0, Qt.ItemDataRole.UserRole, {"kind": "map_layer", "selector": selector}
+                    0,
+                    Qt.ItemDataRole.UserRole,
+                    {
+                        "kind": "map_layer",
+                        "selector": selector,
+                        "title": f"{stage}: {grp.label} / {label}",
+                    },
                 )
                 top.addChild(child)
             self._tree.addTopLevelItem(top)
@@ -188,6 +194,7 @@ class AddPanelDialog(QDialog):
                             "slice_name": e.slice_name,
                             "plane": k,
                         },
+                        "title": f"{e.volume_id}/{e.slice_name} / {label}",
                     },
                 )
                 top.addChild(child)
@@ -209,7 +216,11 @@ class AddPanelDialog(QDialog):
             ref_child.setData(
                 0,
                 Qt.ItemDataRole.UserRole,
-                {"kind": "profiles_ref", "selector": {"job": job, "field": None}},
+                {
+                    "kind": "profiles_ref",
+                    "selector": {"job": job, "field": None},
+                    "title": f"{e.name} / reference",
+                },
             )
             top.addChild(ref_child)
 
@@ -220,7 +231,11 @@ class AddPanelDialog(QDialog):
                 child.setData(
                     0,
                     Qt.ItemDataRole.UserRole,
-                    {"kind": "profiles_trace", "selector": {"job": job, "field": vid}},
+                    {
+                        "kind": "profiles_trace",
+                        "selector": {"job": job, "field": vid},
+                        "title": f"{e.name} / {vid}",
+                    },
                 )
                 top.addChild(child)
             self._tree.addTopLevelItem(top)
@@ -264,7 +279,7 @@ class AddPanelDialog(QDialog):
                         pid = f"{stage}_{self._counter}"
                         self._counter += 1
                         src = PanelSource(h5_path=h5, kind=data["kind"], selector=data["selector"])
-                        panels.append(PanelDef(id=pid, source=src))
+                        panels.append(PanelDef(id=pid, source=src, title=data.get("title")))
                 walk(child)
 
         for i in range(self._tree.topLevelItemCount()):

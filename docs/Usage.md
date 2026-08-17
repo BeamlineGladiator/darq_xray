@@ -1422,10 +1422,16 @@ a move, group toggle, or label edit — the rebuilt tree re-selects the same
 node by identity, so pressing ↑/↓ repeatedly keeps moving the same item
 instead of losing the selection after the first press. Deleting a node
 selects its parent container afterwards, so the outline never drops to no
-selection after a delete. A panel whose label has been switched off (Label
-mode "No label" in the selected-node pane, below) shows "(label off)" next
-to its id in the outline, distinguishing it at a glance from a panel still
-auto-lettering.
+selection after a delete. Each panel row in the outline shows its **captured
+data name** — the stage/group/layer, slice plane, or profiles job/field name
+recorded when the panel was checked off in the Add-panels picker — instead of
+its internal id; a panel added before this capture existed (or a recipe saved
+by an older version) has no stored name and falls back to showing its id.
+Render/export notes (placeholders, drift, …) always reference panels by id
+regardless of what the outline displays. A panel whose label has been
+switched off (Label mode "No label" in the selected-node pane, below) shows
+"(label off)" next to its data name (or id) in the outline, distinguishing it
+at a glance from a panel still auto-lettering.
 
 **In-app editor: right pane (style, compose, overrides, export)**
 
@@ -1444,9 +1450,12 @@ button:
 - *Compose* — the composer-level knobs on `recipe.compose`: the label
   template (must contain an `A`/`a` placeholder), the label font scale, the
   gutter and padding (cm), the scale-bar mode (`per-panel`/`one-panel`/
-  `gutter`) with a panel-id dropdown for the one-panel mode (populated from
-  the recipe's current panels; blank = none designated yet), and a pinned
-  total width in cm (0 = auto-sized from the layout). Every edit writes
+  `gutter`) with a panel dropdown for the one-panel mode (populated from the
+  recipe's current panels, showing each panel's captured data name — falling
+  back to its id when no name was captured; blank = none designated yet), and
+  a pinned total width in cm (0 = auto-sized from the layout). The dropdown
+  displays the data name but stores the panel's id, so `compose.scale_bar_panel`
+  is always set from the id, never the displayed text. Every edit writes
   straight into `recipe.compose` and schedules a re-render.
 - *Selected node* — a stack of pages, one per outline-node type; the page
   shown always matches the current tree selection. Selecting nothing shows a
