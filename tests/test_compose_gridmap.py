@@ -76,3 +76,24 @@ def test_flagged_multi_member_col_is_mappable():
 def test_flatten_panel_ids_dfs_order():
     lay = Row([PanelRef("a"), Col([PanelRef("b"), Spacer(1, 1), PanelRef("c")]), TextCell("t")])
     assert flatten_panel_ids(lay) == ["a", "b", "c"]
+
+
+def test_panel_group_hint_covers_kinds():
+    from dfxm.compose.gridmap import panel_group_hint
+
+    def p(kind, sel):
+        return PanelDef("x", PanelSource("/x.h5", kind, sel))
+
+    assert panel_group_hint(p("map_layer", {"stage": "strain", "z": 0})) == "strain"
+    assert panel_group_hint(p("map_layer", {"stage": "rocking", "dataset": "d"})) == "raw"
+    assert panel_group_hint(p("map_layer", {"stage": "mosaicity", "dataset": "/chi/FWHM"})) == (
+        "mosa_fwhm"
+    )
+    assert panel_group_hint(p("map_layer", {"stage": "mosaicity", "dataset": "/chi/Center"})) == (
+        "mosa_com"
+    )
+    assert panel_group_hint(p("profiles_trace", {"job": {}, "field": "strain"})) == "trace"
+    assert panel_group_hint(p("slice_plane", {"volume_id": "raw_mosa_sum"})) == "raw"
+    assert panel_group_hint(p("slice_plane", {"volume_id": "strain"})) == "strain"
+    assert panel_group_hint(p("slice_plane", {"volume_id": "mosa_com_chi"})) == "mosa_com"
+    assert panel_group_hint(p("profiles_ref", {"job": {}, "field": None})) is None

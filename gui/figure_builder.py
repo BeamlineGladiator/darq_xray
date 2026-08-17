@@ -1001,20 +1001,36 @@ class FigureBuilderWindow(QMainWindow):
         self._current_container().children.append(TextCell("text"))
         self._after_mutation()
 
-    def add_panels(self, panels: list[PanelDef]) -> None:
+    def add_panels(self, panels: list[PanelDef], layout=None) -> dict[str, str]:
+        """Append *panels* (ids uniquified) and either flat PanelRefs (default)
+        or *layout* — a gridmap fragment appended as ONE child of the current
+        container, its refs rewritten through the same renames. Returns the
+        ``{old_id: new_id}`` rename map."""
         container = self._current_container()
         existing_ids = {p.id for p in self._recipe.panels}
+        renames: dict[str, str] = {}
+        stored: list[PanelDef] = []
         for p in panels:
             pid = p.id
             if pid in existing_ids:
                 n = 1
                 while f"{pid}_{n}" in existing_ids:
                     n += 1
+                renames[pid] = f"{pid}_{n}"
                 p = dc_replace(p, id=f"{pid}_{n}")
             existing_ids.add(p.id)
-            self._recipe.panels.append(p)
-            container.children.append(PanelRef(p.id))
+            stored.append(p)
+        self._recipe.panels.extend(stored)
+        if layout is None:
+            for p in stored:
+                container.children.append(PanelRef(p.id))
+        else:
+            for leaf in iter_leaves(layout):
+                if isinstance(leaf, PanelRef) and leaf.panel_id in renames:
+                    leaf.panel_id = renames[leaf.panel_id]
+            container.children.append(layout)
         self._after_mutation()
+        return renames
 
     def move_selected(self, delta: int) -> None:
         node = self._selected_node()
@@ -1201,7 +1217,7 @@ class FigureBuilderWindow(QMainWindow):
         defaults = self._defaults_provider()
         dlg = AddPanelDialog(defaults, parent=self)
         if dlg.exec() == QDialog.DialogCode.Accepted:
-            self.add_panels(dlg.selected_panels)
+            self.add_panels(dlg.selected_panels, dlg.selected_layout)
 
     def _on_label_selected(self) -> None:
         node = self._selected_node()

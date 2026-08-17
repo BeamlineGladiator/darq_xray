@@ -93,3 +93,31 @@ def grid_to_layout(grid) -> Row:
         else:
             children.append(Col([PanelRef(pid) for pid in column]))
     return Row(children)
+
+
+def panel_group_hint(panel) -> str | None:
+    """Cheap, file-free quantity-group guess for schematic tile chips ONLY —
+    rendering always uses the loaded ``PanelData.group``, never this."""
+    src = panel.source
+    if src.kind == "profiles_trace":
+        return "trace"
+    if src.kind == "map_layer":
+        stage = src.selector.get("stage")
+        if stage == "strain":
+            return "strain"
+        if stage == "rocking":
+            return "raw"
+        if stage == "mosaicity":
+            return "mosa_fwhm" if "FWHM" in str(src.selector.get("dataset", "")) else "mosa_com"
+        return None
+    key = "volume_id" if src.kind == "slice_plane" else "field"
+    v = str(src.selector.get(key) or "").lower()
+    if "raw" in v:
+        return "raw"
+    if "fwhm" in v:
+        return "mosa_fwhm"
+    if "strain" in v:
+        return "strain"
+    if "mosa" in v or "com" in v or "chi" in v or "mu" in v:
+        return "mosa_com"
+    return None

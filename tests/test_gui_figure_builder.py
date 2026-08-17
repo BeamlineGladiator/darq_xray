@@ -904,3 +904,71 @@ def test_outline_title_fallback_is_id_and_label_off_survives():
     w._rebuild_tree()
     text = w._tree.topLevelItem(0).child(0).text(0)
     assert "Panel: a" in text and "label off" in text
+
+
+# -- two-step Add panels dialog + layout fragments ----------------------------
+def _slices_dialog(tmp_path):
+    import h5py
+    import numpy as np
+
+    from gui.widgets.panel_picker import AddPanelDialog
+
+    h5 = tmp_path / "obl.h5"
+    with h5py.File(h5, "w") as f:
+        g = f.create_group("strain")
+        g.attrs.update(kind="strain", cbar_label="v", cmap="RdBu_r", title="s", vmin=-1, vmax=1)
+        sg = g.create_group("obl")
+        sg.create_dataset("slices", data=np.zeros((2, 4, 5), "f4"))
+        sg.create_dataset("u_um", data=np.linspace(0, 1, 5))
+        sg.create_dataset("v_um", data=np.linspace(0, 1, 4))
+        sg.create_dataset("offsets_um", data=np.array([0.0, 1.0]))
+    dlg = AddPanelDialog({"slices": {"h5": str(h5), "sx": 0.5, "sy": 0.5, "jobs": []}})
+    dlg._stage.setCurrentText("slices")
+    dlg._reload()
+    dlg._check_all()
+    return dlg
+
+
+def test_add_dialog_two_step_returns_fragment(tmp_path):
+    from dfxm.compose.recipe import Col
+
+    dlg = _slices_dialog(tmp_path)
+    dlg._on_next()
+    assert dlg._stack.currentIndex() == 1
+    assert dlg._arranger.grid() == [[p.id] for p in dlg._staged]  # one-row seed
+    item = dlg._arranger._columns[1].list.takeItem(0)  # stack plane 1 under plane 0
+    dlg._arranger._columns[0].list.addItem(item)
+    dlg.accept()
+    assert len(dlg.selected_panels) == 2
+    lay = dlg.selected_layout
+    assert isinstance(lay, Row) and isinstance(lay.children[0], Col)
+    assert [r.panel_id for r in lay.children[0].children] == [p.id for p in dlg.selected_panels]
+
+
+def test_add_dialog_ok_from_step1_keeps_flat_behaviour(tmp_path):
+    dlg = _slices_dialog(tmp_path)
+    dlg.accept()
+    assert len(dlg.selected_panels) == 2
+    assert dlg.selected_layout is None
+
+
+def test_add_dialog_next_with_nothing_checked_stays_on_step1(tmp_path):
+    dlg = _slices_dialog(tmp_path)
+    dlg._uncheck_all()
+    dlg._on_next()
+    assert dlg._stack.currentIndex() == 0
+    assert "check" in dlg._status.text()
+
+
+def test_window_add_panels_with_fragment_and_id_collision():
+    from dfxm.compose.recipe import Col
+
+    w = _win()
+    w.add_panels([_panel("slices_0")])
+    frag = Row([Col([PanelRef("slices_0"), PanelRef("slices_1")])])
+    renames = w.add_panels([_panel("slices_0"), _panel("slices_1")], layout=frag)
+    assert renames == {"slices_0": "slices_0_1"}
+    root = w.recipe().layout
+    assert root.children[1] is frag  # fragment appended as ONE child
+    assert [r.panel_id for r in frag.children[0].children] == ["slices_0_1", "slices_1"]
+    assert [p.id for p in w.recipe().panels] == ["slices_0", "slices_0_1", "slices_1"]

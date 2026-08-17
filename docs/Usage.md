@@ -1393,6 +1393,35 @@ a composed figure looks consistent with the per-stage exports above.
   renders as a hatched grey box captioned with the reason, and the exit code
   reflects whether *any* panel had real data (see below).
 
+**Add panels…**
+
+Clicking **Add panels…** opens a two-step dialog:
+
+1. **Step 1 — pick.** The existing per-stage picker: choose a stage, its h5
+   loads (or Browse…/Load a different one), check the map layers/slice
+   planes/profile fields you want, then click **Next** (or **OK** to skip
+   arranging and add the checked panels flat, in tree order, exactly as
+   before). Clicking **Next** with nothing checked stays on step 1 with a
+   "check at least one item first" status message.
+2. **Step 2 — arrange (optional).** A drag grid seeded with one column per
+   staged panel — each tile a schematic chip (colour-coded by quantity group:
+   strain/raw/mosa FWHM/mosa COM/trace) labelled with the panel's captured
+   data name. Drag a tile into another column to stack it there (a `Col`, top
+   to bottom); **◀/▶** reorder columns; **✕** removes a column, merging its
+   tiles into a neighbour (never removable below one column); **+ Add
+   column** adds a blank one. Clicking a tile's corner marks it as the
+   scale-bar panel (a small dot), mirroring the compose pane's "one-panel"
+   scale-bar mode. **Back** returns to step 1 without losing the arrangement.
+
+**OK from step 1** appends the checked panels flat — one `PanelRef` per panel,
+in tree order — into the current outline container, same as before this
+two-step flow existed. **OK from step 2** appends the arranged grid as a
+**single new block** (a `Row` of bare `PanelRef`s and/or `Col`s) into the
+current outline container, preserving whatever rows/columns you dragged into
+place; new panel ids are uniquified against the recipe's existing panels
+first, so the arrangement's references always point at the ids actually
+stored.
+
 **In-app editor: live preview**
 
 The `FigureBuilderWindow`'s center pane shows a **live preview** of the
