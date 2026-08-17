@@ -16,7 +16,7 @@ import os
 from dataclasses import asdict
 from dataclasses import replace as dc_replace
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QThread, QTimer, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -56,12 +56,50 @@ from dfxm.compose.recipe import (
     recipe_to_json,
 )
 
+from .widgets.busy import BusyOverlay, keep_alive
 from .widgets.export_dialog import StyleControls
 from .widgets.panel_picker import AddPanelDialog
 
 # Tri-state (Follow/On/Off) combo choices shared by show_title/colorbar override
 # rows — display label -> stored value (None = follow the composed default).
 _TRI_STATE = (("Follow", None), ("On", True), ("Off", False))
+
+
+class _ComposeWorker(QThread):
+    """One render/export of a JSON-snapshotted recipe, off the GUI thread.
+
+    Holds NO Qt widgets — only the JSON snapshot, the shared loader cache
+    (serialized: at most one worker at a time, the GUI thread rebinds rather
+    than mutates it) and an output dir for exports. Results/exceptions are
+    delivered via ``resultReady`` connected to a BOUND METHOD of the window,
+    so delivery is queued onto the GUI thread.
+    """
+
+    resultReady = Signal(int, str, object, object)  # (generation, kind, payload, exception)
+
+    def __init__(
+        self, generation: int, kind: str, recipe_json: str, cache: dict, out_dir: str | None
+    ) -> None:
+        super().__init__()
+        self._generation = generation
+        self._kind = kind
+        self._recipe_json = recipe_json
+        self._cache = cache
+        self._out_dir = out_dir
+
+    def run(self) -> None:  # worker thread — no Qt widgets in here
+        from dfxm.compose.render import export_recipe, render_recipe
+
+        try:
+            recipe = recipe_from_json(self._recipe_json)
+            if self._kind == "export":
+                payload = export_recipe(recipe, self._out_dir, loader_cache=self._cache)
+            else:
+                payload = render_recipe(recipe, loader_cache=self._cache)
+        except Exception as exc:  # noqa: BLE001 — delivered to the GUI as data
+            self.resultReady.emit(self._generation, self._kind, None, exc)
+            return
+        self.resultReady.emit(self._generation, self._kind, payload, None)
 
 
 class FigureBuilderWindow(QMainWindow):
@@ -95,9 +133,14 @@ class FigureBuilderWindow(QMainWindow):
         self._cache: dict = {}
         self._canvas = None
         self._result = None
+        self._worker: _ComposeWorker | None = None
+        self._generation = 0
+        self._pending: tuple[str, str | None] | None = None
+        self._last_outcome = None
         self._preview_host = QWidget()
         self._preview_layout = QVBoxLayout(self._preview_host)
         self._preview_layout.setContentsMargins(0, 0, 0, 0)
+        self._overlay = BusyOverlay(self._preview_host)
         self._notes_label = QLabel("")
         self._notes_label.setWordWrap(True)
         self._refresh_btn = QPushButton("Refresh data")
@@ -214,9 +257,9 @@ class FigureBuilderWindow(QMainWindow):
         layout.addWidget(QLabel("<b>Selected node</b>"))
         layout.addWidget(self._build_inspector())
 
-        export_btn = QPushButton("Export…")
-        export_btn.clicked.connect(self.export_now)
-        layout.addWidget(export_btn)
+        self._export_btn = QPushButton("Export…")
+        self._export_btn.clicked.connect(self.export_now)
+        layout.addWidget(self._export_btn)
 
         layout.addStretch(1)
         scroll.setWidget(container)
@@ -1169,37 +1212,86 @@ class FigureBuilderWindow(QMainWindow):
 
     def refresh_data(self) -> None:
         """Drop the loader cache (stale/deleted source files) and re-render now."""
-        self._cache.clear()
+        self._cache = {}  # rebind, never clear() — an in-flight worker may still be reading the old dict
         self.render_now()
 
-    def render_now(self):
-        """Render the current recipe from ``self._cache`` right away.
+    def render_now(self) -> None:
+        """Request an async preview render of the current recipe (latest-wins).
 
-        Returns the :class:`~dfxm.compose.render.ComposeResult` on success, or
-        ``None`` if there was nothing to render or the render was refused —
-        either way the notes bar carries the explanation and the window never
-        crashes.
+        Non-blocking: snapshots the recipe through JSON, runs
+        ``render_recipe`` on a worker thread, and attaches the canvas in the
+        result slot. At most one worker runs; a request made while one is
+        running is queued (one slot, newest wins) and any superseded worker's
+        result is dropped via the generation counter. The old synchronous
+        return-the-result contract lives on for tests as
+        ``tests.qt_helpers.render_and_wait``.
         """
-        from dfxm.common.errors import StageUserError
-        from dfxm.compose.render import render_recipe
-
         if not self._recipe.panels:
             self._clear_canvas()
             self._notes_label.setText("add panels to preview")
-            return None
-        try:
-            result = render_recipe(self._recipe, loader_cache=self._cache)
-        except StageUserError as exc:
-            hint = f"  Hint: {exc.hint}" if exc.hint else ""
-            self._notes_label.setText(f"cannot render: {exc}{hint}")
-            return None
-        except Exception as exc:  # noqa: BLE001 — preview must never crash the window
-            self._notes_label.setText(f"render failed: {exc}")
-            return None
-        self._show_figure(result.figure)
-        self._result = result
-        self._notes_label.setText("; ".join(result.notes) if result.notes else "")
-        return result
+            self._last_outcome = None
+            return
+        self._request_work("render", None)
+
+    def _request_work(self, kind: str, out_dir: str | None) -> None:
+        self._generation += 1
+        if self._worker is not None:
+            self._pending = (kind, out_dir)
+            return
+        self._start_worker(kind, out_dir)
+
+    def _start_worker(self, kind: str, out_dir: str | None) -> None:
+        self._overlay.start("Exporting…" if kind == "export" else "Rendering…")
+        self._refresh_btn.setEnabled(False)
+        self._export_btn.setEnabled(False)
+        worker = _ComposeWorker(
+            self._generation, kind, recipe_to_json(self._recipe), self._cache, out_dir
+        )
+        worker.resultReady.connect(self._on_worker_result)  # bound method -> queued to GUI thread
+        worker.finished.connect(self._on_worker_finished)
+        self._worker = worker
+        keep_alive(worker)
+        worker.start()
+
+    def _on_worker_result(self, gen: int, kind: str, payload, error) -> None:
+        if gen != self._generation:
+            return  # superseded (latest-wins) or window closed — drop silently
+        from dfxm.common.errors import StageUserError
+
+        if error is not None:
+            verb = (
+                "export failed"
+                if kind == "export"
+                else ("cannot render" if isinstance(error, StageUserError) else "render failed")
+            )
+            hint = ""
+            if isinstance(error, StageUserError) and error.hint:
+                hint = f"  Hint: {error.hint}"
+            self._notes_label.setText(f"{verb}: {error}{hint}")
+            self._last_outcome = None
+            return
+        if kind == "export":
+            paths, res = payload
+            out = os.path.dirname(paths[0]) if paths else ""
+            notes = f"; {'; '.join(res.notes)}" if res.notes else ""
+            self._notes_label.setText(f"wrote {len(paths)} file(s) → {out}{notes}")
+            self._last_outcome = res
+            return
+        self._show_figure(payload.figure)
+        self._result = payload
+        self._notes_label.setText("; ".join(payload.notes) if payload.notes else "")
+        self._last_outcome = payload
+
+    def _on_worker_finished(self) -> None:
+        self._worker = None
+        if self._pending is not None:
+            kind, out_dir = self._pending
+            self._pending = None
+            self._start_worker(kind, out_dir)
+            return
+        self._overlay.stop()
+        self._refresh_btn.setEnabled(True)
+        self._export_btn.setEnabled(True)
 
     def _clear_canvas(self) -> None:
         """Item 9: drop the previous preview so a stale figure never lingers

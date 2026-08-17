@@ -1124,7 +1124,13 @@ def main() -> int:
             )
         ]
     )
-    res = fb.render_now()
+    from tests.qt_helpers import wait_builder_idle
+
+    fb.render_now()
+    assert fb._overlay.active, "busy overlay should cover the preview during a render"
+    wait_builder_idle(fb)
+    assert not fb._overlay.active
+    res = fb._last_outcome
     assert res is not None and res.n_rendered == 1, fb._notes_label.text()
     _bout = os.path.join(_bdir, "export")
     import gui.figure_builder as _fbmod
@@ -1187,7 +1193,9 @@ def main() -> int:
     assert _adlg40._arranger.grid() == [["s0"]]
     _adlg40._on_apply()
     fb.apply_arranged_layout(_adlg40.result_layout)
-    _res40 = fb.render_now()
+    fb.render_now()
+    wait_builder_idle(fb)
+    _res40 = fb._last_outcome
     assert _res40 is not None and _res40.n_rendered == 1, fb._notes_label.text()
     _pdlg40 = _APD40({"slices": {"h5": _bh5, "sx": 0.5, "sy": 0.5, "jobs": []}})
     _pdlg40._stage.setCurrentText("slices")
@@ -1202,12 +1210,23 @@ def main() -> int:
     fb.recipe().compose.trace_autoscale = True
     fb._load_compose_into_widgets()
     assert fb._compose_trace_autoscale.isChecked()
-    _res40b = fb.render_now()
+    fb.render_now()
+    wait_builder_idle(fb)
+    _res40b = fb._last_outcome
     assert _res40b is not None and _res40b.n_rendered == 1, fb._notes_label.text()
     fb._compose_trace_autoscale.setChecked(False)  # widget -> recipe via _on_compose_edited
     assert fb.recipe().compose.trace_autoscale is False
-    _res40c = fb.render_now()
+    fb.render_now()
+    wait_builder_idle(fb)
+    _res40c = fb._last_outcome
     assert _res40c is not None and _res40c.n_rendered == 1, fb._notes_label.text()
+    # fb is never closed in this script (unlike the pytest _no_leaked_debounce_timers
+    # fixture, which stops every live window's debounce on teardown) — the last
+    # setChecked() above re-armed the 300 ms debounce via schedule_preview(); left
+    # running, it can fire deep into a later step's processEvents() call and start
+    # an async worker with nothing left to await it, racing a QThread against
+    # process exit ("QThread: Destroyed while thread '' is still running" -> abort).
+    fb._debounce.stop()
     print(
         "[40] figure builder: arranger + Arrange… + united mode + two-step Add panels"
         " + trace-autoscale toggle"

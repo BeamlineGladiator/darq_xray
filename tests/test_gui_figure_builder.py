@@ -42,6 +42,10 @@ def _no_leaked_debounce_timers():
     while _live_windows:
         w = _live_windows.pop()
         w._debounce.stop()  # never let a pending render fire into a later test
+        w._pending = None
+        if w._worker is not None:
+            w._worker.wait(30000)  # tests may join; production code must not
+        _app.processEvents()  # deliver the worker's queued result/finished
         w.deleteLater()
     _app.processEvents()  # let deleteLater actually run before the next test
 
@@ -122,7 +126,7 @@ def test_delete_row_purges_nested_panel_defs_and_gutter_renders(tmp_path):
     assert [p.id for p in w.recipe().panels] == ["keep"]
 
     w.recipe().compose.scale_bar_mode = "gutter"
-    res = w.render_now()
+    res = render_and_wait(w)
     assert res is not None and res.n_panels == 1 and res.n_rendered == 1
 
 
@@ -228,7 +232,7 @@ def _obl_recipe_panels(tmp_path):
 def test_render_now_populates_preview_and_notes(tmp_path):
     w = _win()
     w.add_panels(_obl_recipe_panels(tmp_path))
-    res = w.render_now()
+    res = render_and_wait(w)
     assert res is not None and res.n_rendered == 1
     assert w._canvas is not None  # a live FigureCanvasQTAgg wrapping res.figure
     assert w._canvas.figure is res.figure
@@ -237,7 +241,7 @@ def test_render_now_populates_preview_and_notes(tmp_path):
 def test_render_error_lands_in_notes_bar_not_crash(tmp_path):
     w = _track(FigureBuilderWindow(lambda: {}, PlotStyle()))  # NO scale anywhere
     w.add_panels(_obl_recipe_panels(tmp_path))
-    res = w.render_now()
+    res = render_and_wait(w)
     assert res is None
     assert "scale" in w._notes_label.text().lower()
     assert "hint" in w._notes_label.text().lower() or "Set Scale" in w._notes_label.text()
@@ -247,12 +251,12 @@ def test_cache_survives_file_deletion_until_refresh(tmp_path):
     w = _win()
     panels = _obl_recipe_panels(tmp_path)
     w.add_panels(panels)
-    assert w.render_now() is not None
+    assert render_and_wait(w) is not None
     os.remove(panels[0].source.h5_path)
-    res2 = w.render_now()  # served from cache
+    res2 = render_and_wait(w)  # served from cache
     assert res2 is not None and res2.n_rendered == 1
     w.refresh_data()  # cache cleared -> placeholder now
-    res3 = w.render_now()
+    res3 = render_and_wait(w)
     assert res3 is not None and res3.n_rendered == 0
     assert "placeholder" in w._notes_label.text()
 
@@ -260,7 +264,7 @@ def test_cache_survives_file_deletion_until_refresh(tmp_path):
 def test_click_preview_selects_outline_node(tmp_path):
     w = _win()
     w.add_panels(_obl_recipe_panels(tmp_path))
-    res = w.render_now()
+    res = render_and_wait(w)
     ax = res.axes_by_id["a"]
     w._on_preview_pick(ax)  # the slot the mpl button_press handler calls
     item = w._tree.currentItem()
@@ -662,10 +666,10 @@ def test_label_edit_keeps_selection():
 def test_render_now_clears_canvas_when_no_panels_left(tmp_path):
     w = _win()
     w.add_panels(_obl_recipe_panels(tmp_path))
-    assert w.render_now() is not None and w._canvas is not None
+    assert render_and_wait(w) is not None and w._canvas is not None
     w._tree.setCurrentItem(w._tree.topLevelItem(0).child(0))
     w.delete_selected()
-    assert w.render_now() is None
+    assert render_and_wait(w) is None
     assert w._canvas is None and w._result is None
     assert "add panels" in w._notes_label.text()
 
@@ -757,7 +761,7 @@ def test_figure2_authored_through_window_methods(tmp_path):
             w.set_selected_label(glabel)  # the outline Label… path — both must work
         assert col.shared_x is True and col.group_label == glabel
 
-    res = w.render_now()
+    res = render_and_wait(w)
     assert res is not None and res.n_rendered == 8, w._notes_label.text()
     fig = res.figure
 
@@ -1104,3 +1108,52 @@ def test_scale_bar_locs_is_canonical():
             "upper left",
         ]
     )
+
+
+# -- busy indication: async render worker (latest-wins) ----------------------
+from tests.qt_helpers import render_and_wait, wait_builder_idle  # noqa: E402
+
+
+def test_async_render_shows_overlay_then_clears(tmp_path):
+    w = _win()
+    w.show()  # BusyOverlay.active reads isVisible(), which needs a shown ancestor chain
+    w.add_panels(_obl_recipe_panels(tmp_path))
+    w.render_now()
+    # synchronous guarantee: the overlay is up and buttons gated BEFORE return
+    assert w._overlay.active and not w._refresh_btn.isEnabled()
+    assert not w._export_btn.isEnabled()
+    wait_builder_idle(w)
+    assert not w._overlay.active
+    assert w._refresh_btn.isEnabled() and w._export_btn.isEnabled()
+    assert w._result is not None and w._canvas is not None
+
+
+def test_latest_wins_two_rapid_renders_one_canvas(tmp_path, monkeypatch):
+    import threading
+
+    import dfxm.compose.render as _render
+
+    real = _render.render_recipe
+    release = threading.Event()
+    calls: list[str] = []
+
+    def gated(recipe, *a, **k):
+        calls.append(recipe.name)
+        if len(calls) == 1:
+            release.wait(30)  # hold render #1 until #2 has been requested
+        return real(recipe, *a, **k)
+
+    monkeypatch.setattr(_render, "render_recipe", gated)
+    w = _win()
+    w.add_panels(_obl_recipe_panels(tmp_path))
+    shows: list = []
+    orig_show = w._show_figure
+    monkeypatch.setattr(w, "_show_figure", lambda fig: (shows.append(fig), orig_show(fig))[1])
+    w.render_now()  # worker 1 (gen 1) — parked in gated()
+    w.recipe().name = "second"
+    w.render_now()  # gen 2 — queued behind worker 1
+    release.set()
+    wait_builder_idle(w)
+    assert calls == ["untitled", "second"]  # serialized, both ran
+    assert len(shows) == 1  # worker 1's stale result was DROPPED, never attached
+    assert w._last_outcome is not None and w._canvas.figure is w._result.figure

@@ -1484,7 +1484,15 @@ always exact regardless of how the preview happened to be scaled on screen.
 Every outline edit (add/move/delete/group/label a panel, row,
 column, spacer, or text cell) and every recipe load schedules a re-render
 300 ms after the last edit, so a burst of clicks re-renders once, not once
-per click. A **Refresh data** button forces an immediate re-render *and*
+per click. The render itself runs on a background thread, so the window stays
+responsive while it works: a translucent spinner overlay ("Rendering…") covers
+the preview and the **Refresh data**/**Export…** buttons disable for the
+duration, clearing and re-enabling the moment the result lands. A render
+requested while one is already running is queued — only the most recently
+requested render ever attaches its result to the canvas (**latest wins**), so
+a burst of edits, or the 300 ms debounce firing mid-render, never flashes a
+stale, superseded figure on screen. A **Refresh data** button forces an
+immediate re-render *and*
 drops the cached source-file readings first — normally a panel's h5 data is
 cached after the first read (so editing the layout, labels, or style stays
 fast even against large files), but that means a source file changed or
