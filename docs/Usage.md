@@ -950,6 +950,15 @@ The dialog renders with the current session publication style (font scale,
 colourmap, scale bar, etc.) from the **Publication style…** dialog, so style
 changes made since the original run are reflected in the replot.
 
+**Render** runs the batch on a background thread (see
+[Busy indication](#busy-indication)): a spinner overlay covers the dialog with
+a `{i}/{N}` progress bar and, once far enough along, a `~… left` ETA; **Render**
+and **Close** are disabled until the batch finishes. Clicking **Cancel** on the
+overlay (or pressing Esc / **Close**, which is gated the same way while a
+batch is running) stops the batch **after the item currently rendering
+completes** — any PNGs already written stay on disk, and the status line is
+prefixed `cancelled — ` alongside the usual `wrote N PNG(s) → …` summary.
+
 > [!note] ROI crop for slices replot
 > `render_replot` and `_rebuild_plane_figure` accept an optional
 > `roi=(r0, r1, c0, c1)` pixel-index crop. Both the 2-D slice array **and** the
@@ -1163,6 +1172,17 @@ up, not like the stage defaults; the **save-toggles**
 (`save_companion`/`save_traces`/`save_overview`) are deliberately not passed
 through, since a replot always writes all three figure kinds regardless of
 what the form's Output group is set to.
+
+**Render** runs the batch on a background thread (see
+[Busy indication](#busy-indication)), but as a **single item** — the whole
+checked-jobs list renders in one call, not one call per job, because filename
+de-duplication and shared trace-figure margins are computed once per run
+across every job. The overlay therefore shows the plain rotating spinner (no
+`{i}/{N}` bar or ETA — there is only ever one step) with a
+`Rendering N job(s)…` label; **Render** and **Close** are disabled until it
+finishes. Because it's a single item, **Cancel** only takes effect before
+rendering starts — once under way the batch always completes and reports the
+normal `wrote N PNG(s) → …` summary.
 
 A job whose `"fields"` override names only ids **absent** from this file (a
 reference-only job in a run — see

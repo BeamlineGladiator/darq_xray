@@ -240,6 +240,69 @@ def test_panel_section_header_shows_uniform_shape_px_hint(tmp_path):
     assert "7×9 px (Y×X)" in top.text(0)
 
 
+# -- busy indication: threaded batch (Task 7) --------------------------------
+
+
+def test_on_render_runs_batch_with_overlay_and_status(tmp_path):
+    from gui.widgets.slice_replot import SliceReplotDialog
+    from tests.qt_helpers import wait_batch_idle
+
+    h5 = tmp_path / "oblique_slices.h5"
+    _mini(str(h5))
+    _app = QApplication.instance() or QApplication([])
+    out = tmp_path / "replots"
+    dlg = SliceReplotDialog(str(h5), style=None, out_default=str(out))
+    dlg.show()  # BusyOverlay.active reads isVisible(), which needs a shown ancestor chain
+    dlg.select_all()
+    dlg._on_render()
+    assert dlg._batch.running and dlg._batch._overlay.active
+    assert not dlg._render_btn.isEnabled()
+    wait_batch_idle(dlg)
+    assert not dlg._batch._overlay.active and dlg._render_btn.isEnabled()
+    assert dlg.written and all(os.path.exists(p) for p in dlg.written)
+    assert len(dlg.written) == 4  # 2 volumes x 2 planes
+    assert "wrote" in dlg._status.text()
+    dlg.deleteLater()
+
+
+def test_reject_while_running_cancels_instead_of_closing(tmp_path, monkeypatch):
+    import threading
+
+    from dfxm.stages import slices as sl
+    from gui.widgets.slice_replot import SliceReplotDialog
+    from tests.qt_helpers import wait_batch_idle
+
+    h5 = tmp_path / "oblique_slices.h5"
+    _mini(str(h5))
+    release = threading.Event()
+    calls: list = []
+    real_render_replot = sl.render_replot
+
+    def fake_render_replot(h5_path, selections, style, clim, out_dir, roi=None, **kw):
+        calls.append(selections)
+        if len(calls) == 1:
+            release.wait(30)  # hold item 1 so the batch is still running when reject() fires
+        return real_render_replot(h5_path, selections, style, clim, out_dir, roi=roi, **kw)
+
+    monkeypatch.setattr(sl, "render_replot", fake_render_replot)
+    _app = QApplication.instance() or QApplication([])
+    out = tmp_path / "replots"
+    dlg = SliceReplotDialog(str(h5), style=None, out_default=str(out))
+    dlg.show()
+    dlg.select_all()
+    dlg._on_render()
+    assert dlg._batch.running
+    dlg.reject()  # cancel request, not a close — dialog stays open, batch keeps running
+    assert dlg.isVisible()
+    assert dlg._batch.running
+    release.set()
+    wait_batch_idle(dlg)
+    assert "cancelled" in dlg._status.text()
+    dlg.reject()  # now it closes normally
+    assert not dlg._batch.running
+    dlg.deleteLater()
+
+
 def test_panel_section_header_shows_mixed_grids_hint(tmp_path):
     from gui.widgets.slice_replot import SliceReplotDialog
 
