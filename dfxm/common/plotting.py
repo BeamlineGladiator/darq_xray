@@ -46,6 +46,9 @@ CMAP_CHOICES: tuple[str, ...] = (
 # its stale-value guard derive from this, like CMAP_CHOICES above).
 AXES_MODES: tuple[str, ...] = ("full", "no_frame", "none")
 
+# Scale-bar corner locations (canonical order — GUI combos derive from this).
+SCALE_BAR_LOCS: tuple[str, ...] = ("lower right", "lower left", "upper right", "upper left")
+
 # Volume "kind" (as stored in HDF5 attrs by the map stages) -> quantity group.
 # Shared by slices and profiles so the kind->group mapping lives in one place.
 GROUP_BY_KIND: dict[str, str] = {

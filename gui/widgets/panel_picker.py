@@ -15,19 +15,23 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
-    QDialogButtonBox,
     QFileDialog,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QPushButton,
+    QStackedWidget,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
+    QWidget,
 )
 
+from dfxm.compose.gridmap import grid_to_layout, panel_group_hint
 from dfxm.compose.recipe import PanelDef, PanelSource
 from dfxm.stages import mosaicity, profiles, rocking, slices, strain
+
+from .layout_arranger import LayoutArranger
 
 _MAP_STAGES = {"strain": strain, "mosaicity": mosaicity, "rocking": rocking}
 _STAGES = ("strain", "mosaicity", "rocking", "slices", "profiles")
@@ -42,10 +46,16 @@ class AddPanelDialog(QDialog):
     the built :class:`~dfxm.compose.recipe.PanelDef` list.
     """
 
-    def __init__(self, defaults: dict[str, dict], parent=None) -> None:
+    def __init__(
+        self, defaults: dict[str, dict], schematic=("per-panel", "right"), parent=None
+    ) -> None:
         super().__init__(parent)
         self._defaults = defaults or {}
         self.selected_panels: list[PanelDef] = []
+        self.selected_layout = None
+        self.scale_bar_pick: tuple[str, str] | None = None
+        self._staged: list[PanelDef] = []
+        self._schematic = schematic
         self._counter = 0
         self._catalog: list = []
         self._loaded_h5 = ""  # the path self._catalog was actually built from
@@ -84,16 +94,43 @@ class AddPanelDialog(QDialog):
         self._status = QLabel("")
         self._status.setWordWrap(True)
 
-        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
+        self._page0 = QWidget()
+        layout0 = QVBoxLayout(self._page0)
+        layout0.addLayout(top_row)
+        layout0.addLayout(check_row)
+        layout0.addWidget(self._tree, 1)
+        layout0.addWidget(self._status)
+
+        self._page1 = QWidget()
+        layout1 = QVBoxLayout(self._page1)
+        layout1.addWidget(QLabel("Drag the new panels into rows/columns (optional):"))
+        self._arranger = LayoutArranger()
+        self._arranger.scaleBarPicked.connect(self._on_scale_bar_picked)
+        layout1.addWidget(self._arranger, 1)
+
+        self._stack = QStackedWidget()
+        self._stack.addWidget(self._page0)
+        self._stack.addWidget(self._page1)
+
+        self._back_btn = QPushButton("Back")
+        self._back_btn.clicked.connect(lambda: self._goto_page(0))
+        self._next_btn = QPushButton("Next")
+        self._next_btn.clicked.connect(self._on_next)
+        ok_btn = QPushButton("OK")
+        ok_btn.clicked.connect(self.accept)
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.clicked.connect(self.reject)
+        btn_row = QHBoxLayout()
+        btn_row.addWidget(self._back_btn)
+        btn_row.addStretch(1)
+        btn_row.addWidget(self._next_btn)
+        btn_row.addWidget(ok_btn)
+        btn_row.addWidget(cancel_btn)
 
         layout = QVBoxLayout(self)
-        layout.addLayout(top_row)
-        layout.addLayout(check_row)
-        layout.addWidget(self._tree, 1)
-        layout.addWidget(self._status)
-        layout.addWidget(buttons)
+        layout.addWidget(self._stack, 1)
+        layout.addLayout(btn_row)
+        self._goto_page(0)
 
         # pre-fill the h5 field for the initially-selected stage and load it.
         self._on_stage_changed(self._stage.currentText())
@@ -158,7 +195,13 @@ class AddPanelDialog(QDialog):
                 if sy is not None:
                     selector["sy"] = sy
                 child.setData(
-                    0, Qt.ItemDataRole.UserRole, {"kind": "map_layer", "selector": selector}
+                    0,
+                    Qt.ItemDataRole.UserRole,
+                    {
+                        "kind": "map_layer",
+                        "selector": selector,
+                        "title": f"{stage}: {grp.label} / {label}",
+                    },
                 )
                 top.addChild(child)
             self._tree.addTopLevelItem(top)
@@ -188,6 +231,7 @@ class AddPanelDialog(QDialog):
                             "slice_name": e.slice_name,
                             "plane": k,
                         },
+                        "title": f"{e.volume_id}/{e.slice_name} / {label}",
                     },
                 )
                 top.addChild(child)
@@ -209,7 +253,11 @@ class AddPanelDialog(QDialog):
             ref_child.setData(
                 0,
                 Qt.ItemDataRole.UserRole,
-                {"kind": "profiles_ref", "selector": {"job": job, "field": None}},
+                {
+                    "kind": "profiles_ref",
+                    "selector": {"job": job, "field": None},
+                    "title": f"{e.name} / reference",
+                },
             )
             top.addChild(ref_child)
 
@@ -220,7 +268,11 @@ class AddPanelDialog(QDialog):
                 child.setData(
                     0,
                     Qt.ItemDataRole.UserRole,
-                    {"kind": "profiles_trace", "selector": {"job": job, "field": vid}},
+                    {
+                        "kind": "profiles_trace",
+                        "selector": {"job": job, "field": vid},
+                        "title": f"{e.name} / {vid}",
+                    },
                 )
                 top.addChild(child)
             self._tree.addTopLevelItem(top)
@@ -264,13 +316,46 @@ class AddPanelDialog(QDialog):
                         pid = f"{stage}_{self._counter}"
                         self._counter += 1
                         src = PanelSource(h5_path=h5, kind=data["kind"], selector=data["selector"])
-                        panels.append(PanelDef(id=pid, source=src))
+                        panels.append(PanelDef(id=pid, source=src, title=data.get("title")))
                 walk(child)
 
         for i in range(self._tree.topLevelItemCount()):
             walk(self._tree.topLevelItem(i))
         return panels
 
+    # -- two-step flow ---------------------------------------------------------
+    def _goto_page(self, i: int) -> None:
+        self._stack.setCurrentIndex(i)
+        self._back_btn.setEnabled(i == 1)
+        self._next_btn.setEnabled(i == 0)
+
+    def _on_next(self) -> None:
+        # Every (re)staging regenerates panel ids — a pick made against a
+        # previous staging would otherwise survive Back/re-check/Next and
+        # write a ghost id into compose.scale_bar_panel.
+        self.scale_bar_pick = None
+        self._staged = self._build_panels()
+        if not self._staged:
+            self._status.setText("check at least one item first")
+            return
+        info = {
+            p.id: {"title": p.title or p.id, "group": panel_group_hint(p)} for p in self._staged
+        }
+        self._arranger.set_grid([[p.id] for p in self._staged], info)
+        self._arranger.set_bar_schematic(self._schematic[0], self._schematic[1])
+        self._goto_page(1)
+
+    def _on_scale_bar_picked(self, pid: str, loc: str) -> None:
+        self.scale_bar_pick = (pid, loc)
+
     def accept(self) -> None:
-        self.selected_panels = self._build_panels()
+        if self._stack.currentIndex() == 1:
+            self.selected_panels = list(self._staged)
+            self.selected_layout = grid_to_layout(self._arranger.grid())
+        else:
+            self.selected_panels = self._build_panels()
+            self.selected_layout = None
+            # OK straight from page 0: any pick staged from an earlier visit
+            # to the arranger page refers to ids that no longer exist.
+            self.scale_bar_pick = None
         super().accept()

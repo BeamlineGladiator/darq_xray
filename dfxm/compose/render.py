@@ -250,25 +250,96 @@ def _apply_shared_colorbars(recipe, style, panels_by_id, data_by_id, cells, fig)
     return no_colorbar_pids, bar_specs
 
 
-def _stretch_shared_bar(node, pids, bar_ax, axes_by_id, data_by_id):
-    """Stretch/reposition *bar_ax* to the group's REAL placed span.
+def _apply_united_colorbars(recipe, style, panels_by_id, data_by_id, cells, fig, notes):
+    """One bar per quantity group (``colorbar_mode == "united"``).
 
-    `_apply_shared_colorbars` sizes the bar leaf from a content-box sum before
-    placement (a provisional reservation — see the comment there); the real
-    placed envelope of a Row/Col of panels also includes each member's own
-    measured decoration margins (tick labels, title, etc.), which
-    `place_tree`'s margin-sharing can make asymmetric besides. Calling this
-    once placement is final (member axes have their true
-    ``get_position()``) makes the bar span exactly the group's real top/bottom
-    (a Col group) or left/right (a Row group) instead of drifting short.
+    Partitions live, non-placeholder map/slice/ref panels by ``data.group``
+    (first-seen DFS order). ``group=None`` panels and traces keep their
+    per-panel behaviour; a ``panel.colorbar is True`` override excludes the
+    panel from grouping (it keeps its own bar — explicit override outranks
+    the mode). Per group: clim unified as the union of member effective
+    ranges (per-panel ``clim`` overrides respected, like the shared path),
+    members rewritten via ``dc_replace`` and their per-panel bars suppressed,
+    and one provisional bar leaf built (cross-dimension corrected after
+    placement, see ``_stretch_bar_to_span``). Returns
+    ``(no_colorbar_pids, united_specs, forced_pids)`` with each spec
+    ``(group, member_pids, bar_leaf, bar_ax)``.
     """
-    member_axes = [axes_by_id[pid] for pid in pids if data_by_id[pid].kind != "placeholder"]
+    no_colorbar_pids: set[str] = set()
+    forced_pids: set[str] = set()
+    groups: dict[str, list] = {}
+    for leaf in _panel_leaves(recipe.layout):
+        pid = leaf.panel_id
+        d = data_by_id[pid]
+        if d.kind not in ("map_layer", "slice_plane", "profiles_ref"):
+            continue
+        if panels_by_id[pid].colorbar is True:
+            forced_pids.add(pid)
+            continue
+        if d.group is None:
+            continue
+        groups.setdefault(d.group, []).append(leaf)
+
+    united_specs = []
+    for grp, members in groups.items():
+        pids = [m.panel_id for m in members]
+        vmins, vmaxs = [], []
+        for pid in pids:
+            d = data_by_id[pid]
+            lo, hi = panels_by_id[pid].clim if panels_by_id[pid].clim is not None else (None, None)
+            vmins.append(lo if lo is not None else d.vmin)
+            vmaxs.append(hi if hi is not None else d.vmax)
+        unified = (min(vmins), max(vmaxs))
+        for pid in pids:
+            panels_by_id[pid] = dc_replace(panels_by_id[pid], clim=unified)
+            no_colorbar_pids.add(pid)
+        first = cells[id(members[0])]
+        if recipe.compose.colorbar_pos == "right":
+            bar_w_in = style.colorbar_fraction * first.w_in + 0.1
+            bar_h_in = first.h_in
+        else:
+            bar_w_in = first.w_in
+            bar_h_in = style.colorbar_fraction * first.h_in + 0.1
+        bar_leaf = Spacer(bar_w_in / _IN_PER_CM, bar_h_in / _IN_PER_CM)
+        bar_ax = fig.add_axes([0.0, 0.0, 0.01, 0.01])
+        cells[id(bar_leaf)] = SizedCell(bar_leaf, None, "spacer", bar_w_in, bar_h_in, ax=bar_ax)
+        united_specs.append((grp, pids, bar_leaf, bar_ax))
+
+    if not united_specs:
+        notes.append("united colorbars: no eligible panels — nothing to unite")
+    return no_colorbar_pids, united_specs, forced_pids
+
+
+def _stretch_bar_to_span(bar_ax, member_axes, vertical: bool):
+    """Stretch/reposition *bar_ax* to the union span of *member_axes* along the
+    bar's long axis (``vertical=True`` -> y span, else x span).
+
+    `_apply_shared_colorbars`/`_apply_united_colorbars` size the bar leaf from
+    a content-box sum before placement (a provisional reservation — see the
+    comments there); the real placed envelope of the member axes also
+    includes each member's own measured decoration margins (tick labels,
+    title, etc.), which `place_tree`'s margin-sharing can make asymmetric
+    besides. Calling this once placement is final (member axes have their
+    true ``get_position()``) makes the bar span exactly the members' real
+    top/bottom (``vertical=True``) or left/right (``vertical=False``) instead
+    of drifting short. Members may be scattered anywhere in the figure
+    (united mode), not just a contiguous Row/Col group.
+
+    End tick labels sit centred ON the bar's end ticks, so a bar flush with
+    the members' span pokes half a label past each end — past the canvas edge
+    for an outermost group, or into a neighbouring row's panels (real-data
+    finding, 2026-07-25). Measure the decorated extent once and inset the bar
+    ends so every decoration stays inside the span — the same end-inset
+    clamp as the original shared-bar fix, and the same collapsed-bar
+    degradation (a span smaller than the bar's own decorations degrades to a
+    collapsed bar, never an inverted/negative-size axes).
+    """
     if not member_axes:
         bar_ax.set_axis_off()
         return
     fig = bar_ax.figure
     bpos = bar_ax.get_position()
-    if isinstance(node, Col):
+    if vertical:
         top = max(ax.get_position().y1 for ax in member_axes)
         bottom = min(ax.get_position().y0 for ax in member_axes)
         bar_ax.set_position([bpos.x0, bottom, bpos.width, top - bottom])
@@ -276,16 +347,11 @@ def _stretch_shared_bar(node, pids, bar_ax, axes_by_id, data_by_id):
         left = min(ax.get_position().x0 for ax in member_axes)
         right = max(ax.get_position().x1 for ax in member_axes)
         bar_ax.set_position([left, bpos.y0, right - left, bpos.height])
-    # End tick labels sit centred ON the bar's end ticks, so a bar flush with
-    # the group's box span pokes half a label past each end — past the canvas
-    # edge for an outermost group, or into a neighbouring row's panels
-    # (real-data finding, 2026-07-25). Measure the decorated extent once and
-    # inset the bar ends so every decoration stays inside the group span.
     fig.canvas.draw()
     ren = fig.canvas.get_renderer()
     bb = bar_ax.get_tightbbox(ren)
     pos = bar_ax.get_position()
-    if isinstance(node, Col):
+    if vertical:
         span_lo, span_hi = (
             fig.transFigure.transform((0.0, bottom))[1],
             fig.transFigure.transform((0.0, top))[1],
@@ -294,7 +360,7 @@ def _stretch_shared_bar(node, pids, bar_ax, axes_by_id, data_by_id):
         over = max(0.0, bb.y1 - span_hi)
         if under or over:
             h_px = fig.get_size_inches()[1] * fig.dpi
-            # clamp: a group smaller than its own bar decorations must degrade
+            # clamp: a span smaller than the bar's own decorations degrades
             # to a collapsed bar, never an inverted (negative-height) axes
             new_h = max(0.0, pos.height - (under + over) / h_px)
             bar_ax.set_position([pos.x0, pos.y0 + under / h_px, pos.width, new_h])
@@ -309,6 +375,13 @@ def _stretch_shared_bar(node, pids, bar_ax, axes_by_id, data_by_id):
             w_px = fig.get_size_inches()[0] * fig.dpi
             new_w = max(0.0, pos.width - (under + over) / w_px)
             bar_ax.set_position([pos.x0 + under / w_px, pos.y0, new_w, pos.height])
+
+
+def _stretch_shared_bar(node, pids, bar_ax, axes_by_id, data_by_id):
+    """Shared-group form of :func:`_stretch_bar_to_span`: a Col group's bar is
+    vertical, a Row group's horizontal; placeholder members are skipped."""
+    member_axes = [axes_by_id[pid] for pid in pids if data_by_id[pid].kind != "placeholder"]
+    _stretch_bar_to_span(bar_ax, member_axes, isinstance(node, Col))
 
 
 def _align_axis_labels(fig, layout, axes_by_id, data_by_id):
@@ -533,9 +606,20 @@ def render_recipe(
         if isinstance(leaf, PanelRef) and data_by_id[leaf.panel_id].kind != "placeholder"
     )
 
-    no_colorbar_pids, bar_specs = _apply_shared_colorbars(
-        recipe, style, panels_by_id, data_by_id, cells, fig
-    )
+    united = recipe.compose.colorbar_mode == "united"
+    if united:
+        n_flagged = sum(1 for _ in _find_shared_bar_nodes(recipe.layout))
+        if n_flagged:
+            notes.append(f"united colorbars override {n_flagged} group flag(s)")
+        no_colorbar_pids, united_specs, forced_pids = _apply_united_colorbars(
+            recipe, style, panels_by_id, data_by_id, cells, fig, notes
+        )
+        bar_specs = []
+    else:
+        no_colorbar_pids, bar_specs = _apply_shared_colorbars(
+            recipe, style, panels_by_id, data_by_id, cells, fig
+        )
+        united_specs, forced_pids = [], set()
     bar_map = {id(node): bar_leaf for node, _grp, _pids, bar_leaf, _ax in bar_specs}
 
     scale_bar_by_pid, gutter_leaf, gutter_scale = _resolve_scale_bar_kwargs(
@@ -554,6 +638,12 @@ def render_recipe(
         )
 
     working_layout = _build_working_layout(recipe.layout, bar_map)
+    if united and united_specs:
+        united_bars = [spec[2] for spec in united_specs]
+        if recipe.compose.colorbar_pos == "right":
+            working_layout = Row([working_layout, Col(united_bars)])
+        else:
+            working_layout = Col([working_layout, Row(united_bars)])
     if gutter_leaf is not None:
         working_layout = Col([working_layout, gutter_leaf])
 
@@ -580,7 +670,13 @@ def render_recipe(
             scale_bar_pref = scale_bar_by_pid.get(pid)
             scale_bar_wanted[pid] = style.scale_bar if scale_bar_pref is None else scale_bar_pref
             cax = None
-            if pid in no_colorbar_pids:
+            if pid in forced_pids:
+                # explicit panel-level override outranks united mode
+                colorbar_kw = True
+                cax = fig.add_axes([0.0, 0.0, 0.01, 0.01])
+                cell.extras = (cax,)
+                cell.sync = _make_cax_sync(cax, style, cell)
+            elif pid in no_colorbar_pids:
                 colorbar_kw = False
             else:
                 colorbar_kw = None
@@ -622,6 +718,22 @@ def render_recipe(
         rep_pid = next((pid for pid in pids if im_by_pid.get(pid) is not None), None)
         if rep_pid is None:
             bar_ax.set_axis_off()  # all-placeholder group: no bar, no phantom margins
+            continue
+        add_colorbar(
+            fig,
+            im_by_pid[rep_pid],
+            cell_by_pid[rep_pid].ax,
+            _cbar_label(data_by_id[rep_pid]),
+            style,
+            group=grp,
+            cax=bar_ax,
+        )
+
+    # United bars are drawn pre-measure too — same reserved-margin rule.
+    for grp, pids, _bar_leaf, bar_ax in united_specs:
+        rep_pid = next((pid for pid in pids if im_by_pid.get(pid) is not None), None)
+        if rep_pid is None:
+            bar_ax.set_axis_off()
             continue
         add_colorbar(
             fig,
@@ -681,6 +793,34 @@ def render_recipe(
         # have reserved margins); here only its cross-dimension is corrected to
         # the group's real placed span.
         _stretch_shared_bar(node, pids, bar_ax, axes_by_id, data_by_id)
+
+    stretched_united_bars = []
+    for grp, pids, _bar_leaf, bar_ax in united_specs:
+        # United members can be scattered anywhere in the layout (not a
+        # contiguous Row/Col group), so the stretch target is the union span
+        # of ALL member axes rather than one group's placed envelope.
+        member_axes = [axes_by_id[pid] for pid in pids]
+        _stretch_bar_to_span(bar_ax, member_axes, recipe.compose.colorbar_pos == "right")
+        stretched_united_bars.append((grp, bar_ax))
+
+    # Two united bars whose stretched spans overlap (e.g. one quantity per
+    # column with colorbar_pos="right": both bars stretch to near-full height
+    # in the same right-edge column) visually collide. Detect pairwise
+    # rectangle overlap of the final placed bar axes and leave a note; actual
+    # lane separation/re-positioning is a recorded follow-up, not implemented
+    # here (minimal fix per final review).
+    for i, (grp_a, ax_a) in enumerate(stretched_united_bars):
+        pos_a = ax_a.get_position()
+        for grp_b, ax_b in stretched_united_bars[i + 1 :]:
+            pos_b = ax_b.get_position()
+            x_overlap = min(pos_a.x1, pos_b.x1) - max(pos_a.x0, pos_b.x0)
+            y_overlap = min(pos_a.y1, pos_b.y1) - max(pos_a.y0, pos_b.y0)
+            if x_overlap > 0 and y_overlap > 0:
+                other_pos = "bottom" if recipe.compose.colorbar_pos == "right" else "right"
+                notes.append(
+                    f"united bars for {grp_a} and {grp_b} overlap — consider "
+                    f"colorbar_pos={other_pos!r} or per-panel bars"
+                )
 
     _align_axis_labels(fig, recipe.layout, axes_by_id, data_by_id)
 

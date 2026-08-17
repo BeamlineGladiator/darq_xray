@@ -1172,27 +1172,55 @@ def main() -> int:
     assert _dlg39.selected == [("s", 0.0)]
     print("[39] Jobs from marks: button wired on profiles view; checklist selection")
 
-    # [40] 3-D viewer: launcher on the visualize view opens a Viewer3DWindow;
+    # [40] figure builder interactive: arranger grid, Arrange… apply, united
+    # colorbar mode, two-step Add-panels dialog.
+    from gui.widgets.layout_arranger import ArrangeDialog, LayoutArranger
+    from gui.widgets.panel_picker import AddPanelDialog as _APD40
+
+    _la40 = LayoutArranger()
+    _la40.set_grid([["s0"]], {"s0": {"title": "strain slice", "group": "strain"}})
+    assert _la40.grid() == [["s0"]]
+    fb.recipe().compose.colorbar_mode = "united"
+    fb._load_compose_into_widgets()
+    assert fb._compose_cbar_mode.currentData() == "united"
+    _adlg40 = ArrangeDialog(fb.recipe(), fb._style)
+    assert _adlg40._arranger.grid() == [["s0"]]
+    _adlg40._on_apply()
+    fb.apply_arranged_layout(_adlg40.result_layout)
+    _res40 = fb.render_now()
+    assert _res40 is not None and _res40.n_rendered == 1, fb._notes_label.text()
+    _pdlg40 = _APD40({"slices": {"h5": _bh5, "sx": 0.5, "sy": 0.5, "jobs": []}})
+    _pdlg40._stage.setCurrentText("slices")
+    _pdlg40._reload()
+    _pdlg40._check_all()
+    _pdlg40._on_next()
+    assert _pdlg40._stack.currentIndex() == 1
+    _pdlg40.accept()
+    assert _pdlg40.selected_panels and _pdlg40.selected_layout is not None
+    assert _pdlg40.selected_panels[0].title  # picker captured a data name
+    print("[40] figure builder: arranger + Arrange… + united mode + two-step Add panels")
+
+    # [41] 3-D viewer: launcher on the visualize view opens a Viewer3DWindow;
     # controls mutate the scene; close prunes the window list (offscreen: the
     # GL canvas degrades to its placeholder and export buttons disable).
-    from gui.viewers import LoadedVolume as _LV40
-    from gui.viewers import VolumeSourceSpec as _VSS40
+    from gui.viewers import LoadedVolume as _LV41
+    from gui.viewers import VolumeSourceSpec as _VSS41
 
-    _lv40 = _LV40(np.ones((2, 3, 4)), (0.15, 0.38, 2.0), "magma", (0.5, 1.0), "I", "raw")
-    _spec40 = _VSS40(
-        "smoke_vol", lambda: _lv40, {"kind": "h5_dataset", "path": "/x", "dataset": "d"}
+    _lv41 = _LV41(np.ones((2, 3, 4)), (0.15, 0.38, 2.0), "magma", (0.5, 1.0), "I", "raw")
+    _spec41 = _VSS41(
+        "smoke_vol", lambda: _lv41, {"kind": "h5_dataset", "path": "/x", "dataset": "d"}
     )
-    _panel40 = win._views["visualize"]._vol3d
-    _panel40.set_sources({"smoke_vol": _spec40}, "visualize")
-    _panel40._open_btn.click()
-    assert len(_panel40._windows) == 1
-    _win40 = _panel40._windows[0]
-    _win40._mode_combo.setCurrentText("surface")
-    assert _win40.scene.mode == "surface"
-    _win40.close()
+    _panel41 = win._views["visualize"]._vol3d
+    _panel41.set_sources({"smoke_vol": _spec41}, "visualize")
+    _panel41._open_btn.click()
+    assert len(_panel41._windows) == 1
+    _win41 = _panel41._windows[0]
+    _win41._mode_combo.setCurrentText("surface")
+    assert _win41.scene.mode == "surface"
+    _win41.close()
     app.processEvents()
-    assert len(_panel40._windows) == 0
-    print("[40] 3-D viewer: launcher opens window, controls live, close frees")
+    assert len(_panel41._windows) == 0
+    print("[41] 3-D viewer: launcher opens window, controls live, close frees")
 
     print("\nGUI SMOKE PASSED")
     return 0

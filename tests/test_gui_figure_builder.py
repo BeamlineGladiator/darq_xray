@@ -835,3 +835,258 @@ def test_style_controls_cbar_typography_round_trip():
     assert st2.cbar_label_scale == 2.0
     c._w_cbar_labelpad.setText("")
     assert st2.cbar_labelpad_pt is None
+
+
+# -- panel titles (picker capture + display sites) ----------------------------
+def test_panel_picker_slice_leaves_carry_titles(tmp_path):
+    import h5py
+    import numpy as np
+    from PySide6.QtCore import Qt
+
+    from gui.widgets.panel_picker import AddPanelDialog
+
+    h5 = tmp_path / "obl.h5"
+    with h5py.File(h5, "w") as f:
+        g = f.create_group("strain")
+        g.attrs.update(kind="strain", cbar_label="v", cmap="RdBu_r", title="s", vmin=-1, vmax=1)
+        sg = g.create_group("obl")
+        sg.create_dataset("slices", data=np.zeros((1, 4, 5), "f4"))
+        sg.create_dataset("u_um", data=np.linspace(0, 1, 5))
+        sg.create_dataset("v_um", data=np.linspace(0, 1, 4))
+        sg.create_dataset("offsets_um", data=np.array([0.0]))
+    dlg = AddPanelDialog({"slices": {"h5": str(h5), "sx": 0.5, "sy": 0.5, "jobs": []}})
+    dlg._stage.setCurrentText("slices")
+    dlg._reload()
+    leaf = dlg._tree.topLevelItem(0).child(0)
+    data = leaf.data(0, Qt.ItemDataRole.UserRole)
+    assert data["title"] == "strain/obl / plane 0  @ +0.00 µm"
+    dlg._check_all()
+    panels = dlg._build_panels()
+    assert panels[0].title == "strain/obl / plane 0  @ +0.00 µm"
+
+
+def test_panel_picker_map_titles_from_fake_catalog():
+    from PySide6.QtCore import Qt
+
+    from gui.widgets.panel_picker import AddPanelDialog
+
+    class _Grp:
+        key = "/chi/Center of mass"
+        label = "Mosa χ COM"
+        item_labels = ["z=0", "z=1"]
+
+    dlg = AddPanelDialog({})
+    dlg._stage.setCurrentText("mosaicity")
+    dlg._tree.clear()
+    dlg._build_map_tree("mosaicity", [_Grp()])
+    leaf = dlg._tree.topLevelItem(0).child(1)
+    assert leaf.data(0, Qt.ItemDataRole.UserRole)["title"] == "mosaicity: Mosa χ COM / z=1"
+
+
+def test_outline_and_scale_bar_combo_show_titles_store_ids():
+    w = _win()
+    p = _panel("a")
+    p.title = "strain: eps / z=0"
+    w.add_panels([p])
+    assert "strain: eps / z=0" in w._tree.topLevelItem(0).child(0).text(0)
+    assert "Panel: a" not in w._tree.topLevelItem(0).child(0).text(0)
+    combo = w._compose_scale_bar_panel
+    idx = combo.findData("a")
+    assert idx > 0 and combo.itemText(idx) == "strain: eps / z=0"
+    combo.setCurrentIndex(idx)
+    assert w.recipe().compose.scale_bar_panel == "a"  # data (id), not display text
+
+
+def test_outline_title_fallback_is_id_and_label_off_survives():
+    w = _win()
+    w.add_panels([_panel("a")])  # no title
+    w.recipe().panels[0].label = ""
+    w._rebuild_tree()
+    text = w._tree.topLevelItem(0).child(0).text(0)
+    assert "Panel: a" in text and "label off" in text
+
+
+# -- two-step Add panels dialog + layout fragments ----------------------------
+def _slices_dialog(tmp_path):
+    import h5py
+    import numpy as np
+
+    from gui.widgets.panel_picker import AddPanelDialog
+
+    h5 = tmp_path / "obl.h5"
+    with h5py.File(h5, "w") as f:
+        g = f.create_group("strain")
+        g.attrs.update(kind="strain", cbar_label="v", cmap="RdBu_r", title="s", vmin=-1, vmax=1)
+        sg = g.create_group("obl")
+        sg.create_dataset("slices", data=np.zeros((2, 4, 5), "f4"))
+        sg.create_dataset("u_um", data=np.linspace(0, 1, 5))
+        sg.create_dataset("v_um", data=np.linspace(0, 1, 4))
+        sg.create_dataset("offsets_um", data=np.array([0.0, 1.0]))
+    dlg = AddPanelDialog({"slices": {"h5": str(h5), "sx": 0.5, "sy": 0.5, "jobs": []}})
+    dlg._stage.setCurrentText("slices")
+    dlg._reload()
+    dlg._check_all()
+    return dlg
+
+
+def test_add_dialog_two_step_returns_fragment(tmp_path):
+    from dfxm.compose.recipe import Col
+
+    dlg = _slices_dialog(tmp_path)
+    dlg._on_next()
+    assert dlg._stack.currentIndex() == 1
+    assert dlg._arranger.grid() == [[p.id] for p in dlg._staged]  # one-row seed
+    item = dlg._arranger._columns[1].list.takeItem(0)  # stack plane 1 under plane 0
+    dlg._arranger._columns[0].list.addItem(item)
+    dlg.accept()
+    assert len(dlg.selected_panels) == 2
+    lay = dlg.selected_layout
+    assert isinstance(lay, Row) and isinstance(lay.children[0], Col)
+    assert [r.panel_id for r in lay.children[0].children] == [p.id for p in dlg.selected_panels]
+
+
+def test_add_dialog_ok_from_step1_keeps_flat_behaviour(tmp_path):
+    dlg = _slices_dialog(tmp_path)
+    dlg.accept()
+    assert len(dlg.selected_panels) == 2
+    assert dlg.selected_layout is None
+
+
+def test_add_dialog_next_with_nothing_checked_stays_on_step1(tmp_path):
+    dlg = _slices_dialog(tmp_path)
+    dlg._uncheck_all()
+    dlg._on_next()
+    assert dlg._stack.currentIndex() == 0
+    assert "check" in dlg._status.text()
+
+
+def test_add_dialog_stale_pick_cleared_on_back_then_ok_from_page0(tmp_path):
+    # Next -> corner-click -> Back -> OK-from-page-0 must not carry a pick
+    # whose panel id no longer exists once page 0 is left/restaged.
+    dlg = _slices_dialog(tmp_path)
+    dlg._on_next()
+    pid = dlg._staged[0].id
+    dlg._on_scale_bar_picked(pid, "upper left")
+    assert dlg.scale_bar_pick == (pid, "upper left")
+    dlg._goto_page(0)
+    dlg.accept()
+    assert dlg.scale_bar_pick is None
+
+
+def test_add_dialog_stale_pick_cleared_by_restage_on_next(tmp_path):
+    # Next -> pick -> Back -> Next: the restage must clear the earlier pick
+    # even though the dialog never left page 1 via OK.
+    dlg = _slices_dialog(tmp_path)
+    dlg._on_next()
+    pid = dlg._staged[0].id
+    dlg._on_scale_bar_picked(pid, "upper left")
+    assert dlg.scale_bar_pick == (pid, "upper left")
+    dlg._goto_page(0)
+    dlg._on_next()
+    assert dlg.scale_bar_pick is None
+
+
+def test_window_add_panels_with_fragment_and_id_collision():
+    from dfxm.compose.recipe import Col
+
+    w = _win()
+    w.add_panels([_panel("slices_0")])
+    frag = Row([Col([PanelRef("slices_0"), PanelRef("slices_1")])])
+    renames = w.add_panels([_panel("slices_0"), _panel("slices_1")], layout=frag)
+    assert renames == {"slices_0": "slices_0_1"}
+    root = w.recipe().layout
+    assert root.children[1] is frag  # fragment appended as ONE child
+    assert [r.panel_id for r in frag.children[0].children] == ["slices_0_1", "slices_1"]
+    assert [p.id for p in w.recipe().panels] == ["slices_0", "slices_0_1", "slices_1"]
+
+
+def test_apply_scale_bar_pick_translated_through_add_panels_rename():
+    # Exercises _on_add_panels's pick-translation logic without exec(): a
+    # dialog result whose selected_panels collides with an existing id must
+    # have its scale_bar_pick's panel id rewritten through the SAME rename
+    # add_panels() applied to the panels themselves — _apply_scale_bar_pick is
+    # the exact method _on_add_panels calls, so this tests the shipped code.
+    w = _win()
+    w.add_panels([_panel("slices_0")])
+    renames = w.add_panels([_panel("slices_0")])  # collides -> "slices_0_1"
+    assert renames == {"slices_0": "slices_0_1"}
+    w._apply_scale_bar_pick(("slices_0", "upper left"), renames)
+    assert w.recipe().compose.scale_bar_mode == "one-panel"
+    assert w.recipe().compose.scale_bar_panel == "slices_0_1"
+    assert w._style.scale_bar_loc == "upper left"
+
+
+def test_apply_scale_bar_pick_none_is_a_no_op():
+    w = _win()
+    w.add_panels([_panel("a")])
+    w._apply_scale_bar_pick(None, {})
+    assert w.recipe().compose.scale_bar_mode != "one-panel"
+    assert w.recipe().compose.scale_bar_panel is None
+
+
+def test_apply_arranged_layout_replaces_purges_and_applies_pick():
+    w = _win()
+    w.add_panels([_panel("a"), _panel("b")])
+    w.apply_arranged_layout(Row([PanelRef("a")]), scale_bar_pick=("a", "upper right"))
+    assert [p.id for p in w.recipe().panels] == ["a"]  # "b" purged with the grid
+    assert w.recipe().compose.scale_bar_mode == "one-panel"
+    assert w.recipe().compose.scale_bar_panel == "a"
+    assert w._style.scale_bar_loc == "upper right"
+    assert w.recipe().style["scale_bar_loc"] == "upper right"
+    assert w.is_dirty()
+
+
+def test_arrange_button_present():
+    w = _win()
+    assert w._arrange_btn.text() == "Arrange…"
+
+
+# -- compose-form colourbar + scale-bar controls ------------------------------
+def test_compose_colorbar_controls_write_fields_and_gate_pos():
+    w = _win()
+    assert w.recipe().compose.colorbar_mode == "per-panel"
+    assert not w._compose_cbar_pos.isEnabled()
+    w._compose_cbar_mode.setCurrentIndex(w._compose_cbar_mode.findData("united"))
+    assert w.recipe().compose.colorbar_mode == "united"
+    assert w._compose_cbar_pos.isEnabled()
+    w._compose_cbar_pos.setCurrentIndex(w._compose_cbar_pos.findData("bottom"))
+    assert w.recipe().compose.colorbar_pos == "bottom"
+    w._compose_cbar_mode.setCurrentIndex(w._compose_cbar_mode.findData("per-panel"))
+    assert not w._compose_cbar_pos.isEnabled()
+
+
+def test_compose_colorbar_widgets_reload_from_recipe():
+    w = _win()
+    w.recipe().compose.colorbar_mode = "united"
+    w.recipe().compose.colorbar_pos = "bottom"
+    w._load_compose_into_widgets()
+    assert w._compose_cbar_mode.currentData() == "united"
+    assert w._compose_cbar_pos.currentData() == "bottom"
+    assert w._compose_cbar_pos.isEnabled()
+
+
+def test_scale_bar_corner_combo_is_style_scale_bar_loc_both_ways():
+    w = _win()
+    w._compose_scale_bar_loc.setCurrentText("upper left")
+    assert w._style.scale_bar_loc == "upper left"
+    assert w.recipe().style["scale_bar_loc"] == "upper left"
+    assert w._controls._w_bar_loc.currentText() == "upper left"
+    w._controls._w_bar_loc.setCurrentText("lower left")  # style-pane edit
+    assert w._style.scale_bar_loc == "lower left"
+    assert w._compose_scale_bar_loc.currentText() == "lower left"
+
+
+def test_scale_bar_locs_is_canonical():
+    from dfxm.common.plotting import SCALE_BAR_LOCS
+    from gui.widgets.export_dialog import _LOCS
+
+    assert (
+        list(SCALE_BAR_LOCS)
+        == _LOCS
+        == [
+            "lower right",
+            "lower left",
+            "upper right",
+            "upper left",
+        ]
+    )

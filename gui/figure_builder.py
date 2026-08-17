@@ -40,7 +40,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from dfxm.common.plotting import CMAP_CHOICES, PlotStyle, style_from_params
+from dfxm.common.plotting import CMAP_CHOICES, SCALE_BAR_LOCS, PlotStyle, style_from_params
 from dfxm.compose.recipe import (
     SCALE_BAR_MODES,
     Col,
@@ -144,6 +144,10 @@ class FigureBuilderWindow(QMainWindow):
         add_btn = QPushButton("Add panels…")
         add_btn.clicked.connect(self._on_add_panels)
         layout.addWidget(add_btn)
+
+        self._arrange_btn = QPushButton("Arrange…")
+        self._arrange_btn.clicked.connect(self._on_arrange)
+        layout.addWidget(self._arrange_btn)
 
         self._tree = QTreeWidget()
         self._tree.setHeaderLabels(["Outline"])
@@ -251,6 +255,21 @@ class FigureBuilderWindow(QMainWindow):
         self._compose_padding.valueChanged.connect(self._on_compose_edited)
         form.addRow("Padding", self._compose_padding)
 
+        form.addRow(QLabel("<b>Colourbars</b>"))
+        self._compose_cbar_mode = QComboBox()
+        for text, value in (("Per panel", "per-panel"), ("One per quantity", "united")):
+            self._compose_cbar_mode.addItem(text, value)
+        self._compose_cbar_mode.currentIndexChanged.connect(self._on_compose_edited)
+        form.addRow("Colourbar mode", self._compose_cbar_mode)
+
+        self._compose_cbar_pos = QComboBox()
+        for text, value in (("Right", "right"), ("Bottom", "bottom")):
+            self._compose_cbar_pos.addItem(text, value)
+        self._compose_cbar_pos.setEnabled(False)
+        self._compose_cbar_pos.currentIndexChanged.connect(self._on_compose_edited)
+        form.addRow("Colourbar position (united)", self._compose_cbar_pos)
+
+        form.addRow(QLabel("<b>Scale bar</b>"))
         self._compose_scale_bar_mode = QComboBox()
         self._compose_scale_bar_mode.addItems(list(SCALE_BAR_MODES))
         self._compose_scale_bar_mode.setCurrentText(c.scale_bar_mode)
@@ -261,6 +280,12 @@ class FigureBuilderWindow(QMainWindow):
         self._compose_scale_bar_panel.currentTextChanged.connect(self._on_compose_edited)
         form.addRow("Scale-bar panel (one-panel mode)", self._compose_scale_bar_panel)
         self._refresh_compose_panel_combo()
+
+        self._compose_scale_bar_loc = QComboBox()
+        self._compose_scale_bar_loc.addItems(list(SCALE_BAR_LOCS))
+        self._compose_scale_bar_loc.setCurrentText(self._style.scale_bar_loc)
+        self._compose_scale_bar_loc.currentTextChanged.connect(self._on_scale_bar_loc_edited)
+        form.addRow("Corner", self._compose_scale_bar_loc)
 
         self._compose_pinned_width = QDoubleSpinBox()
         self._compose_pinned_width.setRange(0.0, 1000.0)
@@ -279,10 +304,10 @@ class FigureBuilderWindow(QMainWindow):
         target = self._recipe.compose.scale_bar_panel or ""
         combo.blockSignals(True)
         combo.clear()
-        combo.addItem("")  # "" = no single panel designated
+        combo.addItem("", "")  # "" = no single panel designated
         for p in self._recipe.panels:
-            combo.addItem(p.id)
-        idx = combo.findText(target)
+            combo.addItem(p.title or p.id, p.id)
+        idx = combo.findData(target)
         combo.setCurrentIndex(idx if idx >= 0 else 0)
         combo.blockSignals(False)
 
@@ -294,7 +319,10 @@ class FigureBuilderWindow(QMainWindow):
             self._compose_font_scale,
             self._compose_gutter,
             self._compose_padding,
+            self._compose_cbar_mode,
+            self._compose_cbar_pos,
             self._compose_scale_bar_mode,
+            self._compose_scale_bar_loc,
             self._compose_pinned_width,
         )
         for w in widgets:
@@ -303,7 +331,15 @@ class FigureBuilderWindow(QMainWindow):
         self._compose_font_scale.setValue(c.label_font_scale)
         self._compose_gutter.setValue(c.gutter_cm)
         self._compose_padding.setValue(c.padding_cm)
+        self._compose_cbar_mode.setCurrentIndex(
+            max(0, self._compose_cbar_mode.findData(c.colorbar_mode))
+        )
+        self._compose_cbar_pos.setCurrentIndex(
+            max(0, self._compose_cbar_pos.findData(c.colorbar_pos))
+        )
+        self._compose_cbar_pos.setEnabled(c.colorbar_mode == "united")
         self._compose_scale_bar_mode.setCurrentText(c.scale_bar_mode)
+        self._compose_scale_bar_loc.setCurrentText(self._style.scale_bar_loc)
         self._compose_pinned_width.setValue(c.pinned_width_cm or 0.0)
         for w in widgets:
             w.blockSignals(False)
@@ -316,16 +352,31 @@ class FigureBuilderWindow(QMainWindow):
         c.gutter_cm = self._compose_gutter.value()
         c.padding_cm = self._compose_padding.value()
         c.scale_bar_mode = self._compose_scale_bar_mode.currentText()
-        c.scale_bar_panel = self._compose_scale_bar_panel.currentText() or None
+        c.scale_bar_panel = self._compose_scale_bar_panel.currentData() or None
+        c.colorbar_mode = self._compose_cbar_mode.currentData()
+        c.colorbar_pos = self._compose_cbar_pos.currentData()
+        self._compose_cbar_pos.setEnabled(c.colorbar_mode == "united")
         pinned = self._compose_pinned_width.value()
         c.pinned_width_cm = pinned if pinned > 0 else None
         self._dirty = True
         self._update_title()
         self.schedule_preview()
 
+    def _on_scale_bar_loc_edited(self, loc: str) -> None:
+        """The corner combo IS style.scale_bar_loc — one setting, two widgets."""
+        if self._style.scale_bar_loc == loc:
+            return
+        self._style.scale_bar_loc = loc
+        self._controls.sync_from_style()
+        self._sync_style_to_recipe()
+
     # -- style pane -------------------------------------------------------------
     def _sync_style_to_recipe(self) -> None:
         self._recipe.style = asdict(self._style)
+        if hasattr(self, "_compose_scale_bar_loc"):
+            self._compose_scale_bar_loc.blockSignals(True)
+            self._compose_scale_bar_loc.setCurrentText(self._style.scale_bar_loc)
+            self._compose_scale_bar_loc.blockSignals(False)
         self._dirty = True
         self._update_title()
         self.schedule_preview()
@@ -914,10 +965,11 @@ class FigureBuilderWindow(QMainWindow):
             return "Col" + (" [group]" if node.group_label else "")
         if isinstance(node, PanelRef):
             panel = self._recipe.panel_by_id().get(node.panel_id)
+            shown = (panel.title if panel and panel.title else None) or node.panel_id
             if panel is not None and panel.label == "":
-                return f"Panel: {node.panel_id} (label off)"
+                return f"Panel: {shown} (label off)"
             suffix = f" ({panel.label})" if panel and panel.label else ""
-            return f"Panel: {node.panel_id}{suffix}"
+            return f"Panel: {shown}{suffix}"
         if isinstance(node, Spacer):
             return f"Spacer {node.w_cm:g}×{node.h_cm:g} cm"
         if isinstance(node, TextCell):
@@ -1000,20 +1052,36 @@ class FigureBuilderWindow(QMainWindow):
         self._current_container().children.append(TextCell("text"))
         self._after_mutation()
 
-    def add_panels(self, panels: list[PanelDef]) -> None:
+    def add_panels(self, panels: list[PanelDef], layout=None) -> dict[str, str]:
+        """Append *panels* (ids uniquified) and either flat PanelRefs (default)
+        or *layout* — a gridmap fragment appended as ONE child of the current
+        container, its refs rewritten through the same renames. Returns the
+        ``{old_id: new_id}`` rename map."""
         container = self._current_container()
         existing_ids = {p.id for p in self._recipe.panels}
+        renames: dict[str, str] = {}
+        stored: list[PanelDef] = []
         for p in panels:
             pid = p.id
             if pid in existing_ids:
                 n = 1
                 while f"{pid}_{n}" in existing_ids:
                     n += 1
+                renames[pid] = f"{pid}_{n}"
                 p = dc_replace(p, id=f"{pid}_{n}")
             existing_ids.add(p.id)
-            self._recipe.panels.append(p)
-            container.children.append(PanelRef(p.id))
+            stored.append(p)
+        self._recipe.panels.extend(stored)
+        if layout is None:
+            for p in stored:
+                container.children.append(PanelRef(p.id))
+        else:
+            for leaf in iter_leaves(layout):
+                if isinstance(leaf, PanelRef) and leaf.panel_id in renames:
+                    leaf.panel_id = renames[leaf.panel_id]
+            container.children.append(layout)
         self._after_mutation()
+        return renames
 
     def move_selected(self, delta: int) -> None:
         node = self._selected_node()
@@ -1198,9 +1266,48 @@ class FigureBuilderWindow(QMainWindow):
     # -- slots ------------------------------------------------------------------
     def _on_add_panels(self) -> None:
         defaults = self._defaults_provider()
-        dlg = AddPanelDialog(defaults, parent=self)
+        c = self._recipe.compose
+        dlg = AddPanelDialog(defaults, schematic=(c.colorbar_mode, c.colorbar_pos), parent=self)
         if dlg.exec() == QDialog.DialogCode.Accepted:
-            self.add_panels(dlg.selected_panels)
+            renames = self.add_panels(dlg.selected_panels, dlg.selected_layout)
+            self._apply_scale_bar_pick(dlg.scale_bar_pick, renames)
+
+    def _apply_scale_bar_pick(self, pick: tuple[str, str] | None, renames: dict[str, str]) -> None:
+        """Apply a (panel_id, corner) scale-bar pick from the Add-panels dialog's
+        arranger page, translating *pick*'s panel id through *renames* — the
+        ``{old_id: new_id}`` map ``add_panels`` returns when a picked id collided
+        with an existing one and had to be uniquified. No-op if *pick* is None."""
+        if pick is None:
+            return
+        pid, loc = pick
+        self._recipe.compose.scale_bar_mode = "one-panel"
+        self._recipe.compose.scale_bar_panel = renames.get(pid, pid)
+        self._style.scale_bar_loc = loc
+        self._controls.sync_from_style()
+        self._sync_style_to_recipe()
+        self._load_compose_into_widgets()
+
+    def _on_arrange(self) -> None:
+        from .widgets.layout_arranger import ArrangeDialog
+
+        dlg = ArrangeDialog(self._recipe, self._style, parent=self)
+        if dlg.exec() == QDialog.DialogCode.Accepted and dlg.result_layout is not None:
+            self.apply_arranged_layout(dlg.result_layout, dlg.scale_bar_pick)
+
+    def apply_arranged_layout(self, new_root, scale_bar_pick=None) -> None:
+        """Replace the layout with an arranged grid, purge orphans, and apply
+        an optional (panel_id, corner) scale-bar pick from the arranger."""
+        self._recipe.layout = new_root
+        self._purge_orphaned_panels()
+        if scale_bar_pick is not None:
+            pid, loc = scale_bar_pick
+            self._recipe.compose.scale_bar_mode = "one-panel"
+            self._recipe.compose.scale_bar_panel = pid
+            self._style.scale_bar_loc = loc
+            self._controls.sync_from_style()
+            self._recipe.style = asdict(self._style)
+        self._load_compose_into_widgets()
+        self._after_mutation()
 
     def _on_label_selected(self) -> None:
         node = self._selected_node()

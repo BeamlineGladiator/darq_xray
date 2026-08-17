@@ -1350,8 +1350,25 @@ a composed figure looks consistent with the per-stage exports above.
 
 - **Recipe** — one JSON file (`dfxm.compose.recipe.FigureRecipe`) describing
   a figure: a name, a `PlotStyle` override dict, composer-level settings
-  (label lettering, gutter/padding, scale-bar mode, an optional pinned total
-  width), a **layout tree**, and the list of **panels** the layout refers to.
+  (label lettering, gutter/padding, scale-bar mode, a colourbar mode, an
+  optional pinned total width), a **layout tree**, and the list of **panels**
+  the layout refers to. The colourbar mode is `per-panel` (default — today's
+  behaviour: each map/slice panel gets its own bar, or a `Row`/`Col`'s
+  `shared_colorbar` flag gives its members one bar together) or `united`: one
+  bar per **quantity** (strain, mosaicity, …) placed along one edge of the
+  whole figure (`colorbar_pos`, `right` or `bottom`), set from the in-app
+  editor's compose pane (below) or a saved recipe file/the headless CLI. In
+  `united` mode, any `shared_colorbar` flags on rows/columns are
+  ignored (a note explains why — the per-quantity bar supersedes them), and a
+  panel's own **Colourbar** override set to On still forces that panel to keep
+  its private bar, excluded from the union. Pick `colorbar_pos` **orthogonal**
+  to how quantities are arranged — e.g. one quantity per column stretches
+  each united bar to (near) the full column height, so `bottom` keeps them
+  apart, while `right` puts both in the same right-edge strip and they
+  overlap. If two united bars' member spans do overlap on the chosen edge,
+  a render note names the two quantities and suggests the other edge or
+  per-panel bars; the renderer does not separate the bars into lanes on its
+  own.
 - **Panels** — each panel (`PanelDef`) points at one dataset inside a stage's
   output h5 (`strain`/`mosaicity`/`rocking` map layer, an `oblique_slices.h5`
   plane, or a `profiles` job's reference image/line trace) plus optional
@@ -1383,6 +1400,67 @@ a composed figure looks consistent with the per-stage exports above.
   renders as a hatched grey box captioned with the reason, and the exit code
   reflects whether *any* panel had real data (see below).
 
+**Add panels…**
+
+Clicking **Add panels…** opens a two-step dialog:
+
+1. **Step 1 — pick.** The existing per-stage picker: choose a stage, its h5
+   loads (or Browse…/Load a different one), check the map layers/slice
+   planes/profile fields you want, then click **Next** (or **OK** to skip
+   arranging and add the checked panels flat, in tree order, exactly as
+   before). Clicking **Next** with nothing checked stays on step 1 with a
+   "check at least one item first" status message.
+2. **Step 2 — arrange (optional).** A drag grid seeded with one column per
+   staged panel — each tile a schematic chip (colour-coded by quantity group:
+   strain/raw/mosa FWHM/mosa COM/trace) labelled with the panel's captured
+   data name. Drag a tile into another column to stack it there (a `Col`, top
+   to bottom); **◀/▶** reorder columns; **✕** removes a column, merging its
+   tiles into a neighbour (never removable below one column); **+ Add
+   column** adds a blank one. Clicking a tile's corner marks it as the
+   scale-bar panel (a small dot), mirroring the compose pane's "one-panel"
+   scale-bar mode. The grid's colourbar-strip preview (along the right or
+   bottom edge) reflects the compose pane's **current** Colourbar mode/
+   position (see *Compose* below) at the moment you opened Add panels…, so
+   switching to "One per quantity" beforehand previews the union strip here.
+   **Back** returns to step 1 without losing the arrangement.
+
+**OK from step 1** appends the checked panels flat — one `PanelRef` per panel,
+in tree order — into the current outline container, same as before this
+two-step flow existed. **OK from step 2** appends the arranged grid as a
+**single new block** (a `Row` of bare `PanelRef`s and/or `Col`s) into the
+current outline container, preserving whatever rows/columns you dragged into
+place; new panel ids are uniquified against the recipe's existing panels
+first, so the arrangement's references always point at the ids actually
+stored. If a scale-bar corner was picked in step 2, OK from step 2 also
+switches Scale-bar mode to **one-panel** targeting that panel (translated
+through the same id-uniquification, so a picked panel that got renamed for a
+collision still resolves to the right id) and moves the Style pane's Bar
+location — and the Compose pane's Corner combo — to that corner, the same
+handoff Arrange…'s Apply performs (below).
+
+**Arrange…**
+
+Clicking **Arrange…** (next to Add panels…) opens the same drag grid over the
+**whole figure's current layout**, letting you re-lay-out everything already
+in the recipe instead of only newly-added panels. It seeds the grid from
+`recipe.layout` when that layout is already a plain grid (one column per
+top-level `PanelRef`/`Col`, each `Col`'s tiles stacked top to bottom); when
+it isn't (spacers, text cells, or nested groups are present), it instead
+seeds one flat column with every panel and shows a persistent warning that
+applying will rebuild the layout as a plain grid — dropping those spacers,
+text cells and nested groups. A note above Apply/Cancel always reminds you
+that any panel dragged out of the grid entirely is removed from the recipe on
+Apply, the same as Delete. Dragging tiles between columns, reordering with
+◀/▶, and clicking a tile's corner to set the one-panel scale-bar target work
+exactly as in the Add-panels arranger (see above). **Apply** rebuilds the
+layout from the grid; a column whose set of panel ids is unchanged from
+before keeps that `Col`'s group label and shared-x/shared-colorbar/shared-clim
+settings — only genuinely new or reshuffled columns start blank. If you
+picked a scale-bar corner, Apply also switches the compose pane to
+**one-panel** scale-bar mode targeting that panel and moves the style's
+scale-bar location to that corner. **Cancel** discards the arrangement and
+leaves the recipe untouched.
+
 **In-app editor: live preview**
 
 The `FigureBuilderWindow`'s center pane shows a **live preview** of the
@@ -1412,10 +1490,16 @@ a move, group toggle, or label edit — the rebuilt tree re-selects the same
 node by identity, so pressing ↑/↓ repeatedly keeps moving the same item
 instead of losing the selection after the first press. Deleting a node
 selects its parent container afterwards, so the outline never drops to no
-selection after a delete. A panel whose label has been switched off (Label
-mode "No label" in the selected-node pane, below) shows "(label off)" next
-to its id in the outline, distinguishing it at a glance from a panel still
-auto-lettering.
+selection after a delete. Each panel row in the outline shows its **captured
+data name** — the stage/group/layer, slice plane, or profiles job/field name
+recorded when the panel was checked off in the Add-panels picker — instead of
+its internal id; a panel added before this capture existed (or a recipe saved
+by an older version) has no stored name and falls back to showing its id.
+Render/export notes (placeholders, drift, …) always reference panels by id
+regardless of what the outline displays. A panel whose label has been
+switched off (Label mode "No label" in the selected-node pane, below) shows
+"(label off)" next to its data name (or id) in the outline, distinguishing it
+at a glance from a panel still auto-lettering.
 
 **In-app editor: right pane (style, compose, overrides, export)**
 
@@ -1433,11 +1517,34 @@ button:
   if the recipe has none) and refreshes every control from it.
 - *Compose* — the composer-level knobs on `recipe.compose`: the label
   template (must contain an `A`/`a` placeholder), the label font scale, the
-  gutter and padding (cm), the scale-bar mode (`per-panel`/`one-panel`/
-  `gutter`) with a panel-id dropdown for the one-panel mode (populated from
-  the recipe's current panels; blank = none designated yet), and a pinned
-  total width in cm (0 = auto-sized from the layout). Every edit writes
-  straight into `recipe.compose` and schedules a re-render.
+  gutter and padding (cm), then two headed groups, then a pinned total width
+  in cm (0 = auto-sized from the layout):
+  - **Colourbars** — *Colourbar mode*, "Per panel" (default — each map/slice
+    panel keeps its own bar, or a `Row`/`Col`'s "one colorbar for this group"
+    flag gives its members one together) or "One per quantity" (`united`:
+    one bar per quantity placed along one edge of the whole figure), and
+    *Colourbar position (united)*, "Right" or "Bottom" — greyed out unless
+    mode is "One per quantity". In united mode, any row/column
+    shared-colorbar flags are ignored (`united` supersedes them) and a
+    panel's own **Colourbar** override set to On (in the selected-node pane,
+    below) still forces that panel to keep its private bar, excluded from
+    the union.
+  - **Scale bar** — the scale-bar mode (`per-panel`/`one-panel`/`gutter`)
+    with a panel dropdown for the one-panel mode (populated from the
+    recipe's current panels, showing each panel's captured data name —
+    falling back to its id when no name was captured; blank = none
+    designated yet), and a **Corner** dropdown over the four scale-bar
+    corners. The dropdown displays the data name but stores the panel's id,
+    so `compose.scale_bar_panel` is always set from the id, never the
+    displayed text. **Corner is the same setting as the Style pane's "Bar
+    location"** — editing either widget updates both immediately (and the
+    Style pane's `changed` signal keeps them in sync from that side too), so
+    there is exactly one `style.scale_bar_loc` value shown two places.
+    Clicking a corner dot on a tile in the Add-panels/Arrange… drag-grid
+    arranger (see below) is a third route to the same setting — it also
+    switches Scale-bar mode to `one-panel` and targets that panel.
+  Every edit writes straight into `recipe.compose` (or, for Corner, into the
+  working `PlotStyle` and then `recipe.style`) and schedules a re-render.
 - *Selected node* — a stack of pages, one per outline-node type; the page
   shown always matches the current tree selection. Selecting nothing shows a
   short hint ("select a node in the outline to edit it"). Every field on
