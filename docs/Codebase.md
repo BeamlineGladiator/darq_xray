@@ -914,6 +914,13 @@ anywhere (`fig.set_layout_engine("none")` throughout, same as `layout.py`).
      keeps every downstream consumer of `data_by_id` (the draw dispatch,
      `n_rendered`, shared-colorbar/scale-bar grouping) in lockstep with what
      `size_cells` actually decided.
+  4b. `autoscale_traces(recipe, cells, data_by_id, notes)` — only when
+     `recipe.compose.trace_autoscale` is true — rescales every eligible
+     trace cell to its column's widest map width (see `layout.py`) BEFORE
+     any axes exist, so every downstream consumer (bar provisional boxes,
+     margins, placement, per-panel scale bars, drift notes) sees the final
+     trace boxes; a later `compose.pinned_width_cm` rescale multiplies all
+     cells uniformly, preserving the match.
   5. Create one `Figure(facecolor="white")`; add a bare axes per `PanelRef`
      (any kind, incl. placeholder — so it stays click-pickable) and per
      `TextCell` (`set_axis_off()` immediately); `Spacer` leaves get no axes.
@@ -1101,6 +1108,32 @@ anywhere (`fig.set_layout_engine("none")` throughout, same as `layout.py`).
   14. `TextCell` contents (centred text in its now-placed axes).
   15. **Drift guard** — `box_drift_note` per panel axes against its final
       `SizedCell.w_in`/`h_in`, appended to `notes` (never raised).
+  - **Text-collision advisory** (very last, after `_align_axis_labels` and
+    the gutter/scale-bar draws — the geometry is final): `render_recipe`
+    builds an owner→axes map (each panel keyed by `title or id`, uniquified
+    with ` #2`/` #3` on duplicate titles; each shared/united bar axes keyed
+    `"colorbar (<group>)"`) and extends `notes` with
+    `_detect_text_collisions(fig, owners, _collision_presuggestions(recipe, cells))`.
+    Exports inherit the check via the shared `render_recipe` path.
+- `_detect_text_collisions(fig, axes_by_owner, pre_suggestions=()) -> list[str]` —
+  final-geometry cross-panel text-overlap check. Per axes it collects the
+  visible, non-empty text artists (`_axes_texts`: title, x/y axis labels,
+  tick labels, annotations/free texts — panel letters are annotations; a bar
+  axes' label + ticks are its own axis artists). Cost guard first: more than
+  `_MAX_COLLISION_TEXTS` (400) text artists total returns
+  `"text-collision check skipped ({n} text artists)"` without drawing.
+  Otherwise one draw, then a prefilter (per-axes `get_tightbbox` padded by
+  2 pt — only text pairs whose parent axes' boxes intersect are compared)
+  and the pairwise test: two texts with DIFFERENT parent axes whose
+  `get_window_extent` rectangles, each shrunk by 1 pt, intersect with
+  positive area (`_overlap_area`). Same-axes overlaps are ignored. Clean →
+  `[]`; else exactly one note, `"text overlaps between panels {names}
+  ({n} collision(s)) — {suggestions}"`, suggestions = `pre_suggestions` +
+  `"increase gutter"` + `"reduce font scale"`. Never an error.
+- `_collision_presuggestions(recipe, cells) -> list[str]` —
+  `["enable trace autoscale"]` when `compose.trace_autoscale` is off and some
+  non-pinned trace cell rendered below `_TRACE_TINY_FRACTION` (40%) of its
+  column's widest map width (via `layout.trace_column_targets`), else `[]`.
 - `export_recipe(recipe, out_dir, *, formats=None, dpi=None, style_overrides=None, loader_cache=None) -> (list[str], ComposeResult)` —
   creates `out_dir` **first**, before rendering anything (`os.makedirs(out_dir,
   exist_ok=True)` wrapped in a `try`/`except OSError`, re-raised as

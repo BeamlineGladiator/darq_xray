@@ -738,3 +738,123 @@ def test_united_orthogonal_position_produces_no_overlap_note(tmp_path):
     h5 = _write_obl(tmp_path / "obl.h5")
     res = render_recipe(_two_column_two_quantity_recipe(h5, pos="bottom"))
     assert not any("overlap" in n for n in res.notes)
+
+
+# -- trace autoscale + text-collision advisory (2026-08-17 spec) ---------------
+
+
+def test_render_trace_autoscale_matches_column_map_width_and_notes(tmp_path):
+    h5 = _write_obl(tmp_path / "obl.h5")
+    pm = PanelDef(
+        "m",
+        PanelSource(h5, "slice_plane", {"volume_id": "raw_sum", "slice_name": "obl", "plane": 0}),
+    )
+    pt = PanelDef("t", PanelSource(h5, "profiles_trace", {"job": JOB, "field": "strain"}))
+    r = FigureRecipe(
+        "auto",
+        {"scale_um_per_cm": 10.0, "trace_scale_um_per_cm": 2.0, "show_title": False},
+        ComposeStyle(trace_autoscale=True),
+        Col([PanelRef("m"), PanelRef("t")]),
+        [pm, pt],
+    )
+    res = render_recipe(r)
+    from dfxm.common.plotting import measured_box_in
+
+    wm, _hm = measured_box_in(res.figure, res.axes_by_id["m"])
+    wt, _ht = measured_box_in(res.figure, res.axes_by_id["t"])
+    assert abs(wt - wm) < 0.01 * wm  # trace matched to the column's map width
+    assert any("autoscaled to column width" in n for n in res.notes)
+
+    r.compose.trace_autoscale = False
+    res_off = render_recipe(r)
+    wt_off, _ = measured_box_in(res_off.figure, res_off.axes_by_id["t"])
+    # discriminates: flag off keeps the physical trace box (~5.8 cm vs 2 cm)
+    assert abs(wt_off - wm) > 0.05 * wm
+    assert not any("autoscaled" in n for n in res_off.notes)
+
+
+def _fig_with_two_axes():
+    from matplotlib.figure import Figure
+
+    fig = Figure(figsize=(4.0, 2.0), facecolor="white")
+    ax1 = fig.add_axes([0.1, 0.2, 0.35, 0.6])
+    ax2 = fig.add_axes([0.55, 0.2, 0.35, 0.6])
+    return fig, ax1, ax2
+
+
+def test_collision_detector_flags_cross_axes_overlap_with_suggestions():
+    from dfxm.compose.render import _detect_text_collisions
+
+    fig, ax1, ax2 = _fig_with_two_axes()
+    # two texts from DIFFERENT axes pinned to the same figure spot -> collide
+    ax1.text(0.5, 0.5, "left panel text", transform=fig.transFigure)
+    ax2.text(0.5, 0.5, "right panel text", transform=fig.transFigure)
+    notes = _detect_text_collisions(fig, {"A": ax1, "B": ax2}, ["enable trace autoscale"])
+    assert len(notes) == 1
+    assert "text overlaps between panels A and B" in notes[0]
+    assert "collision(s)" in notes[0]
+    assert "enable trace autoscale" in notes[0]
+    assert "increase gutter" in notes[0] and "reduce font scale" in notes[0]
+
+
+def test_collision_detector_ignores_same_axes_overlaps_and_clean_figures():
+    from dfxm.compose.render import _detect_text_collisions
+
+    fig, ax1, ax2 = _fig_with_two_axes()
+    # overlapping texts on the SAME axes: matplotlib's business, not ours
+    ax1.text(0.2, 0.5, "one", transform=fig.transFigure)
+    ax1.text(0.2, 0.5, "two", transform=fig.transFigure)
+    assert _detect_text_collisions(fig, {"A": ax1, "B": ax2}) == []
+
+
+def test_collision_detector_cost_guard_skips_past_400_texts():
+    from dfxm.compose.render import _detect_text_collisions
+
+    fig, ax1, ax2 = _fig_with_two_axes()
+    for i in range(401):
+        ax1.text(0.1, 0.1, f"t{i}")
+    notes = _detect_text_collisions(fig, {"A": ax1, "B": ax2})
+    assert len(notes) == 1
+    assert "text-collision check skipped (" in notes[0] and "text artists" in notes[0]
+
+
+def test_collision_presuggestions_trace_tiny_only_when_flag_off():
+    from dfxm.common.plotting import PlotStyle
+    from dfxm.compose.adapters import PanelData
+    from dfxm.compose.layout import size_cells
+    from dfxm.compose.render import _collision_presuggestions
+
+    m, t = PanelRef("m"), PanelRef("t")
+    layout = Col([m, t])
+    pm = PanelDef("m", PanelSource("/x.h5", "map_layer", {}))
+    pt = PanelDef("t", PanelSource("/x.h5", "profiles_trace", {}))
+    r = FigureRecipe("s", {}, ComposeStyle(), layout, [pm, pt])
+    data = {
+        "m": PanelData(kind="map_layer", ext_x_um=20.0, ext_y_um=10.0),
+        "t": PanelData(kind="profiles_trace", length_um=1.0),
+    }
+    style = PlotStyle(scale_um_per_cm=10.0, trace_scale_um_per_cm=5.0, trace_height_cm=2.0)
+    cells = size_cells(r, style, data, [])
+    # trace box 0.2 cm wide < 40% of the column's 2 cm map -> suggest autoscale
+    assert _collision_presuggestions(r, cells) == ["enable trace autoscale"]
+    r.compose.trace_autoscale = True
+    assert _collision_presuggestions(r, cells) == []
+
+
+def test_render_runs_collision_check_at_end_and_clean_figure_has_no_note(tmp_path, monkeypatch):
+    h5 = _write_obl(tmp_path / "obl.h5")
+    res = render_recipe(_two_panel_recipe(h5))
+    assert not any("text overlaps" in n for n in res.notes)  # spacious -> clean
+
+    import dfxm.compose.render as render_mod
+
+    seen = {}
+
+    def _spy(fig, axes_by_owner, pre_suggestions=()):
+        seen["owners"] = dict(axes_by_owner)
+        return ["SENTINEL-COLLISION-NOTE"]
+
+    monkeypatch.setattr(render_mod, "_detect_text_collisions", _spy)
+    res2 = render_recipe(_two_panel_recipe(h5))
+    assert "SENTINEL-COLLISION-NOTE" in res2.notes
+    assert set(seen["owners"]) >= {"a", "b"}  # owners keyed by panel title-or-id

@@ -1483,6 +1483,16 @@ to size from) — the error message plus its hint, without ever crashing the
 window. Deleting the last panel clears the live preview canvas outright
 (rather than leaving the last-rendered figure showing behind the "add panels
 to preview" note) — the note always describes exactly what's on screen.
+The notes bar can also carry a **text-overlap advisory**: after every render
+(and every export — same code path) the composer checks whether visible text
+from different panels overlaps in the final figure (titles, axis and tick
+labels, panel letters, colorbar text) and, if so, appends one note naming the
+colliding panels with suggested fixes — *enable trace autoscale* (offered
+when a trace panel rendered far narrower than its column's maps and that
+option is off), *increase gutter*, and *reduce font scale*. It is advisory
+only, never an error, and on a figure with an unusually large number of text
+artists (over 400) the check skips itself with a note rather than slow the
+render down.
 Clicking a panel in the preview selects that panel's node in the
 outline tree, mirroring the selection you'd otherwise make by hand before
 Label…/Delete/↑/↓. The outline keeps the node you're editing selected across
