@@ -1527,8 +1527,15 @@ button:
   if the recipe has none) and refreshes every control from it.
 - *Compose* — the composer-level knobs on `recipe.compose`: the label
   template (must contain an `A`/`a` placeholder), the label font scale, the
-  gutter and padding (cm), then two headed groups, then a pinned total width
-  in cm (0 = auto-sized from the layout):
+  gutter and padding (cm), an **Autoscale traces to column width**
+  checkbox (off by default — when on, every trace panel is rescaled with its
+  box ratio kept so its width matches the widest map panel in its own
+  column, falling back to the widest map anywhere in the figure when its
+  column has none; a figure with no maps leaves traces untouched, and a
+  trace sized by a pinned row height or column width keeps its pin — pins
+  always win over autoscale; each rescale is reported in the notes bar with
+  the implied µm/cm), then two headed groups, then a pinned total width in
+  cm (0 = auto-sized from the layout):
   - **Colourbars** — *Colourbar mode*, "Per panel" (default — each map/slice
     panel keeps its own bar, or a `Row`/`Col`'s "one colorbar for this group"
     flag gives its members one together) or "One per quantity" (`united`:
