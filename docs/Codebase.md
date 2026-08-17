@@ -572,6 +572,33 @@ other `dfxm/compose` module builds on.
   `ComposeStyle.scale_bar_mode`, a `label_template` with no `A`/`a`
   placeholder, or a non-positive `gutter_cm`/`padding_cm`.
 
+#### `gridmap.py`
+
+Qt-free grid ↔ layout-tree mapping — the foundation for the drag-and-drop
+layout arranger; imported by `gui/widgets/layout_arranger.py` and the two
+arranger dialogs (never by anything else in `dfxm/`).
+- `GridModel = list` — documented shape `list[list[str]]`: columns left→right,
+  each a list of panel ids top→bottom.
+- `layout_to_grid(layout, panels_by_id) -> GridModel | None` — maps a
+  `Row`/`Col`/`PanelRef` layout to a `GridModel`, or `None` when *layout*
+  isn't a "plain grid". Unmappable (→ `None`): a `Spacer` or `TextCell`
+  anywhere; a nested `Row`; a `Col` inside a `Col`; a `PanelRef` whose
+  `panel_id` isn't in `panels_by_id` (a ghost reference); group flags
+  (`group_label`/`shared_colorbar`/`shared_clim`/`pinned_height_cm`) on the
+  root `Row`; a flagged `Col` (`group_label`/`shared_x`/`shared_colorbar`/
+  `shared_clim`/`pinned_width_cm`) with fewer than 2 members, since the
+  rebuild (`grid_to_layout`) would silently drop that `Col` — and its flags —
+  down to a bare `PanelRef`.
+- `flatten_panel_ids(layout) -> list[str]` — every `PanelRef.panel_id` under
+  *layout*, depth-first (built on `recipe.iter_leaves`) — the seed for the
+  flatten-with-warning path a caller offers when `layout_to_grid` returns
+  `None`.
+- `grid_to_layout(grid) -> Row` — builds a `Row([...])` from a `GridModel`: a
+  `Col([PanelRef...])` per multi-tile column, a bare `PanelRef` per
+  single-tile column, empty columns dropped, an empty grid → `Row([])`.
+- Round-trip law: `layout_to_grid(grid_to_layout(g), panels) == g` for any
+  normalized grid `g` (no empty columns, every id present in `panels`).
+
 #### `adapters.py`
 
 The panel-kind registry: maps a recipe `PanelSource` to (a) a pure data loader
