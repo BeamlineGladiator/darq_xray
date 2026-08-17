@@ -13,6 +13,7 @@ from PySide6.QtCore import QRect, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QPainter
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QDialog,
     QHBoxLayout,
     QLabel,
     QListWidget,
@@ -301,3 +302,111 @@ class LayoutArranger(QWidget):
             col.flag_strip.setVisible(bool(flagged))
             if flagged:
                 col.flag_strip.setStyleSheet("background: #009682;")
+
+
+def _collect_col_flags(layout) -> dict[frozenset, dict]:
+    """member-id set -> the Col's group/shared settings, over the whole tree."""
+    from dfxm.compose.recipe import Col, PanelRef, Row
+
+    out: dict[frozenset, dict] = {}
+
+    def walk(node):
+        if isinstance(node, Col):
+            ids = frozenset(c.panel_id for c in node.children if isinstance(c, PanelRef))
+            if ids:
+                out[ids] = {
+                    "pinned_width_cm": node.pinned_width_cm,
+                    "group_label": node.group_label,
+                    "shared_x": node.shared_x,
+                    "shared_colorbar": node.shared_colorbar,
+                    "shared_clim": node.shared_clim,
+                }
+        if isinstance(node, (Row, Col)):
+            for c in node.children:
+                walk(c)
+
+    walk(layout)
+    return out
+
+
+class ArrangeDialog(QDialog):
+    """Arrange the recipe's panels on a drag grid; Apply yields a new root Row.
+
+    Clean-grid case: a Col whose member-id set is unchanged keeps its
+    group/shared flags. Unmappable layouts seed from flatten_panel_ids (one
+    column) behind a persistent warning — applying then drops spacers, text
+    cells and nested groups."""
+
+    def __init__(self, recipe, style, parent=None) -> None:
+        super().__init__(parent)
+        from dfxm.compose.gridmap import flatten_panel_ids, layout_to_grid, panel_group_hint
+
+        self.setWindowTitle("Arrange panels")
+        self.result_layout = None
+        self.scale_bar_pick: tuple[str, str] | None = None
+        self._old_flags = _collect_col_flags(recipe.layout)
+
+        self._arranger = LayoutArranger()
+        self._warning = QLabel(
+            "⚠ This layout is not a plain grid — applying will rebuild it as one: "
+            "spacers, text cells and nested groups will be dropped."
+        )
+        self._warning.setWordWrap(True)
+        grid = layout_to_grid(recipe.layout, recipe.panel_by_id())
+        if grid is None:
+            grid = [flatten_panel_ids(recipe.layout)]
+        else:
+            self._warning.setVisible(False)
+        info = {
+            p.id: {"title": p.title or p.id, "group": panel_group_hint(p)} for p in recipe.panels
+        }
+        self._arranger.set_grid(grid, info)
+        self._arranger.set_bar_schematic(
+            recipe.compose.colorbar_mode,
+            recipe.compose.colorbar_pos,
+            {ids for ids, f in self._old_flags.items() if f["shared_colorbar"]},
+        )
+        self._arranger.set_scale_bar(
+            recipe.compose.scale_bar_panel
+            if recipe.compose.scale_bar_mode == "one-panel"
+            else None,
+            style.scale_bar_loc,
+        )
+        self._arranger.scaleBarPicked.connect(self._on_scale_bar_picked)
+
+        purge_note = QLabel("Panels removed from the grid are removed from the recipe on Apply.")
+        apply_btn = QPushButton("Apply")
+        apply_btn.clicked.connect(self._on_apply)
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.clicked.connect(self.reject)
+        btns = QHBoxLayout()
+        btns.addStretch(1)
+        btns.addWidget(apply_btn)
+        btns.addWidget(cancel_btn)
+
+        lay = QVBoxLayout(self)
+        lay.addWidget(self._warning)
+        lay.addWidget(self._arranger, 1)
+        lay.addWidget(purge_note)
+        lay.addLayout(btns)
+        self.resize(720, 420)
+
+    def _on_scale_bar_picked(self, pid: str, loc: str) -> None:
+        self.scale_bar_pick = (pid, loc)
+
+    def _on_apply(self) -> None:
+        from dfxm.compose.gridmap import grid_to_layout
+        from dfxm.compose.recipe import Col
+
+        new_root = grid_to_layout(self._arranger.grid())
+        for child in new_root.children:
+            if isinstance(child, Col):
+                flags = self._old_flags.get(frozenset(c.panel_id for c in child.children))
+                if flags:
+                    child.pinned_width_cm = flags["pinned_width_cm"]
+                    child.group_label = flags["group_label"]
+                    child.shared_x = flags["shared_x"]
+                    child.shared_colorbar = flags["shared_colorbar"]
+                    child.shared_clim = flags["shared_clim"]
+        self.result_layout = new_root
+        self.accept()

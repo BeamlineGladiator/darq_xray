@@ -81,3 +81,61 @@ def test_schematic_strips_follow_mode_and_pos():
     assert w._right_strip.isHidden() and w._bottom_strip.isHidden()
     assert not w._columns[0].flag_strip.isHidden()  # flagged column strip
     assert w._columns[1].flag_strip.isHidden()
+
+
+def _fb_win():
+    from dfxm.common.plotting import PlotStyle
+    from gui.figure_builder import FigureBuilderWindow
+
+    return FigureBuilderWindow(lambda: {}, PlotStyle(scale_um_per_cm=10.0))
+
+
+def _mk_panel(pid):
+    from dfxm.compose.recipe import PanelDef, PanelSource
+
+    return PanelDef(pid, PanelSource("/x.h5", "map_layer", {"stage": "strain", "z": 0}))
+
+
+def test_arrange_dialog_clean_grid_preserves_col_flags():
+    from dfxm.compose.recipe import Col, PanelRef
+    from gui.widgets.layout_arranger import ArrangeDialog
+
+    w = _fb_win()
+    w.add_panels([_mk_panel("a"), _mk_panel("b"), _mk_panel("c")])
+    root = w.recipe().layout
+    root.children = [
+        PanelRef("a"),
+        Col(
+            [PanelRef("b"), PanelRef("c")],
+            pinned_width_cm=4.0,
+            group_label="G",
+            shared_x=True,
+            shared_colorbar=True,
+            shared_clim=(-1.0, 1.0),
+        ),
+    ]
+    w._rebuild_tree()
+    dlg = ArrangeDialog(w.recipe(), w._style)
+    assert dlg._warning.isHidden()
+    assert dlg._arranger.grid() == [["a"], ["b", "c"]]
+    dlg._on_apply()
+    col = dlg.result_layout.children[1]
+    assert isinstance(col, Col)
+    assert col.shared_x and col.shared_colorbar and col.group_label == "G"
+    assert col.pinned_width_cm == 4.0 and col.shared_clim == (-1.0, 1.0)
+    w._debounce.stop()
+
+
+def test_arrange_dialog_flatten_path_warns_and_seeds_one_column():
+    from dfxm.compose.recipe import Col, Spacer
+    from gui.widgets.layout_arranger import ArrangeDialog
+
+    w = _fb_win()
+    w.add_panels([_mk_panel("a"), _mk_panel("b")])
+    w.recipe().layout.children.append(Spacer(1.0, 1.0))  # unmappable
+    dlg = ArrangeDialog(w.recipe(), w._style)
+    assert not dlg._warning.isHidden()
+    assert dlg._arranger.grid() == [["a", "b"]]
+    dlg._on_apply()
+    assert isinstance(dlg.result_layout.children[0], Col)  # one two-tile column
+    w._debounce.stop()

@@ -972,3 +972,20 @@ def test_window_add_panels_with_fragment_and_id_collision():
     assert root.children[1] is frag  # fragment appended as ONE child
     assert [r.panel_id for r in frag.children[0].children] == ["slices_0_1", "slices_1"]
     assert [p.id for p in w.recipe().panels] == ["slices_0", "slices_0_1", "slices_1"]
+
+
+def test_apply_arranged_layout_replaces_purges_and_applies_pick():
+    w = _win()
+    w.add_panels([_panel("a"), _panel("b")])
+    w.apply_arranged_layout(Row([PanelRef("a")]), scale_bar_pick=("a", "upper right"))
+    assert [p.id for p in w.recipe().panels] == ["a"]  # "b" purged with the grid
+    assert w.recipe().compose.scale_bar_mode == "one-panel"
+    assert w.recipe().compose.scale_bar_panel == "a"
+    assert w._style.scale_bar_loc == "upper right"
+    assert w.recipe().style["scale_bar_loc"] == "upper right"
+    assert w.is_dirty()
+
+
+def test_arrange_button_present():
+    w = _win()
+    assert w._arrange_btn.text() == "Arrange…"

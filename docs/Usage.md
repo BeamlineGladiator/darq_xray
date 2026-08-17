@@ -1422,6 +1422,29 @@ place; new panel ids are uniquified against the recipe's existing panels
 first, so the arrangement's references always point at the ids actually
 stored.
 
+**Arrange…**
+
+Clicking **Arrange…** (next to Add panels…) opens the same drag grid over the
+**whole figure's current layout**, letting you re-lay-out everything already
+in the recipe instead of only newly-added panels. It seeds the grid from
+`recipe.layout` when that layout is already a plain grid (one column per
+top-level `PanelRef`/`Col`, each `Col`'s tiles stacked top to bottom); when
+it isn't (spacers, text cells, or nested groups are present), it instead
+seeds one flat column with every panel and shows a persistent warning that
+applying will rebuild the layout as a plain grid — dropping those spacers,
+text cells and nested groups. A note above Apply/Cancel always reminds you
+that any panel dragged out of the grid entirely is removed from the recipe on
+Apply, the same as Delete. Dragging tiles between columns, reordering with
+◀/▶, and clicking a tile's corner to set the one-panel scale-bar target work
+exactly as in the Add-panels arranger (see above). **Apply** rebuilds the
+layout from the grid; a column whose set of panel ids is unchanged from
+before keeps that `Col`'s group label and shared-x/shared-colorbar/shared-clim
+settings — only genuinely new or reshuffled columns start blank. If you
+picked a scale-bar corner, Apply also switches the compose pane to
+**one-panel** scale-bar mode targeting that panel and moves the style's
+scale-bar location to that corner. **Cancel** discards the arrangement and
+leaves the recipe untouched.
+
 **In-app editor: live preview**
 
 The `FigureBuilderWindow`'s center pane shows a **live preview** of the

@@ -145,6 +145,10 @@ class FigureBuilderWindow(QMainWindow):
         add_btn.clicked.connect(self._on_add_panels)
         layout.addWidget(add_btn)
 
+        self._arrange_btn = QPushButton("Arrange…")
+        self._arrange_btn.clicked.connect(self._on_arrange)
+        layout.addWidget(self._arrange_btn)
+
         self._tree = QTreeWidget()
         self._tree.setHeaderLabels(["Outline"])
         self._tree.currentItemChanged.connect(self._on_tree_selection_changed)
@@ -1218,6 +1222,28 @@ class FigureBuilderWindow(QMainWindow):
         dlg = AddPanelDialog(defaults, parent=self)
         if dlg.exec() == QDialog.DialogCode.Accepted:
             self.add_panels(dlg.selected_panels, dlg.selected_layout)
+
+    def _on_arrange(self) -> None:
+        from .widgets.layout_arranger import ArrangeDialog
+
+        dlg = ArrangeDialog(self._recipe, self._style, parent=self)
+        if dlg.exec() == QDialog.DialogCode.Accepted and dlg.result_layout is not None:
+            self.apply_arranged_layout(dlg.result_layout, dlg.scale_bar_pick)
+
+    def apply_arranged_layout(self, new_root, scale_bar_pick=None) -> None:
+        """Replace the layout with an arranged grid, purge orphans, and apply
+        an optional (panel_id, corner) scale-bar pick from the arranger."""
+        self._recipe.layout = new_root
+        self._purge_orphaned_panels()
+        if scale_bar_pick is not None:
+            pid, loc = scale_bar_pick
+            self._recipe.compose.scale_bar_mode = "one-panel"
+            self._recipe.compose.scale_bar_panel = pid
+            self._style.scale_bar_loc = loc
+            self._controls.sync_from_style()
+            self._recipe.style = asdict(self._style)
+        self._load_compose_into_widgets()
+        self._after_mutation()
 
     def _on_label_selected(self) -> None:
         node = self._selected_node()
