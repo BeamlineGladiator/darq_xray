@@ -794,12 +794,33 @@ def render_recipe(
         # the group's real placed span.
         _stretch_shared_bar(node, pids, bar_ax, axes_by_id, data_by_id)
 
-    for _grp, pids, _bar_leaf, bar_ax in united_specs:
+    stretched_united_bars = []
+    for grp, pids, _bar_leaf, bar_ax in united_specs:
         # United members can be scattered anywhere in the layout (not a
         # contiguous Row/Col group), so the stretch target is the union span
         # of ALL member axes rather than one group's placed envelope.
         member_axes = [axes_by_id[pid] for pid in pids]
         _stretch_bar_to_span(bar_ax, member_axes, recipe.compose.colorbar_pos == "right")
+        stretched_united_bars.append((grp, bar_ax))
+
+    # Two united bars whose stretched spans overlap (e.g. one quantity per
+    # column with colorbar_pos="right": both bars stretch to near-full height
+    # in the same right-edge column) visually collide. Detect pairwise
+    # rectangle overlap of the final placed bar axes and leave a note; actual
+    # lane separation/re-positioning is a recorded follow-up, not implemented
+    # here (minimal fix per final review).
+    for i, (grp_a, ax_a) in enumerate(stretched_united_bars):
+        pos_a = ax_a.get_position()
+        for grp_b, ax_b in stretched_united_bars[i + 1 :]:
+            pos_b = ax_b.get_position()
+            x_overlap = min(pos_a.x1, pos_b.x1) - max(pos_a.x0, pos_b.x0)
+            y_overlap = min(pos_a.y1, pos_b.y1) - max(pos_a.y0, pos_b.y0)
+            if x_overlap > 0 and y_overlap > 0:
+                other_pos = "bottom" if recipe.compose.colorbar_pos == "right" else "right"
+                notes.append(
+                    f"united bars for {grp_a} and {grp_b} overlap — consider "
+                    f"colorbar_pos={other_pos!r} or per-panel bars"
+                )
 
     _align_axis_labels(fig, recipe.layout, axes_by_id, data_by_id)
 

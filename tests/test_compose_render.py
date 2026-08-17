@@ -700,3 +700,41 @@ def test_united_bar_stretches_to_scattered_members_union_span(tmp_path):
     eps = 1e-6
     assert bottom - eps <= bp.y0 and bp.y1 <= top + eps  # inside the union span
     assert bp.height > 0.8 * (top - bottom)  # and covering most of it
+
+
+def _two_column_two_quantity_recipe(h5, *, pos):
+    """One quantity per column, both columns spanning the full row height —
+    the shape the final review flagged: with colorbar_pos="right" both
+    groups' bars stretch to (near) the full height in the same right-edge
+    column and collide; "bottom" keeps them apart (different x spans)."""
+
+    def mk(pid, vid):
+        return PanelDef(
+            pid,
+            PanelSource(h5, "slice_plane", {"volume_id": vid, "slice_name": "obl", "plane": 0}),
+        )
+
+    return FigureRecipe(
+        "overlap",
+        {"scale_um_per_cm": 10.0, "show_title": False},
+        ComposeStyle(colorbar_mode="united", colorbar_pos=pos),
+        Row(
+            [
+                Col([PanelRef("a1"), PanelRef("a2")]),
+                Col([PanelRef("b1"), PanelRef("b2")]),
+            ]
+        ),
+        [mk("a1", "strain"), mk("a2", "strain"), mk("b1", "raw_sum"), mk("b2", "raw_sum")],
+    )
+
+
+def test_united_overlapping_bars_produce_a_note(tmp_path):
+    h5 = _write_obl(tmp_path / "obl.h5")
+    res = render_recipe(_two_column_two_quantity_recipe(h5, pos="right"))
+    assert any("overlap" in n for n in res.notes)
+
+
+def test_united_orthogonal_position_produces_no_overlap_note(tmp_path):
+    h5 = _write_obl(tmp_path / "obl.h5")
+    res = render_recipe(_two_column_two_quantity_recipe(h5, pos="bottom"))
+    assert not any("overlap" in n for n in res.notes)

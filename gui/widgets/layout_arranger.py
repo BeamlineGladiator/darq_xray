@@ -210,7 +210,10 @@ class LayoutArranger(QWidget):
         return col
 
     def _column_ids(self, col) -> list[str]:
-        return [col.list.item(i).data(Qt.ItemDataRole.UserRole) for i in range(col.list.count())]
+        ids = [col.list.item(i).data(Qt.ItemDataRole.UserRole) for i in range(col.list.count())]
+        # An exotic accepted drop (foreign source, no UserRole payload) could
+        # otherwise produce a PanelRef(None) once this feeds grid_to_layout.
+        return [pid for pid in ids if pid is not None]
 
     # -- column ops ------------------------------------------------------------
     def _on_add_column(self) -> None:
@@ -374,7 +377,9 @@ class ArrangeDialog(QDialog):
         )
         self._arranger.scaleBarPicked.connect(self._on_scale_bar_picked)
 
-        purge_note = QLabel("Panels removed from the grid are removed from the recipe on Apply.")
+        purge_note = QLabel(
+            "If any panel is missing from the grid on Apply, it is removed from the recipe."
+        )
         apply_btn = QPushButton("Apply")
         apply_btn.clicked.connect(self._on_apply)
         cancel_btn = QPushButton("Cancel")

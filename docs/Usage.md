@@ -1361,7 +1361,14 @@ a composed figure looks consistent with the per-stage exports above.
   `united` mode, any `shared_colorbar` flags on rows/columns are
   ignored (a note explains why — the per-quantity bar supersedes them), and a
   panel's own **Colourbar** override set to On still forces that panel to keep
-  its private bar, excluded from the union.
+  its private bar, excluded from the union. Pick `colorbar_pos` **orthogonal**
+  to how quantities are arranged — e.g. one quantity per column stretches
+  each united bar to (near) the full column height, so `bottom` keeps them
+  apart, while `right` puts both in the same right-edge strip and they
+  overlap. If two united bars' member spans do overlap on the chosen edge,
+  a render note names the two quantities and suggests the other edge or
+  per-panel bars; the renderer does not separate the bars into lanes on its
+  own.
 - **Panels** — each panel (`PanelDef`) points at one dataset inside a stage's
   output h5 (`strain`/`mosaicity`/`rocking` map layer, an `oblique_slices.h5`
   plane, or a `profiles` job's reference image/line trace) plus optional

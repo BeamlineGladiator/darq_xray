@@ -960,6 +960,32 @@ def test_add_dialog_next_with_nothing_checked_stays_on_step1(tmp_path):
     assert "check" in dlg._status.text()
 
 
+def test_add_dialog_stale_pick_cleared_on_back_then_ok_from_page0(tmp_path):
+    # Next -> corner-click -> Back -> OK-from-page-0 must not carry a pick
+    # whose panel id no longer exists once page 0 is left/restaged.
+    dlg = _slices_dialog(tmp_path)
+    dlg._on_next()
+    pid = dlg._staged[0].id
+    dlg._on_scale_bar_picked(pid, "upper left")
+    assert dlg.scale_bar_pick == (pid, "upper left")
+    dlg._goto_page(0)
+    dlg.accept()
+    assert dlg.scale_bar_pick is None
+
+
+def test_add_dialog_stale_pick_cleared_by_restage_on_next(tmp_path):
+    # Next -> pick -> Back -> Next: the restage must clear the earlier pick
+    # even though the dialog never left page 1 via OK.
+    dlg = _slices_dialog(tmp_path)
+    dlg._on_next()
+    pid = dlg._staged[0].id
+    dlg._on_scale_bar_picked(pid, "upper left")
+    assert dlg.scale_bar_pick == (pid, "upper left")
+    dlg._goto_page(0)
+    dlg._on_next()
+    assert dlg.scale_bar_pick is None
+
+
 def test_window_add_panels_with_fragment_and_id_collision():
     from dfxm.compose.recipe import Col
 
@@ -972,6 +998,30 @@ def test_window_add_panels_with_fragment_and_id_collision():
     assert root.children[1] is frag  # fragment appended as ONE child
     assert [r.panel_id for r in frag.children[0].children] == ["slices_0_1", "slices_1"]
     assert [p.id for p in w.recipe().panels] == ["slices_0", "slices_0_1", "slices_1"]
+
+
+def test_apply_scale_bar_pick_translated_through_add_panels_rename():
+    # Exercises _on_add_panels's pick-translation logic without exec(): a
+    # dialog result whose selected_panels collides with an existing id must
+    # have its scale_bar_pick's panel id rewritten through the SAME rename
+    # add_panels() applied to the panels themselves — _apply_scale_bar_pick is
+    # the exact method _on_add_panels calls, so this tests the shipped code.
+    w = _win()
+    w.add_panels([_panel("slices_0")])
+    renames = w.add_panels([_panel("slices_0")])  # collides -> "slices_0_1"
+    assert renames == {"slices_0": "slices_0_1"}
+    w._apply_scale_bar_pick(("slices_0", "upper left"), renames)
+    assert w.recipe().compose.scale_bar_mode == "one-panel"
+    assert w.recipe().compose.scale_bar_panel == "slices_0_1"
+    assert w._style.scale_bar_loc == "upper left"
+
+
+def test_apply_scale_bar_pick_none_is_a_no_op():
+    w = _win()
+    w.add_panels([_panel("a")])
+    w._apply_scale_bar_pick(None, {})
+    assert w.recipe().compose.scale_bar_mode != "one-panel"
+    assert w.recipe().compose.scale_bar_panel is None
 
 
 def test_apply_arranged_layout_replaces_purges_and_applies_pick():

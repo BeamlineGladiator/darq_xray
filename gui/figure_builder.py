@@ -1270,14 +1270,22 @@ class FigureBuilderWindow(QMainWindow):
         dlg = AddPanelDialog(defaults, schematic=(c.colorbar_mode, c.colorbar_pos), parent=self)
         if dlg.exec() == QDialog.DialogCode.Accepted:
             renames = self.add_panels(dlg.selected_panels, dlg.selected_layout)
-            if dlg.scale_bar_pick is not None:
-                pid, loc = dlg.scale_bar_pick
-                self._recipe.compose.scale_bar_mode = "one-panel"
-                self._recipe.compose.scale_bar_panel = renames.get(pid, pid)
-                self._style.scale_bar_loc = loc
-                self._controls.sync_from_style()
-                self._sync_style_to_recipe()
-                self._load_compose_into_widgets()
+            self._apply_scale_bar_pick(dlg.scale_bar_pick, renames)
+
+    def _apply_scale_bar_pick(self, pick: tuple[str, str] | None, renames: dict[str, str]) -> None:
+        """Apply a (panel_id, corner) scale-bar pick from the Add-panels dialog's
+        arranger page, translating *pick*'s panel id through *renames* — the
+        ``{old_id: new_id}`` map ``add_panels`` returns when a picked id collided
+        with an existing one and had to be uniquified. No-op if *pick* is None."""
+        if pick is None:
+            return
+        pid, loc = pick
+        self._recipe.compose.scale_bar_mode = "one-panel"
+        self._recipe.compose.scale_bar_panel = renames.get(pid, pid)
+        self._style.scale_bar_loc = loc
+        self._controls.sync_from_style()
+        self._sync_style_to_recipe()
+        self._load_compose_into_widgets()
 
     def _on_arrange(self) -> None:
         from .widgets.layout_arranger import ArrangeDialog

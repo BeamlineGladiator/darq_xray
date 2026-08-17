@@ -330,6 +330,10 @@ class AddPanelDialog(QDialog):
         self._next_btn.setEnabled(i == 0)
 
     def _on_next(self) -> None:
+        # Every (re)staging regenerates panel ids — a pick made against a
+        # previous staging would otherwise survive Back/re-check/Next and
+        # write a ghost id into compose.scale_bar_panel.
+        self.scale_bar_pick = None
         self._staged = self._build_panels()
         if not self._staged:
             self._status.setText("check at least one item first")
@@ -351,4 +355,7 @@ class AddPanelDialog(QDialog):
         else:
             self.selected_panels = self._build_panels()
             self.selected_layout = None
+            # OK straight from page 0: any pick staged from an earlier visit
+            # to the arranger page refers to ids that no longer exist.
+            self.scale_bar_pick = None
         super().accept()
