@@ -498,19 +498,9 @@ def _overlap_area(a, b) -> float:
     return w * h if (w > 0.0 and h > 0.0) else 0.0
 
 
-_OWNER_SUFFIX_RE = re.compile(r" #\d+$")
-
-
-def _is_colorbar_owner(name: str) -> bool:
-    """True for an owner display name that names a colorbar axes: the
-    shared/united bar naming (``"colorbar"`` / ``"colorbar (<group>)"``) or
-    the per-panel bar naming (``"<panel> colorbar"``), either possibly
-    uniquified with a trailing `` #2``/`` #3`` by `_owner_key`."""
-    base = _OWNER_SUFFIX_RE.sub("", name)
-    return base == "colorbar" or base.startswith("colorbar (") or base.endswith(" colorbar")
-
-
-def _detect_text_collisions(fig, axes_by_owner, pre_suggestions=()) -> list[str]:
+def _detect_text_collisions(
+    fig, axes_by_owner, pre_suggestions=(), *, owner_group=None, bar_owners=()
+) -> list[str]:
     """Advisory cross-panel text-overlap check on the FINAL geometry.
 
     *axes_by_owner* maps a display name (panel ``title or id``, or a bar
@@ -523,12 +513,34 @@ def _detect_text_collisions(fig, axes_by_owner, pre_suggestions=()) -> list[str]
     clean); a figure with more than ``_MAX_COLLISION_TEXTS`` text artists
     returns a skip note instead of running the O(n²) pass. Never an error.
 
-    When EVERY owner involved in the collision is a colorbar owner
-    (`_is_colorbar_owner`), the note is dropped entirely rather than raised —
-    two colorbar axes only collide when their bars themselves overlap, which
-    the united-bar overlap check already reports (with a more specific
-    `colorbar_pos` suggestion); a generic "increase gutter; reduce font
-    scale" note on top of that would be redundant noise, not new information.
+    *owner_group* optionally maps an owner name to a GROUP key. Two owners
+    sharing a group are treated like the same-axes exemption above:
+    collisions BETWEEN them are ignored entirely (never even counted),
+    though each still gets compared against every owner in a DIFFERENT
+    group. An owner absent from the map (or ``owner_group=None``) is its own
+    singleton group, i.e. unchanged behaviour. The caller uses this to group
+    a panel with its own per-panel colorbar axes under one key (both mean
+    "this panel's own decoration") — a panel's own per-panel colorbar
+    routinely sits close enough that its bottom "×10ⁿ" offset text collides
+    with that SAME panel's own last x-tick label, a real, pre-existing
+    ``dfxm/common/plotting.py`` ``_apply_scientific`` layout defect (default
+    ``offset_pos="bottom"``), not a genuine cross-panel collision; without
+    this exemption, per-panel-colorbar coverage (F2) would make nearly every
+    real per-panel-colorbar figure emit a noisy, wrong-advice note. A panel
+    vs. a DIFFERENT panel's own colorbar, or one colorbar vs. another, is
+    still fully checked.
+
+    *bar_owners* is the set of owner names that are actual shared/united
+    colorbar axes, supplied by the caller (never inferred from the display
+    name — a panel legitimately titled "... colorbar" must not be
+    misclassified, and a per-panel colorbar is deliberately NOT in this set
+    so a genuine collision between two DIFFERENT panels' own colorbars still
+    reports). When EVERY owner involved in the collision is in *bar_owners*,
+    the note is dropped entirely rather than raised — two shared/united bars
+    only collide when the bars themselves overlap, which the united-bar
+    overlap check already reports (with a more specific `colorbar_pos`
+    suggestion); a generic "increase gutter; reduce font scale" note on top
+    of that would be redundant noise, not new information.
     """
     collected = []
     n_texts = 0
@@ -547,6 +559,9 @@ def _detect_text_collisions(fig, axes_by_owner, pre_suggestions=()) -> list[str]
     ren = fig.canvas.get_renderer()
     pad = fig.dpi / 72.0  # 1 pt in pixels
 
+    def _group(owner):
+        return owner_group.get(owner, owner) if owner_group else owner
+
     groups = []
     for owner, ax, texts in collected:
         if not texts:
@@ -561,6 +576,8 @@ def _detect_text_collisions(fig, axes_by_owner, pre_suggestions=()) -> list[str]
     involved: list[str] = []
     for i, (owner_a, bb_a, exts_a) in enumerate(groups):
         for owner_b, bb_b, exts_b in groups[i + 1 :]:
+            if _group(owner_a) == _group(owner_b):
+                continue  # same owner group (e.g. a panel + its own colorbar) — not a real collision
             if _overlap_area(bb_a, bb_b) <= 0.0:
                 continue  # prefilter: distant axes never compared text-by-text
             hits = sum(1 for ea in exts_a for eb in exts_b if _overlap_area(ea, eb) > 0.0)
@@ -571,8 +588,8 @@ def _detect_text_collisions(fig, axes_by_owner, pre_suggestions=()) -> list[str]
                         involved.append(owner)
     if not n_collisions:
         return []
-    if all(_is_colorbar_owner(name) for name in involved):
-        return []  # colorbar-vs-colorbar overlap: the united-bar note covers it
+    if involved and all(name in bar_owners for name in involved):
+        return []  # bar-vs-bar overlap: the united-bar note covers it
     if len(involved) == 1:  # unreachable in practice, defensive
         names = involved[0]
     else:
@@ -1057,8 +1074,17 @@ def render_recipe(
     # (uniquified — two panels sharing a title must not shadow each other in
     # the check), that panel's own per-panel colorbar axes (`cell.extras`,
     # when it has one) keyed "<panel> colorbar", each shared/united bar axes,
-    # and each TextCell leaf's axes keyed "text".
+    # and each TextCell leaf's axes keyed "text". `owner_group` groups a
+    # panel with its OWN per-panel colorbar (same pid) so
+    # `_detect_text_collisions` exempts that pair like a same-axes overlap
+    # (F7 — a panel's own colorbar offset text routinely collides with that
+    # same panel's own last x-tick label, a pre-existing plotting.py layout
+    # defect, not a real cross-panel problem); `bar_owner_names` is the set
+    # of ACTUAL shared/united bar owners, used (not name-pattern-matched,
+    # F8) to drop the note when a collision is bar-vs-bar only.
     owners: dict[str, object] = {}
+    owner_group: dict[str, str] = {}
+    bar_owner_names: set[str] = set()
 
     def _owner_key(base):
         name, k = base, 2
@@ -1069,13 +1095,22 @@ def render_recipe(
 
     for pid, ax in axes_by_id.items():
         name = panels_by_id[pid].title or pid
-        owners[_owner_key(name)] = ax
+        panel_key = _owner_key(name)
+        owners[panel_key] = ax
+        group = f"panel:{pid}"
+        owner_group[panel_key] = group
         for cax in cell_by_pid[pid].extras:
-            owners[_owner_key(f"{name} colorbar")] = cax
+            cbar_key = _owner_key(f"{name} colorbar")
+            owners[cbar_key] = cax
+            owner_group[cbar_key] = group
     for _node, grp, _pids, _bar_leaf, bar_ax in bar_specs:
-        owners[_owner_key(f"colorbar ({grp})" if grp else "colorbar")] = bar_ax
+        key = _owner_key(f"colorbar ({grp})" if grp else "colorbar")
+        owners[key] = bar_ax
+        bar_owner_names.add(key)
     for grp, _pids, _bar_leaf, bar_ax in united_specs:
-        owners[_owner_key(f"colorbar ({grp})" if grp else "colorbar")] = bar_ax
+        key = _owner_key(f"colorbar ({grp})" if grp else "colorbar")
+        owners[key] = bar_ax
+        bar_owner_names.add(key)
     for leaf in leaves:
         if isinstance(leaf, TextCell) and cells[id(leaf)].ax is not None:
             owners[_owner_key("text")] = cells[id(leaf)].ax
@@ -1089,7 +1124,11 @@ def render_recipe(
     # unreachable).
     tiny_pids = _tiny_trace_pids(recipe, cells)
     collision_notes = _detect_text_collisions(
-        fig, owners, ["enable trace autoscale"] if tiny_pids else []
+        fig,
+        owners,
+        ["enable trace autoscale"] if tiny_pids else [],
+        owner_group=owner_group,
+        bar_owners=bar_owner_names,
     )
     notes.extend(collision_notes)
     if tiny_pids and not collision_notes:

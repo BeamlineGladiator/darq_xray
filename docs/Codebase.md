@@ -1114,18 +1114,23 @@ anywhere (`fig.set_layout_engine("none")` throughout, same as `layout.py`).
     panel's own per-panel colorbar axes (`cell.extras`), when it has one,
     keyed `"<panel> colorbar"`; each shared/united bar axes keyed
     `"colorbar (<group>)"`; each `TextCell` leaf's axes keyed `"text"` — all
-    uniquified with ` #2`/` #3` on a name collision (`_owner_key`) — then
-    computes `tiny_pids = _tiny_trace_pids(recipe, cells)` and calls
+    uniquified with ` #2`/` #3` on a name collision (`_owner_key`). Alongside
+    it, `render_recipe` builds `owner_group` (a panel and its OWN per-panel
+    colorbar owner both map to `f"panel:{pid}"`; every other owner is absent,
+    i.e. its own singleton group) and `bar_owner_names` (the set of ACTUAL
+    shared/united bar owner keys — never inferred from the display name).
+    Then it computes `tiny_pids = _tiny_trace_pids(recipe, cells)` and calls
     `_detect_text_collisions(fig, owners, ["enable trace autoscale"] if
-    tiny_pids else [])`, extending `notes` with its result. If `tiny_pids` is
-    non-empty AND the collision check came back clean (no note — the common
-    case: see `_tiny_trace_pids` below for why the collision check alone
-    almost never catches this), a STANDALONE note is appended instead:
-    `"panel(s) {names}: trace rendered under 40% of the column's map width —
-    consider enabling trace autoscale"` (panel(s) named by `title or id`; a
-    single offending panel also gets its width in cm parenthesised). Exports
-    inherit both checks via the shared `render_recipe` path.
-- `_detect_text_collisions(fig, axes_by_owner, pre_suggestions=()) -> list[str]` —
+    tiny_pids else [], owner_group=owner_group, bar_owners=bar_owner_names)`,
+    extending `notes` with its result. If `tiny_pids` is non-empty AND the
+    collision check came back clean (no note — the common case: see
+    `_tiny_trace_pids` below for why the collision check alone almost never
+    catches this), a STANDALONE note is appended instead: `"panel(s) {names}:
+    trace rendered under 40% of the column's map width — consider enabling
+    trace autoscale"` (panel(s) named by `title or id`; a single offending
+    panel also gets its width in cm parenthesised). Exports inherit both
+    checks via the shared `render_recipe` path.
+- `_detect_text_collisions(fig, axes_by_owner, pre_suggestions=(), *, owner_group=None, bar_owners=()) -> list[str]` —
   final-geometry cross-panel text-overlap check. Per axes it collects the
   visible, non-empty text artists (`_axes_texts`: title, x/y axis labels,
   tick labels **actually drawn within the axis's current view interval**
@@ -1138,19 +1143,31 @@ anywhere (`fig.set_layout_engine("none")` throughout, same as `layout.py`).
   artists total returns `"text-collision check skipped ({n} text artists)"`
   without drawing. Otherwise one draw, then a prefilter (per-axes
   `get_tightbbox` padded by 2 pt — only text pairs whose parent axes' boxes
-  intersect are compared) and the pairwise test: two texts with DIFFERENT
-  parent axes whose `get_window_extent` rectangles, each shrunk by 1 pt,
-  intersect with positive area (`_overlap_area`). Same-axes overlaps are
-  ignored. Clean → `[]`. When every owner involved in the collision is a
-  colorbar owner (`_is_colorbar_owner` — a name matching `"colorbar"` /
-  `"colorbar (<group>)"` / `"<panel> colorbar"`, uniquify suffix stripped
-  first) the note is dropped too — two colorbar axes only collide when their
-  bars themselves overlap, which the united-bar overlap check already
-  reports with a more specific `colorbar_pos` suggestion, so a generic
-  "increase gutter; reduce font scale" note on top would be redundant.
-  Otherwise exactly one note, `"text overlaps between panels {names}
-  ({n} collision(s)) — {suggestions}"`, suggestions = `pre_suggestions` +
-  `"increase gutter"` + `"reduce font scale"`. Never an error.
+  intersect are compared) and the pairwise test over pairs whose OWNER GROUP
+  differs (`owner_group.get(owner, owner)` — an owner absent from the map is
+  its own singleton group, so `owner_group=None`/omitted reproduces the
+  original ungrouped behaviour): two texts with DIFFERENT parent axes whose
+  `get_window_extent` rectangles, each shrunk by 1 pt, intersect with
+  positive area (`_overlap_area`). Same-axes overlaps, and now
+  same-owner-group pairs, are ignored — `render_recipe` groups a panel with
+  its own per-panel colorbar so this exempts, e.g., that colorbar's bottom
+  `×10ⁿ` offset text against that SAME panel's own last x-tick label, a real,
+  pre-existing `dfxm/common/plotting.py` `_apply_scientific` layout defect
+  (default `offset_pos="bottom"`) rather than a genuine cross-panel problem —
+  a DIFFERENT panel's colorbar, or a different panel entirely, is still
+  fully checked against it. Clean → `[]`. When every owner involved in the
+  collision is in *bar_owners* (the caller-supplied set of actual
+  shared/united bar owner keys — deliberately not a name-pattern match, so a
+  panel legitimately titled `"... colorbar"` is never misclassified and a
+  genuine cax-vs-cax collision between two DIFFERENT panels' own colorbars
+  still reports) the note is dropped too — two shared/united bars only
+  collide when the bars themselves overlap, which the united-bar overlap
+  check already reports with a more specific `colorbar_pos` suggestion, so a
+  generic "increase gutter; reduce font scale" note on top would be
+  redundant. Otherwise exactly one note, `"text overlaps between panels
+  {names} ({n} collision(s)) — {suggestions}"`, suggestions =
+  `pre_suggestions` + `"increase gutter"` + `"reduce font scale"`. Never an
+  error.
 - `_tiny_trace_pids(recipe, cells) -> list[str]` — panel ids of trace cells
   rendered under `_TRACE_TINY_FRACTION` (40%) of their column's widest map
   width, when `compose.trace_autoscale` is off (`[]` when the flag is on — an

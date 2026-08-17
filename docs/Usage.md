@@ -1489,16 +1489,23 @@ from different panels overlaps in the final figure — titles, axis and tick
 labels (only the ones actually drawn within the panel's current view range —
 a tick the locator proposed but that fell off the visible axis range is never
 counted), panel letters, colorbar text (including each panel's own private
-colorbar, not just a shared/united one), and any text-panel caption — and, if
-so, appends one note naming the colliding panels with suggested fixes —
+colorbar, not just a shared/united one — but a panel's own colorbar is
+checked only against OTHER panels/bars, never against that SAME panel; a
+panel's own colorbar sitting right beside it is expected to run close, and
+the pre-existing case where its "×10ⁿ" offset label brushes that same
+panel's own last tick number is a separate, known plotting quirk, not
+something this advisory reports), and any text-panel caption — and, if so,
+appends one note naming the colliding panels with suggested fixes —
 *enable trace autoscale* (offered when a trace panel rendered far narrower
 than its column's maps and that option is off), *increase gutter*, and
-*reduce font scale*. If the ONLY thing colliding is two colorbars (e.g. two
-"one per quantity" bars stretched into the same corner), that generic note is
-skipped — the more specific *united bars … overlap* note (above) already
-covers it. It is advisory only, never an error, and on a figure with an
-unusually large number of text artists (over 400) the check skips itself
-with a note rather than slow the render down.
+*reduce font scale*. If the ONLY thing colliding is two shared/united
+colorbars (e.g. two "one per quantity" bars stretched into the same corner),
+that generic note is skipped — the more specific *united bars … overlap*
+note (above) already covers it; a genuine collision between two DIFFERENT
+panels' own private colorbars still reports normally. It is advisory only,
+never an error, and on a figure with an unusually large number of text
+artists (over 400) the check skips itself with a note rather than slow the
+render down.
 
 A trace panel rendered under 40% of its column's map width also gets its own
 **standalone advisory** — `"panel(s) {name(s)}: trace rendered under 40% of

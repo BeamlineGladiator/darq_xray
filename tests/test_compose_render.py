@@ -819,6 +819,56 @@ def test_collision_detector_cost_guard_skips_past_400_texts():
     assert "text-collision check skipped (" in notes[0] and "text artists" in notes[0]
 
 
+def test_detect_text_collisions_owner_group_exempts_same_group_pair():
+    """F7: two owners sharing a group (e.g. a panel and its own per-panel
+    colorbar) must be exempted like a same-axes overlap, even though their
+    text genuinely intersects."""
+    from dfxm.compose.render import _detect_text_collisions
+
+    fig, ax1, ax2 = _fig_with_two_axes()
+    ax1.text(0.5, 0.5, "own decoration", transform=fig.transFigure)
+    ax2.text(0.5, 0.5, "own decoration too", transform=fig.transFigure)
+    notes = _detect_text_collisions(
+        fig,
+        {"m": ax1, "m colorbar": ax2},
+        owner_group={"m": "panel:m", "m colorbar": "panel:m"},
+    )
+    assert notes == []
+
+    # a DIFFERENT group still gets compared and reports normally
+    notes2 = _detect_text_collisions(
+        fig,
+        {"m": ax1, "n colorbar": ax2},
+        owner_group={"m": "panel:m", "n colorbar": "panel:n"},
+    )
+    assert notes2 and "text overlaps" in notes2[0]
+
+
+def test_detect_text_collisions_bar_owners_is_an_explicit_set_not_a_name_pattern():
+    """F8: the bar-vs-bar drop must come from the caller-supplied *bar_owners*
+    set, never from matching the display name — a panel legitimately titled
+    "... colorbar" must still report a real collision, and a per-panel
+    colorbar (never added to bar_owners by render_recipe) colliding with a
+    DIFFERENT panel's own colorbar must still report too."""
+    from dfxm.compose.render import _detect_text_collisions
+
+    fig, ax1, ax2 = _fig_with_two_axes()
+    ax1.text(0.5, 0.5, "left", transform=fig.transFigure)
+    ax2.text(0.5, 0.5, "right", transform=fig.transFigure)
+
+    # "weird colorbar" LOOKS like a bar owner by name but isn't in bar_owners
+    notes = _detect_text_collisions(fig, {"weird colorbar": ax1, "b": ax2}, bar_owners=set())
+    assert notes and "text overlaps" in notes[0]
+
+    # both owners genuinely ARE actual bar owners -> note dropped
+    notes2 = _detect_text_collisions(
+        fig,
+        {"colorbar (a)": ax1, "colorbar (b)": ax2},
+        bar_owners={"colorbar (a)", "colorbar (b)"},
+    )
+    assert notes2 == []
+
+
 def test_collision_presuggestions_trace_tiny_only_when_flag_off():
     from dfxm.common.plotting import PlotStyle
     from dfxm.compose.adapters import PanelData
@@ -844,28 +894,29 @@ def test_collision_presuggestions_trace_tiny_only_when_flag_off():
 
 def test_render_runs_collision_check_at_end_and_clean_figure_has_no_note(tmp_path, monkeypatch):
     h5 = _write_obl(tmp_path / "obl.h5")
-    # colorbar=False: since F2 (owner coverage) added per-panel colorbar axes
-    # to the collision check, this fixture's default colorbars genuinely
-    # collide (the last panel's colorbar offset text overlaps its own x-tick
-    # label — a real, separate, pre-existing rendering defect, not a
-    # collision-detector false positive; out of scope for this fix wave).
-    # Turn colorbars off so this test keeps checking what it always meant to:
-    # a spacious PANEL layout produces no false-positive note.
-    res = render_recipe(_two_panel_recipe(h5, colorbar=False))
+    # Default colorbars ON: F7 groups a panel with its OWN per-panel colorbar
+    # axes (same pid) so their own-decoration collision (a real, separate,
+    # pre-existing plotting.py offset-text-vs-tick-label defect — out of
+    # scope for this fix wave) is exempted, exactly like a same-axes overlap.
+    # This fixture must therefore stay clean WITH colorbars on, proving F7's
+    # grouping actually suppresses that defect rather than just hiding it
+    # behind a disabled colorbar (the earlier `colorbar=False` workaround).
+    res = render_recipe(_two_panel_recipe(h5))
     assert not any("text overlaps" in n for n in res.notes)  # spacious -> clean
 
     import dfxm.compose.render as render_mod
 
     seen = {}
 
-    def _spy(fig, axes_by_owner, pre_suggestions=()):
+    def _spy(fig, axes_by_owner, pre_suggestions=(), **kwargs):
         seen["owners"] = dict(axes_by_owner)
         return ["SENTINEL-COLLISION-NOTE"]
 
     monkeypatch.setattr(render_mod, "_detect_text_collisions", _spy)
-    res2 = render_recipe(_two_panel_recipe(h5, colorbar=False))
+    res2 = render_recipe(_two_panel_recipe(h5))
     assert "SENTINEL-COLLISION-NOTE" in res2.notes
     assert set(seen["owners"]) >= {"a", "b"}  # owners keyed by panel title-or-id
+    assert "a colorbar" in seen["owners"] or "b colorbar" in seen["owners"]  # F2 coverage intact
 
 
 # -- review fix wave (2026-08-17): tiny-trace advisory, tick-label view filter,
@@ -915,7 +966,7 @@ def test_owners_include_per_panel_colorbar_and_text_cell_axes(tmp_path, monkeypa
 
     seen = {}
 
-    def _spy(fig, axes_by_owner, pre_suggestions=()):
+    def _spy(fig, axes_by_owner, pre_suggestions=(), **kwargs):
         seen["owners"] = dict(axes_by_owner)
         return []
 
