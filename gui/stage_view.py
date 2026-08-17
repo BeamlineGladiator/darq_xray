@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from dfxm.common.eta import EtaEstimator
 from dfxm.common.figures import FigureSpec, figures_for
 from dfxm.config.models import Experiment, StageSpec
 from dfxm.runner import Done, Failed, Log, Progress, StageRunner
@@ -183,6 +184,7 @@ class StageView(QWidget):
         self._progress.setRange(0, 100)
         self._progress_text = QLabel("")
         self._progress_text.setWordWrap(True)
+        self._eta = EtaEstimator()
         progress_row = QHBoxLayout()
         progress_row.addWidget(self._progress, 1)
         progress_row.addWidget(self._progress_text, 2)
@@ -404,6 +406,7 @@ class StageView(QWidget):
         self._results.clear()
         self._progress.setValue(0)
         self._progress_text.setText("")
+        self._eta.reset()
         self._log.append(f"Running stage '{self._stage_name}'…")
         self._export_btn.setEnabled(False)
         self._export_all_btn.setEnabled(False)
@@ -791,8 +794,10 @@ class StageView(QWidget):
         if isinstance(msg, Progress):
             self._log.set_progress(msg.frac, msg.text)
             self._progress.setValue(max(0, min(100, int(round(msg.frac * 100)))))
+            self._eta.update(msg.frac)
             if msg.text:
-                self._progress_text.setText(msg.text)
+                eta = self._eta.eta_text()
+                self._progress_text.setText(f"{msg.text} — {eta}" if eta else msg.text)
                 self._log.append(f"  [{msg.frac * 100:5.1f}%] {msg.text}")
         elif isinstance(msg, Log):
             self._log.append(msg.text)
