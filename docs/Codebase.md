@@ -532,7 +532,12 @@ other `dfxm/compose` module builds on.
 - `PanelSource` — `h5_path`, `kind` (one of `PANEL_KINDS`), `selector` (kind-specific
   selection key, e.g. stage/field/plane).
 - `PanelDef` — one panel: `id`, `source: PanelSource`, plus per-panel overrides
-  (`roi`, `clim`, `cmap`, `label`, `show_title`, `scale_um_per_cm`, `colorbar`).
+  (`roi`, `clim`, `cmap`, `label`, `show_title`, `scale_um_per_cm`, `colorbar`,
+  `title`). `title` is an optional human-readable data name captured by the
+  panel picker at pick time (e.g. `"strain: Strain map / z=3"`); display-only
+  (outline tree, scale-bar combo, arranger tiles show `title or id`), never
+  part of identity; absent in old recipes → `None`; `RECIPE_VERSION` stays 1
+  (purely additive).
 - `PanelRef` / `Spacer` / `TextCell` — layout leaves (a panel placeholder, blank
   space, or literal text cell).
 - `Row` / `Col` — layout containers (nest freely); each supports a pinned

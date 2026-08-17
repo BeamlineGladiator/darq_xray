@@ -42,6 +42,7 @@ class PanelDef:
     show_title: bool | None = None  # None = composed default (off)
     scale_um_per_cm: float | None = None
     colorbar: bool | None = None  # None = follow style; False when a shared bar covers it
+    title: str | None = None  # human-readable data name (display only); None = show the id
 
 
 @dataclass
@@ -211,6 +212,7 @@ def _panel_def_to_dict(p, rel):
         "show_title": p.show_title,
         "scale_um_per_cm": p.scale_um_per_cm,
         "colorbar": p.colorbar,
+        "title": p.title,
     }
 
 
@@ -227,6 +229,7 @@ def _panel_def_from_dict(d, base_dir):
         show_title=d.get("show_title"),
         scale_um_per_cm=d.get("scale_um_per_cm"),
         colorbar=d.get("colorbar"),
+        title=d.get("title"),
     )
 
 

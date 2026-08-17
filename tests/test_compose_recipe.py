@@ -173,3 +173,20 @@ def test_duplicate_panel_ref_nested_refused():
     with pytest.raises(StageUserError) as e:
         validate_recipe(r)
     assert "more than once" in str(e.value)
+
+
+def test_panel_title_round_trips_and_old_recipes_load_none():
+    import json
+
+    r = _mini_recipe()
+    r.panels[0].title = "strain: layer / z=3"
+    r2 = recipe_from_json(recipe_to_json(r))
+    assert r2.panels[0].title == "strain: layer / z=3"
+    assert r2.panels[1].title is None
+    # an old (pre-title) recipe JSON still loads, title=None everywhere
+    d = json.loads(recipe_to_json(_mini_recipe()))
+    for pd in d["panels"]:
+        pd.pop("title", None)
+    r3 = recipe_from_json(json.dumps(d))
+    assert all(p.title is None for p in r3.panels)
+    assert r3.version == 1
