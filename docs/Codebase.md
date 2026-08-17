@@ -700,7 +700,11 @@ engine" section below, also in `layout.py`).
 - `SizedCell` — dataclass keyed by `id(leaf)`: `leaf` (the `PanelRef`/`Spacer`/
   `TextCell`), `panel` (its `PanelDef`, or `None` for `Spacer`/`TextCell`),
   `kind` (`"map"`/`"trace"`/`"spacer"`/`"text"`/`"placeholder"`), `w_in`/
-  `h_in`. `ax`/`extras`/`sync`/`margins`/`label` default to `None`/`()` — the
+  `h_in`, `pinned` (bool, default `False` — set by `size_cells` when a TRACE
+  cell's size came from a pinned row height / column width, i.e. both pin
+  branches of `_trace_cell`; `autoscale_traces` skips pinned cells — pins
+  outrank autoscale; map cells never set it). `ax`/`extras`/`sync`/`margins`/
+  `label` default to `None`/`()` — the
   render step (Task 7) creates each cell's axes and sets `ax`/`extras`/`sync`
   before calling `measure_cells`/`place_tree` (below), which then fill
   `margins` and position `ax`.
@@ -802,6 +806,23 @@ engine" section below, also in `layout.py`).
   - `notes` is mutated in place (appended to), not returned — callers pass
     the same list through the whole solve to collect every implied-scale/
     clamp/placeholder note for the figure.
+
+- `trace_column_targets(recipe, cells) -> dict[int, float | None]` — for
+  every non-pinned, non-placeholder trace leaf, the autoscale target width in
+  inches: the widest `kind == "map"` cell under the trace's innermost
+  enclosing `Col` that contains one (walking outward through enclosing
+  `Col`s), else the widest map cell in the whole figure, else `None` (no map
+  cells at all). Shared by `autoscale_traces` and `render.py`'s
+  collision-note suggestion check (`_collision_presuggestions`).
+- `autoscale_traces(recipe, cells, data_by_id, notes) -> None` — the
+  match-column-width pass behind `ComposeStyle.trace_autoscale`, run by
+  `render_recipe` immediately after `size_cells` when the flag is true (an
+  early return also makes a flag-off call a strict no-op). Each targeted
+  trace cell gets `f = target_w / w_in` applied to BOTH `w_in` and `h_in`
+  (box ratio kept; both up- and down-scaling), with one note per rescale:
+  `"panel {pid}: trace autoscaled to column width — implied scale {…} µm/cm"`
+  (`data_by_id` is read only for the trace's `length_um` in that note).
+  Pinned trace cells and placeholders are never touched.
 
 #### `layout.py` — measure/align/place engine
 

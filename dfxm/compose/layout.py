@@ -23,7 +23,7 @@ from ..common.plotting import (
     trace_fixed_scale,
     trace_height_cm,
 )
-from .recipe import Col, PanelRef, Row, Spacer, TextCell
+from .recipe import Col, PanelRef, Row, Spacer, TextCell, iter_leaves
 
 _IN_PER_CM = 1.0 / 2.54
 PLACEHOLDER_CM = (4.0, 3.0)
@@ -71,6 +71,9 @@ class SizedCell:
     kind: str  # "map"|"trace"|"spacer"|"text"|"placeholder"
     w_in: float
     h_in: float
+    # True when size_cells sized this cell from a pinned row height / column
+    # width — autoscale_traces never touches pinned cells (pins win).
+    pinned: bool = False
     # filled by the placement pass (Task 6):
     ax: object | None = None
     extras: tuple = ()
@@ -203,7 +206,7 @@ def size_cells(recipe, style, data_by_id, notes):
                 notes.append(
                     f"panel {panel.id}: pinned row height — trace height {h / _IN_PER_CM:.4g} cm"
                 )
-            return SizedCell(leaf, panel, "trace", w, h)
+            return SizedCell(leaf, panel, "trace", w, h, pinned=True)
         st = style
         if panel.scale_um_per_cm:
             st = dc_replace(
@@ -229,7 +232,7 @@ def size_cells(recipe, style, data_by_id, notes):
             notes.append(
                 f"panel {panel.id}: pinned row height — implied trace scale {box[2]:.4g} µm/cm"
             )
-            return SizedCell(leaf, panel, "trace", box[0], pinned_h_in)
+            return SizedCell(leaf, panel, "trace", box[0], pinned_h_in, pinned=True)
         return SizedCell(leaf, panel, "trace", box[0], box[1])
 
     def walk(node, pinned_h_in, pinned_w_in):
@@ -250,6 +253,87 @@ def size_cells(recipe, style, data_by_id, notes):
 
     walk(recipe.layout, None, None)
     return cells
+
+
+def trace_column_targets(recipe, cells):
+    """Target width (inches) per autoscalable trace leaf, keyed by ``id(leaf)``.
+
+    The target is the widest ``kind == "map"`` cell under the trace's
+    innermost enclosing ``Col`` that contains one (walking outward through
+    enclosing ``Col``s), falling back to the widest map cell in the whole
+    figure, or ``None`` when the figure has no map cells at all. Pinned
+    (``SizedCell.pinned``) and placeholder trace cells are excluded entirely.
+    Shared by :func:`autoscale_traces` and render.py's collision-note
+    suggestion check.
+    """
+
+    def widest_map(node) -> float:
+        best = 0.0
+        for leaf in iter_leaves(node):
+            cell = cells.get(id(leaf))
+            if cell is not None and cell.kind == "map":
+                best = max(best, cell.w_in)
+        return best
+
+    figure_widest = widest_map(recipe.layout)
+    targets: dict[int, float | None] = {}
+
+    def walk(node, col_stack):
+        if isinstance(node, Col):
+            for child in node.children:
+                walk(child, col_stack + [node])
+        elif isinstance(node, Row):
+            for child in node.children:
+                walk(child, col_stack)
+        else:
+            cell = cells.get(id(node))
+            if cell is None or cell.kind != "trace" or cell.pinned:
+                return
+            target = None
+            for col in reversed(col_stack):  # innermost enclosing Col first
+                w = widest_map(col)
+                if w > 0.0:
+                    target = w
+                    break
+            if target is None and figure_widest > 0.0:
+                target = figure_widest
+            targets[id(node)] = target
+
+    walk(recipe.layout, [])
+    return targets
+
+
+def autoscale_traces(recipe, cells, data_by_id, notes) -> None:
+    """Match each trace cell's width to its column's widest map cell.
+
+    Run by ``render_recipe`` immediately after :func:`size_cells`, only when
+    ``recipe.compose.trace_autoscale`` is true (the early return below also
+    makes a flag-off call a strict no-op). Scales BOTH dimensions by the same
+    factor (box ratio kept; up- and down-scaling both apply — the option
+    means "match", not "grow only"). Pinned trace cells, placeholders, and
+    figures without any map cell are never touched. Appends one
+    implied-scale note per rescaled trace; ``data_by_id`` supplies each
+    trace's ``length_um`` for that note's arithmetic.
+    """
+    if not recipe.compose.trace_autoscale:
+        return
+    targets = trace_column_targets(recipe, cells)
+    for leaf in iter_leaves(recipe.layout):
+        target = targets.get(id(leaf))
+        if target is None:
+            continue
+        cell = cells[id(leaf)]
+        if cell.w_in <= 0.0 or abs(target - cell.w_in) <= 1e-12:
+            continue  # degenerate width can't scale; equal width needs no work
+        f = target / cell.w_in
+        cell.w_in *= f
+        cell.h_in *= f
+        pid = cell.panel.id
+        length = data_by_id[pid].length_um
+        notes.append(
+            f"panel {pid}: trace autoscaled to column width — "
+            f"implied scale {length / (cell.w_in * 2.54):.4g} µm/cm"
+        )
 
 
 def measure_cells(fig: "Figure", cells: list[SizedCell], pad_in: float = 0.02) -> None:

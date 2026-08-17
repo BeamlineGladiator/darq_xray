@@ -7,7 +7,14 @@ from matplotlib.figure import Figure
 from dfxm.common.errors import StageUserError
 from dfxm.common.plotting import PlotStyle, measured_box_in
 from dfxm.compose.adapters import PanelData
-from dfxm.compose.layout import SizedCell, measure_cells, place_tree, size_cells
+from dfxm.compose.layout import (
+    SizedCell,
+    autoscale_traces,
+    measure_cells,
+    place_tree,
+    size_cells,
+    trace_column_targets,
+)
 from dfxm.compose.recipe import (
     Col,
     ComposeStyle,
@@ -250,6 +257,124 @@ def test_zero_length_trace_under_width_pin_still_placeholder():
     )
     assert cells[id(t)].kind == "placeholder"
     assert any("degenerate trace length" in n for n in notes)
+
+
+# -- trace autoscale (match column width) -------------------------------------
+
+
+def _autoscale_recipe(layout, panels):
+    r = _recipe(layout, panels)
+    r.compose.trace_autoscale = True
+    return r
+
+
+def test_autoscale_matches_trace_to_column_map_width_ratio_kept_with_note():
+    style = PlotStyle(scale_um_per_cm=10.0, trace_scale_um_per_cm=5.0, trace_height_cm=2.0)
+    m, t = PanelRef("m"), PanelRef("t")
+    layout = Col([m, t])
+    r = _autoscale_recipe(layout, [_panel("m"), _panel("t", "profiles_trace")])
+    data = {"m": _map_data(), "t": _trace_data(30.0)}
+    cells = size_cells(r, style, data, notes := [])
+    ct = cells[id(t)]
+    w0, h0 = ct.w_in, ct.h_in  # natural: 30/5 = 6 cm wide, 2 cm tall
+    autoscale_traces(r, cells, data, notes)
+    assert abs(ct.w_in - cells[id(m)].w_in) < 1e-9  # matched (downscale: 6 cm -> 2 cm)
+    assert abs(ct.h_in / ct.w_in - h0 / w0) < 1e-9  # box ratio kept
+    # implied scale = 30 µm / 2 cm = 15 µm/cm
+    assert any("autoscaled to column width" in n and "15" in n for n in notes)
+
+
+def test_autoscale_falls_back_to_figure_widest_map_and_upscales():
+    style = PlotStyle(scale_um_per_cm=10.0, trace_scale_um_per_cm=5.0, trace_height_cm=2.0)
+    m, t = PanelRef("m"), PanelRef("t")
+    layout = Row([m, t])  # trace has NO enclosing Col
+    r = _autoscale_recipe(layout, [_panel("m"), _panel("t", "profiles_trace")])
+    data = {"m": _map_data(40.0, 10.0), "t": _trace_data(10.0)}  # trace 2 cm, map 4 cm
+    cells = size_cells(r, style, data, notes := [])
+    autoscale_traces(r, cells, data, notes)
+    assert abs(cells[id(t)].w_in - cells[id(m)].w_in) < 1e-9  # upscaled: match, not grow-only
+    assert any("autoscaled to column width" in n for n in notes)
+
+
+def test_autoscale_prefers_innermost_enclosing_col_with_a_map():
+    style = PlotStyle(scale_um_per_cm=10.0, trace_scale_um_per_cm=5.0, trace_height_cm=2.0)
+    mo, mi, t = PanelRef("mo"), PanelRef("mi"), PanelRef("t")
+    layout = Col([mo, Col([mi, t])])
+    r = _autoscale_recipe(layout, [_panel("mo"), _panel("mi"), _panel("t", "profiles_trace")])
+    data = {"mo": _map_data(40.0, 10.0), "mi": _map_data(20.0, 10.0), "t": _trace_data(30.0)}
+    cells = size_cells(r, style, data, notes := [])
+    autoscale_traces(r, cells, data, notes)
+    # the inner Col's 2 cm map wins over the outer Col's 4 cm one
+    assert abs(cells[id(t)].w_in - cells[id(mi)].w_in) < 1e-9
+
+
+def test_autoscale_all_trace_figure_untouched_no_note():
+    style = PlotStyle(trace_scale_um_per_cm=5.0, trace_height_cm=2.0)
+    t1, t2 = PanelRef("t1"), PanelRef("t2")
+    layout = Col([t1, t2])
+    r = _autoscale_recipe(layout, [_panel("t1", "profiles_trace"), _panel("t2", "profiles_trace")])
+    data = {"t1": _trace_data(30.0), "t2": _trace_data(10.0)}
+    cells = size_cells(r, style, data, notes := [])
+    w1, w2 = cells[id(t1)].w_in, cells[id(t2)].w_in
+    autoscale_traces(r, cells, data, notes)
+    assert (cells[id(t1)].w_in, cells[id(t2)].w_in) == (w1, w2)
+    assert not any("autoscaled" in n for n in notes)
+
+
+def test_autoscale_skips_pin_sized_trace():
+    style = PlotStyle(scale_um_per_cm=10.0, trace_scale_um_per_cm=5.0, trace_height_cm=2.0)
+    m, t = PanelRef("m"), PanelRef("t")
+    layout = Col([m, Col([t], pinned_width_cm=6.0)])
+    r = _autoscale_recipe(layout, [_panel("m"), _panel("t", "profiles_trace")])
+    data = {"m": _map_data(), "t": _trace_data(30.0)}
+    cells = size_cells(r, style, data, notes := [])
+    ct = cells[id(t)]
+    assert ct.pinned is True
+    assert id(t) not in trace_column_targets(r, cells)  # pinned cells never targeted
+    w0 = ct.w_in
+    autoscale_traces(r, cells, data, notes)
+    assert ct.w_in == w0  # the pin wins
+    assert not any("autoscaled" in n for n in notes)
+
+
+def test_size_cells_marks_pin_sized_traces_and_not_free_ones():
+    style = PlotStyle(scale_um_per_cm=10.0, trace_scale_um_per_cm=5.0, trace_height_cm=2.0)
+    t = PanelRef("t")
+    layout = Row([t], pinned_height_cm=4.0)  # the height-pin branch
+    cells = size_cells(
+        _recipe(layout, [_panel("t", "profiles_trace")]), style, {"t": _trace_data(30.0)}, []
+    )
+    assert cells[id(t)].pinned is True
+    t2 = PanelRef("t")
+    cells2 = size_cells(
+        _recipe(t2, [_panel("t", "profiles_trace")]), style, {"t": _trace_data(30.0)}, []
+    )
+    assert cells2[id(t2)].pinned is False
+
+
+def test_autoscale_leaves_placeholder_trace_untouched():
+    style = PlotStyle(scale_um_per_cm=10.0, trace_scale_um_per_cm=5.0)
+    m, t = PanelRef("m"), PanelRef("t")
+    layout = Col([m, t])
+    r = _autoscale_recipe(layout, [_panel("m"), _panel("t", "profiles_trace")])
+    data = {"m": _map_data(), "t": _trace_data(0.0)}  # degenerate -> placeholder
+    cells = size_cells(r, style, data, notes := [])
+    autoscale_traces(r, cells, data, notes)
+    assert cells[id(t)].kind == "placeholder"
+    assert (cells[id(t)].w_in, cells[id(t)].h_in) == (4.0 / 2.54, 3.0 / 2.54)
+
+
+def test_autoscale_flag_off_is_strict_noop():
+    style = PlotStyle(scale_um_per_cm=10.0, trace_scale_um_per_cm=5.0, trace_height_cm=2.0)
+    m, t = PanelRef("m"), PanelRef("t")
+    layout = Col([m, t])
+    r = _recipe(layout, [_panel("m"), _panel("t", "profiles_trace")])  # flag stays False
+    data = {"m": _map_data(), "t": _trace_data(30.0)}
+    cells = size_cells(r, style, data, notes := [])
+    w0 = cells[id(t)].w_in
+    autoscale_traces(r, cells, data, notes)
+    assert cells[id(t)].w_in == w0
+    assert not any("autoscaled" in n for n in notes)
 
 
 # -- measure/align/place ------------------------------------------------------
