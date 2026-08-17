@@ -69,3 +69,39 @@ def test_progress_suffix_cleared_after_cancel():
     assert view._progress_text.text() == "stacking layers — ~10 s left"
     view._on_cancel()
     assert view._progress_text.text() == "stacking layers"
+
+
+def test_on_run_clears_progress_plain_too(monkeypatch):
+    """N1 fix-wave nit: _on_run cleared _progress_text but not _progress_plain
+    — a cancel/fail before this run's first Progress message would then reset
+    the label back to the PREVIOUS run's step text via the finish-path reset
+    (_on_cancel/_finish_ok/_finish_failed all set _progress_text from
+    _progress_plain). StageRunner is monkeypatched to a no-op so this stays a
+    fast unit test — the assignment under test happens in _on_run BEFORE the
+    real (subprocess-backed) runner is even constructed, so the fake only
+    needs to exist, never actually run."""
+
+    class _FakeRunner:
+        def __init__(self, *_a, **_k):
+            pass
+
+        def start(self):
+            pass
+
+        def is_alive(self):
+            return False
+
+        def poll(self):
+            return []
+
+        def cancel(self):
+            pass
+
+    monkeypatch.setattr("gui.stage_view.StageRunner", _FakeRunner)
+    view, _t = _view_with_fake_clock()
+    view._handle(Progress(0.5, "stale step from a previous run"))
+    assert view._progress_plain == "stale step from a previous run"
+    view._on_run()
+    view._timer.stop()  # never let the fake runner's poll() tick after the test
+    assert view._progress_plain == ""
+    assert view._progress_text.text() == ""

@@ -411,6 +411,9 @@ class StageView(QWidget):
         self._results.clear()
         self._progress.setValue(0)
         self._progress_text.setText("")
+        # A cancel/fail before this run's first Progress message must not
+        # resurrect the previous run's step text via the finish-path reset.
+        self._progress_plain = ""
         self._eta.reset()
         self._log.append(f"Running stage '{self._stage_name}'…")
         self._export_btn.setEnabled(False)

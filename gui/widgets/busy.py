@@ -72,8 +72,20 @@ def wait_for_workers(timeout_ms: int | None = None) -> None:
     set is copied before iterating so a worker finishing (and discarding
     itself via its own ``finished`` signal) concurrently with this call never
     mutates the set out from under it.
+
+    Before waiting on any of them, every live worker is asked to stop
+    cooperatively via ``request_stop()`` when it has one (``BatchWorker``
+    does; ``figure_builder._ComposeWorker`` doesn't and is left to run to
+    completion — a single render/export call, unlike a per-item batch, has
+    nothing to stop between). Requesting every stop first, before waiting on
+    any of them, means a batch mid-run finishes its current item and exits
+    promptly instead of running its full remaining item list while shutdown
+    blocks on it.
     """
-    for worker in list(_LIVE_WORKERS):
+    workers = list(_LIVE_WORKERS)
+    for worker in workers:
+        getattr(worker, "request_stop", lambda: None)()
+    for worker in workers:
         if timeout_ms is None:
             worker.wait()
         else:
