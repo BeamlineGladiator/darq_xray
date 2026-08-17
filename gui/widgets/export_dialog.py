@@ -27,7 +27,7 @@ from PySide6.QtWidgets import (
 )
 
 from dfxm.common.figures import FigureSpec
-from dfxm.common.plotting import AXES_MODES, CMAP_CHOICES, PlotStyle, fixed_scale
+from dfxm.common.plotting import AXES_MODES, CMAP_CHOICES, SCALE_BAR_LOCS, PlotStyle, fixed_scale
 
 from .mpl_canvas import MplCanvas
 
@@ -73,7 +73,7 @@ _CBAR_GROUPS = (
     ("strain", "Strain"),
     ("raw", "Raw intensity"),
 )
-_LOCS = ["lower right", "lower left", "upper right", "upper left"]
+_LOCS = list(SCALE_BAR_LOCS)
 
 
 class StyleControls(QWidget):

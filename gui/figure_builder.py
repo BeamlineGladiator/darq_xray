@@ -40,7 +40,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from dfxm.common.plotting import CMAP_CHOICES, PlotStyle, style_from_params
+from dfxm.common.plotting import CMAP_CHOICES, SCALE_BAR_LOCS, PlotStyle, style_from_params
 from dfxm.compose.recipe import (
     SCALE_BAR_MODES,
     Col,
@@ -255,6 +255,21 @@ class FigureBuilderWindow(QMainWindow):
         self._compose_padding.valueChanged.connect(self._on_compose_edited)
         form.addRow("Padding", self._compose_padding)
 
+        form.addRow(QLabel("<b>Colourbars</b>"))
+        self._compose_cbar_mode = QComboBox()
+        for text, value in (("Per panel", "per-panel"), ("One per quantity", "united")):
+            self._compose_cbar_mode.addItem(text, value)
+        self._compose_cbar_mode.currentIndexChanged.connect(self._on_compose_edited)
+        form.addRow("Colourbar mode", self._compose_cbar_mode)
+
+        self._compose_cbar_pos = QComboBox()
+        for text, value in (("Right", "right"), ("Bottom", "bottom")):
+            self._compose_cbar_pos.addItem(text, value)
+        self._compose_cbar_pos.setEnabled(False)
+        self._compose_cbar_pos.currentIndexChanged.connect(self._on_compose_edited)
+        form.addRow("Colourbar position (united)", self._compose_cbar_pos)
+
+        form.addRow(QLabel("<b>Scale bar</b>"))
         self._compose_scale_bar_mode = QComboBox()
         self._compose_scale_bar_mode.addItems(list(SCALE_BAR_MODES))
         self._compose_scale_bar_mode.setCurrentText(c.scale_bar_mode)
@@ -265,6 +280,12 @@ class FigureBuilderWindow(QMainWindow):
         self._compose_scale_bar_panel.currentTextChanged.connect(self._on_compose_edited)
         form.addRow("Scale-bar panel (one-panel mode)", self._compose_scale_bar_panel)
         self._refresh_compose_panel_combo()
+
+        self._compose_scale_bar_loc = QComboBox()
+        self._compose_scale_bar_loc.addItems(list(SCALE_BAR_LOCS))
+        self._compose_scale_bar_loc.setCurrentText(self._style.scale_bar_loc)
+        self._compose_scale_bar_loc.currentTextChanged.connect(self._on_scale_bar_loc_edited)
+        form.addRow("Corner", self._compose_scale_bar_loc)
 
         self._compose_pinned_width = QDoubleSpinBox()
         self._compose_pinned_width.setRange(0.0, 1000.0)
@@ -298,7 +319,10 @@ class FigureBuilderWindow(QMainWindow):
             self._compose_font_scale,
             self._compose_gutter,
             self._compose_padding,
+            self._compose_cbar_mode,
+            self._compose_cbar_pos,
             self._compose_scale_bar_mode,
+            self._compose_scale_bar_loc,
             self._compose_pinned_width,
         )
         for w in widgets:
@@ -307,7 +331,15 @@ class FigureBuilderWindow(QMainWindow):
         self._compose_font_scale.setValue(c.label_font_scale)
         self._compose_gutter.setValue(c.gutter_cm)
         self._compose_padding.setValue(c.padding_cm)
+        self._compose_cbar_mode.setCurrentIndex(
+            max(0, self._compose_cbar_mode.findData(c.colorbar_mode))
+        )
+        self._compose_cbar_pos.setCurrentIndex(
+            max(0, self._compose_cbar_pos.findData(c.colorbar_pos))
+        )
+        self._compose_cbar_pos.setEnabled(c.colorbar_mode == "united")
         self._compose_scale_bar_mode.setCurrentText(c.scale_bar_mode)
+        self._compose_scale_bar_loc.setCurrentText(self._style.scale_bar_loc)
         self._compose_pinned_width.setValue(c.pinned_width_cm or 0.0)
         for w in widgets:
             w.blockSignals(False)
@@ -321,15 +353,30 @@ class FigureBuilderWindow(QMainWindow):
         c.padding_cm = self._compose_padding.value()
         c.scale_bar_mode = self._compose_scale_bar_mode.currentText()
         c.scale_bar_panel = self._compose_scale_bar_panel.currentData() or None
+        c.colorbar_mode = self._compose_cbar_mode.currentData()
+        c.colorbar_pos = self._compose_cbar_pos.currentData()
+        self._compose_cbar_pos.setEnabled(c.colorbar_mode == "united")
         pinned = self._compose_pinned_width.value()
         c.pinned_width_cm = pinned if pinned > 0 else None
         self._dirty = True
         self._update_title()
         self.schedule_preview()
 
+    def _on_scale_bar_loc_edited(self, loc: str) -> None:
+        """The corner combo IS style.scale_bar_loc — one setting, two widgets."""
+        if self._style.scale_bar_loc == loc:
+            return
+        self._style.scale_bar_loc = loc
+        self._controls.sync_from_style()
+        self._sync_style_to_recipe()
+
     # -- style pane -------------------------------------------------------------
     def _sync_style_to_recipe(self) -> None:
         self._recipe.style = asdict(self._style)
+        if hasattr(self, "_compose_scale_bar_loc"):
+            self._compose_scale_bar_loc.blockSignals(True)
+            self._compose_scale_bar_loc.setCurrentText(self._style.scale_bar_loc)
+            self._compose_scale_bar_loc.blockSignals(False)
         self._dirty = True
         self._update_title()
         self.schedule_preview()
@@ -1219,9 +1266,18 @@ class FigureBuilderWindow(QMainWindow):
     # -- slots ------------------------------------------------------------------
     def _on_add_panels(self) -> None:
         defaults = self._defaults_provider()
-        dlg = AddPanelDialog(defaults, parent=self)
+        c = self._recipe.compose
+        dlg = AddPanelDialog(defaults, schematic=(c.colorbar_mode, c.colorbar_pos), parent=self)
         if dlg.exec() == QDialog.DialogCode.Accepted:
-            self.add_panels(dlg.selected_panels, dlg.selected_layout)
+            renames = self.add_panels(dlg.selected_panels, dlg.selected_layout)
+            if dlg.scale_bar_pick is not None:
+                pid, loc = dlg.scale_bar_pick
+                self._recipe.compose.scale_bar_mode = "one-panel"
+                self._recipe.compose.scale_bar_panel = renames.get(pid, pid)
+                self._style.scale_bar_loc = loc
+                self._controls.sync_from_style()
+                self._sync_style_to_recipe()
+                self._load_compose_into_widgets()
 
     def _on_arrange(self) -> None:
         from .widgets.layout_arranger import ArrangeDialog

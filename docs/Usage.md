@@ -1356,9 +1356,9 @@ a composed figure looks consistent with the per-stage exports above.
   behaviour: each map/slice panel gets its own bar, or a `Row`/`Col`'s
   `shared_colorbar` flag gives its members one bar together) or `united`: one
   bar per **quantity** (strain, mosaicity, …) placed along one edge of the
-  whole figure (`colorbar_pos`, `right` or `bottom`), reachable from a saved
-  recipe file or the headless CLI, not yet from the in-app editor's compose
-  pane. In `united` mode, any `shared_colorbar` flags on rows/columns are
+  whole figure (`colorbar_pos`, `right` or `bottom`), set from the in-app
+  editor's compose pane (below) or a saved recipe file/the headless CLI. In
+  `united` mode, any `shared_colorbar` flags on rows/columns are
   ignored (a note explains why — the per-quantity bar supersedes them), and a
   panel's own **Colourbar** override set to On still forces that panel to keep
   its private bar, excluded from the union.
@@ -1411,7 +1411,11 @@ Clicking **Add panels…** opens a two-step dialog:
    tiles into a neighbour (never removable below one column); **+ Add
    column** adds a blank one. Clicking a tile's corner marks it as the
    scale-bar panel (a small dot), mirroring the compose pane's "one-panel"
-   scale-bar mode. **Back** returns to step 1 without losing the arrangement.
+   scale-bar mode. The grid's colourbar-strip preview (along the right or
+   bottom edge) reflects the compose pane's **current** Colourbar mode/
+   position (see *Compose* below) at the moment you opened Add panels…, so
+   switching to "One per quantity" beforehand previews the union strip here.
+   **Back** returns to step 1 without losing the arrangement.
 
 **OK from step 1** appends the checked panels flat — one `PanelRef` per panel,
 in tree order — into the current outline container, same as before this
@@ -1420,7 +1424,12 @@ two-step flow existed. **OK from step 2** appends the arranged grid as a
 current outline container, preserving whatever rows/columns you dragged into
 place; new panel ids are uniquified against the recipe's existing panels
 first, so the arrangement's references always point at the ids actually
-stored.
+stored. If a scale-bar corner was picked in step 2, OK from step 2 also
+switches Scale-bar mode to **one-panel** targeting that panel (translated
+through the same id-uniquification, so a picked panel that got renamed for a
+collision still resolves to the right id) and moves the Style pane's Bar
+location — and the Compose pane's Corner combo — to that corner, the same
+handoff Arrange…'s Apply performs (below).
 
 **Arrange…**
 
@@ -1501,14 +1510,34 @@ button:
   if the recipe has none) and refreshes every control from it.
 - *Compose* — the composer-level knobs on `recipe.compose`: the label
   template (must contain an `A`/`a` placeholder), the label font scale, the
-  gutter and padding (cm), the scale-bar mode (`per-panel`/`one-panel`/
-  `gutter`) with a panel dropdown for the one-panel mode (populated from the
-  recipe's current panels, showing each panel's captured data name — falling
-  back to its id when no name was captured; blank = none designated yet), and
-  a pinned total width in cm (0 = auto-sized from the layout). The dropdown
-  displays the data name but stores the panel's id, so `compose.scale_bar_panel`
-  is always set from the id, never the displayed text. Every edit writes
-  straight into `recipe.compose` and schedules a re-render.
+  gutter and padding (cm), then two headed groups, then a pinned total width
+  in cm (0 = auto-sized from the layout):
+  - **Colourbars** — *Colourbar mode*, "Per panel" (default — each map/slice
+    panel keeps its own bar, or a `Row`/`Col`'s "one colorbar for this group"
+    flag gives its members one together) or "One per quantity" (`united`:
+    one bar per quantity placed along one edge of the whole figure), and
+    *Colourbar position (united)*, "Right" or "Bottom" — greyed out unless
+    mode is "One per quantity". In united mode, any row/column
+    shared-colorbar flags are ignored (`united` supersedes them) and a
+    panel's own **Colourbar** override set to On (in the selected-node pane,
+    below) still forces that panel to keep its private bar, excluded from
+    the union.
+  - **Scale bar** — the scale-bar mode (`per-panel`/`one-panel`/`gutter`)
+    with a panel dropdown for the one-panel mode (populated from the
+    recipe's current panels, showing each panel's captured data name —
+    falling back to its id when no name was captured; blank = none
+    designated yet), and a **Corner** dropdown over the four scale-bar
+    corners. The dropdown displays the data name but stores the panel's id,
+    so `compose.scale_bar_panel` is always set from the id, never the
+    displayed text. **Corner is the same setting as the Style pane's "Bar
+    location"** — editing either widget updates both immediately (and the
+    Style pane's `changed` signal keeps them in sync from that side too), so
+    there is exactly one `style.scale_bar_loc` value shown two places.
+    Clicking a corner dot on a tile in the Add-panels/Arrange… drag-grid
+    arranger (see below) is a third route to the same setting — it also
+    switches Scale-bar mode to `one-panel` and targets that panel.
+  Every edit writes straight into `recipe.compose` (or, for Corner, into the
+  working `PlotStyle` and then `recipe.style`) and schedules a re-render.
 - *Selected node* — a stack of pages, one per outline-node type; the page
   shown always matches the current tree selection. Selecting nothing shows a
   short hint ("select a node in the outline to edit it"). Every field on

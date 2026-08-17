@@ -989,3 +989,54 @@ def test_apply_arranged_layout_replaces_purges_and_applies_pick():
 def test_arrange_button_present():
     w = _win()
     assert w._arrange_btn.text() == "Arrange…"
+
+
+# -- compose-form colourbar + scale-bar controls ------------------------------
+def test_compose_colorbar_controls_write_fields_and_gate_pos():
+    w = _win()
+    assert w.recipe().compose.colorbar_mode == "per-panel"
+    assert not w._compose_cbar_pos.isEnabled()
+    w._compose_cbar_mode.setCurrentIndex(w._compose_cbar_mode.findData("united"))
+    assert w.recipe().compose.colorbar_mode == "united"
+    assert w._compose_cbar_pos.isEnabled()
+    w._compose_cbar_pos.setCurrentIndex(w._compose_cbar_pos.findData("bottom"))
+    assert w.recipe().compose.colorbar_pos == "bottom"
+    w._compose_cbar_mode.setCurrentIndex(w._compose_cbar_mode.findData("per-panel"))
+    assert not w._compose_cbar_pos.isEnabled()
+
+
+def test_compose_colorbar_widgets_reload_from_recipe():
+    w = _win()
+    w.recipe().compose.colorbar_mode = "united"
+    w.recipe().compose.colorbar_pos = "bottom"
+    w._load_compose_into_widgets()
+    assert w._compose_cbar_mode.currentData() == "united"
+    assert w._compose_cbar_pos.currentData() == "bottom"
+    assert w._compose_cbar_pos.isEnabled()
+
+
+def test_scale_bar_corner_combo_is_style_scale_bar_loc_both_ways():
+    w = _win()
+    w._compose_scale_bar_loc.setCurrentText("upper left")
+    assert w._style.scale_bar_loc == "upper left"
+    assert w.recipe().style["scale_bar_loc"] == "upper left"
+    assert w._controls._w_bar_loc.currentText() == "upper left"
+    w._controls._w_bar_loc.setCurrentText("lower left")  # style-pane edit
+    assert w._style.scale_bar_loc == "lower left"
+    assert w._compose_scale_bar_loc.currentText() == "lower left"
+
+
+def test_scale_bar_locs_is_canonical():
+    from dfxm.common.plotting import SCALE_BAR_LOCS
+    from gui.widgets.export_dialog import _LOCS
+
+    assert (
+        list(SCALE_BAR_LOCS)
+        == _LOCS
+        == [
+            "lower right",
+            "lower left",
+            "upper right",
+            "upper left",
+        ]
+    )
