@@ -1110,30 +1110,63 @@ anywhere (`fig.set_layout_engine("none")` throughout, same as `layout.py`).
       `SizedCell.w_in`/`h_in`, appended to `notes` (never raised).
   - **Text-collision advisory** (very last, after `_align_axis_labels` and
     the gutter/scale-bar draws — the geometry is final): `render_recipe`
-    builds an owner→axes map (each panel keyed by `title or id`, uniquified
-    with ` #2`/` #3` on duplicate titles; each shared/united bar axes keyed
-    `"colorbar (<group>)"`) and extends `notes` with
-    `_detect_text_collisions(fig, owners, _collision_presuggestions(recipe, cells))`.
-    Exports inherit the check via the shared `render_recipe` path.
+    builds an owner→axes map — each panel keyed by `title or id`; that
+    panel's own per-panel colorbar axes (`cell.extras`), when it has one,
+    keyed `"<panel> colorbar"`; each shared/united bar axes keyed
+    `"colorbar (<group>)"`; each `TextCell` leaf's axes keyed `"text"` — all
+    uniquified with ` #2`/` #3` on a name collision (`_owner_key`) — then
+    computes `tiny_pids = _tiny_trace_pids(recipe, cells)` and calls
+    `_detect_text_collisions(fig, owners, ["enable trace autoscale"] if
+    tiny_pids else [])`, extending `notes` with its result. If `tiny_pids` is
+    non-empty AND the collision check came back clean (no note — the common
+    case: see `_tiny_trace_pids` below for why the collision check alone
+    almost never catches this), a STANDALONE note is appended instead:
+    `"panel(s) {names}: trace rendered under 40% of the column's map width —
+    consider enabling trace autoscale"` (panel(s) named by `title or id`; a
+    single offending panel also gets its width in cm parenthesised). Exports
+    inherit both checks via the shared `render_recipe` path.
 - `_detect_text_collisions(fig, axes_by_owner, pre_suggestions=()) -> list[str]` —
   final-geometry cross-panel text-overlap check. Per axes it collects the
   visible, non-empty text artists (`_axes_texts`: title, x/y axis labels,
-  tick labels, annotations/free texts — panel letters are annotations; a bar
-  axes' label + ticks are its own axis artists). Cost guard first: more than
-  `_MAX_COLLISION_TEXTS` (400) text artists total returns
-  `"text-collision check skipped ({n} text artists)"` without drawing.
-  Otherwise one draw, then a prefilter (per-axes `get_tightbbox` padded by
-  2 pt — only text pairs whose parent axes' boxes intersect are compared)
-  and the pairwise test: two texts with DIFFERENT parent axes whose
-  `get_window_extent` rectangles, each shrunk by 1 pt, intersect with
-  positive area (`_overlap_area`). Same-axes overlaps are ignored. Clean →
-  `[]`; else exactly one note, `"text overlaps between panels {names}
+  tick labels **actually drawn within the axis's current view interval**
+  (`_view_filtered_tick_labels` — `get_xticklabels()`/`get_yticklabels()`
+  include labels for ticks the locator proposed but matplotlib never draws
+  because they fall outside `get_view_interval()`, which used to inflate the
+  collision count with phantom text extents), annotations/free texts — panel
+  letters are annotations; a bar axes' label + ticks are its own axis
+  artists). Cost guard first: more than `_MAX_COLLISION_TEXTS` (400) text
+  artists total returns `"text-collision check skipped ({n} text artists)"`
+  without drawing. Otherwise one draw, then a prefilter (per-axes
+  `get_tightbbox` padded by 2 pt — only text pairs whose parent axes' boxes
+  intersect are compared) and the pairwise test: two texts with DIFFERENT
+  parent axes whose `get_window_extent` rectangles, each shrunk by 1 pt,
+  intersect with positive area (`_overlap_area`). Same-axes overlaps are
+  ignored. Clean → `[]`. When every owner involved in the collision is a
+  colorbar owner (`_is_colorbar_owner` — a name matching `"colorbar"` /
+  `"colorbar (<group>)"` / `"<panel> colorbar"`, uniquify suffix stripped
+  first) the note is dropped too — two colorbar axes only collide when their
+  bars themselves overlap, which the united-bar overlap check already
+  reports with a more specific `colorbar_pos` suggestion, so a generic
+  "increase gutter; reduce font scale" note on top would be redundant.
+  Otherwise exactly one note, `"text overlaps between panels {names}
   ({n} collision(s)) — {suggestions}"`, suggestions = `pre_suggestions` +
   `"increase gutter"` + `"reduce font scale"`. Never an error.
+- `_tiny_trace_pids(recipe, cells) -> list[str]` — panel ids of trace cells
+  rendered under `_TRACE_TINY_FRACTION` (40%) of their column's widest map
+  width, when `compose.trace_autoscale` is off (`[]` when the flag is on — an
+  autoscaled trace is matched to that width and so is never tiny). Feeds both
+  the collision note's conditional lead suggestion and `render_recipe`'s
+  standalone tiny-trace note (above); the standalone note exists because the
+  collision check's own geometry — every axes reserves its own measured
+  tightbbox — means a microscopic trace fully inside its own reserved box
+  next to a full-size map rarely produces an actual text-artist OVERLAP, so
+  without the standalone note the advisory was practically unreachable.
 - `_collision_presuggestions(recipe, cells) -> list[str]` —
-  `["enable trace autoscale"]` when `compose.trace_autoscale` is off and some
-  non-pinned trace cell rendered below `_TRACE_TINY_FRACTION` (40%) of its
-  column's widest map width (via `layout.trace_column_targets`), else `[]`.
+  `["enable trace autoscale"]` when `_tiny_trace_pids(recipe, cells)` is
+  non-empty, else `[]`; thin wrapper kept for its own direct-call test and as
+  the documented public-ish suggestion-only entry point (`render_recipe`
+  itself computes `tiny_pids` once and derives both the presuggestion and the
+  standalone note from it directly, rather than calling this twice).
 - `export_recipe(recipe, out_dir, *, formats=None, dpi=None, style_overrides=None, loader_cache=None) -> (list[str], ComposeResult)` —
   creates `out_dir` **first**, before rendering anything (`os.makedirs(out_dir,
   exist_ok=True)` wrapped in a `try`/`except OSError`, re-raised as

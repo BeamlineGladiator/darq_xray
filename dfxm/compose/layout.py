@@ -71,8 +71,9 @@ class SizedCell:
     kind: str  # "map"|"trace"|"spacer"|"text"|"placeholder"
     w_in: float
     h_in: float
-    # True when size_cells sized this cell from a pinned row height / column
-    # width — autoscale_traces never touches pinned cells (pins win).
+    # True when size_cells sized this TRACE cell from a pinned row height /
+    # column width (map cells never set it) — autoscale_traces skips pinned
+    # cells; pins win.
     pinned: bool = False
     # filled by the placement pass (Task 6):
     ax: object | None = None

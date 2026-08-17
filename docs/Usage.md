@@ -1485,14 +1485,27 @@ window. Deleting the last panel clears the live preview canvas outright
 to preview" note) — the note always describes exactly what's on screen.
 The notes bar can also carry a **text-overlap advisory**: after every render
 (and every export — same code path) the composer checks whether visible text
-from different panels overlaps in the final figure (titles, axis and tick
-labels, panel letters, colorbar text) and, if so, appends one note naming the
-colliding panels with suggested fixes — *enable trace autoscale* (offered
-when a trace panel rendered far narrower than its column's maps and that
-option is off), *increase gutter*, and *reduce font scale*. It is advisory
-only, never an error, and on a figure with an unusually large number of text
-artists (over 400) the check skips itself with a note rather than slow the
-render down.
+from different panels overlaps in the final figure — titles, axis and tick
+labels (only the ones actually drawn within the panel's current view range —
+a tick the locator proposed but that fell off the visible axis range is never
+counted), panel letters, colorbar text (including each panel's own private
+colorbar, not just a shared/united one), and any text-panel caption — and, if
+so, appends one note naming the colliding panels with suggested fixes —
+*enable trace autoscale* (offered when a trace panel rendered far narrower
+than its column's maps and that option is off), *increase gutter*, and
+*reduce font scale*. If the ONLY thing colliding is two colorbars (e.g. two
+"one per quantity" bars stretched into the same corner), that generic note is
+skipped — the more specific *united bars … overlap* note (above) already
+covers it. It is advisory only, never an error, and on a figure with an
+unusually large number of text artists (over 400) the check skips itself
+with a note rather than slow the render down.
+
+A trace panel rendered under 40% of its column's map width also gets its own
+**standalone advisory** — `"panel(s) {name(s)}: trace rendered under 40% of
+the column's map width — consider enabling trace autoscale"` — even when
+nothing actually overlaps: a microscopic trace panel still reserves its own
+space cleanly, so the text-overlap check above rarely fires for it on its
+own; this note catches the case anyway.
 Clicking a panel in the preview selects that panel's node in the
 outline tree, mirroring the selection you'd otherwise make by hand before
 Label…/Delete/↑/↓. The outline keeps the node you're editing selected across
