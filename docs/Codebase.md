@@ -877,7 +877,7 @@ anywhere (`fig.set_layout_engine("none")` throughout, same as `layout.py`).
      leaves and overwrites `data_by_id[pid]` with a genuine
      `PanelData(kind="placeholder", payload={"reason": "degenerate extent"})`
      wherever `cell.kind == "placeholder"` but the data isn't already one —
-     otherwise the draw loop below (step 8) would still hand the ORIGINAL
+     otherwise the draw loop below (step 9) would still hand the ORIGINAL
      degenerate arrays to `draw_panel`, which trusts `data.kind` over the
      cell's sizing decision and would call `imshow` with a zero-width/height
      extent (matplotlib's "identical low and high xlims/ylims" warning). This
@@ -917,7 +917,7 @@ anywhere (`fig.set_layout_engine("none")` throughout, same as `layout.py`).
      just hides the bar axes (`set_axis_off()`) instead of leaving a blank
      default-ticked one. The bar's actual colourbar content
      (`add_colorbar(..., cax=bar_ax)`) is drawn *before* the measure pass
-     (step 9) so the bar's own tick numbers, offset text, and vertical label
+     (step 11) so the bar's own tick numbers, offset text, and vertical label
      get measured margins — reserved envelope space — like any panel's;
      drawing it after placement left those decorations with no room at all
      (they spilled over the next column's panels or off the canvas).
@@ -999,7 +999,7 @@ anywhere (`fig.set_layout_engine("none")` throughout, same as `layout.py`).
      `scale_bar_loc="center"`/`scale_bar_inset_pt=0.0` regardless of the
      recipe's own style — a user's corner `scale_bar_loc` (meant for full-size
      map panels) would clip inside this small dedicated cell.
-  8. **Draw panel contents** — per `PanelRef` leaf, dispatched on
+  9. **Draw panel contents** — per `PanelRef` leaf, dispatched on
      `SizedCell.kind`: `"map"` panels needing a colourbar (not covered by a
      shared bar, `style.colorbar` on) get their own provisional `cax` axes
      wired onto the cell as `extras`/`sync` (mirrors
@@ -1013,23 +1013,23 @@ anywhere (`fig.set_layout_engine("none")` throughout, same as `layout.py`).
      `PanelDef.show_title` still re-enables it). Every map panel's scale bar
      is drawn with `scale_bar=False` HERE regardless of `compose.scale_bar_mode`
      — whether one is wanted is only recorded (`scale_bar_wanted[pid]`); the
-     bar itself is drawn later (step 12) once the panel's box has its FINAL
+     bar itself is drawn later (step 13) once the panel's box has its FINAL
      size, so its baked printed-point thickness reflects the panel's real
-     effective µm/cm even after a pinned-width rescale (step 11) changes it.
-  9. **Labels** — `_assign_labels`/`_draw_label`: depth-first auto-increment
-     over `compose.label_template` (a `group_label` node consumes one slot for
-     the whole group; a manual `PanelDef.label` replaces the slot's text;
-     `label=""` suppresses it), drawn as a bold `ax.annotate` at the axes'
-     top-left *before* `measure_cells` so the label counts toward margins.
-  10. `measure_cells` then `place_tree` (`gutter_in`/`pad_in` from
+     effective µm/cm even after a pinned-width rescale (step 12) changes it.
+  10. **Labels** — `_assign_labels`/`_draw_label`: depth-first auto-increment
+      over `compose.label_template` (a `group_label` node consumes one slot for
+      the whole group; a manual `PanelDef.label` replaces the slot's text;
+      `label=""` suppresses it), drawn as a bold `ax.annotate` at the axes'
+      top-left *before* `measure_cells` so the label counts toward margins.
+  11. `measure_cells` then `place_tree` (`gutter_in`/`pad_in` from
       `compose.gutter_cm`/`padding_cm`).
-  11. **Pinned total width** (`compose.pinned_width_cm`, optional) — rescale
+  12. **Pinned total width** (`compose.pinned_width_cm`, optional) — rescale
       every cell's `w_in`/`h_in` by `factor = pinned_width_cm·cm→in / fig_w`,
       note each panel's new implied effective scale, re-run `measure_cells` +
       `place_tree` once, and note a residual miss > 2%.
-  12. **Per-panel scale bars**, drawn now from FINAL cell sizes
+  13. **Per-panel scale bars**, drawn now from FINAL cell sizes
       (`fixed_scale_um_per_cm = ext_x_um / (cell.w_in * 2.54)`, recomputed
-      post-rescale) for every panel `scale_bar_wanted` (step 8) — this is the
+      post-rescale) for every panel `scale_bar_wanted` (step 9) — this is the
       first point a bar's true printed-point thickness is baked in. Then each
       shared bar is span-corrected (`_stretch_shared_bar` — its colourbar
       content was already drawn pre-measure, see step 6; here only its
@@ -1044,8 +1044,8 @@ anywhere (`fig.set_layout_engine("none")` throughout, same as `layout.py`).
       ignores the composer's absolutely-placed ones; the shared run margin
       already reserves the widest member's decoration space, so the shift
       cannot overflow).
-  13. `TextCell` contents (centred text in its now-placed axes).
-  14. **Drift guard** — `box_drift_note` per panel axes against its final
+  14. `TextCell` contents (centred text in its now-placed axes).
+  15. **Drift guard** — `box_drift_note` per panel axes against its final
       `SizedCell.w_in`/`h_in`, appended to `notes` (never raised).
 - `export_recipe(recipe, out_dir, *, formats=None, dpi=None, style_overrides=None, loader_cache=None) -> (list[str], ComposeResult)` —
   creates `out_dir` **first**, before rendering anything (`os.makedirs(out_dir,
