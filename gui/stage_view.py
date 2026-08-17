@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from dfxm.common.eta import EtaEstimator
 from dfxm.common.figures import FigureSpec, figures_for
 from dfxm.config.models import Experiment, StageSpec
 from dfxm.runner import Done, Failed, Log, Progress, StageRunner
@@ -37,6 +38,7 @@ from dfxm.stages.registry import STAGE_TARGETS
 from .bindings import experiment_overrides
 from .form_state import FormStateStore
 from .viewers import append_line_job, inject_line_into_jobs, volume_sources
+from .widgets.busy import busy_cursor
 from .widgets.help_panel import HelpPanel
 from .widgets.log_console import LogConsole
 from .widgets.param_form import ParamForm
@@ -182,6 +184,12 @@ class StageView(QWidget):
         self._progress.setRange(0, 100)
         self._progress_text = QLabel("")
         self._progress_text.setWordWrap(True)
+        # The last plain Progress.text (no " — ~N s left" ETA suffix) — kept
+        # so _on_cancel/_finish_ok/_finish_failed can reset the label to it,
+        # dropping a now-stale ETA that would otherwise linger after the run
+        # has actually stopped.
+        self._progress_plain = ""
+        self._eta = EtaEstimator()
         progress_row = QHBoxLayout()
         progress_row.addWidget(self._progress, 1)
         progress_row.addWidget(self._progress_text, 2)
@@ -403,6 +411,10 @@ class StageView(QWidget):
         self._results.clear()
         self._progress.setValue(0)
         self._progress_text.setText("")
+        # A cancel/fail before this run's first Progress message must not
+        # resurrect the previous run's step text via the finish-path reset.
+        self._progress_plain = ""
+        self._eta.reset()
         self._log.append(f"Running stage '{self._stage_name}'…")
         self._export_btn.setEnabled(False)
         self._export_all_btn.setEnabled(False)
@@ -417,6 +429,7 @@ class StageView(QWidget):
             self._runner.cancel()
         self._timer.stop()
         self._log.set_status("Cancelled.", error=True)
+        self._progress_text.setText(self._progress_plain)  # drop a stale ETA suffix
         self._set_running(False)
 
     # -- profiles interactive line picker (lazy) --------------------------
@@ -440,13 +453,14 @@ class StageView(QWidget):
         from .widgets.line_picker import LinePickerDialog  # imported on demand
 
         try:
-            dlg = LinePickerDialog(
-                h5,
-                slice_name,
-                init_offset=offset,
-                ref_pref=vals.get("reference_volume_id", ""),
-                parent=self,
-            )
+            with busy_cursor():  # no widget passed — text would never be shown
+                dlg = LinePickerDialog(
+                    h5,
+                    slice_name,
+                    init_offset=offset,
+                    ref_pref=vals.get("reference_volume_id", ""),
+                    parent=self,
+                )
         except Exception as exc:  # noqa: BLE001 - missing slice / unreadable file
             self._log.append(f"Pick line failed: {exc}")
             self._tabs.setCurrentWidget(self._log)
@@ -479,7 +493,8 @@ class StageView(QWidget):
         from dfxm.stages import slices as _sl  # local import: lazy, Qt-free
 
         try:
-            marks = _sl.read_marks(h5)
+            with busy_cursor():
+                marks = _sl.read_marks(h5)
         except Exception as exc:  # noqa: BLE001 - unreadable file
             self._log.append(f"Jobs from marks: cannot read marks: {exc}")
             self._tabs.setCurrentWidget(self._log)
@@ -502,13 +517,14 @@ class StageView(QWidget):
         n = len(sel_dlg.selected)
         for k, (sname, off) in enumerate(sel_dlg.selected, start=1):
             try:
-                dlg = LinePickerDialog(
-                    h5,
-                    sname,
-                    init_offset=off,
-                    ref_pref=vals.get("reference_volume_id", ""),
-                    parent=self,
-                )
+                with busy_cursor():
+                    dlg = LinePickerDialog(
+                        h5,
+                        sname,
+                        init_offset=off,
+                        ref_pref=vals.get("reference_volume_id", ""),
+                        parent=self,
+                    )
             except Exception as exc:  # noqa: BLE001 - missing slice / unreadable file
                 self._log.append(f"Jobs from marks: {sname} @ {off:+.2f} µm failed: {exc}")
                 skipped += 1
@@ -692,7 +708,8 @@ class StageView(QWidget):
         from .widgets.mark_planes import MarkPlanesDialog  # imported on demand
 
         try:
-            dlg = MarkPlanesDialog(h5, parent=self)
+            with busy_cursor():
+                dlg = MarkPlanesDialog(h5, parent=self)
         except Exception as exc:  # noqa: BLE001 - unreadable / empty file
             self._log.append(f"Mark planes failed: {exc}")
             self._tabs.setCurrentWidget(self._log)
@@ -786,8 +803,11 @@ class StageView(QWidget):
         if isinstance(msg, Progress):
             self._log.set_progress(msg.frac, msg.text)
             self._progress.setValue(max(0, min(100, int(round(msg.frac * 100)))))
+            self._eta.update(msg.frac)
             if msg.text:
-                self._progress_text.setText(msg.text)
+                self._progress_plain = msg.text
+                eta = self._eta.eta_text()
+                self._progress_text.setText(f"{msg.text} — {eta}" if eta else msg.text)
                 self._log.append(f"  [{msg.frac * 100:5.1f}%] {msg.text}")
         elif isinstance(msg, Log):
             self._log.append(msg.text)
@@ -801,6 +821,7 @@ class StageView(QWidget):
         self._last_result = result
         self._log.set_progress(1.0, "Done.")
         self._progress.setValue(100)
+        self._progress_text.setText(self._progress_plain)  # drop a stale ETA suffix
         summary = _summarize(self._stage_name, result)
         first_line = summary.splitlines()[0] if summary else "done"
         self._show_banner(f"✓ {html.escape(first_line)}", error=False)
@@ -938,6 +959,7 @@ class StageView(QWidget):
         self._timer.stop()
         self._log.set_status(f"Failed: {failure.error}", error=True)
         self._log.append(failure.traceback)
+        self._progress_text.setText(self._progress_plain)  # drop a stale ETA suffix
         text = f"✗ {html.escape(failure.error)}"
         hint = getattr(failure, "hint", "")
         if hint:

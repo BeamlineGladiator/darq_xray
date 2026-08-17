@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
 
 from dfxm.stages import profiles as _pr
 
+from .busy import DialogBatchRunner
 from .clim_section import ClimGroupSection, volume_label
 
 
@@ -84,12 +85,12 @@ class ProfilesReplotDialog(QDialog):
         self._render_btn = QPushButton("Render")
         self._render_btn.setProperty("role", "primary")
         self._render_btn.clicked.connect(self._on_render)
-        close_btn = QPushButton("Close")
-        close_btn.clicked.connect(self.reject)
+        self._close_btn = QPushButton("Close")
+        self._close_btn.clicked.connect(self.reject)
         btn_row = QHBoxLayout()
         btn_row.addWidget(self._status, 1)
         btn_row.addWidget(self._render_btn)
-        btn_row.addWidget(close_btn)
+        btn_row.addWidget(self._close_btn)
 
         layout = QVBoxLayout(self)
         layout.addLayout(file_row)
@@ -100,6 +101,7 @@ class ProfilesReplotDialog(QDialog):
         layout.addLayout(btn_row)
 
         self._catalog: list = []
+        self._batch = DialogBatchRunner(self, (self._render_btn, self._close_btn))
         self._reload()
 
     @staticmethod
@@ -237,18 +239,50 @@ class ProfilesReplotDialog(QDialog):
         if err:
             self._status.setText(err)
             return
-        try:
-            written = self.render_selection(out_dir)
-        except Exception as exc:  # noqa: BLE001 — surface render errors in the status bar
-            self._status.setText(f"render failed: {self._fmt_error(exc)}")
+        jobs = self._checked_jobs()
+        h5, style, params = self._h5_path, self._style, self._params
+        clims, dpi = self._clim.clim_by_group(), int(self._dpi.value())
+        self._last_out_dir = out_dir
+        result_box: list = []
+
+        def _whole_batch(_jobs):
+            # ONE item: profiles' stem dedup + shared trace margins are
+            # per-call state — never split this batch (plan Task 7 note).
+            res = _pr.render_replot(h5, _jobs, style, clims, out_dir, dpi=dpi, params=params)
+            result_box.append(res)  # plain attr/list append: GIL-safe, read only after finish
+            return [
+                p
+                for jr in res.jobs
+                for p in ([jr.figure] if jr.figure else []) + list(jr.overviews) + list(jr.traces)
+            ]
+
+        self._result_box = result_box
+        self._batch.start(
+            [jobs], _whole_batch, self._on_batch_done, text=f"Rendering {len(jobs)} job(s)…"
+        )
+
+    def _on_batch_done(self, written: list, error: str, cancelled: bool) -> None:
+        self.written = written
+        if error:
+            self._status.setText(f"render failed: {error}")
             return
-        res = self._last_result
-        msg = f"wrote {len(written)} PNG(s) → {out_dir}"
-        if res.skipped:
+        res = self._result_box[0] if self._result_box else None
+        self._last_result = res
+        msg = f"wrote {len(written)} PNG(s) → {self._last_out_dir}"
+        if cancelled:
+            msg = "cancelled — " + msg
+        if res is not None and res.skipped:
             msg += f"; skipped: {'; '.join(res.skipped)}"
-        if res.notes:
+        if res is not None and res.notes:
             msg += f"; notes: {'; '.join(res.notes)}"
         self._status.setText(msg)
+
+    def reject(self) -> None:  # noqa: D401 — Qt override
+        """Close gates on a running batch: first Esc/Close requests cancel."""
+        if self._batch.running:
+            self._batch.request_cancel()
+            return
+        super().reject()
 
     def _on_browse_h5(self) -> None:
         path, _ = QFileDialog.getOpenFileName(self, "Open oblique_slices.h5", "", "HDF5 (*.h5)")

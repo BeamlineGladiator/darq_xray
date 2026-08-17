@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
+from .busy import DialogBatchRunner
 from .clim_section import ClimGroupSection
 from .plane_selection import PlaneSelectionPanel
 from .plane_selection_model import build_layer_rows, layer_selections
@@ -95,12 +96,12 @@ class ReplotDialog(QDialog):
         self._panel.selectionChanged.connect(
             lambda: self._render_btn.setEnabled(self._panel.has_selection())
         )
-        close_btn = QPushButton("Close")
-        close_btn.clicked.connect(self.reject)
+        self._close_btn = QPushButton("Close")
+        self._close_btn.clicked.connect(self.reject)
         btn_row = QHBoxLayout()
         btn_row.addWidget(self._status, 1)
         btn_row.addWidget(self._render_btn)
-        btn_row.addWidget(close_btn)
+        btn_row.addWidget(self._close_btn)
 
         layout = QVBoxLayout(self)
         layout.addLayout(file_row)
@@ -113,6 +114,7 @@ class ReplotDialog(QDialog):
 
         self._catalog: list = []
         self._skipped: list[str] = []
+        self._batch = DialogBatchRunner(self, (self._render_btn, self._close_btn))
         self._reload()
 
     def _default_out_for(self, h5_path: str) -> str:
@@ -223,21 +225,42 @@ class ReplotDialog(QDialog):
         if not out_dir:
             self._status.setText("set an output dir")
             return
-        if not self._selections():
+        sels = self._selections()
+        if not sels:
             self._status.setText("nothing selected")
             return
         err = self._clim.validate()
         if err:
             self._status.setText(err)
             return
-        try:
-            written = self.render_selection(out_dir)
-        except Exception as exc:  # noqa: BLE001 — surface render errors in the status bar
-            self._status.setText(f"render failed: {exc}")
+        # Snapshot EVERYTHING on the GUI thread; the per-item fn is Qt-free.
+        h5, style, render_fn = self._h5_path, self._style, self._render_fn
+        clim, roi = self._clim.clim_by_group(), self._roi()
+        self._last_out_dir = out_dir
+
+        def _one(sel):
+            return render_fn(h5, [sel], style, clim, roi, out_dir)
+
+        self._batch.start(sels, _one, self._on_batch_done)
+
+    def _on_batch_done(self, written: list, error: str, cancelled: bool) -> None:
+        self.written = written  # partial results are real files — always record them
+        if error:
+            self._status.setText(f"render failed: {error}")
             return
-        self._status.setText(f"wrote {len(written)} PNG(s) → {out_dir}")
+        msg = f"wrote {len(written)} PNG(s) → {self._last_out_dir}"
+        if cancelled:
+            msg = "cancelled — " + msg
         if self._skipped:
-            self._status.setText(self._status.text() + f"; skipped {len(self._skipped)} combo(s)")
+            msg += f"; skipped {len(self._skipped)} combo(s)"
+        self._status.setText(msg)
+
+    def reject(self) -> None:  # noqa: D401 — Qt override
+        """Close gates on a running batch: first Esc/Close requests cancel."""
+        if self._batch.running:
+            self._batch.request_cancel()
+            return
+        super().reject()
 
     def _on_browse_h5(self) -> None:
         path, _ = QFileDialog.getOpenFileName(self, "Open volume h5", "", "HDF5 (*.h5)")

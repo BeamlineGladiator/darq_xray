@@ -42,6 +42,11 @@ def _no_leaked_debounce_timers():
     while _live_windows:
         w = _live_windows.pop()
         w._debounce.stop()  # never let a pending render fire into a later test
+        w._pending_render = False
+        w._pending_export = None
+        if w._worker is not None:
+            w._worker.wait(30000)  # tests may join; production code must not
+        _app.processEvents()  # deliver the worker's queued result/finished
         w.deleteLater()
     _app.processEvents()  # let deleteLater actually run before the next test
 
@@ -122,7 +127,7 @@ def test_delete_row_purges_nested_panel_defs_and_gutter_renders(tmp_path):
     assert [p.id for p in w.recipe().panels] == ["keep"]
 
     w.recipe().compose.scale_bar_mode = "gutter"
-    res = w.render_now()
+    res = render_and_wait(w)
     assert res is not None and res.n_panels == 1 and res.n_rendered == 1
 
 
@@ -228,7 +233,7 @@ def _obl_recipe_panels(tmp_path):
 def test_render_now_populates_preview_and_notes(tmp_path):
     w = _win()
     w.add_panels(_obl_recipe_panels(tmp_path))
-    res = w.render_now()
+    res = render_and_wait(w)
     assert res is not None and res.n_rendered == 1
     assert w._canvas is not None  # a live FigureCanvasQTAgg wrapping res.figure
     assert w._canvas.figure is res.figure
@@ -237,7 +242,7 @@ def test_render_now_populates_preview_and_notes(tmp_path):
 def test_render_error_lands_in_notes_bar_not_crash(tmp_path):
     w = _track(FigureBuilderWindow(lambda: {}, PlotStyle()))  # NO scale anywhere
     w.add_panels(_obl_recipe_panels(tmp_path))
-    res = w.render_now()
+    res = render_and_wait(w)
     assert res is None
     assert "scale" in w._notes_label.text().lower()
     assert "hint" in w._notes_label.text().lower() or "Set Scale" in w._notes_label.text()
@@ -247,12 +252,12 @@ def test_cache_survives_file_deletion_until_refresh(tmp_path):
     w = _win()
     panels = _obl_recipe_panels(tmp_path)
     w.add_panels(panels)
-    assert w.render_now() is not None
+    assert render_and_wait(w) is not None
     os.remove(panels[0].source.h5_path)
-    res2 = w.render_now()  # served from cache
+    res2 = render_and_wait(w)  # served from cache
     assert res2 is not None and res2.n_rendered == 1
     w.refresh_data()  # cache cleared -> placeholder now
-    res3 = w.render_now()
+    res3 = render_and_wait(w)
     assert res3 is not None and res3.n_rendered == 0
     assert "placeholder" in w._notes_label.text()
 
@@ -260,7 +265,7 @@ def test_cache_survives_file_deletion_until_refresh(tmp_path):
 def test_click_preview_selects_outline_node(tmp_path):
     w = _win()
     w.add_panels(_obl_recipe_panels(tmp_path))
-    res = w.render_now()
+    res = render_and_wait(w)
     ax = res.axes_by_id["a"]
     w._on_preview_pick(ax)  # the slot the mpl button_press handler calls
     item = w._tree.currentItem()
@@ -355,9 +360,34 @@ def test_export_now_writes_files(tmp_path, monkeypatch):
     monkeypatch.setattr(
         "gui.figure_builder.QFileDialog.getExistingDirectory", lambda *a, **k: str(out)
     )
-    w.export_now()
+    export_and_wait(w)
     assert os.path.exists(out / "untitled.png")
     assert "wrote" in w._notes_label.text()
+
+
+def test_export_now_zero_files_written_still_reports_chosen_dir(tmp_path, monkeypatch):
+    """All export formats unchecked -> export_recipe returns paths=[] — the
+    notes bar must still name the directory the user chose (review finding on
+    e4386ed: the async _on_worker_result briefly derived the reported dir
+    from os.path.dirname(paths[0]), which is empty when paths == [] — parity
+    with the old synchronous export_now, which always printed the chosen
+    `out` directly, never one derived from paths[0])."""
+    from matplotlib.figure import Figure
+
+    from dfxm.compose.render import ComposeResult
+
+    w = _win()
+    w.add_panels(_obl_recipe_panels(tmp_path))
+    out = tmp_path / "out"
+    monkeypatch.setattr(
+        "gui.figure_builder.QFileDialog.getExistingDirectory", lambda *a, **k: str(out)
+    )
+    monkeypatch.setattr(
+        "dfxm.compose.render.export_recipe",
+        lambda *a, **k: ([], ComposeResult(figure=Figure())),
+    )
+    export_and_wait(w)
+    assert w._notes_label.text() == f"wrote 0 file(s) → {out}"
 
 
 # -- fix wave 1: partial-submit override editor + export never crashes -------
@@ -397,7 +427,7 @@ def test_export_now_unexpected_error_reports_to_notes_bar_not_crash(tmp_path, mo
         raise OSError("disk full")
 
     monkeypatch.setattr("dfxm.compose.render.export_recipe", _raise)
-    w.export_now()  # must not raise
+    export_and_wait(w)  # must not raise
     assert "export failed" in w._notes_label.text()
 
 
@@ -662,10 +692,10 @@ def test_label_edit_keeps_selection():
 def test_render_now_clears_canvas_when_no_panels_left(tmp_path):
     w = _win()
     w.add_panels(_obl_recipe_panels(tmp_path))
-    assert w.render_now() is not None and w._canvas is not None
+    assert render_and_wait(w) is not None and w._canvas is not None
     w._tree.setCurrentItem(w._tree.topLevelItem(0).child(0))
     w.delete_selected()
-    assert w.render_now() is None
+    assert render_and_wait(w) is None
     assert w._canvas is None and w._result is None
     assert "add panels" in w._notes_label.text()
 
@@ -757,7 +787,7 @@ def test_figure2_authored_through_window_methods(tmp_path):
             w.set_selected_label(glabel)  # the outline Label… path — both must work
         assert col.shared_x is True and col.group_label == glabel
 
-    res = w.render_now()
+    res = render_and_wait(w)
     assert res is not None and res.n_rendered == 8, w._notes_label.text()
     fig = res.figure
 
@@ -1104,3 +1134,212 @@ def test_scale_bar_locs_is_canonical():
             "upper left",
         ]
     )
+
+
+# -- busy indication: async render worker (latest-wins) ----------------------
+from tests.qt_helpers import export_and_wait, render_and_wait, wait_builder_idle  # noqa: E402
+
+
+def test_async_render_shows_overlay_then_clears(tmp_path):
+    w = _win()
+    w.show()  # BusyOverlay.active reads isVisible(), which needs a shown ancestor chain
+    w.add_panels(_obl_recipe_panels(tmp_path))
+    w.render_now()
+    # synchronous guarantee: the overlay is up and buttons gated BEFORE return
+    assert w._overlay.active and not w._refresh_btn.isEnabled()
+    assert not w._export_btn.isEnabled()
+    wait_builder_idle(w)
+    assert not w._overlay.active
+    assert w._refresh_btn.isEnabled() and w._export_btn.isEnabled()
+    assert w._result is not None and w._canvas is not None
+
+
+def test_latest_wins_two_rapid_renders_one_canvas(tmp_path, monkeypatch):
+    import threading
+
+    import dfxm.compose.render as _render
+
+    real = _render.render_recipe
+    release = threading.Event()
+    calls: list[str] = []
+
+    def gated(recipe, *a, **k):
+        calls.append(recipe.name)
+        if len(calls) == 1:
+            release.wait(30)  # hold render #1 until #2 has been requested
+        return real(recipe, *a, **k)
+
+    monkeypatch.setattr(_render, "render_recipe", gated)
+    w = _win()
+    w.add_panels(_obl_recipe_panels(tmp_path))
+    # add_panels() arms the 300 ms schedule_preview debounce; without
+    # stopping it here, the debounce can fire mid-wait_builder_idle() (its
+    # processEvents()/sleep(0.01) loop can easily run past 300 ms) and issue
+    # an extra, uncounted render_now() call that this test never asked for —
+    # the test only meant to drive render_now() explicitly below. That made
+    # this test order-dependent: it passed reliably as part of the full file
+    # (earlier tests' overhead pushed timing around) but failed intermittently
+    # run alone (fix wave F5).
+    w._debounce.stop()
+    shows: list = []
+    orig_show = w._show_figure
+    monkeypatch.setattr(w, "_show_figure", lambda fig: (shows.append(fig), orig_show(fig))[1])
+    w.render_now()  # worker 1 (gen 1) — parked in gated()
+    w.recipe().name = "second"
+    w.render_now()  # gen 2 — queued behind worker 1
+    release.set()
+    wait_builder_idle(w)
+    assert calls == ["untitled", "second"]  # serialized, both ran
+    assert len(shows) == 1  # worker 1's stale result was DROPPED, never attached
+    assert w._last_outcome is not None and w._canvas.figure is w._result.figure
+
+
+def test_close_with_live_worker_drops_result_never_attaches(tmp_path, monkeypatch):
+    """closeEvent must never join a live worker on the GUI thread (SIGABRT
+    risk documented in Task 3's report) — it bumps the generation counter and
+    drops any pending request instead, so a result delivered after close is
+    discarded by _on_worker_result's generation check on arrival."""
+    import threading
+
+    import dfxm.compose.render as _render
+
+    real = _render.render_recipe
+    release = threading.Event()
+
+    def gated(recipe, *a, **k):
+        release.wait(30)
+        return real(recipe, *a, **k)
+
+    monkeypatch.setattr(_render, "render_recipe", gated)
+    w = _win()
+    w.add_panels(_obl_recipe_panels(tmp_path))
+    w.render_now()
+    assert w._worker is not None
+    w._dirty = False
+    assert w.close()  # returns immediately — never joins the thread on the GUI thread
+    assert w._pending_render is False and w._pending_export is None
+    assert not w._debounce.isActive()
+    release.set()
+    w._worker.wait(30000)  # test-only join so monkeypatch outlives the worker
+    _app.processEvents()
+    assert w._canvas is None  # generation was bumped on close: result dropped
+
+
+# -- fix wave (review F1-F7): dual pending slots + no-panels invalidation ----
+def _gate_render_and_export(monkeypatch):
+    """Patch render_recipe (gated: blocks on the first call only) and
+    export_recipe (recorded, never gated) — shared setup for the F2 tests."""
+    import threading
+
+    import dfxm.compose.render as _render
+
+    real_render = _render.render_recipe
+    real_export = _render.export_recipe
+    release = threading.Event()
+    render_calls: list[str] = []
+    export_calls: list[str] = []
+
+    def gated_render(recipe, *a, **k):
+        render_calls.append(recipe.name)
+        if len(render_calls) == 1:
+            release.wait(30)  # hold only the first (in-flight) render
+        return real_render(recipe, *a, **k)
+
+    def recorded_export(recipe, out_dir, *a, **k):
+        export_calls.append(out_dir)
+        return real_export(recipe, out_dir, *a, **k)
+
+    monkeypatch.setattr(_render, "render_recipe", gated_render)
+    monkeypatch.setattr(_render, "export_recipe", recorded_export)
+    return release, render_calls, export_calls
+
+
+def test_pending_export_survives_a_pending_render_export_then_render(tmp_path, monkeypatch):
+    """F2: the old single ``_pending`` slot silently dropped an export queued
+    behind a render (or vice versa) — whichever request landed second
+    overwrote the first. Order here: render in flight -> export requested ->
+    render requested; both a queued export AND a final render must still run."""
+    release, render_calls, export_calls = _gate_render_and_export(monkeypatch)
+    out = tmp_path / "out"
+    monkeypatch.setattr(
+        "gui.figure_builder.QFileDialog.getExistingDirectory", lambda *a, **k: str(out)
+    )
+
+    w = _win()
+    w.add_panels(_obl_recipe_panels(tmp_path))
+    w._debounce.stop()  # drive render_now()/export_now() explicitly below
+    w.render_now()  # worker 1 (render) — parked in gated_render()
+    assert w._worker is not None
+    w.export_now()  # queued in the export slot
+    w.render_now()  # queued in the render slot — must NOT clobber the export
+    assert w._pending_export == str(out) and w._pending_render is True
+    release.set()
+    wait_builder_idle(w)
+    # 3 render_recipe calls: the initial (gated) render, export_recipe's own
+    # internal render_recipe call (export always re-renders, never reuses the
+    # preview), and one final render.
+    assert render_calls == ["untitled"] * 3
+    assert export_calls == [str(out)]  # exactly one export, with the chosen dir
+    assert w._pending_render is False and w._pending_export is None
+
+
+def test_pending_render_survives_a_pending_export_render_then_export(tmp_path, monkeypatch):
+    """F2, reverse request order: render in flight -> render requested ->
+    export requested. _on_worker_finished always starts a queued export
+    before a queued render (it snapshots the CURRENT recipe), so the export
+    still runs first regardless of request order, and the render still
+    follows it — neither request is dropped."""
+    release, render_calls, export_calls = _gate_render_and_export(monkeypatch)
+    out = tmp_path / "out"
+    monkeypatch.setattr(
+        "gui.figure_builder.QFileDialog.getExistingDirectory", lambda *a, **k: str(out)
+    )
+
+    w = _win()
+    w.add_panels(_obl_recipe_panels(tmp_path))
+    w._debounce.stop()
+    w.render_now()  # worker 1 (render) — parked in gated_render()
+    assert w._worker is not None
+    w.render_now()  # queued in the render slot (requested first this time)
+    w.export_now()  # queued in the export slot (requested second)
+    release.set()
+    wait_builder_idle(w)
+    assert render_calls == ["untitled"] * 3  # initial + export's own internal render + final
+    assert export_calls == [str(out)]
+    assert w._pending_render is False and w._pending_export is None
+
+
+def test_render_now_no_panels_invalidates_inflight_worker_and_pending(tmp_path, monkeypatch):
+    """F3: render_now()'s no-panels branch must bump the generation AND clear
+    both pending slots, or a worker already in flight against the
+    since-deleted panels could land its result and re-attach a figure the
+    user just deleted every panel out of."""
+    import threading
+
+    import dfxm.compose.render as _render
+
+    real = _render.render_recipe
+    release = threading.Event()
+
+    def gated(recipe, *a, **k):
+        release.wait(30)
+        return real(recipe, *a, **k)
+
+    monkeypatch.setattr(_render, "render_recipe", gated)
+    w = _win()
+    w.add_panels(_obl_recipe_panels(tmp_path))
+    w._debounce.stop()
+    w.render_now()  # worker parked in gated() — snapshotted the recipe with the panel
+    assert w._worker is not None
+    gen_before = w._generation
+    w.recipe().panels.clear()  # simulate "remove all panels"
+    w.render_now()  # no-panels branch — must invalidate the in-flight worker too
+    assert w._generation > gen_before
+    assert w._pending_render is False and w._pending_export is None
+    assert w._canvas is None
+    assert w._notes_label.text() == "add panels to preview"
+    release.set()
+    wait_builder_idle(w)
+    # the in-flight worker's late (stale-generation) result must never attach
+    assert w._canvas is None
+    assert w._notes_label.text() == "add panels to preview"

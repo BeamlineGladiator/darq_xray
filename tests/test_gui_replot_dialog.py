@@ -199,3 +199,79 @@ def test_pick_roi_fills_boxes(tmp_path, monkeypatch):
         "88",
     )
     dlg.deleteLater()
+
+
+# -- busy indication: threaded batch (Task 6) --------------------------------
+
+
+def test_on_render_runs_batch_with_overlay_and_status(tmp_path):
+    from tests.qt_helpers import wait_batch_idle
+
+    h5 = tmp_path / "vol.h5"
+    h5.write_bytes(b"")
+    captured = {}
+
+    def catalog_fn(path):
+        return [ReplotGroup(key="A", label="A", item_labels=["l0", "l1"])]
+
+    def render_fn(path, selections, style, clim, roi, out_dir):
+        captured["selections"] = selections
+        captured["clim"] = clim
+        captured["roi"] = roi
+        os.makedirs(out_dir, exist_ok=True)
+        out_path = os.path.join(out_dir, "x.png")
+        with open(out_path, "wb"):
+            pass
+        return [out_path]
+
+    dlg = ReplotDialog(str(h5), catalog_fn, render_fn, style=None, out_default=str(tmp_path))
+    dlg.show()  # BusyOverlay.active reads isVisible(), which needs a shown ancestor chain
+    dlg.select_all()
+    dlg._out_edit.setText(str(tmp_path / "out"))
+    dlg._on_render()
+    assert dlg._batch.running and dlg._batch._overlay.active
+    assert not dlg._render_btn.isEnabled()
+    wait_batch_idle(dlg)
+    assert not dlg._batch._overlay.active and dlg._render_btn.isEnabled()
+    assert dlg.written and all(os.path.exists(p) for p in dlg.written)
+    assert "wrote" in dlg._status.text()
+
+
+def test_reject_while_running_cancels_instead_of_closing(tmp_path, monkeypatch):
+    import threading
+
+    from tests.qt_helpers import wait_batch_idle
+
+    h5 = tmp_path / "vol.h5"
+    h5.write_bytes(b"")
+    release = threading.Event()
+    calls: list = []
+
+    def catalog_fn(path):
+        return [ReplotGroup(key="A", label="A", item_labels=["l0", "l1", "l2"])]
+
+    def render_fn(path, selections, style, clim, roi, out_dir):
+        calls.append(selections)
+        if len(calls) == 1:
+            release.wait(30)  # hold item 1 so the batch is still running when reject() fires
+        os.makedirs(out_dir, exist_ok=True)
+        out_path = os.path.join(out_dir, f"{len(calls)}.png")
+        with open(out_path, "wb"):
+            pass
+        return [out_path]
+
+    dlg = ReplotDialog(str(h5), catalog_fn, render_fn, style=None, out_default=str(tmp_path))
+    dlg.show()
+    dlg.select_all()
+    dlg._out_edit.setText(str(tmp_path / "out"))
+    dlg._on_render()
+    assert dlg._batch.running
+    dlg.reject()  # cancel request, not a close — dialog stays open, batch keeps running
+    assert dlg.isVisible()
+    assert dlg._batch.running
+    release.set()
+    wait_batch_idle(dlg)
+    assert "cancelled" in dlg._status.text()
+    dlg.reject()  # now it closes normally
+    assert not dlg._batch.running
+    dlg.deleteLater()

@@ -34,7 +34,22 @@ def main(argv: list[str] | None = None) -> int:
 
     window = MainWindow()
     window.show()
-    return app.exec()
+    ret = app.exec()
+    # Defensive: MainWindow.closeEvent already joins every pinned worker
+    # QThread, but app.exec() can also return via a path that skips
+    # closeEvent (e.g. the last top-level window other than MainWindow
+    # closing, or a quit triggered some other way) — a still-running QThread
+    # left pinned in gui.widgets.busy._LIVE_WORKERS at interpreter teardown
+    # aborts the process, so join here too; a no-op when closeEvent already
+    # emptied the registry. Bounded (unlike closeEvent's own call): this is
+    # the last-resort backstop right before the process exits, not a
+    # user-facing wait, so it must not hang the interpreter forever on a
+    # worker that never finishes — 60 s is generous for any batch/render/
+    # export this app runs, then main() returns regardless.
+    from .widgets.busy import wait_for_workers
+
+    wait_for_workers(timeout_ms=60_000)
+    return ret
 
 
 if __name__ == "__main__":

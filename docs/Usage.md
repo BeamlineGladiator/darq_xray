@@ -271,7 +271,7 @@ Every stage uses the same layout:
 |---|---|
 | **Parameter form** (left) | Auto-generated from the stage's schema. The few **essential** fields show first; the rest collapse under **Advanced (N settings)**, grouped by theme (Calibration, Data layout, Alignment, Appearance, Output, …). Hover any label for a tooltip. Scrolling the form never changes a spin box or dropdown any more — a field only reacts to the wheel once you've clicked into it; otherwise the wheel just scrolls the page. |
 | **Help panel** (under the form) | Explains whichever field has focus — what it does, its unit, and the calibration warning where relevant. Idles on a description of the stage. |
-| **Run / Cancel + progress** | Runs the stage in a **separate process**; the bar and step text track progress; **Cancel** truly kills it. Before launching, input paths are checked on disk — a missing one blocks the run and focuses the offending field. |
+| **Run / Cancel + progress** | Runs the stage in a **separate process**; the bar and step text track progress; **Cancel** truly kills it. Before launching, input paths are checked on disk — a missing one blocks the run and focuses the offending field. Once a run/batch is more than 5 % done and has been going for more than 2 seconds, the progress text may also show a `~… left` estimate; the estimate starts fresh every time you click **Run**, so it never carries a stale reading over from a previous run. |
 | **Status banner** (above the tabs) | Green one-liner on success; on failure, the error in plain language plus an actionable hint (the full traceback stays in **Log**). |
 | **Log** tab | Live progress + streamed messages. |
 | **Results** tab | A text summary of what was produced — including every skipped layer/input and the reason. |
@@ -310,6 +310,23 @@ blocked — but treat an unexpected ⚠ as a prompt to double-check you typed th
 crop in the right frame (map pixels vs. detector pixels are the classic mix-up).
 The marker clears itself as soon as the field matches the experiment again, and
 it only appears when the experiment actually has ROIs configured.
+
+### Busy indication
+
+Two visual cues mark the app as working: an animated **spinner overlay** — a
+translucent panel with a rotating arc and a status line, covering whatever it
+is rendering and blocking input to it until the work finishes (a **Cancel**
+button appears on it wherever the operation can actually be stopped
+mid-batch) — for renders that run long enough to animate visibly, and the
+system **wait cursor** for shorter synchronous operations (a load, a read or
+write). A stage **Run**'s progress bar and step text are unchanged, gaining a
+`~… left` estimate once far enough along to be trustworthy (see the
+stage-panel table above). Either indicator always clears itself once the work
+finishes, errors, or is cancelled. The nine synchronous load/save spots in the
+app that were previously silent — Pick line…, Jobs from marks…, Mark planes…
+(opening, changing slice, and Save), Pick ROI… previews, Initialize from
+data…, opening a figure-builder recipe, and opening a pop-out 3-D viewer —
+all show the wait cursor for the duration of the load/save.
 
 ---
 
@@ -430,6 +447,15 @@ is disabled while nothing is selected. A checked layer that doesn't exist for a
 checked quantity is silently skipped rather than erroring; the status line
 reports `skipped N combo(s)` after rendering.
 
+**Render** runs the batch on a background thread (see
+[Busy indication](#busy-indication)): a spinner overlay covers the dialog with
+a `{i}/{N}` progress bar and, once far enough along, a `~… left` ETA; **Render**
+and **Close** are disabled until the batch finishes. Clicking **Cancel** on the
+overlay (or pressing Esc / **Close**, which is gated the same way while a
+batch is running) stops the batch **after the item currently rendering
+completes** — any PNGs already written stay on disk, and the status line is
+prefixed `cancelled — ` alongside the usual `wrote N PNG(s) → …` summary.
+
 `strain.replot_catalog(h5_path)` reads a `stacked_strain_volumes.h5` and returns
 a single `ReplotGroup` (key `"strain"`) with one item per stored layer (names
 come from `source_folders` in the file's attributes).
@@ -499,7 +525,11 @@ CoM and FWHM) is a **quantity** checkbox on the right. Both open **everything
 checked**; the **Filter** box narrows which layer rows are visible without
 changing what's checked, and **Check all visible** selects exactly the filtered
 subset. **Render** is disabled while nothing is selected, and a checked layer
-missing from one dataset is skipped (reported, not an error).
+missing from one dataset is skipped (reported, not an error). **Render** runs
+in the background with the same progress-overlay/ETA/cancel-after-current-item
+behaviour as the strain dialog — see
+[Replotting strain layers without re-running](#replotting-strain-layers-without-re-running)
+and [Busy indication](#busy-indication).
 
 `mosaicity.replot_catalog(h5_path)` enumerates the 3-D datasets present in a
 `stacked_volumes.h5` and returns one `ReplotGroup` per dataset (χ/μ CoM and
@@ -582,6 +612,11 @@ layers are listed **once** on the left (flat, no sections); `sum_intensity` and
 without changing what's checked, and **Check all visible** selects exactly the
 filtered subset. **Render** is disabled while nothing is selected, and a
 checked layer missing from one product is skipped (reported, not an error).
+**Render** runs in the background with the same
+progress-overlay/ETA/cancel-after-current-item behaviour as the strain dialog
+— see
+[Replotting strain layers without re-running](#replotting-strain-layers-without-re-running)
+and [Busy indication](#busy-indication).
 
 `rocking.replot_catalog(h5_path)` enumerates the 3-D datasets present and returns
 one `ReplotGroup` per dataset (`sum_intensity` and `specific_frame`).
@@ -919,6 +954,15 @@ The dialog renders with the current session publication style (font scale,
 colourmap, scale bar, etc.) from the **Publication style…** dialog, so style
 changes made since the original run are reflected in the replot.
 
+**Render** runs the batch on a background thread (see
+[Busy indication](#busy-indication)): a spinner overlay covers the dialog with
+a `{i}/{N}` progress bar and, once far enough along, a `~… left` ETA; **Render**
+and **Close** are disabled until the batch finishes. Clicking **Cancel** on the
+overlay (or pressing Esc / **Close**, which is gated the same way while a
+batch is running) stops the batch **after the item currently rendering
+completes** — any PNGs already written stay on disk, and the status line is
+prefixed `cancelled — ` alongside the usual `wrote N PNG(s) → …` summary.
+
 > [!note] ROI crop for slices replot
 > `render_replot` and `_rebuild_plane_figure` accept an optional
 > `roi=(r0, r1, c0, c1)` pixel-index crop. Both the 2-D slice array **and** the
@@ -1132,6 +1176,19 @@ up, not like the stage defaults; the **save-toggles**
 (`save_companion`/`save_traces`/`save_overview`) are deliberately not passed
 through, since a replot always writes all three figure kinds regardless of
 what the form's Output group is set to.
+
+**Render** runs the batch on a background thread (see
+[Busy indication](#busy-indication)), but as a **single item** — the whole
+checked-jobs list renders in one call, not one call per job, because filename
+de-duplication and shared trace-figure margins are computed once per run
+across every job. The overlay therefore shows the plain rotating spinner (no
+`{i}/{N}` bar or ETA — there is only ever one step) with a
+`Rendering N job(s)…` label; **Render** and **Close** are disabled until it
+finishes. Because it's a single item, **Cancel** only takes effect before
+rendering starts (the status line is then prefixed `cancelled — ` on the
+resulting `wrote 0 PNG(s) → …`, same as the slices/strain dialogs) — once
+under way the batch always completes and reports the normal
+`wrote N PNG(s) → …` summary.
 
 A job whose `"fields"` override names only ids **absent** from this file (a
 reference-only job in a run — see
@@ -1471,7 +1528,19 @@ always exact regardless of how the preview happened to be scaled on screen.
 Every outline edit (add/move/delete/group/label a panel, row,
 column, spacer, or text cell) and every recipe load schedules a re-render
 300 ms after the last edit, so a burst of clicks re-renders once, not once
-per click. A **Refresh data** button forces an immediate re-render *and*
+per click. The render itself runs on a background thread, so the window stays
+responsive while it works: a translucent spinner overlay ("Rendering…") covers
+the preview and the **Refresh data**/**Export…** buttons disable for the
+duration, clearing and re-enabling the moment the result lands. A render
+requested while one is already running is queued — only the most recently
+requested render ever attaches its result to the canvas (**latest wins**), so
+a burst of edits, or the 300 ms debounce firing mid-render, never flashes a
+stale, superseded figure on screen. Render and export requests are queued in
+**separate slots**, so a render queued behind a running export (or an export
+queued behind a running render) is never silently dropped by the other kind
+— both eventually run (see the **Export…** bullet below for the export
+side). A **Refresh data** button forces an
+immediate re-render *and*
 drops the cached source-file readings first — normally a panel's h5 data is
 cached after the first read (so editing the layout, labels, or style stays
 fast even against large files), but that means a source file changed or
@@ -1506,6 +1575,17 @@ panels' own private colorbars still reports normally. It is advisory only,
 never an error, and on a figure with an unusually large number of text
 artists (over 400) the check skips itself with a note rather than slow the
 render down.
+
+Closing the builder window never waits on a running render or export — a
+close request in progress (e.g. from an outline edit's 300 ms debounce, or an
+export you just started) is dropped immediately and the window closes right
+away; the background work itself keeps running to completion, but its result
+is discarded rather than applied to a window that's already gone. Closing the
+**main application window** is different: it waits (showing the wait cursor)
+for every such background render/export to actually finish before the app
+exits, so a run that is still mid-flight when you quit is never torn down
+half-written and the app never aborts trying to shut down a still-running
+worker.
 
 A trace panel rendered under 40% of its column's map width also gets its own
 **standalone advisory** — `"panel(s) {name(s)}: trace rendered under 40% of
@@ -1629,14 +1709,22 @@ button:
   aligned to one x position (and x-axis labels within a row to one y), even
   when the panels' tick numbers have different widths — so e.g. a strain
   trace's label lines up with its mosaicity neighbours'.
-- **Export…** opens a directory picker and writes the recipe with
-  `dfxm.compose.render.export_recipe` (the same formats/DPI the recipe's
-  current style specifies — exactly what the live preview is showing you,
-  including any style-pane edits not yet saved into the recipe file — reusing
-  the preview's loader cache so nothing already read is re-read from disk);
-  the notes bar reports how many files were written and where, or the error
-  and its hint if the recipe couldn't be exported (including an output
-  directory that couldn't be created).
+- **Export…** opens a directory picker and, like the live preview, runs on
+  the same background compose thread (spinner overlay text "Exporting…";
+  **Refresh data**/**Export…** disable for the duration and re-enable when it
+  lands) — it writes the recipe with `dfxm.compose.render.export_recipe` (the
+  same formats/DPI the recipe's current style specifies — exactly what the
+  live preview is showing you, including any style-pane edits not yet saved
+  into the recipe file — reusing the preview's loader cache so nothing
+  already read is re-read from disk; export re-renders the recipe rather than
+  reusing the on-screen preview figure); the notes bar reports how many files
+  were written and where, or the error and its hint if the recipe couldn't be
+  exported (including an output directory that couldn't be created). An
+  export request made while a render (or another export) is already running
+  is queued in its own slot, separate from a queued render — the two never
+  clobber each other, and a queued export always starts before a queued
+  render once the running worker finishes (it snapshots the recipe at that
+  moment, so it exports the most current state).
 
 **Rendering from the command line**
 

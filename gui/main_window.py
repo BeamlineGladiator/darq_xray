@@ -365,6 +365,18 @@ class MainWindow(QMainWindow):
         self._save_plot_style()
         for view in self._views.values():
             view.flush()  # write any pending debounced form-state save
+        # Join every pinned worker QThread (figure-builder render/export,
+        # replot-dialog batches, …) before the app tears down. keep_alive
+        # (gui/widgets/busy.py) only stops those threads from being
+        # garbage-collected mid-flight; it does not stop the process exiting
+        # out from under a still-running one, which aborts with
+        # "QThread: Destroyed while thread is still running". This is the one
+        # sanctioned place the GUI thread blocks on a worker — see
+        # wait_for_workers's docstring.
+        from .widgets.busy import busy_cursor, wait_for_workers
+
+        with busy_cursor():
+            wait_for_workers()
         super().closeEvent(event)
 
     # -- slots ----------------------------------------------------------------
