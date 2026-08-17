@@ -162,6 +162,41 @@ def test_batch_worker_error_carries_partial_written_and_hint():
     assert results == [(["p1"], "bad item — fix it")]
 
 
+def test_wait_for_workers_blocks_until_released_then_registry_empty():
+    """F1 fix wave: wait_for_workers is the one sanctioned join-on-the-GUI-
+    thread — the shutdown path (MainWindow.closeEvent / gui/app.py) uses it to
+    avoid a pinned still-running QThread aborting the process at teardown
+    ("QThread: Destroyed while thread is still running"). Gate a worker,
+    release it from another (non-GUI) thread while wait_for_workers blocks,
+    and confirm it returns once the worker actually finishes and that
+    keep_alive's own finished-signal handler has already discarded it from
+    the live-worker registry."""
+    import threading
+
+    from gui.widgets.busy import _LIVE_WORKERS, BatchWorker, keep_alive, wait_for_workers
+
+    release = threading.Event()
+
+    def fn(item):
+        release.wait(20)
+        return [f"p{item}"]
+
+    w = BatchWorker([1], fn)
+    keep_alive(w)
+    w.start()
+    assert w in _LIVE_WORKERS
+    threading.Timer(0.2, release.set).start()  # release the gate off-thread
+    wait_for_workers(timeout_ms=20000)  # blocks this thread until w.run() returns
+    assert w.isFinished()
+    # keep_alive's own cleanup (worker.finished -> _LIVE_WORKERS.discard) is
+    # delivered as a queued connection onto the GUI thread — wait_for_workers
+    # only guarantees the thread has finished running, not that the queued
+    # signal has been dispatched yet, so pump the event loop once before
+    # checking the registry.
+    _app.processEvents()
+    assert w not in _LIVE_WORKERS
+
+
 def test_dialog_batch_runner_overlay_buttons_and_finish():
     from PySide6.QtWidgets import QPushButton
 

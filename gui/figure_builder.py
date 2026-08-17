@@ -90,18 +90,23 @@ class _ComposeWorker(QThread):
     def run(self) -> None:  # worker thread — no Qt widgets in here
         from dfxm.compose.render import export_recipe, render_recipe
 
+        from .widgets.busy import _RENDER_LOCK
+
         try:
             recipe = recipe_from_json(self._recipe_json)
-            if self._kind == "export":
-                paths, res = export_recipe(recipe, self._out_dir, loader_cache=self._cache)
-                # Carry the requested out_dir through explicitly (not derived
-                # from paths[0]) so the result slot reports the directory the
-                # user chose even when nothing was written (e.g. every format
-                # unchecked -> paths == []) — parity with the old synchronous
-                # export_now, which always printed the chosen dir.
-                payload = (paths, res, self._out_dir)
-            else:
-                payload = render_recipe(recipe, loader_cache=self._cache)
+            # Serialized against BatchWorker's per-item renders (shared
+            # matplotlib mathtext parser — never render on two threads at once).
+            with _RENDER_LOCK:
+                if self._kind == "export":
+                    paths, res = export_recipe(recipe, self._out_dir, loader_cache=self._cache)
+                    # Carry the requested out_dir through explicitly (not derived
+                    # from paths[0]) so the result slot reports the directory the
+                    # user chose even when nothing was written (e.g. every format
+                    # unchecked -> paths == []) — parity with the old synchronous
+                    # export_now, which always printed the chosen dir.
+                    payload = (paths, res, self._out_dir)
+                else:
+                    payload = render_recipe(recipe, loader_cache=self._cache)
         except Exception as exc:  # noqa: BLE001 — delivered to the GUI as data
             self.resultReady.emit(self._generation, self._kind, None, exc)
             return
@@ -141,7 +146,14 @@ class FigureBuilderWindow(QMainWindow):
         self._result = None
         self._worker: _ComposeWorker | None = None
         self._generation = 0
-        self._pending: tuple[str, str | None] | None = None
+        # Two independent queued-request slots (not one shared slot): a
+        # render queued behind a running worker must not be dropped by a
+        # subsequently queued export, or vice versa. Each slot is still
+        # "latest wins" WITHIN its own kind — a second queued render while one
+        # is already queued just overwrites it (there is nothing to lose,
+        # both would render the same final recipe state).
+        self._pending_render: bool = False
+        self._pending_export: str | None = None  # out_dir, or None = nothing queued
         self._last_outcome = None
         self._preview_host = QWidget()
         self._preview_layout = QVBoxLayout(self._preview_host)
@@ -1225,6 +1237,14 @@ class FigureBuilderWindow(QMainWindow):
         ``tests.qt_helpers.render_and_wait``.
         """
         if not self._recipe.panels:
+            # Bump the generation and drop anything queued: an in-flight
+            # worker's result (render or export) would otherwise arrive after
+            # this and — pre-fix — could re-attach a figure built from the
+            # panels that just got deleted, since the worker holds its own
+            # JSON snapshot taken before the deletion.
+            self._generation += 1
+            self._pending_render = False
+            self._pending_export = None
             self._clear_canvas()
             self._notes_label.setText("add panels to preview")
             self._last_outcome = None
@@ -1234,7 +1254,10 @@ class FigureBuilderWindow(QMainWindow):
     def _request_work(self, kind: str, out_dir: str | None) -> None:
         self._generation += 1
         if self._worker is not None:
-            self._pending = (kind, out_dir)
+            if kind == "export":
+                self._pending_export = out_dir
+            else:
+                self._pending_render = True
             return
         self._start_worker(kind, out_dir)
 
@@ -1281,10 +1304,19 @@ class FigureBuilderWindow(QMainWindow):
 
     def _on_worker_finished(self) -> None:
         self._worker = None
-        if self._pending is not None:
-            kind, out_dir = self._pending
-            self._pending = None
-            self._start_worker(kind, out_dir)
+        # A queued export runs before a queued render: it snapshots
+        # recipe_to_json(self._recipe) at _start_worker time, so starting it
+        # first captures the recipe state as of right now rather than after
+        # whatever the queued render's snapshot would trigger. Either slot may
+        # be set alongside the other — both surviving the wait is the point
+        # (see the F2 fix note on self._pending_render/_pending_export above).
+        if self._pending_export is not None:
+            out_dir, self._pending_export = self._pending_export, None
+            self._start_worker("export", out_dir)
+            return
+        if self._pending_render:
+            self._pending_render = False
+            self._start_worker("render", None)
             return
         self._overlay.stop()
         self._refresh_btn.setEnabled(True)
@@ -1483,7 +1515,8 @@ class FigureBuilderWindow(QMainWindow):
     def closeEvent(self, event) -> None:  # noqa: N802 — Qt override signature
         if not self._dirty:
             self._debounce.stop()
-            self._pending = None
+            self._pending_render = False
+            self._pending_export = None
             self._generation += 1  # any in-flight worker result is now stale — dropped on arrival
             event.accept()
             return
@@ -1515,11 +1548,15 @@ class FigureBuilderWindow(QMainWindow):
         # A live _ComposeWorker (e.g. just armed by that debounce, or still
         # running a render/export) holds no Qt objects, so it is never joined
         # here — keep_alive keeps it alive to run to completion regardless of
-        # this window's lifetime. Dropping _pending stops it from chaining
-        # into a second worker, and bumping _generation means its eventual
-        # resultReady delivery (queued onto the GUI thread) is discarded by
+        # this window's lifetime (gui/widgets/busy.py's wait_for_workers is
+        # what eventually joins it, but only at MAIN-WINDOW close / app exit —
+        # never here, since this window closing is routine, not shutdown).
+        # Dropping both pending slots stops it from chaining into a second
+        # worker, and bumping _generation means its eventual resultReady
+        # delivery (queued onto the GUI thread) is discarded by
         # _on_worker_result's generation check on arrival — or simply never
         # dispatched if this window has since been deleted.
-        self._pending = None
+        self._pending_render = False
+        self._pending_export = None
         self._generation += 1
         event.accept()

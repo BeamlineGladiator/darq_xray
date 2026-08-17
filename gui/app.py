@@ -34,7 +34,18 @@ def main(argv: list[str] | None = None) -> int:
 
     window = MainWindow()
     window.show()
-    return app.exec()
+    ret = app.exec()
+    # Defensive: MainWindow.closeEvent already joins every pinned worker
+    # QThread, but app.exec() can also return via a path that skips
+    # closeEvent (e.g. the last top-level window other than MainWindow
+    # closing, or a quit triggered some other way) — a still-running QThread
+    # left pinned in gui.widgets.busy._LIVE_WORKERS at interpreter teardown
+    # aborts the process, so join here too; a no-op when closeEvent already
+    # emptied the registry.
+    from .widgets.busy import wait_for_workers
+
+    wait_for_workers()
+    return ret
 
 
 if __name__ == "__main__":

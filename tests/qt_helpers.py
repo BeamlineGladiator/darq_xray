@@ -16,7 +16,7 @@ def wait_builder_idle(w, timeout_s: float = 30.0) -> None:
     pending compose worker."""
     app = QApplication.instance()
     deadline = time.monotonic() + timeout_s
-    while w._worker is not None or w._pending is not None:
+    while w._worker is not None or w._pending_render or w._pending_export is not None:
         assert time.monotonic() < deadline, "compose worker did not finish in time"
         app.processEvents()
         time.sleep(0.01)

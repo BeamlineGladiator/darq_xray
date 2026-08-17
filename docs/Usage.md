@@ -1535,7 +1535,11 @@ duration, clearing and re-enabling the moment the result lands. A render
 requested while one is already running is queued — only the most recently
 requested render ever attaches its result to the canvas (**latest wins**), so
 a burst of edits, or the 300 ms debounce firing mid-render, never flashes a
-stale, superseded figure on screen. A **Refresh data** button forces an
+stale, superseded figure on screen. Render and export requests are queued in
+**separate slots**, so a render queued behind a running export (or an export
+queued behind a running render) is never silently dropped by the other kind
+— both eventually run (see the **Export…** bullet below for the export
+side). A **Refresh data** button forces an
 immediate re-render *and*
 drops the cached source-file readings first — normally a panel's h5 data is
 cached after the first read (so editing the layout, labels, or style stays
@@ -1576,7 +1580,12 @@ Closing the builder window never waits on a running render or export — a
 close request in progress (e.g. from an outline edit's 300 ms debounce, or an
 export you just started) is dropped immediately and the window closes right
 away; the background work itself keeps running to completion, but its result
-is discarded rather than applied to a window that's already gone.
+is discarded rather than applied to a window that's already gone. Closing the
+**main application window** is different: it waits (showing the wait cursor)
+for every such background render/export to actually finish before the app
+exits, so a run that is still mid-flight when you quit is never torn down
+half-written and the app never aborts trying to shut down a still-running
+worker.
 
 A trace panel rendered under 40% of its column's map width also gets its own
 **standalone advisory** — `"panel(s) {name(s)}: trace rendered under 40% of
@@ -1712,7 +1721,10 @@ button:
   were written and where, or the error and its hint if the recipe couldn't be
   exported (including an output directory that couldn't be created). An
   export request made while a render (or another export) is already running
-  is queued the same way a render request is — **latest wins**.
+  is queued in its own slot, separate from a queued render — the two never
+  clobber each other, and a queued export always starts before a queued
+  render once the running worker finishes (it snapshots the recipe at that
+  moment, so it exports the most current state).
 
 **Rendering from the command line**
 

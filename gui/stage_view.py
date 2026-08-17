@@ -184,6 +184,11 @@ class StageView(QWidget):
         self._progress.setRange(0, 100)
         self._progress_text = QLabel("")
         self._progress_text.setWordWrap(True)
+        # The last plain Progress.text (no " — ~N s left" ETA suffix) — kept
+        # so _on_cancel/_finish_ok/_finish_failed can reset the label to it,
+        # dropping a now-stale ETA that would otherwise linger after the run
+        # has actually stopped.
+        self._progress_plain = ""
         self._eta = EtaEstimator()
         progress_row = QHBoxLayout()
         progress_row.addWidget(self._progress, 1)
@@ -421,6 +426,7 @@ class StageView(QWidget):
             self._runner.cancel()
         self._timer.stop()
         self._log.set_status("Cancelled.", error=True)
+        self._progress_text.setText(self._progress_plain)  # drop a stale ETA suffix
         self._set_running(False)
 
     # -- profiles interactive line picker (lazy) --------------------------
@@ -444,7 +450,7 @@ class StageView(QWidget):
         from .widgets.line_picker import LinePickerDialog  # imported on demand
 
         try:
-            with busy_cursor("Loading slice planes…"):
+            with busy_cursor():  # no widget passed — text would never be shown
                 dlg = LinePickerDialog(
                     h5,
                     slice_name,
@@ -796,6 +802,7 @@ class StageView(QWidget):
             self._progress.setValue(max(0, min(100, int(round(msg.frac * 100)))))
             self._eta.update(msg.frac)
             if msg.text:
+                self._progress_plain = msg.text
                 eta = self._eta.eta_text()
                 self._progress_text.setText(f"{msg.text} — {eta}" if eta else msg.text)
                 self._log.append(f"  [{msg.frac * 100:5.1f}%] {msg.text}")
@@ -811,6 +818,7 @@ class StageView(QWidget):
         self._last_result = result
         self._log.set_progress(1.0, "Done.")
         self._progress.setValue(100)
+        self._progress_text.setText(self._progress_plain)  # drop a stale ETA suffix
         summary = _summarize(self._stage_name, result)
         first_line = summary.splitlines()[0] if summary else "done"
         self._show_banner(f"✓ {html.escape(first_line)}", error=False)
@@ -948,6 +956,7 @@ class StageView(QWidget):
         self._timer.stop()
         self._log.set_status(f"Failed: {failure.error}", error=True)
         self._log.append(failure.traceback)
+        self._progress_text.setText(self._progress_plain)  # drop a stale ETA suffix
         text = f"✗ {html.escape(failure.error)}"
         hint = getattr(failure, "hint", "")
         if hint:

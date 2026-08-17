@@ -42,7 +42,8 @@ def _no_leaked_debounce_timers():
     while _live_windows:
         w = _live_windows.pop()
         w._debounce.stop()  # never let a pending render fire into a later test
-        w._pending = None
+        w._pending_render = False
+        w._pending_export = None
         if w._worker is not None:
             w._worker.wait(30000)  # tests may join; production code must not
         _app.processEvents()  # deliver the worker's queued result/finished
@@ -1171,6 +1172,15 @@ def test_latest_wins_two_rapid_renders_one_canvas(tmp_path, monkeypatch):
     monkeypatch.setattr(_render, "render_recipe", gated)
     w = _win()
     w.add_panels(_obl_recipe_panels(tmp_path))
+    # add_panels() arms the 300 ms schedule_preview debounce; without
+    # stopping it here, the debounce can fire mid-wait_builder_idle() (its
+    # processEvents()/sleep(0.01) loop can easily run past 300 ms) and issue
+    # an extra, uncounted render_now() call that this test never asked for —
+    # the test only meant to drive render_now() explicitly below. That made
+    # this test order-dependent: it passed reliably as part of the full file
+    # (earlier tests' overhead pushed timing around) but failed intermittently
+    # run alone (fix wave F5).
+    w._debounce.stop()
     shows: list = []
     orig_show = w._show_figure
     monkeypatch.setattr(w, "_show_figure", lambda fig: (shows.append(fig), orig_show(fig))[1])
@@ -1207,8 +1217,129 @@ def test_close_with_live_worker_drops_result_never_attaches(tmp_path, monkeypatc
     assert w._worker is not None
     w._dirty = False
     assert w.close()  # returns immediately — never joins the thread on the GUI thread
-    assert w._pending is None and not w._debounce.isActive()
+    assert w._pending_render is False and w._pending_export is None
+    assert not w._debounce.isActive()
     release.set()
     w._worker.wait(30000)  # test-only join so monkeypatch outlives the worker
     _app.processEvents()
     assert w._canvas is None  # generation was bumped on close: result dropped
+
+
+# -- fix wave (review F1-F7): dual pending slots + no-panels invalidation ----
+def _gate_render_and_export(monkeypatch):
+    """Patch render_recipe (gated: blocks on the first call only) and
+    export_recipe (recorded, never gated) — shared setup for the F2 tests."""
+    import threading
+
+    import dfxm.compose.render as _render
+
+    real_render = _render.render_recipe
+    real_export = _render.export_recipe
+    release = threading.Event()
+    render_calls: list[str] = []
+    export_calls: list[str] = []
+
+    def gated_render(recipe, *a, **k):
+        render_calls.append(recipe.name)
+        if len(render_calls) == 1:
+            release.wait(30)  # hold only the first (in-flight) render
+        return real_render(recipe, *a, **k)
+
+    def recorded_export(recipe, out_dir, *a, **k):
+        export_calls.append(out_dir)
+        return real_export(recipe, out_dir, *a, **k)
+
+    monkeypatch.setattr(_render, "render_recipe", gated_render)
+    monkeypatch.setattr(_render, "export_recipe", recorded_export)
+    return release, render_calls, export_calls
+
+
+def test_pending_export_survives_a_pending_render_export_then_render(tmp_path, monkeypatch):
+    """F2: the old single ``_pending`` slot silently dropped an export queued
+    behind a render (or vice versa) — whichever request landed second
+    overwrote the first. Order here: render in flight -> export requested ->
+    render requested; both a queued export AND a final render must still run."""
+    release, render_calls, export_calls = _gate_render_and_export(monkeypatch)
+    out = tmp_path / "out"
+    monkeypatch.setattr(
+        "gui.figure_builder.QFileDialog.getExistingDirectory", lambda *a, **k: str(out)
+    )
+
+    w = _win()
+    w.add_panels(_obl_recipe_panels(tmp_path))
+    w._debounce.stop()  # drive render_now()/export_now() explicitly below
+    w.render_now()  # worker 1 (render) — parked in gated_render()
+    assert w._worker is not None
+    w.export_now()  # queued in the export slot
+    w.render_now()  # queued in the render slot — must NOT clobber the export
+    assert w._pending_export == str(out) and w._pending_render is True
+    release.set()
+    wait_builder_idle(w)
+    # 3 render_recipe calls: the initial (gated) render, export_recipe's own
+    # internal render_recipe call (export always re-renders, never reuses the
+    # preview), and one final render.
+    assert render_calls == ["untitled"] * 3
+    assert export_calls == [str(out)]  # exactly one export, with the chosen dir
+    assert w._pending_render is False and w._pending_export is None
+
+
+def test_pending_render_survives_a_pending_export_render_then_export(tmp_path, monkeypatch):
+    """F2, reverse request order: render in flight -> render requested ->
+    export requested. _on_worker_finished always starts a queued export
+    before a queued render (it snapshots the CURRENT recipe), so the export
+    still runs first regardless of request order, and the render still
+    follows it — neither request is dropped."""
+    release, render_calls, export_calls = _gate_render_and_export(monkeypatch)
+    out = tmp_path / "out"
+    monkeypatch.setattr(
+        "gui.figure_builder.QFileDialog.getExistingDirectory", lambda *a, **k: str(out)
+    )
+
+    w = _win()
+    w.add_panels(_obl_recipe_panels(tmp_path))
+    w._debounce.stop()
+    w.render_now()  # worker 1 (render) — parked in gated_render()
+    assert w._worker is not None
+    w.render_now()  # queued in the render slot (requested first this time)
+    w.export_now()  # queued in the export slot (requested second)
+    release.set()
+    wait_builder_idle(w)
+    assert render_calls == ["untitled"] * 3  # initial + export's own internal render + final
+    assert export_calls == [str(out)]
+    assert w._pending_render is False and w._pending_export is None
+
+
+def test_render_now_no_panels_invalidates_inflight_worker_and_pending(tmp_path, monkeypatch):
+    """F3: render_now()'s no-panels branch must bump the generation AND clear
+    both pending slots, or a worker already in flight against the
+    since-deleted panels could land its result and re-attach a figure the
+    user just deleted every panel out of."""
+    import threading
+
+    import dfxm.compose.render as _render
+
+    real = _render.render_recipe
+    release = threading.Event()
+
+    def gated(recipe, *a, **k):
+        release.wait(30)
+        return real(recipe, *a, **k)
+
+    monkeypatch.setattr(_render, "render_recipe", gated)
+    w = _win()
+    w.add_panels(_obl_recipe_panels(tmp_path))
+    w._debounce.stop()
+    w.render_now()  # worker parked in gated() — snapshotted the recipe with the panel
+    assert w._worker is not None
+    gen_before = w._generation
+    w.recipe().panels.clear()  # simulate "remove all panels"
+    w.render_now()  # no-panels branch — must invalidate the in-flight worker too
+    assert w._generation > gen_before
+    assert w._pending_render is False and w._pending_export is None
+    assert w._canvas is None
+    assert w._notes_label.text() == "add panels to preview"
+    release.set()
+    wait_builder_idle(w)
+    # the in-flight worker's late (stale-generation) result must never attach
+    assert w._canvas is None
+    assert w._notes_label.text() == "add panels to preview"

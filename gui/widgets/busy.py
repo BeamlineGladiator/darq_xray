@@ -3,15 +3,22 @@
 Everything user-visible about "the app is working" lives here (spec
 2026-08-17-busy-indication-design.md): :class:`BusyOverlay` (animated
 indeterminate spinner or determinate progress over a host widget),
-:func:`busy_cursor` (honest wait-cursor for short synchronous blocks) and
+:func:`busy_cursor` (honest wait-cursor for short synchronous blocks),
 :func:`keep_alive` (pins running QThreads so they are never garbage-collected
-mid-flight), and the batch machinery (:class:`BatchWorker`/
+mid-flight) and its shutdown-only counterpart :func:`wait_for_workers` (joins
+every pinned worker — the one place the app is allowed to block the GUI
+thread on a QThread), and the batch machinery (:class:`BatchWorker`/
 :class:`DialogBatchRunner`) used by the replot dialogs to run a per-item
 render loop on a worker thread under a cancellable, determinate overlay.
+Module-level :data:`_RENDER_LOCK` serializes the actual render/export call
+inside :class:`BatchWorker` and (imported from here) `figure_builder`'s
+``_ComposeWorker`` — two worker threads must never call into matplotlib at
+the same time.
 """
 
 from __future__ import annotations
 
+import threading
 from contextlib import contextmanager
 
 from PySide6.QtCore import QEvent, QObject, Qt, QThread, QTimer, Signal
@@ -33,11 +40,44 @@ from ..theme import ThemeController
 # QThread that gets garbage-collected aborts the process.
 _LIVE_WORKERS: set = set()
 
+# BatchWorker and figure_builder._ComposeWorker each run on their own QThread
+# and can therefore end up rendering concurrently; matplotlib's mathtext
+# parser (and some of the loader-cache machinery) is not thread-safe, so both
+# worker classes serialize their actual render/export call through this one
+# lock rather than through a per-class lock each.
+_RENDER_LOCK = threading.Lock()
+
 
 def keep_alive(worker) -> None:
     """Pin *worker* (a QThread) until it finishes."""
     _LIVE_WORKERS.add(worker)
     worker.finished.connect(lambda w=worker: _LIVE_WORKERS.discard(w))
+
+
+def wait_for_workers(timeout_ms: int | None = None) -> None:
+    """Block the calling (GUI) thread until every pinned worker has finished.
+
+    Joining a running ``QThread`` from the GUI thread is normally forbidden —
+    it freezes the UI and defeats the point of a worker thread — but at
+    interpreter/window teardown there is no event loop left to consume a
+    worker's results anyway, and a still-running ``QThread`` that gets
+    garbage-collected at that point aborts the process
+    (``QThread: Destroyed while thread is still running``). This is the one
+    sanctioned exception to that rule: call it only from a shutdown path
+    (``MainWindow.closeEvent``, defensively after ``app.exec()`` in
+    ``gui/app.py``), never from routine UI code.
+
+    *timeout_ms* is passed to each worker's ``wait()`` (``None`` waits
+    indefinitely, matching ``QThread.wait()``'s own default). The live-worker
+    set is copied before iterating so a worker finishing (and discarding
+    itself via its own ``finished`` signal) concurrently with this call never
+    mutates the set out from under it.
+    """
+    for worker in list(_LIVE_WORKERS):
+        if timeout_ms is None:
+            worker.wait()
+        else:
+            worker.wait(timeout_ms)
 
 
 @contextmanager
@@ -48,6 +88,13 @@ def busy_cursor(text: str = "", widget=None):
     the block runs; always restores the cursor, including on raise. The status
     text is deliberately left for the call site's completion message to
     overwrite.
+
+    Re-entrancy note: that forced ``processEvents()`` call pumps the Qt event
+    queue — it can dispatch a pending paint, a timer, or (if this block is
+    nested inside another ``busy_cursor``/dialog) a signal from further up the
+    call stack, before this block's body ever runs. Callers must tolerate
+    events firing out of order relative to when they were queued and must not
+    assume the block executes atomically with respect to the rest of the app.
     """
     app = QApplication.instance()
     if app is not None:
@@ -212,7 +259,8 @@ class BatchWorker(QThread):
                 if self._stop:
                     self.cancelled = True
                     break
-                self.written.extend(self._fn(item))
+                with _RENDER_LOCK:
+                    self.written.extend(self._fn(item))
                 self.itemDone.emit(i + 1, total)
         except Exception as exc:  # noqa: BLE001 — delivered to the dialog as data
             hint = getattr(exc, "hint", "")
