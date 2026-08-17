@@ -1139,6 +1139,7 @@ def main() -> int:
     _fbmod.QFileDialog.getExistingDirectory = staticmethod(lambda *a, **k: _bout)
     try:
         fb.export_now()
+        wait_builder_idle(fb)
     finally:
         _fbmod.QFileDialog.getExistingDirectory = _orig_dir
     assert os.path.exists(os.path.join(_bout, "untitled.png"))

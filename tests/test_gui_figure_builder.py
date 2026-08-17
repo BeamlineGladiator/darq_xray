@@ -359,7 +359,7 @@ def test_export_now_writes_files(tmp_path, monkeypatch):
     monkeypatch.setattr(
         "gui.figure_builder.QFileDialog.getExistingDirectory", lambda *a, **k: str(out)
     )
-    w.export_now()
+    export_and_wait(w)
     assert os.path.exists(out / "untitled.png")
     assert "wrote" in w._notes_label.text()
 
@@ -401,7 +401,7 @@ def test_export_now_unexpected_error_reports_to_notes_bar_not_crash(tmp_path, mo
         raise OSError("disk full")
 
     monkeypatch.setattr("dfxm.compose.render.export_recipe", _raise)
-    w.export_now()  # must not raise
+    export_and_wait(w)  # must not raise
     assert "export failed" in w._notes_label.text()
 
 
@@ -1111,7 +1111,7 @@ def test_scale_bar_locs_is_canonical():
 
 
 # -- busy indication: async render worker (latest-wins) ----------------------
-from tests.qt_helpers import render_and_wait, wait_builder_idle  # noqa: E402
+from tests.qt_helpers import export_and_wait, render_and_wait, wait_builder_idle  # noqa: E402
 
 
 def test_async_render_shows_overlay_then_clears(tmp_path):
@@ -1157,3 +1157,33 @@ def test_latest_wins_two_rapid_renders_one_canvas(tmp_path, monkeypatch):
     assert calls == ["untitled", "second"]  # serialized, both ran
     assert len(shows) == 1  # worker 1's stale result was DROPPED, never attached
     assert w._last_outcome is not None and w._canvas.figure is w._result.figure
+
+
+def test_close_with_live_worker_drops_result_never_attaches(tmp_path, monkeypatch):
+    """closeEvent must never join a live worker on the GUI thread (SIGABRT
+    risk documented in Task 3's report) — it bumps the generation counter and
+    drops any pending request instead, so a result delivered after close is
+    discarded by _on_worker_result's generation check on arrival."""
+    import threading
+
+    import dfxm.compose.render as _render
+
+    real = _render.render_recipe
+    release = threading.Event()
+
+    def gated(recipe, *a, **k):
+        release.wait(30)
+        return real(recipe, *a, **k)
+
+    monkeypatch.setattr(_render, "render_recipe", gated)
+    w = _win()
+    w.add_panels(_obl_recipe_panels(tmp_path))
+    w.render_now()
+    assert w._worker is not None
+    w._dirty = False
+    assert w.close()  # returns immediately — never joins the thread on the GUI thread
+    assert w._pending is None and not w._debounce.isActive()
+    release.set()
+    w._worker.wait(30000)  # test-only join so monkeypatch outlives the worker
+    _app.processEvents()
+    assert w._canvas is None  # generation was bumped on close: result dropped

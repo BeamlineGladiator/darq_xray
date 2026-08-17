@@ -1528,6 +1528,12 @@ never an error, and on a figure with an unusually large number of text
 artists (over 400) the check skips itself with a note rather than slow the
 render down.
 
+Closing the builder window never waits on a running render or export — a
+close request in progress (e.g. from an outline edit's 300 ms debounce, or an
+export you just started) is dropped immediately and the window closes right
+away; the background work itself keeps running to completion, but its result
+is discarded rather than applied to a window that's already gone.
+
 A trace panel rendered under 40% of its column's map width also gets its own
 **standalone advisory** — `"panel(s) {name(s)}: trace rendered under 40% of
 the column's map width — consider enabling trace autoscale"` — even when
@@ -1650,14 +1656,19 @@ button:
   aligned to one x position (and x-axis labels within a row to one y), even
   when the panels' tick numbers have different widths — so e.g. a strain
   trace's label lines up with its mosaicity neighbours'.
-- **Export…** opens a directory picker and writes the recipe with
-  `dfxm.compose.render.export_recipe` (the same formats/DPI the recipe's
-  current style specifies — exactly what the live preview is showing you,
-  including any style-pane edits not yet saved into the recipe file — reusing
-  the preview's loader cache so nothing already read is re-read from disk);
-  the notes bar reports how many files were written and where, or the error
-  and its hint if the recipe couldn't be exported (including an output
-  directory that couldn't be created).
+- **Export…** opens a directory picker and, like the live preview, runs on
+  the same background compose thread (spinner overlay text "Exporting…";
+  **Refresh data**/**Export…** disable for the duration and re-enable when it
+  lands) — it writes the recipe with `dfxm.compose.render.export_recipe` (the
+  same formats/DPI the recipe's current style specifies — exactly what the
+  live preview is showing you, including any style-pane edits not yet saved
+  into the recipe file — reusing the preview's loader cache so nothing
+  already read is re-read from disk; export re-renders the recipe rather than
+  reusing the on-screen preview figure); the notes bar reports how many files
+  were written and where, or the error and its hint if the recipe couldn't be
+  exported (including an output directory that couldn't be created). An
+  export request made while a render (or another export) is already running
+  is queued the same way a render request is — **latest wins**.
 
 **Rendering from the command line**
 

@@ -977,23 +977,15 @@ class FigureBuilderWindow(QMainWindow):
 
     # -- export -------------------------------------------------------------------
     def export_now(self) -> None:
-        from dfxm.common.errors import StageUserError
-        from dfxm.compose.render import export_recipe
-
+        """Ask for an export directory, then run ``export_recipe`` on the
+        shared compose worker (spinner text "Exporting…"). Export re-renders
+        rather than reusing the preview result — simplest correct thing; the
+        result slot reports "wrote N file(s) → dir" or the failure text.
+        """
         out = QFileDialog.getExistingDirectory(self, "Export directory")
         if not out:
             return
-        try:
-            paths, res = export_recipe(self._recipe, out, loader_cache=self._cache)
-        except StageUserError as exc:
-            hint = f"  Hint: {exc.hint}" if exc.hint else ""
-            self._notes_label.setText(f"export failed: {exc}{hint}")
-            return
-        except Exception as exc:  # noqa: BLE001 — export must never crash the window
-            self._notes_label.setText(f"export failed: {exc}")
-            return
-        notes = f"; {'; '.join(res.notes)}" if res.notes else ""
-        self._notes_label.setText(f"wrote {len(paths)} file(s) → {out}{notes}")
+        self._request_work("export", out)
 
     # -- recipe access ------------------------------------------------------------
     def recipe(self) -> FigureRecipe:
@@ -1485,6 +1477,8 @@ class FigureBuilderWindow(QMainWindow):
     def closeEvent(self, event) -> None:  # noqa: N802 — Qt override signature
         if not self._dirty:
             self._debounce.stop()
+            self._pending = None
+            self._generation += 1  # any in-flight worker result is now stale — dropped on arrival
             event.accept()
             return
         ret = QMessageBox.question(
@@ -1512,4 +1506,14 @@ class FigureBuilderWindow(QMainWindow):
         # behaviour — e.g. it re-populating the notes label of a hidden
         # window, or firing during an unrelated later event-loop turn).
         self._debounce.stop()
+        # A live _ComposeWorker (e.g. just armed by that debounce, or still
+        # running a render/export) holds no Qt objects, so it is never joined
+        # here — keep_alive keeps it alive to run to completion regardless of
+        # this window's lifetime. Dropping _pending stops it from chaining
+        # into a second worker, and bumping _generation means its eventual
+        # resultReady delivery (queued onto the GUI thread) is discarded by
+        # _on_worker_result's generation check on arrival — or simply never
+        # dispatched if this window has since been deleted.
+        self._pending = None
+        self._generation += 1
         event.accept()
