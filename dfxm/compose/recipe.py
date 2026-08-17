@@ -11,6 +11,8 @@ from ..common.errors import StageUserError
 RECIPE_VERSION = 1
 PANEL_KINDS = ("map_layer", "slice_plane", "profiles_ref", "profiles_trace")
 SCALE_BAR_MODES = ("per-panel", "one-panel", "gutter")
+COLORBAR_MODES = ("per-panel", "united")
+COLORBAR_POSITIONS = ("right", "bottom")
 
 
 @dataclass
@@ -22,6 +24,8 @@ class ComposeStyle:
     scale_bar_mode: str = "per-panel"
     scale_bar_panel: str | None = None
     pinned_width_cm: float | None = None
+    colorbar_mode: str = "per-panel"  # one of COLORBAR_MODES
+    colorbar_pos: str = "right"  # one of COLORBAR_POSITIONS (united mode only)
 
 
 @dataclass
@@ -355,6 +359,17 @@ def validate_recipe(recipe: FigureRecipe) -> None:
         raise StageUserError(
             f"invalid compose.scale_bar_mode {recipe.compose.scale_bar_mode!r}",
             hint=f"scale_bar_mode must be one of {SCALE_BAR_MODES}.",
+        )
+
+    if recipe.compose.colorbar_mode not in COLORBAR_MODES:
+        raise StageUserError(
+            f"invalid compose.colorbar_mode {recipe.compose.colorbar_mode!r}",
+            hint=f"colorbar_mode must be one of {COLORBAR_MODES}.",
+        )
+    if recipe.compose.colorbar_pos not in COLORBAR_POSITIONS:
+        raise StageUserError(
+            f"invalid compose.colorbar_pos {recipe.compose.colorbar_pos!r}",
+            hint=f"colorbar_pos must be one of {COLORBAR_POSITIONS}.",
         )
 
     label_template = recipe.compose.label_template

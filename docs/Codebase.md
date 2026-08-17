@@ -526,9 +526,15 @@ render/export modules; the GUI-facing recipe editor is `gui/figure_builder.py`
 The recipe data model + JSON (de)serialization + validation — the schema every
 other `dfxm/compose` module builds on.
 - `RECIPE_VERSION = 1`, `PANEL_KINDS = ("map_layer", "slice_plane", "profiles_ref", "profiles_trace")`,
-  `SCALE_BAR_MODES = ("per-panel", "one-panel", "gutter")`.
+  `SCALE_BAR_MODES = ("per-panel", "one-panel", "gutter")`,
+  `COLORBAR_MODES = ("per-panel", "united")`, `COLORBAR_POSITIONS = ("right", "bottom")`.
 - `ComposeStyle` — composer-level look knobs: `label_template`, `label_font_scale`,
-  `gutter_cm`, `padding_cm`, `scale_bar_mode`, `scale_bar_panel`, `pinned_width_cm`.
+  `gutter_cm`, `padding_cm`, `scale_bar_mode`, `scale_bar_panel`, `pinned_width_cm`,
+  `colorbar_mode` (default `"per-panel"`, one of `COLORBAR_MODES` — `"united"` is
+  for a later task's single shared colorbar pass), `colorbar_pos` (default
+  `"right"`, one of `COLORBAR_POSITIONS` — only meaningful in `"united"` mode).
+  Both are additive fields: absent in old recipe JSON → the defaults above via
+  `ComposeStyle(**d.get("compose", {}))`, no loader change needed.
 - `PanelSource` — `h5_path`, `kind` (one of `PANEL_KINDS`), `selector` (kind-specific
   selection key, e.g. stage/field/plane).
 - `PanelDef` — one panel: `id`, `source: PanelSource`, plus per-panel overrides
@@ -569,8 +575,9 @@ other `dfxm/compose` module builds on.
   the first problem found: duplicate panel ids, a layout `PanelRef` pointing at
   a panel id that doesn't exist (a "ghost" reference), a panel referenced by
   the layout more than once, an unknown `PanelSource.kind`, an unknown
-  `ComposeStyle.scale_bar_mode`, a `label_template` with no `A`/`a`
-  placeholder, or a non-positive `gutter_cm`/`padding_cm`.
+  `ComposeStyle.scale_bar_mode`, an unknown `colorbar_mode`/`colorbar_pos`, a
+  `label_template` with no `A`/`a` placeholder, or a non-positive
+  `gutter_cm`/`padding_cm`.
 
 #### `gridmap.py`
 

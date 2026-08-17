@@ -76,6 +76,8 @@ def test_unknown_version_raises_stageusererror():
         (lambda r: setattr(r.panels[0].source, "kind", "hologram"), "hologram"),
         (lambda r: setattr(r.compose, "scale_bar_mode", "everywhere"), "scale_bar_mode"),
         (lambda r: setattr(r.compose, "label_template", "xx"), "label_template"),
+        (lambda r: setattr(r.compose, "colorbar_mode", "rainbow"), "colorbar_mode"),
+        (lambda r: setattr(r.compose, "colorbar_pos", "left"), "colorbar_pos"),
     ],
 )
 def test_validate_refuses_bad_recipes(mutate, frag):
@@ -190,3 +192,18 @@ def test_panel_title_round_trips_and_old_recipes_load_none():
     r3 = recipe_from_json(json.dumps(d))
     assert all(p.title is None for p in r3.panels)
     assert r3.version == 1
+
+
+def test_colorbar_mode_fields_round_trip_and_old_recipe_defaults():
+    import json
+
+    r = _mini_recipe()
+    r.compose.colorbar_mode = "united"
+    r.compose.colorbar_pos = "bottom"
+    r2 = recipe_from_json(recipe_to_json(r))
+    assert r2.compose.colorbar_mode == "united" and r2.compose.colorbar_pos == "bottom"
+    d = json.loads(recipe_to_json(_mini_recipe()))
+    d["compose"].pop("colorbar_mode")
+    d["compose"].pop("colorbar_pos")
+    r3 = recipe_from_json(json.dumps(d))
+    assert r3.compose.colorbar_mode == "per-panel" and r3.compose.colorbar_pos == "right"
