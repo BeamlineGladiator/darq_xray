@@ -37,3 +37,14 @@ def export_and_wait(w, timeout_s: float = 30.0):
     w.export_now()
     wait_builder_idle(w, timeout_s)
     return w._last_outcome
+
+
+def wait_batch_idle(dialog, timeout_s: float = 60.0) -> None:
+    """Drive the event loop until *dialog*._batch (a DialogBatchRunner) is idle."""
+    app = QApplication.instance()
+    deadline = time.monotonic() + timeout_s
+    while dialog._batch.running:
+        assert time.monotonic() < deadline, "replot batch did not finish in time"
+        app.processEvents()
+        time.sleep(0.01)
+    app.processEvents()

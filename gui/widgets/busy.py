@@ -5,15 +5,16 @@ Everything user-visible about "the app is working" lives here (spec
 indeterminate spinner or determinate progress over a host widget),
 :func:`busy_cursor` (honest wait-cursor for short synchronous blocks) and
 :func:`keep_alive` (pins running QThreads so they are never garbage-collected
-mid-flight). Batch machinery (:class:`BatchWorker`/:class:`DialogBatchRunner`)
-is added by the replot-threading tasks.
+mid-flight), and the batch machinery (:class:`BatchWorker`/
+:class:`DialogBatchRunner`) used by the replot dialogs to run a per-item
+render loop on a worker thread under a cancellable, determinate overlay.
 """
 
 from __future__ import annotations
 
 from contextlib import contextmanager
 
-from PySide6.QtCore import QEvent, Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, QObject, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QColor, QPainter, QPen
 from PySide6.QtWidgets import (
     QApplication,
@@ -23,6 +24,8 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+
+from dfxm.common.eta import EtaEstimator
 
 from ..theme import ThemeController
 
@@ -174,3 +177,101 @@ class BusyOverlay(QWidget):
 
     def wheelEvent(self, event) -> None:  # noqa: N802 — Qt override
         event.accept()
+
+
+class BatchWorker(QThread):
+    """Per-item batch on a worker thread: ``fn(item) -> list[str]`` per item.
+
+    Emits ``itemDone(done, total)`` after each item and ``batchFinished
+    (written, error_text)`` once — error_text "" on success AND on cancel
+    (``cancelled`` distinguishes). ``request_stop()`` is cooperative: the
+    current item always completes. Exceptions are formatted with a
+    StageUserError hint when present and carried as data, with the partial
+    ``written`` list preserved (those files are really on disk).
+    """
+
+    itemDone = Signal(int, int)
+    batchFinished = Signal(list, str)
+
+    def __init__(self, items: list, fn) -> None:
+        super().__init__()
+        self._items = list(items)
+        self._fn = fn
+        self._stop = False
+        self.written: list[str] = []
+        self.cancelled = False
+
+    def request_stop(self) -> None:
+        self._stop = True
+
+    def run(self) -> None:  # worker thread — no Qt widgets in here
+        total = len(self._items)
+        err = ""
+        try:
+            for i, item in enumerate(self._items):
+                if self._stop:
+                    self.cancelled = True
+                    break
+                self.written.extend(self._fn(item))
+                self.itemDone.emit(i + 1, total)
+        except Exception as exc:  # noqa: BLE001 — delivered to the dialog as data
+            hint = getattr(exc, "hint", "")
+            err = f"{exc} — {hint}" if hint else str(exc)
+        self.batchFinished.emit(list(self.written), err)
+
+
+class DialogBatchRunner(QObject):
+    """Owns one batch run for a dialog: cancellable determinate BusyOverlay
+    over the dialog, ETA from EtaEstimator, button gating, and GUI-thread
+    delivery (it is a QObject parented to the dialog, so the worker's signals
+    queue onto the GUI thread). Single-item batches keep the indeterminate
+    spinner — a 0/1 progress bar with an ETA is noise."""
+
+    def __init__(self, dialog: QWidget, buttons: tuple) -> None:
+        super().__init__(dialog)
+        self._buttons = tuple(buttons)
+        self._overlay = BusyOverlay(dialog, cancellable=True)
+        self._overlay.cancelRequested.connect(self.request_cancel)
+        self._eta = EtaEstimator()
+        self._worker: BatchWorker | None = None
+        self._on_finished_cb = None
+
+    @property
+    def running(self) -> bool:
+        return self._worker is not None
+
+    def start(self, items: list, fn, on_finished, text: str = "Rendering…") -> None:
+        if self._worker is not None:
+            return
+        self._on_finished_cb = on_finished
+        for b in self._buttons:
+            b.setEnabled(False)
+        self._eta.reset()
+        self._overlay.start(text)
+        if len(items) > 1:
+            self._overlay.set_progress(0, len(items), "")
+        worker = BatchWorker(items, fn)
+        worker.itemDone.connect(self._on_item_done)  # bound methods -> queued to GUI thread
+        worker.batchFinished.connect(self._on_batch_finished)
+        self._worker = worker
+        keep_alive(worker)
+        worker.start()
+
+    def request_cancel(self) -> None:
+        if self._worker is not None:
+            self._worker.request_stop()
+            self._overlay.set_text("Cancelling — finishing current item…")
+
+    def _on_item_done(self, done: int, total: int) -> None:
+        self._eta.update(done / total)
+        if total > 1:
+            self._overlay.set_progress(done, total, self._eta.eta_text())
+
+    def _on_batch_finished(self, written: list, error: str) -> None:
+        worker, self._worker = self._worker, None
+        cancelled = bool(worker.cancelled) if worker is not None else False
+        self._overlay.stop()  # stop() in EVERY finish path: success, error, cancel
+        for b in self._buttons:
+            b.setEnabled(True)
+        if self._on_finished_cb is not None:
+            self._on_finished_cb(written, error, cancelled)

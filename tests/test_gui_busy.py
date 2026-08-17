@@ -105,3 +105,81 @@ def test_busy_cursor_restores_on_exception_and_writes_text():
             assert label.text() == "loading…"
             raise RuntimeError("boom")
     assert _app.overrideCursor() is None
+
+
+def _run_batch(worker):
+    worker.start()
+    assert worker.wait(20000)
+    _app.processEvents()
+
+
+def test_batch_worker_runs_items_and_reports():
+    from gui.widgets.busy import BatchWorker
+
+    ticks, finishes = [], []
+    w = BatchWorker([1, 2, 3], lambda i: [f"p{i}"])
+    w.itemDone.connect(lambda d, t: ticks.append((d, t)))
+    w.batchFinished.connect(lambda paths, err: finishes.append((paths, err)))
+    _run_batch(w)
+    assert ticks == [(1, 3), (2, 3), (3, 3)]
+    assert finishes == [(["p1", "p2", "p3"], "")]
+    assert not w.cancelled
+
+
+def test_batch_worker_cancel_stops_after_current_item():
+    from gui.widgets.busy import BatchWorker
+
+    seen: list[int] = []
+    holder: list = []
+
+    def fn(i):
+        seen.append(i)
+        holder[0].request_stop()
+        return [f"p{i}"]
+
+    w = BatchWorker([1, 2, 3], fn)
+    holder.append(w)
+    results: list = []
+    w.batchFinished.connect(lambda paths, err: results.append((paths, err)))
+    _run_batch(w)
+    assert seen == [1] and w.cancelled
+    assert results == [(["p1"], "")]
+
+
+def test_batch_worker_error_carries_partial_written_and_hint():
+    from dfxm.common.errors import StageUserError
+    from gui.widgets.busy import BatchWorker
+
+    def fn(i):
+        if i == 2:
+            raise StageUserError("bad item", hint="fix it")
+        return [f"p{i}"]
+
+    results: list = []
+    w = BatchWorker([1, 2, 3], fn)
+    w.batchFinished.connect(lambda paths, err: results.append((paths, err)))
+    _run_batch(w)
+    assert results == [(["p1"], "bad item — fix it")]
+
+
+def test_dialog_batch_runner_overlay_buttons_and_finish():
+    from PySide6.QtWidgets import QPushButton
+
+    from gui.widgets.busy import DialogBatchRunner
+
+    host = _host()
+    btn = QPushButton("Render", host)
+    runner = DialogBatchRunner(host, (btn,))
+    done: list = []
+    runner.start([1, 2], lambda i: [f"p{i}"], lambda w, e, c: done.append((w, e, c)))
+    assert runner.running and runner._overlay.active and not btn.isEnabled()
+    import time as _t
+
+    deadline = _t.monotonic() + 20
+    while runner.running:
+        assert _t.monotonic() < deadline
+        _app.processEvents()
+        _t.sleep(0.01)
+    _app.processEvents()
+    assert done == [(["p1", "p2"], "", False)]
+    assert not runner._overlay.active and btn.isEnabled()
