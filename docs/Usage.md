@@ -1181,8 +1181,10 @@ across every job. The overlay therefore shows the plain rotating spinner (no
 `{i}/{N}` bar or ETA — there is only ever one step) with a
 `Rendering N job(s)…` label; **Render** and **Close** are disabled until it
 finishes. Because it's a single item, **Cancel** only takes effect before
-rendering starts — once under way the batch always completes and reports the
-normal `wrote N PNG(s) → …` summary.
+rendering starts (the status line is then prefixed `cancelled — ` on the
+resulting `wrote 0 PNG(s) → …`, same as the slices/strain dialogs) — once
+under way the batch always completes and reports the normal
+`wrote N PNG(s) → …` summary.
 
 A job whose `"fields"` override names only ids **absent** from this file (a
 reference-only job in a run — see

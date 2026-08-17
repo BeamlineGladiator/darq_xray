@@ -269,6 +269,8 @@ class ProfilesReplotDialog(QDialog):
         res = self._result_box[0] if self._result_box else None
         self._last_result = res
         msg = f"wrote {len(written)} PNG(s) → {self._last_out_dir}"
+        if cancelled:
+            msg = "cancelled — " + msg
         if res is not None and res.skipped:
             msg += f"; skipped: {'; '.join(res.skipped)}"
         if res is not None and res.notes:
