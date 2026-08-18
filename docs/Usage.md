@@ -1429,8 +1429,8 @@ a composed figure looks consistent with the per-stage exports above.
 - **Panels** — each panel (`PanelDef`) points at one dataset inside a stage's
   output h5 (`strain`/`mosaicity`/`rocking` map layer, an `oblique_slices.h5`
   plane, or a `profiles` job's reference image/line trace) plus optional
-  per-panel overrides (ROI crop, colour limits, colormap, label text, its own
-  physical scale). A recipe can mix panels from several different h5 files.
+  per-panel overrides (ROI crop or crop-to-data, colour limits, colormap, label
+  text, its own physical scale). A recipe can mix panels from several different h5 files.
   A `profiles_ref` panel's ROI crop only trims the displayed image — the
   analysis line overlay keeps the job's own endpoints and simply clips at the
   crop's edge when the line runs past it, rather than resizing the panel.
@@ -1688,6 +1688,11 @@ button:
   re-render.
   - **Panel** — edits its `PanelDef` in place: **ROI crop** as `r0,r1,c0,c1`
     pixel text (blank = full frame; all four values are required together),
+    a **Crop to data** checkbox (auto-crops the panel to the bounding box of
+    its finite, non-NaN pixels plus a 3 % margin — the quickest way to get
+    rid of the blank frame around an aligned map or oblique slice without
+    typing pixel bounds; when an ROI is also given, the box is searched inside
+    that ROI; trace panels ignore it),
     **colour limits** as `lo,hi` (either half may be left blank to keep that
     bound automatic), **colormap** (blank = follow the style), a three-state
     **Label** control — *Auto letter* (the automatic sequence letter, the

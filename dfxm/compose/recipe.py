@@ -53,6 +53,9 @@ class PanelDef:
     scale_um_per_cm: float | None = None
     colorbar: bool | None = None  # None = follow style; False when a shared bar covers it
     title: str | None = None  # human-readable data name (display only); None = show the id
+    # Auto-crop to the finite-data bounding box (+3 % margin), searched inside
+    # `roi` when one is set; ignored by trace panels.
+    crop_to_data: bool = False
 
 
 @dataclass
@@ -223,6 +226,7 @@ def _panel_def_to_dict(p, rel):
         "scale_um_per_cm": p.scale_um_per_cm,
         "colorbar": p.colorbar,
         "title": p.title,
+        "crop_to_data": bool(p.crop_to_data),
     }
 
 
@@ -240,6 +244,7 @@ def _panel_def_from_dict(d, base_dir):
         scale_um_per_cm=d.get("scale_um_per_cm"),
         colorbar=d.get("colorbar"),
         title=d.get("title"),
+        crop_to_data=bool(d.get("crop_to_data", False)),
     )
 
 

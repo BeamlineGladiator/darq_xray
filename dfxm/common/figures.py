@@ -182,6 +182,50 @@ def crop_roi_2d(layer: np.ndarray, roi: tuple[int, int, int, int] | None) -> np.
     return layer[r0:r1, c0:c1]
 
 
+def data_bbox_roi(
+    layer: np.ndarray,
+    roi: tuple[int, int, int, int] | None = None,
+    *,
+    margin_frac: float = 0.03,
+) -> tuple[int, int, int, int] | None:
+    """Bounding box of the finite (unmasked, non-NaN) pixels of a 2-D array as a
+    ``(r0, r1, c0, c1)`` ROI in the array's own full-frame pixel coordinates —
+    the "crop to data" helper behind the figure builder's per-panel option.
+
+    Searched inside *roi* when given (the result never grows past it), padded
+    by ``ceil(margin_frac * box_size)`` pixels per side on each axis (so 0.0
+    = the exact box) and clamped to the frame. Returns ``None`` when nothing
+    finite is found (or the ROI is empty), letting the caller keep its own ROI.
+    """
+    sub = crop_roi_2d(layer, roi)
+    if sub is None or sub.size == 0:
+        return None
+    if roi is None:
+        r_off = c_off = 0
+    else:
+        h, w = layer.shape[:2]
+        r_off = max(0, min(int(roi[0]), h))
+        c_off = max(0, min(int(roi[2]), w))
+    if np.ma.isMaskedArray(sub):
+        finite = np.isfinite(np.ma.filled(sub.astype(float), np.nan))
+    else:
+        finite = np.isfinite(np.asarray(sub, dtype=float))
+    rows = np.flatnonzero(finite.any(axis=1))
+    cols = np.flatnonzero(finite.any(axis=0))
+    if rows.size == 0 or cols.size == 0:
+        return None
+    r0, r1 = int(rows[0]), int(rows[-1]) + 1
+    c0, c1 = int(cols[0]), int(cols[-1]) + 1
+    pad_r = int(np.ceil(max(0.0, float(margin_frac)) * (r1 - r0)))
+    pad_c = int(np.ceil(max(0.0, float(margin_frac)) * (c1 - c0)))
+    h_sub, w_sub = sub.shape[:2]
+    r0 = max(0, r0 - pad_r)
+    r1 = min(h_sub, r1 + pad_r)
+    c0 = max(0, c0 - pad_c)
+    c1 = min(w_sub, c1 + pad_c)
+    return (r0 + r_off, r1 + r_off, c0 + c_off, c1 + c_off)
+
+
 def _apply_clim(vmin: float, vmax: float, clim: tuple[float | None, float | None] | None):
     if clim is None:
         return vmin, vmax

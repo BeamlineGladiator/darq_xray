@@ -286,3 +286,88 @@ def test_draw_panel_trace_honours_trace_opts(tmp_path):
     assert line.get_color() == "red"
     assert ax.yaxis.label.get_fontsize() == pytest.approx(20.0)
     assert ax.xaxis.get_ticklabels()[0].get_fontsize() == pytest.approx(20.0)
+
+
+def test_data_bbox_roi_finite_box_with_margin_and_within_roi():
+    from dfxm.common.figures import data_bbox_roi
+
+    a = np.full((40, 60), np.nan)
+    a[10:20, 20:35] = 1.0  # rows 10..19, cols 20..34
+    # 5 % margin of the box size (>= 1 px) each side, clamped to the frame
+    assert data_bbox_roi(a, margin_frac=0.0) == (10, 20, 20, 35)
+    r0, r1, c0, c1 = data_bbox_roi(a, margin_frac=0.1)
+    assert (r0, r1, c0, c1) == (9, 21, 18, 37)  # 10% of 10 rows = 1; of 15 cols = 1.5 -> 2
+    # nothing finite -> None (caller keeps its own roi)
+    assert data_bbox_roi(np.full((3, 3), np.nan)) is None
+    # restricted to an explicit ROI: box is found INSIDE it, returned in full-frame coords
+    assert data_bbox_roi(a, roi=(0, 40, 0, 25), margin_frac=0.0) == (10, 20, 20, 25)
+    # clamps at the frame edge
+    b = np.ones((5, 5))
+    assert data_bbox_roi(b, margin_frac=0.5) == (0, 5, 0, 5)
+    # masked arrays: masked cells count as missing
+    m = np.ma.masked_invalid(a)
+    assert data_bbox_roi(m, margin_frac=0.0) == (10, 20, 20, 35)
+
+
+def test_load_panel_crop_to_data_crops_all_image_kinds(tmp_path):
+    from dfxm.compose.recipe import PanelDef, PanelSource
+
+    # map layer: strain with NaN border
+    h5 = str(tmp_path / "strain.h5")
+    arr = np.full((2, 20, 30), np.nan)
+    arr[:, 5:15, 10:20] = 1e-4
+    with h5py.File(h5, "w") as f:
+        f.create_dataset("strain", data=arr)
+        f.attrs["scale_x_um"] = 1.0
+        f.attrs["scale_y_um"] = 1.0
+    p = PanelDef("m", PanelSource(h5, "map_layer", {"stage": "strain", "z": 0}), crop_to_data=True)
+    d = load_panel(p)
+    # default margin 3 % of the 10-px box = 0.3 -> ceil to 1 px each side
+    assert d.payload["layer"].shape == (12, 12)
+    assert d.ext_x_um == 12.0 and d.ext_y_um == 12.0
+    p0 = PanelDef("m0", PanelSource(h5, "map_layer", {"stage": "strain", "z": 0}))
+    assert load_panel(p0).payload["layer"].shape == (20, 30)
+    # crop_to_data changes the loader cache key
+    from dfxm.compose.adapters import _cache_key
+
+    assert _cache_key(p) != _cache_key(p0)
+
+
+def test_load_panel_crop_to_data_slice_and_ref(tmp_path):
+    from dfxm.compose.recipe import PanelDef, PanelSource
+
+    u = np.linspace(-10.0, 10.0, 41)
+    v = np.linspace(-8.0, 8.0, 33)
+    plane = np.full((33, 41), np.nan)
+    plane[8:24, 10:30] = 2.0
+    h5 = str(tmp_path / "obl.h5")
+    with h5py.File(h5, "w") as f:
+        for vid, kind in (("raw_sum", "raw_sum"), ("strain", "strain")):
+            g = f.create_group(vid)
+            g.attrs.update(
+                kind=kind, cbar_label="value", cmap="gray", title=vid, vmin=-10.0, vmax=10.0
+            )
+            sg = g.create_group("obl")
+            sg.create_dataset("slices", data=plane[None, ...].astype("f4"))
+            sg.create_dataset("u_um", data=u)
+            sg.create_dataset("v_um", data=v)
+            sg.create_dataset("offsets_um", data=np.array([0.0]))
+    sl = PanelDef(
+        "s",
+        PanelSource(h5, "slice_plane", {"volume_id": "strain", "slice_name": "obl", "plane": 0}),
+        crop_to_data=True,
+    )
+    d = load_panel(sl)
+    h, w = d.payload["plane2d"].shape
+    assert h < 33 and w < 41 and len(d.payload["u"]) == w and len(d.payload["v"]) == h
+    ref = PanelDef(
+        "r", PanelSource(h5, "profiles_ref", {"job": JOB, "field": None}), crop_to_data=True
+    )
+    d2 = load_panel(ref)
+    h2, w2 = d2.payload["plane"].shape
+    assert h2 < 33 and w2 < 41 and len(d2.payload["u"]) == w2
+    # traces ignore the flag
+    tr = PanelDef(
+        "t", PanelSource(h5, "profiles_trace", {"job": JOB, "field": "strain"}), crop_to_data=True
+    )
+    assert load_panel(tr).kind == "profiles_trace"

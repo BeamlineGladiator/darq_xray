@@ -415,6 +415,24 @@ def test_override_widget_edit_preserves_suppressed_label_and_precise_clim(tmp_pa
     assert panel.clim == (-0.123456789, 0.987654321)  # ...or silently round clim
 
 
+def test_override_crop_to_data_checkbox_writes_field_and_reloads(tmp_path):
+    w = _win()
+    w.add_panels(_obl_recipe_panels(tmp_path))
+    panel = w.recipe().panels[0]
+    assert panel.crop_to_data is False
+    w._select_outline_panel(panel.id)
+    assert not w._ov_crop.isChecked()
+    w._ov_crop.setChecked(True)  # real widget signal path
+    assert panel.crop_to_data is True
+    assert w.is_dirty()
+    w._ov_crop.setChecked(False)
+    assert panel.crop_to_data is False
+    # reload path from the panel's stored value
+    panel.crop_to_data = True
+    w._load_panel_page(panel)
+    assert w._ov_crop.isChecked()
+
+
 def test_export_now_unexpected_error_reports_to_notes_bar_not_crash(tmp_path, monkeypatch):
     w = _win()
     w.add_panels(_obl_recipe_panels(tmp_path))

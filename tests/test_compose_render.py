@@ -1040,3 +1040,66 @@ def test_trace_fonts_follow_style_font_scale_and_compose_overrides(tmp_path):
     (line2,) = [ln for ln in ax2.lines if ln.get_zorder() == 3]
     assert line2.get_linewidth() == 1.0 and line2.get_color() == "k"
     assert ax2.yaxis.label.get_fontsize() == pytest.approx(10.0)
+
+
+def _label_text(ax, text):
+    return next(t for t in ax.texts if t.get_text() == text and t.get_fontweight() == "bold")
+
+
+def test_panel_label_lifted_clear_of_scientific_offset_text(tmp_path):
+    # strain-magnitude values (~1e-4) so the y axis carries a x10^n exponent
+    u = np.linspace(-10.0, 10.0, 41)
+    v = np.linspace(-8.0, 8.0, 33)
+    uu, vv = np.meshgrid(u, v)
+    h5 = str(tmp_path / "obl.h5")
+    with h5py.File(h5, "w") as f:
+        g = f.create_group("strain")
+        g.attrs.update(kind="strain", cbar_label="Strain", cmap="RdBu_r", title="s")
+        g.attrs.update(vmin=-2e-3, vmax=2e-3)
+        sg = g.create_group("obl")
+        sg.create_dataset("slices", data=((uu + vv) * 1e-4)[None, ...].astype("f4"))
+        sg.create_dataset("u_um", data=u)
+        sg.create_dataset("v_um", data=v)
+        sg.create_dataset("offsets_um", data=np.array([0.0]))
+    p1 = PanelDef(
+        "a",
+        PanelSource(h5, "slice_plane", {"volume_id": "strain", "slice_name": "obl", "plane": 0}),
+    )
+    p2 = PanelDef("t", PanelSource(h5, "profiles_trace", {"job": JOB, "field": "strain"}))
+    style = {
+        "scale_um_per_cm": 10.0,
+        "trace_scale_um_per_cm": 5.0,
+        "font_scale": 2.0,
+        "tickfmt_strain": "scientific",
+    }
+    r = FigureRecipe("mix", style, ComposeStyle(), Row([PanelRef("a"), PanelRef("t")]), [p1, p2])
+    res = render_recipe(r)
+    fig = res.figure
+    fig.canvas.draw()
+    ren = fig.canvas.get_renderer()
+    ax = res.axes_by_id["t"]
+    label = _label_text(ax, "B")
+    lbb = label.get_window_extent(ren)
+    others = [t for t in ax.texts if t is not label and t.get_visible() and t.get_text()]
+    assert others, "expected the x10^n exponent text on the strain trace"
+    for t in others:
+        obb = t.get_window_extent(ren)
+        assert not (lbb.overlaps(obb) and lbb.x1 > obb.x0 + 0.5 and obb.x1 > lbb.x0 + 0.5), (
+            f"label overlaps {t.get_text()!r}"
+        )
+    # the label still sits above the axes (never pushed inside it)
+    assert lbb.y0 >= ax.get_window_extent(ren).y1 - 0.5
+
+
+def test_profiles_ref_panel_follows_font_scale_and_axes_mode(tmp_path):
+    h5 = _write_obl(tmp_path / "obl.h5")
+    p = PanelDef("r", PanelSource(h5, "profiles_ref", {"job": JOB, "field": None}))
+    style = {"scale_um_per_cm": 10.0, "font_scale": 2.0, "axes_mode": "full"}
+    r = FigureRecipe("ref", dict(style), ComposeStyle(), Row([PanelRef("r")]), [p])
+    res = render_recipe(r)
+    ax = res.axes_by_id["r"]
+    assert ax.xaxis.label.get_fontsize() == pytest.approx(20.0)  # 10 pt default x 2.0
+    style["axes_mode"] = "none"
+    r2 = FigureRecipe("ref", dict(style), ComposeStyle(), Row([PanelRef("r")]), [p])
+    res2 = render_recipe(r2)
+    assert not res2.axes_by_id["r"].axison

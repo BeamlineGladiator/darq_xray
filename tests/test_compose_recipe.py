@@ -256,3 +256,17 @@ def test_trace_look_knobs_validated():
     with pytest.raises(StageUserError) as e:
         validate_recipe(r)
     assert "trace_font_scale" in str(e.value) and e.value.hint
+
+
+def test_panel_crop_to_data_round_trips_and_defaults_false():
+    import json
+
+    r = _mini_recipe()
+    r.panels[0].crop_to_data = True
+    r2 = recipe_from_json(recipe_to_json(r))
+    assert r2.panels[0].crop_to_data is True and r2.panels[1].crop_to_data is False
+    d = json.loads(recipe_to_json(_mini_recipe()))
+    for p in d["panels"]:
+        p.pop("crop_to_data")
+    r3 = recipe_from_json(json.dumps(d))
+    assert all(p.crop_to_data is False for p in r3.panels)

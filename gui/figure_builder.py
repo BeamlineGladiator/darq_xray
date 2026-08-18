@@ -801,6 +801,15 @@ class FigureBuilderWindow(QMainWindow):
         self._ov_roi.textChanged.connect(lambda _t: self._on_override_field_edited("roi"))
         form.addRow("ROI crop (px)", self._ov_roi)
 
+        self._ov_crop = QCheckBox("Crop to data")
+        self._ov_crop.setToolTip(
+            "Auto-crop this panel to the bounding box of its finite (non-NaN) pixels, "
+            "plus a 3 % margin — searched inside the ROI above when one is set. "
+            "Ignored by trace panels."
+        )
+        self._ov_crop.toggled.connect(lambda _c: self._on_override_field_edited("crop_to_data"))
+        form.addRow("", self._ov_crop)
+
         self._ov_clim = QLineEdit()
         self._ov_clim.setPlaceholderText("lo,hi (blank half ok; blank both = stored)")
         self._ov_clim.textChanged.connect(lambda _t: self._on_override_field_edited("clim"))
@@ -868,6 +877,7 @@ class FigureBuilderWindow(QMainWindow):
     def _load_panel_page(self, panel: PanelDef) -> None:
         widgets = (
             self._ov_roi,
+            self._ov_crop,
             self._ov_clim,
             self._ov_cmap,
             self._ov_label_mode,
@@ -879,6 +889,7 @@ class FigureBuilderWindow(QMainWindow):
         for w in widgets:
             w.blockSignals(True)
         self._ov_roi.setText(",".join(str(v) for v in panel.roi) if panel.roi else "")
+        self._ov_crop.setChecked(bool(panel.crop_to_data))
         if panel.clim is not None:
             lo, hi = panel.clim
             lo_s = "" if lo is None else f"{lo:g}"
@@ -947,6 +958,7 @@ class FigureBuilderWindow(QMainWindow):
             return
         getters = {
             "roi": self._ov_roi.text,
+            "crop_to_data": self._ov_crop.isChecked,
             "clim": self._ov_clim.text,
             "cmap": self._ov_cmap.currentText,
             "label": self._label_override_value,
@@ -1028,6 +1040,8 @@ class FigureBuilderWindow(QMainWindow):
         changes: dict = {}
         if "roi" in values:
             changes["roi"] = new_roi
+        if "crop_to_data" in values:
+            changes["crop_to_data"] = bool(values["crop_to_data"])
         if "clim" in values:
             changes["clim"] = new_clim
         if "cmap" in values:

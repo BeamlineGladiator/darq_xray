@@ -29,7 +29,7 @@ import os
 from dataclasses import dataclass, field
 
 from ..common.errors import StageUserError
-from ..common.figures import crop_roi_2d
+from ..common.figures import crop_roi_2d, data_bbox_roi
 from ..common.plotting import GROUP_BY_KIND, symmetric_limits
 from .recipe import PANEL_KINDS, PanelDef
 
@@ -49,7 +49,13 @@ class PanelData:
 def _cache_key(panel: PanelDef) -> str:
     src = panel.source
     return json.dumps(
-        [src.h5_path, src.kind, src.selector, list(panel.roi) if panel.roi else None],
+        [
+            src.h5_path,
+            src.kind,
+            src.selector,
+            list(panel.roi) if panel.roi else None,
+            bool(panel.crop_to_data),
+        ],
         sort_keys=True,
         default=str,
     )
@@ -74,7 +80,12 @@ def load_panel(panel: PanelDef, *, cache: dict | None = None) -> PanelData:
         return cache[key]
     loader = _LOADERS[panel.source.kind]
     try:
-        data = loader(panel.source.h5_path, panel.source.selector, panel.roi)
+        data = loader(
+            panel.source.h5_path,
+            panel.source.selector,
+            panel.roi,
+            crop_to_data=bool(panel.crop_to_data),
+        )
     except StageUserError:
         raise
     except Exception as exc:  # noqa: BLE001 — the composition survives partial data
@@ -84,7 +95,7 @@ def load_panel(panel: PanelDef, *, cache: dict | None = None) -> PanelData:
     return data
 
 
-def _load_map_layer(h5_path, sel, roi):
+def _load_map_layer(h5_path, sel, roi, *, crop_to_data=False):
     import h5py
 
     stage = sel.get("stage")
@@ -128,6 +139,7 @@ def _load_map_layer(h5_path, sel, roi):
             vmin, vmax = _replot_default_clim(dset, {}, None)
         else:
             vmin, vmax = symmetric_limits(layer)
+    roi = _effective_roi(layer, roi, crop_to_data)
     layer = crop_roi_2d(layer, roi)
     if layer is None:
         raise ValueError(f"ROI {roi} crops to an empty layer")
@@ -142,7 +154,7 @@ def _load_map_layer(h5_path, sel, roi):
     )
 
 
-def _load_slice_plane(h5_path, sel, roi):
+def _load_slice_plane(h5_path, sel, roi, *, crop_to_data=False):
     import h5py
 
     from ..common.plotting import resolve_cmap
@@ -173,7 +185,7 @@ def _load_slice_plane(h5_path, sel, roi):
         u = sg["u_um"][:]
         v = sg["v_um"][:]
         off = float(sg["offsets_um"][k])
-    s2d, u, v = _crop_uv(s2d, u, v, roi)
+    s2d, u, v = _crop_uv(s2d, u, v, _effective_roi(s2d, roi, crop_to_data))
     group = GROUP_BY_KIND.get(kind)
     prep["group"] = group
     prep["cmap_name"] = resolve_cmap(None, group, fallback=prep["cmap_name"])
@@ -186,6 +198,16 @@ def _load_slice_plane(h5_path, sel, roi):
         vmax=prep["vmax"],
         payload={"prep": prep, "sname": sname, "plane2d": s2d, "u": u, "v": v, "offset_um": off},
     )
+
+
+def _effective_roi(plane, roi, crop_to_data):
+    """The ROI to crop *plane* with: ``roi`` as-is, or — when *crop_to_data* —
+    the finite-data bounding box (``data_bbox_roi``, +3 % margin) searched
+    inside ``roi``; falls back to ``roi`` when the plane has no finite data."""
+    if not crop_to_data:
+        return roi
+    box = data_bbox_roi(plane, roi)
+    return roi if box is None else box
 
 
 def _crop_uv(plane, u, v, roi):
@@ -207,7 +229,7 @@ def _crop_uv(plane, u, v, roi):
     return cropped, u[c0:c1], v[r0:r1]
 
 
-def _load_profiles_ref(h5_path, sel, roi):
+def _load_profiles_ref(h5_path, sel, roi, *, crop_to_data=False):
     import h5py
 
     from ..stages import profiles
@@ -234,7 +256,7 @@ def _load_profiles_ref(h5_path, sel, roi):
             plane, attrs = fld["plane"], fld["attrs"]
         else:
             plane, attrs = ref_plane, ref_attrs
-    plane, u, v = _crop_uv(plane, u_um, v_um, roi)
+    plane, u, v = _crop_uv(plane, u_um, v_um, _effective_roi(plane, roi, crop_to_data))
     color = profiles.auto_line_color(attrs["cmap"], None)
     return PanelData(
         kind="profiles_ref",
@@ -247,7 +269,7 @@ def _load_profiles_ref(h5_path, sel, roi):
     )
 
 
-def _load_profiles_trace(h5_path, sel, roi):
+def _load_profiles_trace(h5_path, sel, roi, *, crop_to_data=False):
     import h5py
 
     from ..stages import profiles
@@ -409,6 +431,13 @@ def draw_panel(
             add_colorbar(
                 ax.get_figure(), im, ax, attrs["cbar_label"], style, group=data.group, cax=cax
             )
+        if style is not None:
+            # same styling the standalone reference figure gets (font scale,
+            # axes_mode) — the composer skipped both before 2026-08-18
+            from ..common.plotting import apply_axes_mode, apply_text_scale
+
+            apply_text_scale(ax, style)
+            apply_axes_mode(ax, style)
         return im
     if data.kind == "profiles_trace":
         from ..stages.profiles import draw_trace_axes

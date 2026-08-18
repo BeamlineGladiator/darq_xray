@@ -104,8 +104,10 @@ def _assign_labels(layout, panels_by_id, compose):
 
 
 def _draw_label(ax, text, style, compose):
+    """Panel letter, bold, anchored 4 pt above the axes' top-left corner.
+    Returns the annotation so `_lift_labels_clear_of_axes_text` can move it."""
     size = 12.0 * style.font_scale * compose.label_font_scale
-    ax.annotate(
+    return ax.annotate(
         text,
         xy=(0.0, 1.0),
         xycoords="axes fraction",
@@ -117,6 +119,41 @@ def _draw_label(ax, text, style, compose):
         fontweight="bold",
         annotation_clip=False,
     )
+
+
+def _lift_labels_clear_of_axes_text(fig, labelled) -> None:
+    """Move each panel label straight up until it clears the axes' own texts.
+
+    A trace axis with a scientific tick format carries its ``×10ⁿ`` exponent
+    as an axes text at the top-left corner (`apply_axis_tickfmt`), exactly
+    where the panel letter is anchored, so the two overlap (real-data finding
+    2026-08-18: labels E/H over ``×10⁻⁴``). Runs BEFORE the measure pass, so
+    the lifted label's extra height is reserved in the cell's top margin like
+    any other decoration. *labelled* is ``[(ax, annotation), ...]``.
+    """
+    if not labelled:
+        return
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+
+    if fig.canvas is None or not hasattr(fig.canvas, "get_renderer"):
+        FigureCanvasAgg(fig)
+    fig.canvas.draw()
+    ren = fig.canvas.get_renderer()
+    for ax, ann in labelled:
+        lbb = ann.get_window_extent(ren)
+        top = None
+        for t in list(ax.texts) + [ax.yaxis.get_offset_text()]:
+            if t is ann or not t.get_visible() or not t.get_text():
+                continue
+            obb = t.get_window_extent(ren)
+            if obb.width <= 0 or obb.height <= 0 or not lbb.overlaps(obb):
+                continue
+            top = obb.y1 if top is None else max(top, obb.y1)
+        if top is None or top <= lbb.y0:
+            continue
+        lift_pt = (top - lbb.y0) * 72.0 / fig.dpi + 2.0
+        x_pt, y_pt = ann.get_position()
+        ann.set_position((x_pt, y_pt + lift_pt))
 
 
 def _panel_leaves(node):
@@ -905,10 +942,12 @@ def render_recipe(
             draw_panel(ax, panel, data, style, show_title=False)
 
     labels = _assign_labels(recipe.layout, panels_by_id, recipe.compose)
+    labelled = []
     for node_id, text in labels.items():
         cell = cells.get(node_id)
         if cell is not None and cell.ax is not None:
-            _draw_label(cell.ax, text, style, recipe.compose)
+            labelled.append((cell.ax, _draw_label(cell.ax, text, style, recipe.compose)))
+    _lift_labels_clear_of_axes_text(fig, labelled)
 
     # Shared colorbars are drawn NOW, before the measure pass, so the bar's own
     # decorations (tick numbers, offset text, vertical label) get measured
