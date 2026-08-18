@@ -94,6 +94,8 @@ def test_measure_axes_margins_ignores_labels_of_axis_off_axes():
     m = measure_axes_margins(fig, ax, pad_in=0.0)
     assert max(m.left, m.right, m.top, m.bottom) < 0.05
 
+
+def test_axes_margins_max_with():
     a = AxesMargins(1.0, 0.1, 0.2, 0.5)
     b = AxesMargins(0.5, 0.4, 0.1, 0.9)
     m = a.max_with(b)

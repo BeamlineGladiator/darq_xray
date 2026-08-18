@@ -1137,3 +1137,19 @@ def test_scale_bar_cell_falls_back_to_auto_length_when_bar_would_not_fit(tmp_pat
     assert len(boxes) == 1
     assert _scale_bar_rect(boxes[0]).get_width() < 20.0  # auto-sized inside the 2-cm span
     assert any("scale-bar cell" in n and "auto" in n for n in res.notes)
+
+
+def test_scale_bar_cell_without_maps_leaves_note(tmp_path):
+    from dfxm.compose.recipe import ScaleBarCell
+
+    h5 = _write_obl(tmp_path / "obl.h5")
+    pt = PanelDef("t", PanelSource(h5, "profiles_trace", {"job": JOB, "field": "strain"}))
+    r = FigureRecipe(
+        "sb",
+        {"trace_scale_um_per_cm": 5.0},
+        ComposeStyle(),
+        Row([PanelRef("t"), ScaleBarCell(2.0, 1.0)]),
+        [pt],
+    )
+    res = render_recipe(r)  # no crash
+    assert any("scale-bar cell" in n and "blank" in n for n in res.notes)

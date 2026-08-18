@@ -767,6 +767,10 @@ def _resolve_scale_bar_kwargs(recipe, panels_by_id, data_by_id, cell_by_pid, not
             raise StageUserError(
                 "shared scale bar needs every map at one µm/cm", hint=_GUTTER_MISMATCH_HINT
             )
+        if placed_bars and not effs:
+            notes.append(
+                "scale-bar cell: no map panel with a size to take the µm/cm from — cell left blank"
+            )
         if effs and placed_bars:
             gutter_scale = next(iter(effs))
         elif effs:

@@ -1404,7 +1404,8 @@ form.
 > (traces: *No label*); Style → Axes **None**, Font scale ~2.5–3, Scale
 > ~20 µm/cm; Compose → Traces: font scale ~1.8, line width ~6 pt, aspect ~2.6,
 > Autoscale off and Style → *Trace scale* ~4–5 µm/cm so the traces are wide.
-> `test_figure_builder_fig5.json` in the repo root is exactly this recipe.
+> `docs/examples/figure5_style_recipe.json` is exactly this recipe (its
+> `h5_path`s point at the STO2 `oblique_slices_v2.h5`; edit them for your data).
 > The Style pane's Font scale now goes up to 20 (was 5) for large pages.
 >
 > **Recipe files** are JSON. **Save as…** appends `.json` when you type a name

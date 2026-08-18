@@ -112,8 +112,10 @@ def test_arrange_dialog_clean_grid_preserves_col_flags():
             shared_x=True,
             shared_colorbar=True,
             shared_clim=(-1.0, 1.0),
+            gap_cm=0.0,
         ),
     ]
+    root.gap_cm = 1.5
     w._rebuild_tree()
     dlg = ArrangeDialog(w.recipe(), w._style)
     assert dlg._warning.isHidden()
@@ -123,6 +125,8 @@ def test_arrange_dialog_clean_grid_preserves_col_flags():
     assert isinstance(col, Col)
     assert col.shared_x and col.shared_colorbar and col.group_label == "G"
     assert col.pinned_width_cm == 4.0 and col.shared_clim == (-1.0, 1.0)
+    assert col.gap_cm == 0.0  # per-container gap survives a rearrange
+    assert dlg.result_layout.gap_cm == 1.5  # ...and so does the root row's
     w._debounce.stop()
 
 

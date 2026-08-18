@@ -1,0 +1,450 @@
+{
+ "name": "figure5_style",
+ "style": {
+  "scale_bar": true,
+  "scale_bar_length_um": 50.0,
+  "scale_bar_thickness_pt": 16,
+  "scale_bar_label_scale": 1.0,
+  "scale_bar_loc": "lower left",
+  "scale_bar_color": "white",
+  "scale_bar_box": true,
+  "scale_bar_box_color": "black",
+  "scale_bar_box_alpha": 0.75,
+  "scale_bar_box_margin_pt": 4.0,
+  "scale_bar_inset_pt": 5.0,
+  "font_scale": 2.8,
+  "title_scale": 1.0,
+  "show_title": false,
+  "center_axis_labels": true,
+  "axes_mode": "none",
+  "colorbar": true,
+  "colorbar_label": null,
+  "colorbar_fraction": 0.07,
+  "colorbar_ticks": 5,
+  "cbar_label_scale": 1.0,
+  "cbar_tick_scale": 1.0,
+  "cbar_labelpad_pt": null,
+  "tickfmt_mosa_com": "2",
+  "tickfmt_mosa_fwhm": "auto",
+  "tickfmt_strain": "scientific",
+  "tickfmt_raw": "arb",
+  "offset_scale_mosa_com": 0.6,
+  "offset_scale_mosa_fwhm": 1.0,
+  "offset_scale_strain": 1.2,
+  "offset_scale_raw": 1.0,
+  "offset_pos_mosa_com": "bottom",
+  "offset_pos_mosa_fwhm": "bottom",
+  "offset_pos_strain": "top",
+  "offset_pos_raw": "bottom",
+  "round_clim": true,
+  "figure_width": "auto",
+  "scale_um_per_cm": 20.0,
+  "trace_scale_um_per_cm": 4.5,
+  "trace_height_cm": null,
+  "formats": [
+   "png"
+  ],
+  "dpi": 600,
+  "cmap_mosa_com": "fast",
+  "cmap_mosa_fwhm": "magma",
+  "cmap_strain": "RdBu_r",
+  "cmap_raw": "gray"
+ },
+ "compose": {
+  "label_template": "A",
+  "label_font_scale": 1.0,
+  "gutter_cm": 1.0,
+  "padding_cm": 0.3,
+  "scale_bar_mode": "per-panel",
+  "scale_bar_panel": null,
+  "pinned_width_cm": null,
+  "colorbar_mode": "per-panel",
+  "colorbar_pos": "right",
+  "trace_autoscale": false,
+  "trace_aspect": 2.6,
+  "trace_font_scale": 1.9,
+  "trace_linewidth": 7.0
+ },
+ "layout": {
+  "type": "row",
+  "children": [
+   {
+    "type": "col",
+    "shared_colorbar": true,
+    "children": [
+     {
+      "type": "panel",
+      "panel_id": "profiles_0"
+     },
+     {
+      "type": "scalebar",
+      "w_cm": 5.0,
+      "h_cm": 2.6
+     },
+     {
+      "type": "panel",
+      "panel_id": "profiles_4"
+     }
+    ],
+    "gap_cm": 0.6
+   },
+   {
+    "type": "col",
+    "shared_x": true,
+    "group_label": "A2",
+    "children": [
+     {
+      "type": "panel",
+      "panel_id": "profiles_1"
+     },
+     {
+      "type": "panel",
+      "panel_id": "profiles_3"
+     },
+     {
+      "type": "panel",
+      "panel_id": "profiles_2"
+     }
+    ],
+    "gap_cm": 0.0
+   },
+   {
+    "type": "col",
+    "shared_x": true,
+    "group_label": "B2",
+    "children": [
+     {
+      "type": "panel",
+      "panel_id": "profiles_5"
+     },
+     {
+      "type": "panel",
+      "panel_id": "profiles_7"
+     },
+     {
+      "type": "panel",
+      "panel_id": "profiles_6"
+     }
+    ],
+    "gap_cm": 0.0
+   }
+  ]
+ },
+ "panels": [
+  {
+   "id": "profiles_0",
+   "source": {
+    "h5_path": "/mnt/data/ESRF/STO2_overnight_plots/oblique_slices_v2.h5",
+    "kind": "profiles_ref",
+    "selector": {
+     "field": null,
+     "job": {
+      "end_uv": [
+       39.7172,
+       21.4557
+      ],
+      "fields": [
+       "mosa_com_mu",
+       "mosa_fwhm_mu",
+       "raw_mosa_sum",
+       "strain"
+      ],
+      "fig_name": "profile_oblique_full_3_um",
+      "n_samples": null,
+      "name": "oblique_full_pin_-3.72um",
+      "offset_um": -3.7232,
+      "start_uv": [
+       1.8913,
+       -13.3441
+      ],
+      "width_pixels": 1
+     }
+    }
+   },
+   "roi": null,
+   "clim": null,
+   "cmap": null,
+   "label": "A1",
+   "show_title": null,
+   "scale_um_per_cm": null,
+   "colorbar": null,
+   "title": "oblique_full_pin_-3.72um / reference",
+   "crop_to_data": true
+  },
+  {
+   "id": "profiles_1",
+   "source": {
+    "h5_path": "/mnt/data/ESRF/STO2_overnight_plots/oblique_slices_v2.h5",
+    "kind": "profiles_trace",
+    "selector": {
+     "field": "mosa_com_mu",
+     "job": {
+      "end_uv": [
+       39.7172,
+       21.4557
+      ],
+      "fields": [
+       "mosa_com_mu",
+       "mosa_fwhm_mu",
+       "raw_mosa_sum",
+       "strain"
+      ],
+      "fig_name": "profile_oblique_full_3_um",
+      "n_samples": null,
+      "name": "oblique_full_pin_-3.72um",
+      "offset_um": -3.7232,
+      "start_uv": [
+       1.8913,
+       -13.3441
+      ],
+      "width_pixels": 1
+     }
+    }
+   },
+   "roi": null,
+   "clim": null,
+   "cmap": null,
+   "label": "",
+   "show_title": null,
+   "scale_um_per_cm": null,
+   "colorbar": null,
+   "title": "oblique_full_pin_-3.72um / mosa_com_mu"
+  },
+  {
+   "id": "profiles_2",
+   "source": {
+    "h5_path": "/mnt/data/ESRF/STO2_overnight_plots/oblique_slices_v2.h5",
+    "kind": "profiles_trace",
+    "selector": {
+     "field": "raw_mosa_sum",
+     "job": {
+      "end_uv": [
+       39.7172,
+       21.4557
+      ],
+      "fields": [
+       "mosa_com_mu",
+       "mosa_fwhm_mu",
+       "raw_mosa_sum",
+       "strain"
+      ],
+      "fig_name": "profile_oblique_full_3_um",
+      "n_samples": null,
+      "name": "oblique_full_pin_-3.72um",
+      "offset_um": -3.7232,
+      "start_uv": [
+       1.8913,
+       -13.3441
+      ],
+      "width_pixels": 1
+     }
+    }
+   },
+   "roi": null,
+   "clim": null,
+   "cmap": null,
+   "label": "",
+   "show_title": null,
+   "scale_um_per_cm": null,
+   "colorbar": null,
+   "title": "oblique_full_pin_-3.72um / raw_mosa_sum"
+  },
+  {
+   "id": "profiles_3",
+   "source": {
+    "h5_path": "/mnt/data/ESRF/STO2_overnight_plots/oblique_slices_v2.h5",
+    "kind": "profiles_trace",
+    "selector": {
+     "field": "strain",
+     "job": {
+      "end_uv": [
+       39.7172,
+       21.4557
+      ],
+      "fields": [
+       "mosa_com_mu",
+       "mosa_fwhm_mu",
+       "raw_mosa_sum",
+       "strain"
+      ],
+      "fig_name": "profile_oblique_full_3_um",
+      "n_samples": null,
+      "name": "oblique_full_pin_-3.72um",
+      "offset_um": -3.7232,
+      "start_uv": [
+       1.8913,
+       -13.3441
+      ],
+      "width_pixels": 1
+     }
+    }
+   },
+   "roi": null,
+   "clim": null,
+   "cmap": null,
+   "label": "",
+   "show_title": null,
+   "scale_um_per_cm": null,
+   "colorbar": null,
+   "title": "oblique_full_pin_-3.72um / strain"
+  },
+  {
+   "id": "profiles_4",
+   "source": {
+    "h5_path": "/mnt/data/ESRF/STO2_overnight_plots/oblique_slices_v2.h5",
+    "kind": "profiles_ref",
+    "selector": {
+     "field": null,
+     "job": {
+      "end_uv": [
+       -35.1781,
+       33.56
+      ],
+      "fields": [
+       "mosa_com_mu",
+       "mosa_fwhm_mu",
+       "strain",
+       "raw_mosa_sum"
+      ],
+      "fig_name": "profile_oblique_full_parallel_26_um",
+      "n_samples": null,
+      "name": "oblique_full_parallel_pin_+26.60um",
+      "offset_um": 26.5993,
+      "start_uv": [
+       1.1348,
+       7.0819
+      ],
+      "width_pixels": 1
+     }
+    }
+   },
+   "roi": null,
+   "clim": null,
+   "cmap": null,
+   "label": "B1",
+   "show_title": null,
+   "scale_um_per_cm": null,
+   "colorbar": null,
+   "title": "oblique_full_parallel_pin_+26.60um / reference",
+   "crop_to_data": true
+  },
+  {
+   "id": "profiles_5",
+   "source": {
+    "h5_path": "/mnt/data/ESRF/STO2_overnight_plots/oblique_slices_v2.h5",
+    "kind": "profiles_trace",
+    "selector": {
+     "field": "mosa_com_mu",
+     "job": {
+      "end_uv": [
+       -35.1781,
+       33.56
+      ],
+      "fields": [
+       "mosa_com_mu",
+       "mosa_fwhm_mu",
+       "strain",
+       "raw_mosa_sum"
+      ],
+      "fig_name": "profile_oblique_full_parallel_26_um",
+      "n_samples": null,
+      "name": "oblique_full_parallel_pin_+26.60um",
+      "offset_um": 26.5993,
+      "start_uv": [
+       1.1348,
+       7.0819
+      ],
+      "width_pixels": 1
+     }
+    }
+   },
+   "roi": null,
+   "clim": null,
+   "cmap": null,
+   "label": "",
+   "show_title": null,
+   "scale_um_per_cm": null,
+   "colorbar": null,
+   "title": "oblique_full_parallel_pin_+26.60um / mosa_com_mu"
+  },
+  {
+   "id": "profiles_6",
+   "source": {
+    "h5_path": "/mnt/data/ESRF/STO2_overnight_plots/oblique_slices_v2.h5",
+    "kind": "profiles_trace",
+    "selector": {
+     "field": "raw_mosa_sum",
+     "job": {
+      "end_uv": [
+       -35.1781,
+       33.56
+      ],
+      "fields": [
+       "mosa_com_mu",
+       "mosa_fwhm_mu",
+       "strain",
+       "raw_mosa_sum"
+      ],
+      "fig_name": "profile_oblique_full_parallel_26_um",
+      "n_samples": null,
+      "name": "oblique_full_parallel_pin_+26.60um",
+      "offset_um": 26.5993,
+      "start_uv": [
+       1.1348,
+       7.0819
+      ],
+      "width_pixels": 1
+     }
+    }
+   },
+   "roi": null,
+   "clim": null,
+   "cmap": null,
+   "label": "",
+   "show_title": null,
+   "scale_um_per_cm": null,
+   "colorbar": null,
+   "title": "oblique_full_parallel_pin_+26.60um / raw_mosa_sum"
+  },
+  {
+   "id": "profiles_7",
+   "source": {
+    "h5_path": "/mnt/data/ESRF/STO2_overnight_plots/oblique_slices_v2.h5",
+    "kind": "profiles_trace",
+    "selector": {
+     "field": "strain",
+     "job": {
+      "end_uv": [
+       -35.1781,
+       33.56
+      ],
+      "fields": [
+       "mosa_com_mu",
+       "mosa_fwhm_mu",
+       "strain",
+       "raw_mosa_sum"
+      ],
+      "fig_name": "profile_oblique_full_parallel_26_um",
+      "n_samples": null,
+      "name": "oblique_full_parallel_pin_+26.60um",
+      "offset_um": 26.5993,
+      "start_uv": [
+       1.1348,
+       7.0819
+      ],
+      "width_pixels": 1
+     }
+    }
+   },
+   "roi": null,
+   "clim": null,
+   "cmap": null,
+   "label": "",
+   "show_title": null,
+   "scale_um_per_cm": null,
+   "colorbar": null,
+   "title": "oblique_full_parallel_pin_+26.60um / strain"
+  }
+ ],
+ "version": 1
+}

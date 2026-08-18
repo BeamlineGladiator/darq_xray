@@ -323,6 +323,7 @@ def _collect_col_flags(layout) -> dict[frozenset, dict]:
                     "shared_x": node.shared_x,
                     "shared_colorbar": node.shared_colorbar,
                     "shared_clim": node.shared_clim,
+                    "gap_cm": node.gap_cm,
                 }
         if isinstance(node, (Row, Col)):
             for c in node.children:
@@ -348,6 +349,8 @@ class ArrangeDialog(QDialog):
         self.result_layout = None
         self.scale_bar_pick: tuple[str, str] | None = None
         self._old_flags = _collect_col_flags(recipe.layout)
+        # the root Row's own per-container gap survives a rearrange too
+        self._old_root_gap = getattr(recipe.layout, "gap_cm", None)
 
         self._arranger = LayoutArranger()
         self._warning = QLabel(
@@ -413,5 +416,7 @@ class ArrangeDialog(QDialog):
                     child.shared_x = flags["shared_x"]
                     child.shared_colorbar = flags["shared_colorbar"]
                     child.shared_clim = flags["shared_clim"]
+                    child.gap_cm = flags.get("gap_cm")
+        new_root.gap_cm = self._old_root_gap
         self.result_layout = new_root
         self.accept()

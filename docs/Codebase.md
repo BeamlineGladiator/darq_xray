@@ -1134,6 +1134,10 @@ anywhere (`fig.set_layout_engine("none")` throughout, same as `layout.py`).
       `scale_bar_loc="center"`, `inset 0`, and the style's `scale_bar_length_um`
       when ≤ 0.9 × the cell span (else auto length + a "scale-bar cell … auto
       length" note). Its axes is an owner in the text-collision check.
+      A scale-bar cell with no sized map panel to take the µm/cm from is left
+      blank with a "scale-bar cell: no map panel … cell left blank" note.
+      `gui/widgets/layout_arranger.py`'s `_collect_col_flags`/`_on_apply` carry
+      `gap_cm` (and the root Row's) through a rearrange like the other flags.
   10. **Labels** — `_assign_labels`/`_draw_label`: depth-first auto-increment
       over `compose.label_template` (a `group_label` node consumes one slot for
       the whole group; a manual `PanelDef.label` replaces the slot's text;
