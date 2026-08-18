@@ -60,6 +60,9 @@ from .widgets.busy import BusyOverlay, busy_cursor, keep_alive
 from .widgets.export_dialog import StyleControls
 from .widgets.panel_picker import AddPanelDialog
 
+# Editable trace-colour combo presets ("" = matplotlib default C0).
+TRACE_COLOR_CHOICES = ("", "black", "C0", "C1", "C2", "C3", "red", "gray", "white")
+
 # Tri-state (Follow/On/Off) combo choices shared by show_title/colorbar override
 # rows — display label -> stored value (None = follow the composed default).
 _TRI_STATE = (("Follow", None), ("On", True), ("Off", False))
@@ -321,6 +324,44 @@ class FigureBuilderWindow(QMainWindow):
         self._compose_trace_autoscale.toggled.connect(self._on_compose_edited)
         form.addRow(self._compose_trace_autoscale)
 
+        form.addRow(QLabel("<b>Traces</b>"))
+        self._compose_trace_lw = QDoubleSpinBox()
+        self._compose_trace_lw.setRange(0.0, 50.0)
+        self._compose_trace_lw.setDecimals(2)
+        self._compose_trace_lw.setSingleStep(0.5)
+        self._compose_trace_lw.setSuffix(" pt")
+        self._compose_trace_lw.setSpecialValueText("auto (1.8 pt × font scale)")
+        self._compose_trace_lw.setValue(c.trace_linewidth or 0.0)
+        self._compose_trace_lw.setToolTip(
+            "Line width of profile traces in points. 0 = automatic: 1.8 pt times the "
+            "trace font scale, so lines thicken with the text."
+        )
+        self._compose_trace_lw.valueChanged.connect(self._on_compose_edited)
+        form.addRow("Trace line width (0 = auto)", self._compose_trace_lw)
+
+        self._compose_trace_color = QComboBox()
+        self._compose_trace_color.setEditable(True)
+        self._compose_trace_color.addItems(list(TRACE_COLOR_CHOICES))
+        self._compose_trace_color.setCurrentText(c.trace_color)
+        self._compose_trace_color.setToolTip(
+            "Trace colour (any matplotlib colour name / hex). Blank = default blue (C0)."
+        )
+        self._compose_trace_color.currentTextChanged.connect(self._on_compose_edited)
+        form.addRow("Trace colour (blank = C0)", self._compose_trace_color)
+
+        self._compose_trace_font_scale = QDoubleSpinBox()
+        self._compose_trace_font_scale.setRange(0.0, 10.0)
+        self._compose_trace_font_scale.setDecimals(2)
+        self._compose_trace_font_scale.setSingleStep(0.1)
+        self._compose_trace_font_scale.setSpecialValueText("follow Style font scale")
+        self._compose_trace_font_scale.setValue(c.trace_font_scale or 0.0)
+        self._compose_trace_font_scale.setToolTip(
+            "Font scale for trace axis labels/ticks. 0 = follow the Style pane's Font "
+            "scale so maps and traces stay typographically consistent."
+        )
+        self._compose_trace_font_scale.valueChanged.connect(self._on_compose_edited)
+        form.addRow("Trace font scale (0 = follow)", self._compose_trace_font_scale)
+
         form.addRow(QLabel("<b>Colourbars</b>"))
         self._compose_cbar_mode = QComboBox()
         for text, value in (("Per panel", "per-panel"), ("One per quantity", "united")):
@@ -386,6 +427,9 @@ class FigureBuilderWindow(QMainWindow):
             self._compose_gutter,
             self._compose_padding,
             self._compose_trace_autoscale,
+            self._compose_trace_lw,
+            self._compose_trace_color,
+            self._compose_trace_font_scale,
             self._compose_cbar_mode,
             self._compose_cbar_pos,
             self._compose_scale_bar_mode,
@@ -399,6 +443,9 @@ class FigureBuilderWindow(QMainWindow):
         self._compose_gutter.setValue(c.gutter_cm)
         self._compose_padding.setValue(c.padding_cm)
         self._compose_trace_autoscale.setChecked(c.trace_autoscale)
+        self._compose_trace_lw.setValue(c.trace_linewidth or 0.0)
+        self._compose_trace_color.setCurrentText(c.trace_color or "")
+        self._compose_trace_font_scale.setValue(c.trace_font_scale or 0.0)
         self._compose_cbar_mode.setCurrentIndex(
             max(0, self._compose_cbar_mode.findData(c.colorbar_mode))
         )
@@ -420,6 +467,11 @@ class FigureBuilderWindow(QMainWindow):
         c.gutter_cm = self._compose_gutter.value()
         c.padding_cm = self._compose_padding.value()
         c.trace_autoscale = self._compose_trace_autoscale.isChecked()
+        lw = self._compose_trace_lw.value()
+        c.trace_linewidth = lw if lw > 0 else None
+        c.trace_color = self._compose_trace_color.currentText().strip()
+        tfs = self._compose_trace_font_scale.value()
+        c.trace_font_scale = tfs if tfs > 0 else None
         c.scale_bar_mode = self._compose_scale_bar_mode.currentText()
         c.scale_bar_panel = self._compose_scale_bar_panel.currentData() or None
         c.colorbar_mode = self._compose_cbar_mode.currentData()

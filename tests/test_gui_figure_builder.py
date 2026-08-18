@@ -1109,6 +1109,34 @@ def test_compose_trace_autoscale_checkbox_writes_field_and_reloads():
     assert w.recipe().compose.trace_autoscale is False
 
 
+def test_compose_trace_look_widgets_write_fields_and_reload():
+    w = _win()
+    c = w.recipe().compose
+    assert c.trace_linewidth is None and c.trace_color == "" and c.trace_font_scale is None
+    assert w._compose_trace_lw.value() == 0.0  # 0 = follow (1.8 pt x font scale)
+    assert w._compose_trace_font_scale.value() == 0.0  # 0 = follow Style font scale
+    assert w._compose_trace_color.currentText() == ""
+    w._compose_trace_lw.setValue(4.0)
+    w._compose_trace_font_scale.setValue(1.5)
+    w._compose_trace_color.setCurrentText("black")
+    c = w.recipe().compose
+    assert c.trace_linewidth == 4.0 and c.trace_font_scale == 1.5 and c.trace_color == "black"
+    assert w.is_dirty()
+    # back to 0 -> None (derived again)
+    w._compose_trace_lw.setValue(0.0)
+    w._compose_trace_font_scale.setValue(0.0)
+    assert w.recipe().compose.trace_linewidth is None
+    assert w.recipe().compose.trace_font_scale is None
+    # reload path: recipe -> widgets, signals blocked, no write-back
+    w.recipe().compose.trace_linewidth = 2.5
+    w.recipe().compose.trace_color = "C1"
+    w.recipe().compose.trace_font_scale = 0.8
+    w._load_compose_into_widgets()
+    assert w._compose_trace_lw.value() == 2.5
+    assert w._compose_trace_color.currentText() == "C1"
+    assert w._compose_trace_font_scale.value() == 0.8
+
+
 def test_scale_bar_corner_combo_is_style_scale_bar_loc_both_ways():
     w = _win()
     w._compose_scale_bar_loc.setCurrentText("upper left")

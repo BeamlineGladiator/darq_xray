@@ -27,6 +27,11 @@ class ComposeStyle:
     colorbar_mode: str = "per-panel"  # one of COLORBAR_MODES
     colorbar_pos: str = "right"  # one of COLORBAR_POSITIONS (united mode only)
     trace_autoscale: bool = False  # autoscale trace cells to their column's map width
+    # Trace look (profiles_trace panels). None/"" = derived: fonts follow
+    # style.font_scale, linewidth = 1.8 pt x that font scale, colour = C0.
+    trace_linewidth: float | None = None  # pt, absolute when set
+    trace_color: str = ""  # matplotlib colour; "" = default C0
+    trace_font_scale: float | None = None  # None = follow style.font_scale
 
 
 @dataclass
@@ -390,3 +395,11 @@ def validate_recipe(recipe: FigureRecipe) -> None:
             f"compose.padding_cm must be positive, got {recipe.compose.padding_cm!r}",
             hint="Set padding_cm to a positive number of centimetres.",
         )
+    for field, unit in (("trace_linewidth", "points"), ("trace_font_scale", "a scale factor")):
+        val = getattr(recipe.compose, field)
+        if val is not None and not (float(val) > 0):
+            raise StageUserError(
+                f"compose.{field} must be positive, got {val!r}",
+                hint=f"Set {field} to a positive number ({unit}) or leave it blank to derive "
+                "it from the style's Font scale.",
+            )

@@ -249,3 +249,40 @@ def test_slice_plane_roi_clamps_out_of_range_indices(tmp_path):
     d = load_panel(p)
     assert d.kind == "slice_plane"
     assert d.ext_x_um == 2.0 and d.ext_y_um == 1.5  # full extents survive the clamp
+
+
+def test_resolve_trace_opts_follows_style_font_scale_by_default():
+    from dfxm.common.plotting import PlotStyle
+    from dfxm.compose.adapters import resolve_trace_opts
+    from dfxm.compose.recipe import ComposeStyle
+
+    st = PlotStyle(font_scale=2.5)
+    o = resolve_trace_opts(ComposeStyle(), st)
+    assert o["font_scale"] == 2.5
+    assert o["linewidth"] == pytest.approx(1.8 * 2.5)  # scales with the fonts
+    assert o["color"] is None  # matplotlib C0
+    # style None (bare draw) -> plain 1.0 / 1.8
+    o0 = resolve_trace_opts(ComposeStyle(), None)
+    assert o0 == {"linewidth": 1.8, "color": None, "font_scale": 1.0}
+    # explicit overrides win, linewidth override is absolute (not rescaled)
+    o2 = resolve_trace_opts(
+        ComposeStyle(trace_linewidth=4.0, trace_color="k", trace_font_scale=1.2), st
+    )
+    assert o2 == {"linewidth": 4.0, "color": "k", "font_scale": 1.2}
+    # font override alone still drives the default linewidth
+    o3 = resolve_trace_opts(ComposeStyle(trace_font_scale=2.0), st)
+    assert o3["linewidth"] == pytest.approx(3.6) and o3["font_scale"] == 2.0
+
+
+def test_draw_panel_trace_honours_trace_opts(tmp_path):
+    h5 = _write_obl(tmp_path / "obl.h5")
+    fig = Figure(figsize=(6, 4))
+    ax = fig.add_subplot(111)
+    p = PanelDef("t", PanelSource(h5, "profiles_trace", {"job": JOB, "field": "strain"}))
+    d = load_panel(p)
+    draw_panel(ax, p, d, None, trace_opts={"linewidth": 5.0, "color": "red", "font_scale": 2.0})
+    (line,) = [ln for ln in ax.lines if ln.get_zorder() == 3]
+    assert line.get_linewidth() == 5.0
+    assert line.get_color() == "red"
+    assert ax.yaxis.label.get_fontsize() == pytest.approx(20.0)
+    assert ax.xaxis.get_ticklabels()[0].get_fontsize() == pytest.approx(20.0)

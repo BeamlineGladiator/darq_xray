@@ -279,6 +279,27 @@ def _load_profiles_trace(h5_path, sel, roi):
     )
 
 
+_TRACE_LW_PER_FONT = 1.8  # default trace linewidth (pt) per unit of font scale
+
+
+def resolve_trace_opts(compose, style) -> dict:
+    """Trace look for ``profiles_trace`` panels: ``{"linewidth", "color", "font_scale"}``.
+
+    Fonts follow ``style.font_scale`` unless ``compose.trace_font_scale`` is set;
+    the default linewidth is 1.8 pt x that (effective) font scale so one Font
+    scale knob keeps maps and traces typographically consistent;
+    ``compose.trace_linewidth`` (pt, absolute) and ``compose.trace_color``
+    (``""`` = matplotlib ``C0``) override.
+    """
+    fs = compose.trace_font_scale
+    if fs is None:
+        fs = float(style.font_scale) if style is not None else 1.0
+    fs = float(fs)
+    lw = compose.trace_linewidth
+    lw = _TRACE_LW_PER_FONT * fs if lw is None else float(lw)
+    return {"linewidth": lw, "color": compose.trace_color or None, "font_scale": fs}
+
+
 def draw_panel(
     ax,
     panel,
@@ -291,12 +312,15 @@ def draw_panel(
     fixed_scale_um_per_cm=None,
     show_xlabel=True,
     show_title=False,
+    trace_opts=None,
 ):
     """Draw *data* into *ax* with the panel's overrides applied.
 
     Titles are OFF by default in composed figures (``panel.show_title`` or
     ``show_title=True`` re-enables). Returns the drawn ``AxesImage`` for
-    maps/slices/refs, or ``None`` for traces and placeholders.
+    maps/slices/refs, or ``None`` for traces and placeholders. *trace_opts*
+    is :func:`resolve_trace_opts`'s dict for trace panels (``None`` = derive
+    from a default :class:`ComposeStyle` and *style*).
     """
     if data.kind == "placeholder":
         draw_placeholder(ax, data.payload["reason"])
@@ -390,13 +414,17 @@ def draw_panel(
         from ..stages.profiles import draw_trace_axes
 
         pay = data.payload
+        if trace_opts is None:
+            from .recipe import ComposeStyle
+
+            trace_opts = resolve_trace_opts(ComposeStyle(), style)
         draw_trace_axes(
             ax,
             pay["fld"],
             pay["geom"],
-            linewidth=1.8,
-            color=None,
-            font_scale=1.0,
+            linewidth=trace_opts["linewidth"],
+            color=trace_opts["color"],
+            font_scale=trace_opts["font_scale"],
             style=style,
             show_xlabel=show_xlabel,
         )

@@ -1634,8 +1634,18 @@ button:
   column has none; a figure with no maps leaves traces untouched, and a
   trace sized by a pinned row height or column width keeps its pin — pins
   always win over autoscale; each rescale is reported in the notes bar with
-  the implied µm/cm), then two headed groups, then a pinned total width in
+  the implied µm/cm), then three headed groups, then a pinned total width in
   cm (0 = auto-sized from the layout):
+  - **Traces** — the look of every line-profile (trace) panel: *Trace line
+    width* in pt (0 = auto: 1.8 pt × the trace font scale, so lines thicken
+    with the text), *Trace colour* (any matplotlib colour name or hex; blank
+    = the default blue `C0`), and *Trace font scale* (0 = follow the Style
+    pane's **Font scale**, so map and trace text stay the same size — before
+    this the composer drew traces at a fixed 1.8 pt / 10 pt regardless of the
+    style, which is why a large map font left tiny trace text). These are
+    composer settings saved in the recipe; the profiles *stage's* own
+    `trace_linewidth`/`trace_font_scale` parameters only affect that stage's
+    standalone PNGs, not composed figures.
   - **Colourbars** — *Colourbar mode*, "Per panel" (default — each map/slice
     panel keeps its own bar, or a `Row`/`Col`'s "one colorbar for this group"
     flag gives its members one together) or "One per quantity" (`united`:

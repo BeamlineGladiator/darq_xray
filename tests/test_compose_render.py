@@ -1016,3 +1016,27 @@ def test_shared_x_stack_tight_gutter_no_false_positive_text_collision(tmp_path):
     )
     res = render_recipe(r)
     assert not any("text overlaps" in n for n in res.notes)
+
+
+def test_trace_fonts_follow_style_font_scale_and_compose_overrides(tmp_path):
+    h5 = _write_obl(tmp_path / "obl.h5")
+    p1 = PanelDef(
+        "a",
+        PanelSource(h5, "slice_plane", {"volume_id": "strain", "slice_name": "obl", "plane": 0}),
+    )
+    p2 = PanelDef("t", PanelSource(h5, "profiles_trace", {"job": JOB, "field": "strain"}))
+    style = {"scale_um_per_cm": 10.0, "trace_scale_um_per_cm": 5.0, "font_scale": 2.0}
+    r = FigureRecipe(
+        "mix", dict(style), ComposeStyle(), Row([PanelRef("a"), PanelRef("t")]), [p1, p2]
+    )
+    res = render_recipe(r)
+    ax = res.axes_by_id["t"]
+    assert ax.yaxis.label.get_fontsize() == pytest.approx(20.0)  # 10 pt x font_scale 2.0
+    (line,) = [ln for ln in ax.lines if ln.get_zorder() == 3]
+    assert line.get_linewidth() == pytest.approx(3.6)  # 1.8 x 2.0
+    r.compose = ComposeStyle(trace_linewidth=1.0, trace_color="k", trace_font_scale=1.0)
+    res2 = render_recipe(r)
+    ax2 = res2.axes_by_id["t"]
+    (line2,) = [ln for ln in ax2.lines if ln.get_zorder() == 3]
+    assert line2.get_linewidth() == 1.0 and line2.get_color() == "k"
+    assert ax2.yaxis.label.get_fontsize() == pytest.approx(10.0)

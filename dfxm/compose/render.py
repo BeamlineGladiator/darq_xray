@@ -20,7 +20,7 @@ from ..common.plotting import (
     draw_scale_bar,
     style_from_params,
 )
-from .adapters import PanelData, draw_panel, load_panel
+from .adapters import PanelData, draw_panel, load_panel, resolve_trace_opts
 from .layout import (
     SizedCell,
     autoscale_traces,
@@ -841,6 +841,7 @@ def render_recipe(
         working_layout = Col([working_layout, gutter_leaf])
 
     hide_xlabel_pids = _resolve_show_xlabel(recipe, data_by_id)
+    trace_opts = resolve_trace_opts(recipe.compose, style)
 
     # Per-panel scale bars are deliberately NOT drawn here — see the deferred
     # loop after placement below (a pinned_width_cm rescale changes every
@@ -891,7 +892,15 @@ def render_recipe(
             im_by_pid[pid] = im
         elif cell.kind == "trace":
             show_xlabel = pid not in hide_xlabel_pids
-            draw_panel(ax, panel, data, style, show_xlabel=show_xlabel, show_title=False)
+            draw_panel(
+                ax,
+                panel,
+                data,
+                style,
+                show_xlabel=show_xlabel,
+                show_title=False,
+                trace_opts=trace_opts,
+            )
         else:  # placeholder
             draw_panel(ax, panel, data, style, show_title=False)
 

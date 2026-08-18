@@ -222,3 +222,37 @@ def test_trace_autoscale_round_trips_and_old_recipe_defaults():
     r3 = recipe_from_json(json.dumps(d))
     assert r3.compose.trace_autoscale is False
     assert r3.version == 1
+
+
+def test_trace_look_knobs_round_trip_and_old_recipe_defaults():
+    import json
+
+    r = _mini_recipe()
+    r.compose.trace_linewidth = 4.0
+    r.compose.trace_color = "k"
+    r.compose.trace_font_scale = 2.0
+    r2 = recipe_from_json(recipe_to_json(r))
+    assert r2.compose.trace_linewidth == 4.0
+    assert r2.compose.trace_color == "k"
+    assert r2.compose.trace_font_scale == 2.0
+    # an old recipe JSON (no trace look keys) loads with the "follow style" defaults
+    d = json.loads(recipe_to_json(_mini_recipe()))
+    for k in ("trace_linewidth", "trace_color", "trace_font_scale"):
+        d["compose"].pop(k)
+    r3 = recipe_from_json(json.dumps(d))
+    assert r3.compose.trace_linewidth is None
+    assert r3.compose.trace_color == ""
+    assert r3.compose.trace_font_scale is None
+
+
+def test_trace_look_knobs_validated():
+    r = _mini_recipe()
+    r.compose.trace_linewidth = 0.0
+    with pytest.raises(StageUserError) as e:
+        validate_recipe(r)
+    assert "trace_linewidth" in str(e.value) and e.value.hint
+    r = _mini_recipe()
+    r.compose.trace_font_scale = -1.0
+    with pytest.raises(StageUserError) as e:
+        validate_recipe(r)
+    assert "trace_font_scale" in str(e.value) and e.value.hint
