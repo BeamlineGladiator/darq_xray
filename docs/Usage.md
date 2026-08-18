@@ -1395,6 +1395,10 @@ form.
 > usable) and reused — clicking the button again re-raises the same window
 > instead of opening a second one, so a recipe you're mid-edit on is never
 > silently orphaned.
+>
+> **Recipe files** are JSON. **Save as…** appends `.json` when you type a name
+> without an extension, and **Open…** lists `*.json` by default — switch its
+> file-type dropdown to *All files* to open a recipe saved under another name.
 
 The figure builder (`dfxm/compose/`) assembles a **multi-panel publication
 figure** — several map/slice/trace panels from one or more stage outputs,

@@ -1389,3 +1389,29 @@ def test_render_now_no_panels_invalidates_inflight_worker_and_pending(tmp_path, 
     # the in-flight worker's late (stale-generation) result must never attach
     assert w._canvas is None
     assert w._notes_label.text() == "add panels to preview"
+
+
+def test_save_as_appends_json_suffix_and_open_offers_all_files(tmp_path, monkeypatch):
+    from gui.figure_builder import _ensure_json_suffix
+
+    assert _ensure_json_suffix("/x/recipe") == "/x/recipe.json"
+    assert _ensure_json_suffix("/x/recipe.json") == "/x/recipe.json"
+    assert _ensure_json_suffix("/x/recipe.txt") == "/x/recipe.txt"  # explicit ext respected
+    w = _win()
+    w.add_panels(_obl_recipe_panels(tmp_path))
+    target = tmp_path / "myfig"  # user typed no extension
+    monkeypatch.setattr(
+        "gui.figure_builder.QFileDialog.getSaveFileName", lambda *a, **k: (str(target), "")
+    )
+    w._on_save_as()
+    assert (tmp_path / "myfig.json").exists() and not target.exists()
+    assert w._current_path == str(tmp_path / "myfig.json")
+    seen = {}
+
+    def fake_open(*a, **k):
+        seen["filter"] = a[3] if len(a) > 3 else k.get("filter")
+        return ("", "")
+
+    monkeypatch.setattr("gui.figure_builder.QFileDialog.getOpenFileName", fake_open)
+    w._on_open()
+    assert "All files" in seen["filter"]

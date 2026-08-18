@@ -61,6 +61,14 @@ from .widgets.export_dialog import StyleControls
 from .widgets.fit_canvas import FitFigureHost
 from .widgets.panel_picker import AddPanelDialog
 
+
+def _ensure_json_suffix(path: str) -> str:
+    """Append ``.json`` to a Save-As path typed without an extension, so the
+    saved recipe shows up again under the Open dialog's ``*.json`` filter."""
+    root, ext = os.path.splitext(path)
+    return path if ext else path + ".json"
+
+
 # Editable trace-colour combo presets ("" = matplotlib default C0).
 TRACE_COLOR_CHOICES = ("", "black", "C0", "C1", "C2", "C3", "red", "gray", "white")
 
@@ -1529,7 +1537,7 @@ class FigureBuilderWindow(QMainWindow):
 
     def _on_open(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
-            self, "Open figure recipe", "", "Figure recipe (*.json)"
+            self, "Open figure recipe", "", "Figure recipe (*.json);;All files (*)"
         )
         if not path:
             return
@@ -1551,7 +1559,7 @@ class FigureBuilderWindow(QMainWindow):
         if not path:
             return
         try:
-            self.save_recipe_file(path)
+            self.save_recipe_file(_ensure_json_suffix(path))
         except Exception as exc:  # noqa: BLE001 — surface save errors, never crash
             QMessageBox.warning(self, "Save failed", str(exc))
 
