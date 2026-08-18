@@ -1396,6 +1396,17 @@ form.
 > instead of opening a second one, so a recipe you're mid-edit on is never
 > silently orphaned.
 >
+> [!example] A "reference maps + trace stacks" figure (the Figure-5 look)
+> Two profiles jobs → outline `Row[ Col[ ref A, Scale bar, ref B ] (One
+> colorbar for this group), Col[ A's traces ] (Shared x, gap 0, group label
+> "A2"), Col[ B's traces ] (Shared x, gap 0, group label "B2") ]`; on the two
+> reference panels tick **Crop to data** and give them custom labels "A1"/"B1"
+> (traces: *No label*); Style → Axes **None**, Font scale ~2.5–3, Scale
+> ~20 µm/cm; Compose → Traces: font scale ~1.8, line width ~6 pt, aspect ~2.6,
+> Autoscale off and Style → *Trace scale* ~4–5 µm/cm so the traces are wide.
+> `test_figure_builder_fig5.json` in the repo root is exactly this recipe.
+> The Style pane's Font scale now goes up to 20 (was 5) for large pages.
+>
 > **Recipe files** are JSON. **Save as…** appends `.json` when you type a name
 > without an extension, and **Open…** lists `*.json` by default — switch its
 > file-type dropdown to *All files* to open a recipe saved under another name.
@@ -1654,7 +1665,10 @@ button:
     style, which is why a large map font left tiny trace text). These are
     composer settings saved in the recipe; the profiles *stage's* own
     `trace_linewidth`/`trace_font_scale` parameters only affect that stage's
-    standalone PNGs, not composed figures.
+    standalone PNGs, not composed figures. *Trace aspect w/h* (0 = keep each
+    trace's own box) forces every trace box to a width/height ratio after
+    sizing/autoscale — e.g. 3 for the wide, short traces of a stacked profile
+    column; pinned traces keep their pin.
   - **Colourbars** — *Colourbar mode*, "Per panel" (default — each map/slice
     panel keeps its own bar, or a `Row`/`Col`'s "one colorbar for this group"
     flag gives its members one together) or "One per quantity" (`united`:
@@ -1728,6 +1742,22 @@ button:
     (`shared_x`).
   - **Spacer** — its width and height in cm.
   - **Text** — its text string plus its box's width and height in cm.
+  - **Scale bar** — a stand-alone scale-bar cell (outline button **Scale
+    bar**), width/height in cm; place it anywhere — e.g. between two stacked
+    maps. While one exists the maps' own bars are off and the cell shows the
+    shared map scale using the Style pane's *Bar length* (falling back to an
+    automatic length, with a note, when that length would not fit the cell).
+    All maps must then be at one µm/cm (the same rule as the `gutter` mode).
+  - Every **Row/Col** page also has **Gap between children**: the spacing
+    inside that container only — *follow gutter* (default), **0 cm** for
+    touching panels (a stacked trace column looks like one plot with shared
+    x), or any value in cm; the compose-pane *Gutter* still applies elsewhere.
+
+  Long axis labels are reserved for: a trace whose "distance along line (µm)"
+  is wider than the panel, or a y label taller than a short panel, gets the
+  extra room in its margins instead of running into a neighbour (2026-08-18 —
+  before, the layout ignored a label's length entirely). If that spacing looks
+  too generous, lower the *Trace font scale* rather than the gap.
 
   Within any column of stacked panels the y-axis labels are automatically
   aligned to one x position (and x-axis labels within a row to one y), even

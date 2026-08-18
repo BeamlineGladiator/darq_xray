@@ -386,7 +386,7 @@ class StyleControls(QWidget):
         form.addRow(QLabel("<b>Text</b>"))
 
         self._w_font_scale = QDoubleSpinBox()
-        self._w_font_scale.setRange(0.5, 5.0)
+        self._w_font_scale.setRange(0.5, 20.0)  # large composed pages need >5
         self._w_font_scale.setDecimals(2)
         self._w_font_scale.setSingleStep(0.1)
         self._w_font_scale.setValue(s.font_scale)

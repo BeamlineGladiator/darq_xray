@@ -63,7 +63,37 @@ def test_measure_axes_margins_covers_decorations():
     assert fw >= m.left + 2.5 and fh >= m.bottom + 1.5  # canvas holds box+margins
 
 
-def test_axes_margins_max_with():
+def test_measure_axes_margins_includes_axis_label_overhang():
+    """A very wide x label on a narrow axes must widen the LEFT/RIGHT margins:
+    matplotlib's ``get_tightbbox`` squashes axis-label widths to 1 px
+    (`for_layout_only`), which let long labels overflow into neighbours."""
+    fig = Figure(figsize=(6, 4), facecolor="white")
+    ax = fig.add_subplot(111)
+    ax.plot([0, 1], [0, 1])
+    ax.set_yticks([])
+    ax.set_xlabel("a very very very long distance-along-line label (µm)", fontsize=14)
+    place_axes_box(fig, ax, 0.6, 1.0)  # 0.6 in wide box, label ~ 5 in wide
+    m = measure_axes_margins(fig, ax)
+    fig.canvas.draw()
+    ren = fig.canvas.get_renderer()
+    lab = ax.xaxis.label.get_window_extent(ren)
+    box = ax.get_window_extent(ren)
+    d = fig.dpi
+    assert m.right >= (lab.x1 - box.x1) / d - 1e-6
+    assert m.left >= (box.x0 - lab.x0) / d - 1e-6
+
+
+def test_measure_axes_margins_ignores_labels_of_axis_off_axes():
+    fig = Figure(figsize=(6, 4), facecolor="white")
+    ax = fig.add_subplot(111)
+    ax.imshow(np.zeros((4, 4)))
+    ax.set_xlabel("a very very very long label that would be huge")
+    ax.set_ylabel("another very long label")
+    ax.set_axis_off()
+    place_axes_box(fig, ax, 1.0, 1.0)
+    m = measure_axes_margins(fig, ax, pad_in=0.0)
+    assert max(m.left, m.right, m.top, m.bottom) < 0.05
+
     a = AxesMargins(1.0, 0.1, 0.2, 0.5)
     b = AxesMargins(0.5, 0.4, 0.1, 0.9)
     m = a.max_with(b)

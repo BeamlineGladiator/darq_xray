@@ -409,6 +409,18 @@ def measure_axes_margins(fig, ax, extras=(), pad_in: float = 0.02) -> AxesMargin
     fig.canvas.draw()
     r = fig.canvas.get_renderer()
     tb = ax.get_tightbbox(r)
+    # `Axes.get_tightbbox` measures the axis labels "for layout only" — their
+    # bboxes are squashed to 1 px in the label's own running direction (an x
+    # label counts for height but not width, a y label for width but not
+    # height), so a label wider than its axes silently overflowed into the
+    # neighbouring cell. Union the labels' TRUE extents in as well.
+    if ax.axison:
+        for axis in (ax.xaxis, ax.yaxis):
+            label = axis.label
+            if axis.get_visible() and label.get_visible() and label.get_text():
+                lb = label.get_window_extent(r)
+                if lb.width > 0 and lb.height > 0:
+                    tb = tb.union([tb, lb])
     for ex in extras:
         if ex is not None:
             tb = tb.union([tb, ex.get_tightbbox(r)])

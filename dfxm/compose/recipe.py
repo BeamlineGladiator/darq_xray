@@ -32,6 +32,9 @@ class ComposeStyle:
     trace_linewidth: float | None = None  # pt, absolute when set
     trace_color: str = ""  # matplotlib colour; "" = default C0
     trace_font_scale: float | None = None  # None = follow style.font_scale
+    # Trace box width/height ratio applied after sizing/autoscale (unpinned
+    # traces only); None = keep each trace's own box (length/scale x height).
+    trace_aspect: float | None = None
 
 
 @dataclass
@@ -77,6 +80,16 @@ class TextCell:
 
 
 @dataclass
+class ScaleBarCell:
+    """A placeable scale-bar cell: draws ONE µm scale bar (the shared map scale)
+    wherever it sits in the layout; every map panel's own bar is suppressed
+    while one exists (like ``scale_bar_mode="gutter"``, but you choose the spot)."""
+
+    w_cm: float = 3.0
+    h_cm: float = 1.2
+
+
+@dataclass
 class Row:
     children: list
     pinned_height_cm: float | None = None
@@ -86,6 +99,7 @@ class Row:
     group_label: str | None = None
     shared_colorbar: bool = False
     shared_clim: tuple[float, float] | None = None
+    gap_cm: float | None = None  # spacing between MY children; None = compose.gutter_cm
 
 
 @dataclass
@@ -99,6 +113,7 @@ class Col:
     shared_x: bool = False
     shared_colorbar: bool = False
     shared_clim: tuple[float, float] | None = None
+    gap_cm: float | None = None  # spacing between MY children; None = compose.gutter_cm
 
 
 @dataclass
@@ -106,7 +121,7 @@ class FigureRecipe:
     name: str
     style: dict  # PlotStyle field overrides, JSON-safe
     compose: ComposeStyle
-    layout: Row | Col | PanelRef | Spacer | TextCell
+    layout: Row | Col | PanelRef | Spacer | TextCell | ScaleBarCell
     panels: list[PanelDef]
     version: int = RECIPE_VERSION
 
@@ -115,7 +130,7 @@ class FigureRecipe:
 
 
 def iter_leaves(node):
-    """Yield layout leaves (PanelRef/Spacer/TextCell) in depth-first order."""
+    """Yield layout leaves (PanelRef/Spacer/TextCell/ScaleBarCell) in depth-first order."""
     if isinstance(node, (Row, Col)):
         for child in node.children:
             yield from iter_leaves(child)
@@ -126,7 +141,7 @@ def iter_leaves(node):
 def _node_to_dict(node, rel):
     if isinstance(node, Row):
         d = {"type": "row", "children": [_node_to_dict(c, rel) for c in node.children]}
-        for k in ("pinned_height_cm", "group_label", "shared_clim"):
+        for k in ("pinned_height_cm", "group_label", "shared_clim", "gap_cm"):
             if getattr(node, k) is not None:
                 d[k] = getattr(node, k)
         if node.shared_colorbar:
@@ -134,7 +149,7 @@ def _node_to_dict(node, rel):
         return d
     if isinstance(node, Col):
         d = {"type": "col", "children": [_node_to_dict(c, rel) for c in node.children]}
-        for k in ("pinned_width_cm", "group_label", "shared_clim"):
+        for k in ("pinned_width_cm", "group_label", "shared_clim", "gap_cm"):
             if getattr(node, k) is not None:
                 d[k] = getattr(node, k)
         if node.shared_colorbar:
@@ -148,9 +163,11 @@ def _node_to_dict(node, rel):
         return {"type": "spacer", "w_cm": node.w_cm, "h_cm": node.h_cm}
     if isinstance(node, TextCell):
         return {"type": "text", "text": node.text, "w_cm": node.w_cm, "h_cm": node.h_cm}
+    if isinstance(node, ScaleBarCell):
+        return {"type": "scalebar", "w_cm": node.w_cm, "h_cm": node.h_cm}
     raise StageUserError(
         f"unknown layout node {type(node).__name__!r}",
-        hint="Layout nodes must be Row/Col/PanelRef/Spacer/TextCell.",
+        hint="Layout nodes must be Row/Col/PanelRef/Spacer/TextCell/ScaleBarCell.",
     )
 
 
@@ -163,6 +180,7 @@ def _node_from_dict(d):
             group_label=d.get("group_label") or None,
             shared_colorbar=bool(d.get("shared_colorbar", False)),
             shared_clim=tuple(d["shared_clim"]) if d.get("shared_clim") else None,
+            gap_cm=d.get("gap_cm"),
         )
     if t == "col":
         return Col(
@@ -172,6 +190,7 @@ def _node_from_dict(d):
             shared_x=bool(d.get("shared_x", False)),
             shared_colorbar=bool(d.get("shared_colorbar", False)),
             shared_clim=tuple(d["shared_clim"]) if d.get("shared_clim") else None,
+            gap_cm=d.get("gap_cm"),
         )
     if t == "panel":
         return PanelRef(d["panel_id"])
@@ -179,9 +198,11 @@ def _node_from_dict(d):
         return Spacer(float(d["w_cm"]), float(d["h_cm"]))
     if t == "text":
         return TextCell(d["text"], float(d.get("w_cm", 2.0)), float(d.get("h_cm", 1.0)))
+    if t == "scalebar":
+        return ScaleBarCell(float(d.get("w_cm", 3.0)), float(d.get("h_cm", 1.2)))
     raise StageUserError(
         f"unknown layout node type {t!r}",
-        hint="Valid node types: row, col, panel, spacer, text.",
+        hint="Valid node types: row, col, panel, spacer, text, scalebar.",
     )
 
 
@@ -400,7 +421,26 @@ def validate_recipe(recipe: FigureRecipe) -> None:
             f"compose.padding_cm must be positive, got {recipe.compose.padding_cm!r}",
             hint="Set padding_cm to a positive number of centimetres.",
         )
-    for field, unit in (("trace_linewidth", "points"), ("trace_font_scale", "a scale factor")):
+
+    def _walk_gaps(node):
+        if isinstance(node, (Row, Col)):
+            g = node.gap_cm
+            if g is not None and not (float(g) >= 0):
+                raise StageUserError(
+                    f"{type(node).__name__} gap_cm must be >= 0, got {g!r}",
+                    hint="Set the container's gap (cm) to zero or a positive number, or "
+                    "leave it blank to use compose.gutter_cm.",
+                )
+            for c in node.children:
+                _walk_gaps(c)
+
+    _walk_gaps(recipe.layout)
+
+    for field, unit in (
+        ("trace_linewidth", "points"),
+        ("trace_font_scale", "a scale factor"),
+        ("trace_aspect", "a width/height ratio"),
+    ):
         val = getattr(recipe.compose, field)
         if val is not None and not (float(val) > 0):
             raise StageUserError(

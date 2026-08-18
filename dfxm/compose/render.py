@@ -23,13 +23,24 @@ from ..common.plotting import (
 from .adapters import PanelData, draw_panel, load_panel, resolve_trace_opts
 from .layout import (
     SizedCell,
+    apply_trace_aspect,
     autoscale_traces,
     measure_cells,
+    node_gap_in,
     place_tree,
     size_cells,
     trace_column_targets,
 )
-from .recipe import Col, PanelRef, Row, Spacer, TextCell, iter_leaves, validate_recipe
+from .recipe import (
+    Col,
+    PanelRef,
+    Row,
+    ScaleBarCell,
+    Spacer,
+    TextCell,
+    iter_leaves,
+    validate_recipe,
+)
 
 _IN_PER_CM = 1.0 / 2.54
 _MAX_COLLISION_TEXTS = 400  # cost guard: skip the pairwise pass beyond this
@@ -276,16 +287,13 @@ def _apply_shared_colorbars(recipe, style, panels_by_id, data_by_id, cells, fig)
         # span by each member's own top/bottom (or left/right) decoration
         # margins, which is exactly what left the bar short of the group in
         # the pre-fix geometry.
+        node_gap = node_gap_in(node, gutter_in)
         if isinstance(node, Col):
-            content_h = sum(c.h_in for c in member_cells) + gutter_in * max(
-                0, len(member_cells) - 1
-            )
+            content_h = sum(c.h_in for c in member_cells) + node_gap * max(0, len(member_cells) - 1)
             bar_w_in = style.colorbar_fraction * first.w_in + 0.1
             bar_h_in = content_h
         else:
-            content_w = sum(c.w_in for c in member_cells) + gutter_in * max(
-                0, len(member_cells) - 1
-            )
+            content_w = sum(c.w_in for c in member_cells) + node_gap * max(0, len(member_cells) - 1)
             bar_w_in = content_w
             bar_h_in = style.colorbar_fraction * first.h_in + 0.1
 
@@ -711,6 +719,12 @@ def _resolve_scale_bar_kwargs(recipe, panels_by_id, data_by_id, cell_by_pid, not
     ]
     gutter_leaf = None
     gutter_scale = None
+    placed_bars = [leaf for leaf in iter_leaves(recipe.layout) if isinstance(leaf, ScaleBarCell)]
+    if placed_bars:
+        # A user-placed scale-bar cell overrides the mode: every map's own bar
+        # is off and the cell(s) draw the shared map scale (same contract as
+        # "gutter", but the author chose the spot).
+        mode = "gutter"
 
     if mode == "one-panel":
         target = recipe.compose.scale_bar_panel
@@ -753,7 +767,9 @@ def _resolve_scale_bar_kwargs(recipe, panels_by_id, data_by_id, cell_by_pid, not
             raise StageUserError(
                 "shared scale bar needs every map at one µm/cm", hint=_GUTTER_MISMATCH_HINT
             )
-        if effs:
+        if effs and placed_bars:
+            gutter_scale = next(iter(effs))
+        elif effs:
             gutter_scale = next(iter(effs))
             # Deliberate deviation from the brief's literal sizing ("xlim
             # spanning gutter_in * 2.54 * shared_scale" reads as: reuse
@@ -796,6 +812,7 @@ def render_recipe(
     cells = size_cells(recipe, style, data_by_id, notes)
     if recipe.compose.trace_autoscale:
         autoscale_traces(recipe, cells, data_by_id, notes)
+    apply_trace_aspect(recipe.compose, cells, notes)
 
     fig = Figure(facecolor="white")
 
@@ -824,7 +841,7 @@ def render_recipe(
                 data_by_id[leaf.panel_id] = PanelData(
                     kind="placeholder", payload={"reason": "degenerate extent"}
                 )
-        elif isinstance(leaf, TextCell):
+        elif isinstance(leaf, (TextCell, ScaleBarCell)):
             ax = fig.add_axes([0.0, 0.0, 0.01, 0.01])
             ax.set_axis_off()
             cell.ax = ax
@@ -1065,7 +1082,9 @@ def render_recipe(
 
     _align_axis_labels(fig, recipe.layout, axes_by_id, data_by_id)
 
-    if gutter_leaf is not None and gutter_scale is not None:
+    bar_leaves = [gutter_leaf] if gutter_leaf is not None else []
+    bar_leaves += [leaf for leaf in leaves if isinstance(leaf, ScaleBarCell)]
+    if bar_leaves and gutter_scale is not None:
         # Recompute the shared scale FRESH from final cell sizes (a
         # pinned_width_cm rescale after `_resolve_scale_bar_kwargs` ran would
         # otherwise leave `gutter_scale` stale, same issue as the per-panel
@@ -1084,17 +1103,30 @@ def render_recipe(
         gutter_scale = (
             next(iter(effs_final), gutter_scale) if len(effs_final) == 1 else gutter_scale
         )
-        gcell = cells[id(gutter_leaf)]
-        gax = gcell.ax
-        span = gcell.w_in * 2.54 * gutter_scale
-        gax.set_xlim(0, span if span > 0 else 1.0)
-        gax.set_ylim(0, 1)
-        # Force a sensible, non-clipping placement in the narrow dedicated
-        # gutter cell — the brief calls for this explicitly ("loc forced
-        # sensible via the style"); an arbitrary corner loc from the user's
-        # style (meant for full-size map panels) can clip in this small box.
-        gutter_style = dc_replace(style, scale_bar_loc="center", scale_bar_inset_pt=0.0)
-        draw_scale_bar(gax, None, style=gutter_style, fixed_scale_um_per_cm=gutter_scale)
+        for bar_leaf in bar_leaves:
+            gcell = cells[id(bar_leaf)]
+            gax = gcell.ax
+            span = gcell.w_in * 2.54 * gutter_scale
+            gax.set_xlim(0, span if span > 0 else 1.0)
+            # y in µm too: draw_scale_bar's fixed-scale bar thickness is in
+            # data units (pt -> cm -> µm), so a 0..1 y range made the bar
+            # ~14 "units" tall and it clipped away to two frame corners.
+            span_h = gcell.h_in * 2.54 * gutter_scale
+            gax.set_ylim(0, span_h if span_h > 0 else 1.0)
+            # Force a sensible, non-clipping placement in the narrow dedicated
+            # cell — an arbitrary corner loc from the user's style (meant for
+            # full-size map panels) can clip in this small box.
+            gutter_style = dc_replace(style, scale_bar_loc="center", scale_bar_inset_pt=0.0)
+            # Honour the style's bar length when it fits the cell (with room
+            # for the label box); otherwise auto-size and say so.
+            length = style.scale_bar_length_um
+            if length is not None and not (0 < float(length) <= 0.9 * span):
+                notes.append(
+                    f"scale-bar cell: {float(length):g} µm does not fit a "
+                    f"{gcell.w_in * 2.54:.3g} cm cell at {gutter_scale:.4g} µm/cm — auto length"
+                )
+                length = None
+            draw_scale_bar(gax, length, style=gutter_style, fixed_scale_um_per_cm=gutter_scale)
 
     for leaf in leaves:
         if isinstance(leaf, TextCell):
@@ -1162,6 +1194,8 @@ def render_recipe(
     for leaf in leaves:
         if isinstance(leaf, TextCell) and cells[id(leaf)].ax is not None:
             owners[_owner_key("text")] = cells[id(leaf)].ax
+        elif isinstance(leaf, ScaleBarCell) and cells[id(leaf)].ax is not None:
+            owners[_owner_key("scale bar")] = cells[id(leaf)].ax
 
     # Tiny-trace advisory: `_tiny_trace_pids` also feeds the collision note's
     # conditional lead suggestion, but the collision check itself practically

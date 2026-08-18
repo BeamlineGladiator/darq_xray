@@ -561,3 +561,60 @@ def test_spacer_and_text_cells_occupy_their_boxes():
     figw = fig.get_size_inches()[0]
     # panel starts 1 in (spacer) + its own left margin from the left edge
     assert abs(ca.ax.get_position().x0 * figw - (1.0 + ca.margins.left)) < 0.02
+
+
+def test_apply_trace_aspect_sets_height_from_width_skipping_pins():
+    from dfxm.compose.layout import SizedCell, apply_trace_aspect
+    from dfxm.compose.recipe import ComposeStyle
+
+    t = SizedCell(object(), None, "trace", 3.0, 1.0)
+    pinned = SizedCell(object(), None, "trace", 3.0, 1.0, pinned=True)
+    m = SizedCell(object(), None, "map", 3.0, 3.0)
+    cells = {1: t, 2: pinned, 3: m}
+    notes = []
+    apply_trace_aspect(ComposeStyle(trace_aspect=None), cells, notes)
+    assert (t.w_in, t.h_in) == (3.0, 1.0)  # None = untouched
+    apply_trace_aspect(ComposeStyle(trace_aspect=4.0), cells, notes)
+    assert t.w_in == 3.0 and t.h_in == pytest.approx(0.75)
+    assert (pinned.w_in, pinned.h_in) == (3.0, 1.0)  # pins win
+    assert (m.w_in, m.h_in) == (3.0, 3.0)  # maps untouched
+
+
+def test_col_gap_cm_overrides_global_gutter_between_its_children():
+    fig = Figure(facecolor="white")
+    a1, a2 = PanelRef("a1"), PanelRef("a2")
+    col = Col([a1, a2], gap_cm=0.0)  # touching panels inside this column
+    b = PanelRef("b")
+    layout = Row([col, b])  # ...but the row keeps the global gutter
+    cells = {
+        id(a1): _plot_cell(fig, a1, 1.5, 1.0),
+        id(a2): _plot_cell(fig, a2, 1.5, 1.0),
+        id(b): _plot_cell(fig, b, 1.5, 1.0),
+    }
+    measure_cells(fig, list(cells.values()))
+    fw, fh = place_tree(fig, layout, cells, gutter_in=0.5, pad_in=0.0)
+    p1 = cells[id(a1)].ax.get_position()
+    p2 = cells[id(a2)].ax.get_position()
+    m1, m2 = cells[id(a1)].margins, cells[id(a2)].margins
+    # vertical distance between the two boxes = only their own decoration margins
+    gap_in = (p1.y0 - p2.y1) * fh
+    assert gap_in == pytest.approx(m1.bottom + m2.top, abs=1e-6)
+    # the row gutter (0.5 in) still separates the column from b
+    pb = cells[id(b)].ax.get_position()
+    col_right = max(p1.x1, p2.x1) * fw + max(m1.right, m2.right)
+    assert (pb.x0 * fw - cells[id(b)].margins.left) - col_right == pytest.approx(0.5, abs=1e-6)
+
+
+def test_row_col_gap_cm_round_trips_and_validated():
+    from dfxm.compose.recipe import recipe_from_json, recipe_to_json, validate_recipe
+
+    p = PanelDef("m", PanelSource("/x.h5", "map_layer", {"stage": "strain"}))
+    r = FigureRecipe(
+        "g", {}, ComposeStyle(), Row([Col([PanelRef("m")], gap_cm=0.0)], gap_cm=1.25), [p]
+    )
+    r2 = recipe_from_json(recipe_to_json(r))
+    assert r2.layout.gap_cm == 1.25 and r2.layout.children[0].gap_cm == 0.0
+    r.layout.gap_cm = -1.0
+    with pytest.raises(StageUserError) as e:
+        validate_recipe(r)
+    assert "gap_cm" in str(e.value) and e.value.hint

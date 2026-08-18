@@ -49,6 +49,7 @@ from dfxm.compose.recipe import (
     PanelDef,
     PanelRef,
     Row,
+    ScaleBarCell,
     Spacer,
     TextCell,
     iter_leaves,
@@ -68,6 +69,9 @@ def _ensure_json_suffix(path: str) -> str:
     root, ext = os.path.splitext(path)
     return path if ext else path + ".json"
 
+
+# Row/Col gap spin sentinel: the spinbox minimum shown as "follow gutter" (gap_cm=None).
+_GAP_FOLLOW = -0.1
 
 # Editable trace-colour combo presets ("" = matplotlib default C0).
 TRACE_COLOR_CHOICES = ("", "black", "C0", "C1", "C2", "C3", "red", "gray", "white")
@@ -237,10 +241,18 @@ class FigureBuilderWindow(QMainWindow):
         spacer_btn.clicked.connect(self.add_spacer)
         text_btn = QPushButton("Text")
         text_btn.clicked.connect(self.add_text)
+        scalebar_btn = QPushButton("Scale bar")
+        scalebar_btn.setToolTip(
+            "Add a stand-alone scale-bar cell you can place anywhere in the layout "
+            "(e.g. between two maps). While one exists, the maps' own scale bars are off "
+            "and the cell shows the shared map scale."
+        )
+        scalebar_btn.clicked.connect(self.add_scale_bar)
         edit_row1.addWidget(row_btn)
         edit_row1.addWidget(col_btn)
         edit_row1.addWidget(spacer_btn)
         edit_row1.addWidget(text_btn)
+        edit_row1.addWidget(scalebar_btn)
         layout.addLayout(edit_row1)
 
         edit_row2 = QHBoxLayout()
@@ -372,6 +384,20 @@ class FigureBuilderWindow(QMainWindow):
         self._compose_trace_font_scale.valueChanged.connect(self._on_compose_edited)
         form.addRow("Trace font scale (0 = follow)", self._compose_trace_font_scale)
 
+        self._compose_trace_aspect = QDoubleSpinBox()
+        self._compose_trace_aspect.setRange(0.0, 20.0)
+        self._compose_trace_aspect.setDecimals(2)
+        self._compose_trace_aspect.setSingleStep(0.5)
+        self._compose_trace_aspect.setSpecialValueText("keep box (length/scale × height)")
+        self._compose_trace_aspect.setValue(c.trace_aspect or 0.0)
+        self._compose_trace_aspect.setToolTip(
+            "Width/height ratio of every trace box, applied after sizing/autoscale "
+            "(e.g. 3.5 = wide, short traces). 0 = keep each trace's own box; pinned traces "
+            "always keep their pin."
+        )
+        self._compose_trace_aspect.valueChanged.connect(self._on_compose_edited)
+        form.addRow("Trace aspect w/h (0 = keep box)", self._compose_trace_aspect)
+
         form.addRow(QLabel("<b>Colourbars</b>"))
         self._compose_cbar_mode = QComboBox()
         for text, value in (("Per panel", "per-panel"), ("One per quantity", "united")):
@@ -440,6 +466,7 @@ class FigureBuilderWindow(QMainWindow):
             self._compose_trace_lw,
             self._compose_trace_color,
             self._compose_trace_font_scale,
+            self._compose_trace_aspect,
             self._compose_cbar_mode,
             self._compose_cbar_pos,
             self._compose_scale_bar_mode,
@@ -456,6 +483,7 @@ class FigureBuilderWindow(QMainWindow):
         self._compose_trace_lw.setValue(c.trace_linewidth or 0.0)
         self._compose_trace_color.setCurrentText(c.trace_color or "")
         self._compose_trace_font_scale.setValue(c.trace_font_scale or 0.0)
+        self._compose_trace_aspect.setValue(c.trace_aspect or 0.0)
         self._compose_cbar_mode.setCurrentIndex(
             max(0, self._compose_cbar_mode.findData(c.colorbar_mode))
         )
@@ -482,6 +510,8 @@ class FigureBuilderWindow(QMainWindow):
         c.trace_color = self._compose_trace_color.currentText().strip()
         tfs = self._compose_trace_font_scale.value()
         c.trace_font_scale = tfs if tfs > 0 else None
+        asp = self._compose_trace_aspect.value()
+        c.trace_aspect = asp if asp > 0 else None
         c.scale_bar_mode = self._compose_scale_bar_mode.currentText()
         c.scale_bar_panel = self._compose_scale_bar_panel.currentData() or None
         c.colorbar_mode = self._compose_cbar_mode.currentData()
@@ -634,6 +664,8 @@ class FigureBuilderWindow(QMainWindow):
             lambda v: self._apply_pin_spin(self._inspector_node, "pinned_height_cm", v)
         )
         form.addRow("Pinned height (0 = off)", self._row_pin_h)
+        self._row_gap = self._make_gap_spin()
+        form.addRow("Gap between children", self._row_gap)
 
         self._row_shared_cb = QCheckBox("One colorbar for this group")
         self._row_shared_cb.toggled.connect(
@@ -654,6 +686,7 @@ class FigureBuilderWindow(QMainWindow):
             self._row_group_mode,
             self._row_group_label,
             self._row_pin_h,
+            self._row_gap,
             self._row_shared_cb,
             self._row_shared_clim,
         )
@@ -661,6 +694,7 @@ class FigureBuilderWindow(QMainWindow):
             w.blockSignals(True)
         self._load_group_label(self._row_group_mode, self._row_group_label, row.group_label)
         self._row_pin_h.setValue(row.pinned_height_cm or 0.0)
+        self._row_gap.setValue(_GAP_FOLLOW if row.gap_cm is None else row.gap_cm)
         self._row_shared_cb.setChecked(row.shared_colorbar)
         if row.shared_clim is not None:
             lo, hi = row.shared_clim
@@ -685,6 +719,8 @@ class FigureBuilderWindow(QMainWindow):
             lambda v: self._apply_pin_spin(self._inspector_node, "pinned_width_cm", v)
         )
         form.addRow("Pinned width (0 = off)", self._col_pin_w)
+        self._col_gap = self._make_gap_spin()
+        form.addRow("Gap between children", self._col_gap)
 
         self._col_shared_x = QCheckBox("Shared x axis (bottom labels only)")
         self._col_shared_x.toggled.connect(
@@ -711,6 +747,7 @@ class FigureBuilderWindow(QMainWindow):
             self._col_group_mode,
             self._col_group_label,
             self._col_pin_w,
+            self._col_gap,
             self._col_shared_x,
             self._col_shared_cb,
             self._col_shared_clim,
@@ -719,6 +756,7 @@ class FigureBuilderWindow(QMainWindow):
             w.blockSignals(True)
         self._load_group_label(self._col_group_mode, self._col_group_label, col.group_label)
         self._col_pin_w.setValue(col.pinned_width_cm or 0.0)
+        self._col_gap.setValue(_GAP_FOLLOW if col.gap_cm is None else col.gap_cm)
         self._col_shared_x.setChecked(col.shared_x)
         self._col_shared_cb.setChecked(col.shared_colorbar)
         if col.shared_clim is not None:
@@ -728,6 +766,26 @@ class FigureBuilderWindow(QMainWindow):
             self._col_shared_clim.setText("")
         for w in widgets:
             w.blockSignals(False)
+
+    def _make_gap_spin(self) -> QDoubleSpinBox:
+        """Row/Col *gap between children* spin: the minimum (-0.1) is the
+        "follow the figure gutter" sentinel (`gap_cm=None`); 0 = touching."""
+        spin = QDoubleSpinBox()
+        spin.setRange(_GAP_FOLLOW, 100.0)
+        spin.setDecimals(2)
+        spin.setSingleStep(0.1)
+        spin.setSuffix(" cm")
+        spin.setSpecialValueText("follow gutter")
+        spin.setToolTip(
+            "Spacing between this container's children. 0 = panels touch (e.g. a stacked "
+            "trace column); the minimum setting means follow the compose-pane Gutter."
+        )
+        spin.valueChanged.connect(
+            lambda v: self._apply_node_field(
+                self._inspector_node, "gap_cm", None if v < 0 else float(v)
+            )
+        )
+        return spin
 
     # -- Spacer page --------------------------------------------------------------
     def _build_spacer_page(self) -> QWidget:
@@ -938,8 +996,8 @@ class FigureBuilderWindow(QMainWindow):
         elif isinstance(node, Col):
             self._load_col_page(node)
             self._inspector.setCurrentWidget(self._page_col)
-        elif isinstance(node, Spacer):
-            self._load_spacer_page(node)
+        elif isinstance(node, (Spacer, ScaleBarCell)):
+            self._load_spacer_page(node)  # same two size fields (w_cm/h_cm)
             self._inspector.setCurrentWidget(self._page_spacer)
         elif isinstance(node, TextCell):
             self._load_text_page(node)
@@ -1111,6 +1169,8 @@ class FigureBuilderWindow(QMainWindow):
             return f"Spacer {node.w_cm:g}×{node.h_cm:g} cm"
         if isinstance(node, TextCell):
             return f"Text: {node.text}"
+        if isinstance(node, ScaleBarCell):
+            return f"Scale bar {node.w_cm:g}×{node.h_cm:g} cm"
         return str(node)
 
     def _build_item(self, node) -> QTreeWidgetItem:
@@ -1187,6 +1247,10 @@ class FigureBuilderWindow(QMainWindow):
 
     def add_text(self) -> None:
         self._current_container().children.append(TextCell("text"))
+        self._after_mutation()
+
+    def add_scale_bar(self) -> None:
+        self._current_container().children.append(ScaleBarCell())
         self._after_mutation()
 
     def add_panels(self, panels: list[PanelDef], layout=None) -> dict[str, str]:

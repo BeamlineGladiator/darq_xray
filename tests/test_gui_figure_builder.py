@@ -1415,3 +1415,40 @@ def test_save_as_appends_json_suffix_and_open_offers_all_files(tmp_path, monkeyp
     monkeypatch.setattr("gui.figure_builder.QFileDialog.getOpenFileName", fake_open)
     w._on_open()
     assert "All files" in seen["filter"]
+
+
+def test_add_scale_bar_cell_and_trace_aspect_widget():
+    from dfxm.compose.recipe import ScaleBarCell, iter_leaves
+
+    w = _win()
+    w.add_scale_bar()
+    leaves = list(iter_leaves(w.recipe().layout))
+    assert any(isinstance(x, ScaleBarCell) for x in leaves)
+    w.select_node(next(x for x in leaves if isinstance(x, ScaleBarCell)))
+    assert w._inspector.currentWidget() is w._page_spacer  # shares the size page
+    w._spacer_w.setValue(4.0)
+    assert next(x for x in leaves if isinstance(x, ScaleBarCell)).w_cm == 4.0
+    assert w.recipe().compose.trace_aspect is None
+    w._compose_trace_aspect.setValue(3.5)
+    assert w.recipe().compose.trace_aspect == 3.5
+    w._compose_trace_aspect.setValue(0.0)
+    assert w.recipe().compose.trace_aspect is None
+
+
+def test_row_col_gap_spin_writes_gap_cm_with_follow_sentinel():
+    w = _win()
+    w.add_col()
+    col = w.recipe().layout.children[-1]
+    w.select_node(col)
+    assert w._col_gap.value() < 0 and col.gap_cm is None  # "follow gutter"
+    w._col_gap.setValue(0.0)
+    assert col.gap_cm == 0.0  # touching
+    w._col_gap.setValue(1.5)
+    assert col.gap_cm == 1.5
+    w._col_gap.setValue(-0.1)
+    assert col.gap_cm is None
+    w.add_row()
+    row = w.recipe().layout.children[-1]
+    w.select_node(row)
+    w._row_gap.setValue(0.25)
+    assert row.gap_cm == 0.25

@@ -23,7 +23,7 @@ from ..common.plotting import (
     trace_fixed_scale,
     trace_height_cm,
 )
-from .recipe import Col, PanelRef, Row, Spacer, TextCell, iter_leaves
+from .recipe import Col, PanelRef, Row, ScaleBarCell, Spacer, TextCell, iter_leaves
 
 _IN_PER_CM = 1.0 / 2.54
 PLACEHOLDER_CM = (4.0, 3.0)
@@ -68,7 +68,7 @@ def _validate_scale(value, panel_id: str, what: str) -> float:
 class SizedCell:
     leaf: object  # the layout leaf (PanelRef/Spacer/TextCell)
     panel: object | None  # PanelDef, or None for Spacer/TextCell
-    kind: str  # "map"|"trace"|"spacer"|"text"|"placeholder"
+    kind: str  # "map"|"trace"|"spacer"|"text"|"scalebar"|"placeholder"
     w_in: float
     h_in: float
     # True when size_cells sized this TRACE cell from a pinned row height /
@@ -96,12 +96,13 @@ def size_cells(recipe, style, data_by_id, notes):
 
     gutter_in = recipe.compose.gutter_cm * _IN_PER_CM
 
-    def _split_pin(pin_in, n, what):
+    def _split_pin(pin_in, n, what, gap_in=None):
         """Divide a pin among n stacked children, subtracting inter-child
         gutters, so the container's total equals the pin. Never silent."""
         if pin_in is None or n <= 1:
             return pin_in
-        each = (pin_in - gutter_in * (n - 1)) / n
+        g = gutter_in if gap_in is None else gap_in
+        each = (pin_in - g * (n - 1)) / n
         if each <= 0:
             raise StageUserError(
                 f"pinned {what} {pin_in / _IN_PER_CM:.4g} cm is too small for "
@@ -119,6 +120,8 @@ def size_cells(recipe, style, data_by_id, notes):
             return SizedCell(leaf, None, "spacer", leaf.w_cm * _IN_PER_CM, leaf.h_cm * _IN_PER_CM)
         if isinstance(leaf, TextCell):
             return SizedCell(leaf, None, "text", leaf.w_cm * _IN_PER_CM, leaf.h_cm * _IN_PER_CM)
+        if isinstance(leaf, ScaleBarCell):
+            return SizedCell(leaf, None, "scalebar", leaf.w_cm * _IN_PER_CM, leaf.h_cm * _IN_PER_CM)
         panel = panels[leaf.panel_id]
         data = data_by_id[panel.id]
         if data.kind == "placeholder":
@@ -240,13 +243,17 @@ def size_cells(recipe, style, data_by_id, notes):
         if isinstance(node, Row):
             ph = node.pinned_height_cm * _IN_PER_CM if node.pinned_height_cm else pinned_h_in
             # a width pin crossing a Row is shared by its side-by-side children
-            pw = _split_pin(pinned_w_in, len(node.children), "column width")
+            pw = _split_pin(
+                pinned_w_in, len(node.children), "column width", node_gap_in(node, gutter_in)
+            )
             for child in node.children:
                 walk(child, ph, pw)
         elif isinstance(node, Col):
             pw = node.pinned_width_cm * _IN_PER_CM if node.pinned_width_cm else pinned_w_in
             # a height pin crossing a Col is shared by its stacked children
-            ph = _split_pin(pinned_h_in, len(node.children), "row height")
+            ph = _split_pin(
+                pinned_h_in, len(node.children), "row height", node_gap_in(node, gutter_in)
+            )
             for child in node.children:
                 walk(child, ph, pw)
         else:
@@ -337,6 +344,32 @@ def autoscale_traces(recipe, cells, data_by_id, notes) -> None:
         )
 
 
+def node_gap_in(node, gutter_in: float) -> float:
+    """Spacing (inches) between *node*'s children: its own ``gap_cm`` when set
+    (Row/Col only), else the figure-wide gutter."""
+    g = getattr(node, "gap_cm", None)
+    if g is None:
+        return gutter_in
+    return max(0.0, float(g)) * _IN_PER_CM
+
+
+def apply_trace_aspect(compose, cells, notes) -> None:
+    """Force every unpinned trace cell to ``compose.trace_aspect`` (width /
+    height) by recomputing its HEIGHT from its (already sized or autoscaled)
+    width. ``None`` = keep each cell's own box; pinned cells and maps are
+    never touched (pins win, maps are physical)."""
+    aspect = getattr(compose, "trace_aspect", None)
+    if aspect is None:
+        return
+    aspect = float(aspect)
+    if not (aspect > 0):
+        return
+    for cell in cells.values():
+        if cell.kind != "trace" or cell.pinned or cell.w_in <= 0:
+            continue
+        cell.h_in = cell.w_in / aspect
+
+
 def measure_cells(fig: "Figure", cells: list[SizedCell], pad_in: float = 0.02) -> None:
     """Fill each cell's margins, measured at FINAL box size (mandatory: tick
     density depends on size — same rule as place_axes_box)."""
@@ -365,7 +398,7 @@ def _cell_env(c):
 
 def place_tree(
     fig: "Figure",
-    layout: "Row | Col | PanelRef | Spacer | TextCell",
+    layout: "Row | Col | PanelRef | Spacer | TextCell | ScaleBarCell",
     cells: dict[int, SizedCell],
     *,
     gutter_in: float,
@@ -409,15 +442,17 @@ def place_tree(
         if isinstance(node, Row):
             _share_row(node)
             child_envs = [_envelope(c) for c in node.children]
-            w = sum(e[0] for e in child_envs) + gutter_in * max(0, len(child_envs) - 1)
+            g = node_gap_in(node, gutter_in)
+            w = sum(e[0] for e in child_envs) + g * max(0, len(child_envs) - 1)
             h = max(e[1] for e in child_envs)
             env[id(node)] = (w, h)
             return (w, h)
         if isinstance(node, Col):
             _share_col(node)
             child_envs = [_envelope(c) for c in node.children]
+            g = node_gap_in(node, gutter_in)
             w = max(e[0] for e in child_envs)
-            h = sum(e[1] for e in child_envs) + gutter_in * max(0, len(child_envs) - 1)
+            h = sum(e[1] for e in child_envs) + g * max(0, len(child_envs) - 1)
             env[id(node)] = (w, h)
             return (w, h)
         e = _cell_env(cells[id(node)])
@@ -432,15 +467,17 @@ def place_tree(
         # (x, y) = this node's envelope top-left, inches from figure top-left
         if isinstance(node, Row):
             cx = x
+            g = node_gap_in(node, gutter_in)
             for child in node.children:
                 _place(child, cx, y)  # top-aligned; trailing pad below shorter kids
-                cx += env[id(child)][0] + gutter_in
+                cx += env[id(child)][0] + g
             return
         if isinstance(node, Col):
             cy = y
+            g = node_gap_in(node, gutter_in)
             for child in node.children:
                 _place(child, x, cy)  # left-aligned; trailing pad right of narrower kids
-                cy += env[id(child)][1] + gutter_in
+                cy += env[id(child)][1] + g
             return
         c = cells[id(node)]
         if c.ax is None:

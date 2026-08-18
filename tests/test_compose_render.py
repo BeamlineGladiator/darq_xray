@@ -1103,3 +1103,37 @@ def test_profiles_ref_panel_follows_font_scale_and_axes_mode(tmp_path):
     r2 = FigureRecipe("ref", dict(style), ComposeStyle(), Row([PanelRef("r")]), [p])
     res2 = render_recipe(r2)
     assert not res2.axes_by_id["r"].axison
+
+
+def test_scale_bar_cell_draws_shared_bar_and_suppresses_panel_bars(tmp_path):
+    from dfxm.compose.recipe import ScaleBarCell
+
+    h5 = _write_obl(tmp_path / "obl.h5")
+    r = _two_panel_recipe(h5, scale_bar=True, scale_bar_length_um=5.0)
+    bar_leaf = ScaleBarCell(3.0, 1.0)
+    r.layout = Row([PanelRef("a"), Col([bar_leaf]), PanelRef("b")])
+    res = render_recipe(r)
+    # the maps carry no bar of their own any more ...
+    assert _scale_bar_box(res.axes_by_id["a"]) is None
+    assert _scale_bar_box(res.axes_by_id["b"]) is None
+    # ... the placed cell does, honouring the style's bar length (5 µm fits a 3-cm cell at 10 µm/cm)
+    extra = [ax for ax in res.figure.axes if ax not in res.axes_by_id.values()]
+    boxes = [ax for ax in extra if _scale_bar_box(ax) is not None]
+    assert len(boxes) == 1
+    rect = _scale_bar_rect(boxes[0])
+    assert rect.get_width() == pytest.approx(5.0)
+    assert not any("no scale bar" in n for n in res.notes)
+
+
+def test_scale_bar_cell_falls_back_to_auto_length_when_bar_would_not_fit(tmp_path):
+    from dfxm.compose.recipe import ScaleBarCell
+
+    h5 = _write_obl(tmp_path / "obl.h5")
+    r = _two_panel_recipe(h5, scale_bar=True, scale_bar_length_um=500.0)  # 50 cm at 10 µm/cm
+    r.layout = Row([PanelRef("a"), ScaleBarCell(2.0, 1.0), PanelRef("b")])
+    res = render_recipe(r)
+    extra = [ax for ax in res.figure.axes if ax not in res.axes_by_id.values()]
+    boxes = [ax for ax in extra if _scale_bar_box(ax) is not None]
+    assert len(boxes) == 1
+    assert _scale_bar_rect(boxes[0]).get_width() < 20.0  # auto-sized inside the 2-cm span
+    assert any("scale-bar cell" in n and "auto" in n for n in res.notes)

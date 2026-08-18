@@ -270,3 +270,14 @@ def test_panel_crop_to_data_round_trips_and_defaults_false():
         p.pop("crop_to_data")
     r3 = recipe_from_json(json.dumps(d))
     assert all(p.crop_to_data is False for p in r3.panels)
+
+
+def test_scale_bar_cell_round_trips():
+    from dfxm.compose.recipe import ScaleBarCell
+
+    r = _mini_recipe()
+    r.layout.children.append(ScaleBarCell(3.5, 1.25))
+    r2 = recipe_from_json(recipe_to_json(r))
+    leaf = r2.layout.children[-1]
+    assert isinstance(leaf, ScaleBarCell) and (leaf.w_cm, leaf.h_cm) == (3.5, 1.25)
+    assert [type(x).__name__ for x in iter_leaves(r2.layout)][-1] == "ScaleBarCell"
