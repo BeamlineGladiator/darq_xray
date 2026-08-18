@@ -58,6 +58,7 @@ from dfxm.compose.recipe import (
 
 from .widgets.busy import BusyOverlay, busy_cursor, keep_alive
 from .widgets.export_dialog import StyleControls
+from .widgets.fit_canvas import FitFigureHost
 from .widgets.panel_picker import AddPanelDialog
 
 # Editable trace-colour combo presets ("" = matplotlib default C0).
@@ -145,7 +146,8 @@ class FigureBuilderWindow(QMainWindow):
         self._current_path: str | None = None
 
         self._cache: dict = {}
-        self._canvas = None
+        self._canvas = None  # live FigureCanvasQTAgg (inside _canvas_host) or None
+        self._canvas_host = None  # FitFigureHost wrapping _canvas, or None
         self._result = None
         self._worker: _ComposeWorker | None = None
         self._generation = 0
@@ -1377,29 +1379,33 @@ class FigureBuilderWindow(QMainWindow):
     def _clear_canvas(self) -> None:
         """Item 9: drop the previous preview so a stale figure never lingers
         behind the 'add panels to preview' note."""
-        if self._canvas is not None:
-            self._preview_layout.removeWidget(self._canvas)
-            self._canvas.deleteLater()
-            self._canvas = None
+        self._drop_canvas_host()
         self._result = None
 
+    def _drop_canvas_host(self) -> None:
+        if self._canvas_host is not None:
+            self._preview_layout.removeWidget(self._canvas_host)
+            self._canvas_host.deleteLater()
+        self._canvas_host = None
+        self._canvas = None
+
     def _show_figure(self, figure) -> None:
-        """Swap in a fresh, undecorated ``FigureCanvasQTAgg`` for *figure*.
+        """Swap in a fresh, undecorated canvas for *figure*, dpi-fitted to the pane.
 
         The composed figure is placed absolutely by the compose layout
         solver, so it must never be re-laid-out by a display canvas — always
-        a new plain canvas here, never the themed :class:`~gui.widgets.mpl_canvas.MplCanvas`
+        a new plain canvas here (inside a :class:`~gui.widgets.fit_canvas.FitFigureHost`,
+        which keeps the figure's true size in inches and scales only its dpi
+        to fit, so fonts/line widths in points shrink with the page exactly as
+        in the export), never the themed :class:`~gui.widgets.mpl_canvas.MplCanvas`
         (that would restyle/re-fit the white publication figure and break
         WYSIWYG parity with the export).
         """
-        from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
-
-        if self._canvas is not None:
-            self._preview_layout.removeWidget(self._canvas)
-            self._canvas.deleteLater()
-        self._canvas = FigureCanvasQTAgg(figure)
+        self._drop_canvas_host()
+        self._canvas_host = FitFigureHost(figure)
+        self._canvas = self._canvas_host.canvas
         self._canvas.mpl_connect("button_press_event", self._on_preview_click)
-        self._preview_layout.addWidget(self._canvas, 1)
+        self._preview_layout.addWidget(self._canvas_host, 1)
         self._canvas.draw_idle()
 
     def _on_preview_click(self, event) -> None:

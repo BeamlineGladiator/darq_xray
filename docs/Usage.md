@@ -1521,10 +1521,15 @@ leaves the recipe untouched.
 **In-app editor: live preview**
 
 The `FigureBuilderWindow`'s center pane shows a **live preview** of the
-composed figure, built by the same render pipeline that exports it — the
-on-screen canvas may be display-scaled to fit the window, but every export
-re-renders from the recipe at its exact physical size, so exported files are
-always exact regardless of how the preview happened to be scaled on screen.
+composed figure, built by the same render pipeline that exports it. The
+preview is a **true-to-scale thumbnail**: the figure keeps its real physical
+size (cm) and only its on-screen resolution is reduced to fit the pane, so
+text and line widths shrink together with the page exactly as in the export
+(before 2026-08-18 the pane squeezed the figure's *size* instead, leaving
+fonts at full point size — a wide recipe showed oversized, overlapping text
+that the export never had). Every export re-renders from the recipe at its
+exact physical size, so exported files are always exact regardless of how
+the preview happened to be scaled on screen.
 Every outline edit (add/move/delete/group/label a panel, row,
 column, spacer, or text cell) and every recipe load schedules a re-render
 300 ms after the last edit, so a burst of clicks re-renders once, not once
