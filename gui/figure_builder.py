@@ -899,6 +899,15 @@ class FigureBuilderWindow(QMainWindow):
         )
         self._ov_roi_pick.clicked.connect(self._on_pick_panel_roi)
         roi_row.addWidget(self._ov_roi_pick)
+        self._ov_roi_all = QPushButton("→ all maps")
+        self._ov_roi_all.setToolTip(
+            "Copy this panel's ROI crop (and its Crop-to-data setting) to every other map, "
+            "slice and reference panel in the recipe, so they all show the same region and "
+            "get the same box size. The scale bar is unaffected: every map already shares the "
+            "Style pane's Scale (µm/cm)."
+        )
+        self._ov_roi_all.clicked.connect(self._on_copy_roi_to_all)
+        roi_row.addWidget(self._ov_roi_all)
         form.addRow("ROI crop (px)", roi_row)
 
         self._ov_crop = QCheckBox("Crop to data")
@@ -1063,6 +1072,25 @@ class FigureBuilderWindow(QMainWindow):
         if dlg.exec() and dlg.result:
             r0, r1, c0, c1 = dlg.result
             self._ov_roi.setText(f"{r0},{r1},{c0},{c1}")  # textChanged -> apply
+
+    def _on_copy_roi_to_all(self) -> None:
+        """Copy the selected panel's roi/crop_to_data onto every other image panel."""
+        src = self._override_panel
+        if src is None:
+            return
+        n = 0
+        for p in self._recipe.panels:
+            if p is src or p.source.kind == "profiles_trace":
+                continue
+            if p.roi != src.roi or p.crop_to_data != src.crop_to_data:
+                p.roi = src.roi
+                p.crop_to_data = src.crop_to_data
+                n += 1
+        if n:
+            self._notes_label.setText(f"ROI copied to {n} other image panel(s)")
+            self._after_inspector_mutation()
+        else:
+            self._notes_label.setText("all image panels already share this ROI")
 
     def _on_override_field_edited(self, key: str) -> None:
         """Submit only the ONE widget the user actually changed.

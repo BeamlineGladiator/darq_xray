@@ -1711,7 +1711,11 @@ button:
     or click **Pick…** next to it to draw the rectangle on the panel's full
     image with the same interactive ROI picker the replot dialogs use (the
     current ROI is pre-drawn; *Use* writes the pixel bounds back; trace panels
-    have no ROI) —
+    have no ROI), and **→ all maps** to copy this panel's ROI and Crop-to-data
+    setting to every other image panel so they show the same region and get
+    the same box size (the scale bar needs no such help — every map already
+    shares the Style pane's *Scale (µm/cm)*, so "50 µm" is the same length on
+    all of them whatever the crop) —
     a **Crop to data** checkbox (auto-crops the panel to the bounding box of
     its finite, non-NaN pixels plus a 3 % margin — the quickest way to get
     rid of the blank frame around an aligned map or oblique slice without

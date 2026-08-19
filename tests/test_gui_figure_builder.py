@@ -1491,3 +1491,23 @@ def test_pick_roi_button_writes_roi_from_picker(tmp_path, monkeypatch):
     # second pick is seeded with the current roi
     w._ov_roi_pick.click()
     assert seen["initial"] == (1, 5, 2, 7)
+
+
+def test_copy_roi_to_all_image_panels(tmp_path):
+    w = _win()
+    w.add_panels(_obl_recipe_panels(tmp_path))
+    from dfxm.compose.recipe import PanelDef, PanelSource
+
+    h5 = w.recipe().panels[0].source.h5_path
+    sel = {"volume_id": "strain", "slice_name": "obl", "plane": 0}
+    other = PanelDef("other", PanelSource(h5, "slice_plane", dict(sel)))
+    trace = PanelDef("tr", PanelSource(h5, "profiles_trace", {"job": {}, "field": "strain"}))
+    w.add_panels([other, trace])
+    src = w.recipe().panels[0]
+    src.roi = (1, 5, 2, 7)
+    src.crop_to_data = True
+    w._select_outline_panel(src.id)
+    w._ov_roi_all.click()
+    assert other.roi == (1, 5, 2, 7) and other.crop_to_data is True
+    assert trace.roi is None  # traces untouched
+    assert w.is_dirty() and "copied to 1" in w._notes_label.text()
