@@ -324,6 +324,7 @@ def _collect_col_flags(layout) -> dict[frozenset, dict]:
                     "shared_colorbar": node.shared_colorbar,
                     "shared_clim": node.shared_clim,
                     "gap_cm": node.gap_cm,
+                    "fill_height": node.fill_height,
                 }
         if isinstance(node, (Row, Col)):
             for c in node.children:
@@ -417,6 +418,7 @@ class ArrangeDialog(QDialog):
                     child.shared_colorbar = flags["shared_colorbar"]
                     child.shared_clim = flags["shared_clim"]
                     child.gap_cm = flags.get("gap_cm")
+                    child.fill_height = bool(flags.get("fill_height", False))
         new_root.gap_cm = self._old_root_gap
         self.result_layout = new_root
         self.accept()

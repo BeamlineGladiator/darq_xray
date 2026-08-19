@@ -1447,8 +1447,17 @@ def test_row_col_gap_spin_writes_gap_cm_with_follow_sentinel():
     assert col.gap_cm == 1.5
     w._col_gap.setValue(-0.1)
     assert col.gap_cm is None
-    w.add_row()
-    row = w.recipe().layout.children[-1]
+    w.add_row()  # appended INTO the selected col
+    row = col.children[-1]
+    assert isinstance(row, Row)
     w.select_node(row)
     w._row_gap.setValue(0.25)
     assert row.gap_cm == 0.25
+    # fill flags
+    w.select_node(col)
+    assert not w._col_fill.isChecked() and col.fill_height is False
+    w._col_fill.setChecked(True)
+    assert col.fill_height is True
+    w.select_node(row)
+    w._row_fill.setChecked(True)
+    assert row.fill_width is True

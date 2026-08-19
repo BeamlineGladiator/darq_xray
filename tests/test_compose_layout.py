@@ -618,3 +618,55 @@ def test_row_col_gap_cm_round_trips_and_validated():
     with pytest.raises(StageUserError) as e:
         validate_recipe(r)
     assert "gap_cm" in str(e.value) and e.value.hint
+
+
+def test_col_fill_height_stretches_its_traces_to_the_row_height():
+    fig = Figure(facecolor="white")
+    m = PanelRef("m")
+    t1, t2 = PanelRef("t1"), PanelRef("t2")
+    col = Col([t1, t2], fill_height=True, gap_cm=0.0)
+    layout = Row([m, col])
+    cm = _plot_cell(fig, m, 2.0, 6.0)  # a tall map
+    cm.kind = "map"
+    c1 = _plot_cell(fig, t1, 3.0, 1.0)
+    c2 = _plot_cell(fig, t2, 3.0, 1.0)
+    c1.kind = c2.kind = "trace"
+    cells = {id(m): cm, id(t1): c1, id(t2): c2}
+    measure_cells(fig, list(cells.values()))
+    fw, fh = place_tree(fig, layout, cells, gutter_in=0.2, pad_in=0.0)
+    # both traces grew by the same amount and the column now spans the map's envelope height
+    assert c1.h_in == pytest.approx(c2.h_in) and c1.h_in > 1.0
+    pm = cm.ax.get_position()
+    p1 = cells[id(t1)].ax.get_position()
+    p2 = cells[id(t2)].ax.get_position()
+    top_map = pm.y1 * fh + cm.margins.top
+    top_col = p1.y1 * fh + c1.margins.top
+    bot_map = pm.y0 * fh - cm.margins.bottom
+    bot_col = p2.y0 * fh - c2.margins.bottom
+    assert top_col == pytest.approx(top_map, abs=1e-6)
+    assert bot_col == pytest.approx(bot_map, abs=1e-6)
+
+
+def test_fill_flags_round_trip_and_pinned_or_map_cells_untouched():
+    from dfxm.compose.recipe import recipe_from_json, recipe_to_json
+
+    p = PanelDef("m", PanelSource("/x.h5", "map_layer", {"stage": "strain"}))
+    r = FigureRecipe(
+        "f", {}, ComposeStyle(), Row([Col([PanelRef("m")], fill_height=True)], fill_width=True), [p]
+    )
+    r2 = recipe_from_json(recipe_to_json(r))
+    assert r2.layout.fill_width is True and r2.layout.children[0].fill_height is True
+    fig = Figure(facecolor="white")
+    m = PanelRef("m")
+    t = PanelRef("t")
+    col = Col([t], fill_height=True)
+    layout = Row([m, col])
+    cm = _plot_cell(fig, m, 2.0, 6.0)
+    cm.kind = "map"
+    ct = _plot_cell(fig, t, 3.0, 1.0)
+    ct.kind = "trace"
+    ct.pinned = True  # pins win: a pinned trace is never stretched
+    cells = {id(m): cm, id(t): ct}
+    measure_cells(fig, list(cells.values()))
+    place_tree(fig, layout, cells, gutter_in=0.2, pad_in=0.0)
+    assert ct.h_in == 1.0

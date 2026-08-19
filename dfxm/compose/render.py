@@ -167,6 +167,15 @@ def _lift_labels_clear_of_axes_text(fig, labelled) -> None:
         ann.set_position((x_pt, y_pt + lift_pt))
 
 
+def _has_fill(node) -> bool:
+    """True when any Row/Col under *node* asks to fill (stretch its traces)."""
+    if isinstance(node, (Row, Col)):
+        if getattr(node, "fill_height", False) or getattr(node, "fill_width", False):
+            return True
+        return any(_has_fill(c) for c in node.children)
+    return False
+
+
 def _panel_leaves(node):
     """PanelRef leaves under *node* (any depth), depth-first order."""
     return [leaf for leaf in iter_leaves(node) if isinstance(leaf, PanelRef)]
@@ -1011,6 +1020,12 @@ def render_recipe(
     gutter_in = recipe.compose.gutter_cm * _IN_PER_CM
     pad_in = recipe.compose.padding_cm * _IN_PER_CM
     fig_w, fig_h = place_tree(fig, working_layout, cells, gutter_in=gutter_in, pad_in=pad_in)
+    if _has_fill(recipe.layout):
+        # A fill stretched some trace cells during placement; their margins
+        # were measured at the old box size (tick density depends on size) —
+        # measure once more at the stretched size and place again.
+        measure_cells(fig, list(cells.values()), pad_in=0.02)
+        fig_w, fig_h = place_tree(fig, working_layout, cells, gutter_in=gutter_in, pad_in=pad_in)
 
     if recipe.compose.pinned_width_cm:
         target_w_in = recipe.compose.pinned_width_cm * _IN_PER_CM

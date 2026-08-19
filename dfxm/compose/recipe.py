@@ -100,6 +100,9 @@ class Row:
     shared_colorbar: bool = False
     shared_clim: tuple[float, float] | None = None
     gap_cm: float | None = None  # spacing between MY children; None = compose.gutter_cm
+    # Stretch my unpinned TRACE cells' widths so my envelope matches the
+    # widest sibling in the parent Col (maps are physical and never stretched).
+    fill_width: bool = False
 
 
 @dataclass
@@ -114,6 +117,9 @@ class Col:
     shared_colorbar: bool = False
     shared_clim: tuple[float, float] | None = None
     gap_cm: float | None = None  # spacing between MY children; None = compose.gutter_cm
+    # Stretch my unpinned TRACE cells' heights so my envelope matches the
+    # tallest sibling in the parent Row (e.g. a trace stack beside a tall map).
+    fill_height: bool = False
 
 
 @dataclass
@@ -146,6 +152,8 @@ def _node_to_dict(node, rel):
                 d[k] = getattr(node, k)
         if node.shared_colorbar:
             d["shared_colorbar"] = True
+        if node.fill_width:
+            d["fill_width"] = True
         return d
     if isinstance(node, Col):
         d = {"type": "col", "children": [_node_to_dict(c, rel) for c in node.children]}
@@ -156,6 +164,8 @@ def _node_to_dict(node, rel):
             d["shared_colorbar"] = True
         if node.shared_x:
             d["shared_x"] = True
+        if node.fill_height:
+            d["fill_height"] = True
         return d
     if isinstance(node, PanelRef):
         return {"type": "panel", "panel_id": node.panel_id}
@@ -181,6 +191,7 @@ def _node_from_dict(d):
             shared_colorbar=bool(d.get("shared_colorbar", False)),
             shared_clim=tuple(d["shared_clim"]) if d.get("shared_clim") else None,
             gap_cm=d.get("gap_cm"),
+            fill_width=bool(d.get("fill_width", False)),
         )
     if t == "col":
         return Col(
@@ -191,6 +202,7 @@ def _node_from_dict(d):
             shared_colorbar=bool(d.get("shared_colorbar", False)),
             shared_clim=tuple(d["shared_clim"]) if d.get("shared_clim") else None,
             gap_cm=d.get("gap_cm"),
+            fill_height=bool(d.get("fill_height", False)),
         )
     if t == "panel":
         return PanelRef(d["panel_id"])

@@ -438,10 +438,48 @@ def place_tree(
             for c in leaf_cells:
                 c.margins = AxesMargins(left, right, c.margins.top, c.margins.bottom)
 
+    def _free_traces(node):
+        """Unpinned trace cells under *node* (the cells a fill may stretch)."""
+        return [
+            cells[id(leaf)]
+            for leaf in iter_leaves(node)
+            if id(leaf) in cells
+            and cells[id(leaf)].kind == "trace"
+            and not cells[id(leaf)].pinned
+            and cells[id(leaf)].ax is not None
+        ]
+
+    def _fill(children, child_envs, axis):
+        """Grow the filling children (Col.fill_height in a Row: axis=1;
+        Row.fill_width in a Col: axis=0) by stretching their free trace
+        cells equally until their envelope matches the largest sibling."""
+        target = max(e[axis] for e in child_envs)
+        changed = False
+        for i, child in enumerate(children):
+            wants = (axis == 1 and isinstance(child, Col) and child.fill_height) or (
+                axis == 0 and isinstance(child, Row) and child.fill_width
+            )
+            if not wants:
+                continue
+            extra = target - child_envs[i][axis]
+            free = _free_traces(child)
+            if extra <= 1e-9 or not free:
+                continue
+            each = extra / len(free)
+            for c in free:
+                if axis == 1:
+                    c.h_in += each
+                else:
+                    c.w_in += each
+            child_envs[i] = _envelope(child)
+            changed = True
+        return changed
+
     def _envelope(node):
         if isinstance(node, Row):
             _share_row(node)
             child_envs = [_envelope(c) for c in node.children]
+            _fill(node.children, child_envs, 1)
             g = node_gap_in(node, gutter_in)
             w = sum(e[0] for e in child_envs) + g * max(0, len(child_envs) - 1)
             h = max(e[1] for e in child_envs)
@@ -450,6 +488,7 @@ def place_tree(
         if isinstance(node, Col):
             _share_col(node)
             child_envs = [_envelope(c) for c in node.children]
+            _fill(node.children, child_envs, 0)
             g = node_gap_in(node, gutter_in)
             w = max(e[0] for e in child_envs)
             h = sum(e[1] for e in child_envs) + g * max(0, len(child_envs) - 1)

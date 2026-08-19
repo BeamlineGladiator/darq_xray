@@ -666,6 +666,15 @@ class FigureBuilderWindow(QMainWindow):
         form.addRow("Pinned height (0 = off)", self._row_pin_h)
         self._row_gap = self._make_gap_spin()
         form.addRow("Gap between children", self._row_gap)
+        self._row_fill = QCheckBox("Fill width (stretch my traces to the column)")
+        self._row_fill.setToolTip(
+            "Stretch this row's unpinned trace panels equally so the row is as wide as the "
+            "widest sibling in the enclosing column. Maps are never stretched."
+        )
+        self._row_fill.toggled.connect(
+            lambda on: self._apply_node_field(self._inspector_node, "fill_width", bool(on))
+        )
+        form.addRow(self._row_fill)
 
         self._row_shared_cb = QCheckBox("One colorbar for this group")
         self._row_shared_cb.toggled.connect(
@@ -687,6 +696,7 @@ class FigureBuilderWindow(QMainWindow):
             self._row_group_label,
             self._row_pin_h,
             self._row_gap,
+            self._row_fill,
             self._row_shared_cb,
             self._row_shared_clim,
         )
@@ -695,6 +705,7 @@ class FigureBuilderWindow(QMainWindow):
         self._load_group_label(self._row_group_mode, self._row_group_label, row.group_label)
         self._row_pin_h.setValue(row.pinned_height_cm or 0.0)
         self._row_gap.setValue(_GAP_FOLLOW if row.gap_cm is None else row.gap_cm)
+        self._row_fill.setChecked(bool(row.fill_width))
         self._row_shared_cb.setChecked(row.shared_colorbar)
         if row.shared_clim is not None:
             lo, hi = row.shared_clim
@@ -721,6 +732,17 @@ class FigureBuilderWindow(QMainWindow):
         form.addRow("Pinned width (0 = off)", self._col_pin_w)
         self._col_gap = self._make_gap_spin()
         form.addRow("Gap between children", self._col_gap)
+        self._col_fill = QCheckBox("Fill height (stretch my traces to the row)")
+        self._col_fill.setToolTip(
+            "Stretch this column's unpinned trace panels equally so the column is as tall as "
+            "the tallest sibling in the enclosing row — e.g. a trace stack beside a tall map. "
+            "Every trace keeps its own width (line length / trace scale); maps are never "
+            "stretched."
+        )
+        self._col_fill.toggled.connect(
+            lambda on: self._apply_node_field(self._inspector_node, "fill_height", bool(on))
+        )
+        form.addRow(self._col_fill)
 
         self._col_shared_x = QCheckBox("Shared x axis (bottom labels only)")
         self._col_shared_x.toggled.connect(
@@ -748,6 +770,7 @@ class FigureBuilderWindow(QMainWindow):
             self._col_group_label,
             self._col_pin_w,
             self._col_gap,
+            self._col_fill,
             self._col_shared_x,
             self._col_shared_cb,
             self._col_shared_clim,
@@ -757,6 +780,7 @@ class FigureBuilderWindow(QMainWindow):
         self._load_group_label(self._col_group_mode, self._col_group_label, col.group_label)
         self._col_pin_w.setValue(col.pinned_width_cm or 0.0)
         self._col_gap.setValue(_GAP_FOLLOW if col.gap_cm is None else col.gap_cm)
+        self._col_fill.setChecked(bool(col.fill_height))
         self._col_shared_x.setChecked(col.shared_x)
         self._col_shared_cb.setChecked(col.shared_colorbar)
         if col.shared_clim is not None:

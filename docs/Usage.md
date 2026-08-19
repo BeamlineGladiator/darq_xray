@@ -1398,12 +1398,13 @@ form.
 >
 > [!example] A "reference maps + trace stacks" figure (the Figure-5 look)
 > Two profiles jobs → outline `Row[ Col[ ref A, Scale bar, ref B ] (One
-> colorbar for this group), Col[ A's traces ] (Shared x, gap 0, group label
-> "A2"), Col[ B's traces ] (Shared x, gap 0, group label "B2") ]`; on the two
+> colorbar for this group), Col[ A's traces ] (Shared x, gap 0, **Fill
+> height**, group label "A2"), Col[ B's traces ] (same, "B2") ]`; on the two
 > reference panels tick **Crop to data** and give them custom labels "A1"/"B1"
-> (traces: *No label*); Style → Axes **None**, Font scale ~2.5–3, Scale
-> ~20 µm/cm; Compose → Traces: font scale ~1.8, line width ~6 pt, aspect ~2.6,
-> Autoscale off and Style → *Trace scale* ~4–5 µm/cm so the traces are wide.
+> (traces: *No label*); Style → Axes **None**, Font scale ~2.8, Scale
+> ~20 µm/cm, *Trace scale* ~5 µm/cm (trace width); Compose → Traces: font
+> scale ~2, line width ~7 pt, aspect 0 (keep box), Autoscale off. Fill height
+> makes the three traces equal-height and as tall as the map column.
 > `docs/examples/figure5_style_recipe.json` is exactly this recipe (its
 > `h5_path`s point at the STO2 `oblique_slices_v2.h5`; edit them for your data).
 > The Style pane's Font scale now goes up to 20 (was 5) for large pages.
@@ -1753,6 +1754,17 @@ button:
     inside that container only — *follow gutter* (default), **0 cm** for
     touching panels (a stacked trace column looks like one plot with shared
     x), or any value in cm; the compose-pane *Gutter* still applies elsewhere.
+    And a **Fill** checkbox — Col: *Fill height (stretch my traces to the
+    row)*, Row: *Fill width (stretch my traces to the column)* — which
+    stretches that container's trace panels **equally** until it is as tall
+    (wide) as its tallest (widest) sibling. This is how a column of three
+    traces next to a tall map ends up as three equal-height panels spanning
+    the map's height, exactly like the profiles widget's companion stack;
+    every trace keeps its own width (line length ÷ trace scale), maps and
+    pinned traces are never stretched. Prefer this over *Trace aspect* when
+    the columns have different numbers of rows — aspect ties each height to
+    its own line length, so traces of different lengths end up different
+    heights.
 
   Long axis labels are reserved for: a trace whose "distance along line (µm)"
   is wider than the panel, or a y label taller than a short panel, gets the

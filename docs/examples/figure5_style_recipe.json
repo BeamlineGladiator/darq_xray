@@ -39,8 +39,8 @@
   "round_clim": true,
   "figure_width": "auto",
   "scale_um_per_cm": 20.0,
-  "trace_scale_um_per_cm": 4.5,
-  "trace_height_cm": null,
+  "trace_scale_um_per_cm": 5.0,
+  "trace_height_cm": 3.0,
   "formats": [
    "png"
   ],
@@ -61,8 +61,8 @@
   "colorbar_mode": "per-panel",
   "colorbar_pos": "right",
   "trace_autoscale": false,
-  "trace_aspect": 2.6,
-  "trace_font_scale": 1.9,
+  "trace_aspect": null,
+  "trace_font_scale": 2.0,
   "trace_linewidth": 7.0
  },
  "layout": {
@@ -106,7 +106,8 @@
       "panel_id": "profiles_2"
      }
     ],
-    "gap_cm": 0.0
+    "gap_cm": 0.0,
+    "fill_height": true
    },
    {
     "type": "col",
@@ -126,7 +127,8 @@
       "panel_id": "profiles_6"
      }
     ],
-    "gap_cm": 0.0
+    "gap_cm": 0.0,
+    "fill_height": true
    }
   ]
  },
