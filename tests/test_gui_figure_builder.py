@@ -1461,3 +1461,33 @@ def test_row_col_gap_spin_writes_gap_cm_with_follow_sentinel():
     w.select_node(row)
     w._row_fill.setChecked(True)
     assert row.fill_width is True
+
+
+def test_pick_roi_button_writes_roi_from_picker(tmp_path, monkeypatch):
+    import gui.figure_builder as fb
+
+    w = _win()
+    w.add_panels(_obl_recipe_panels(tmp_path))
+    panel = w.recipe().panels[0]
+    w._select_outline_panel(panel.id)
+    seen = {}
+
+    class FakeDlg:
+        def __init__(self, previews, initial=None, parent=None):
+            seen["previews"] = previews
+            seen["initial"] = initial
+            self.result = (1, 5, 2, 7)
+
+        def exec(self):
+            arr, sx, sy = seen["previews"][0][1]()  # the thunk really loads the full frame
+            seen["shape"] = arr.shape
+            return 1
+
+    monkeypatch.setattr(fb, "ROIPickerDialog", FakeDlg, raising=False)
+    w._ov_roi_pick.click()
+    assert panel.roi == (1, 5, 2, 7)
+    assert w._ov_roi.text() == "1,5,2,7"
+    assert seen["initial"] is None and len(seen["shape"]) == 2
+    # second pick is seeded with the current roi
+    w._ov_roi_pick.click()
+    assert seen["initial"] == (1, 5, 2, 7)

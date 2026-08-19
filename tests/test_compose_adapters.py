@@ -371,3 +371,37 @@ def test_load_panel_crop_to_data_slice_and_ref(tmp_path):
         "t", PanelSource(h5, "profiles_trace", {"job": JOB, "field": "strain"}), crop_to_data=True
     )
     assert load_panel(tr).kind == "profiles_trace"
+
+
+def test_panel_preview_full_frame_for_roi_picking(tmp_path):
+    from dfxm.compose.adapters import panel_preview
+    from dfxm.compose.recipe import PanelDef, PanelSource
+
+    h5 = _write_obl(tmp_path / "obl.h5")
+    # slice plane: full frame even when the panel itself is cropped
+    sl = PanelDef(
+        "s",
+        PanelSource(h5, "slice_plane", {"volume_id": "strain", "slice_name": "obl", "plane": 0}),
+        roi=(2, 10, 3, 9),
+        crop_to_data=True,
+    )
+    arr, sx, sy = panel_preview(sl)
+    assert arr.shape == (33, 41) and sx == pytest.approx(0.5) and sy == pytest.approx(0.5)
+    ref = PanelDef(
+        "r", PanelSource(h5, "profiles_ref", {"job": JOB, "field": None}), roi=(1, 5, 1, 5)
+    )
+    arr2, _sx, _sy = panel_preview(ref)
+    assert arr2.shape == (33, 41)
+    # map layer: pixel sizes from the selector / attrs
+    hm = _write_strain(tmp_path / "strain.h5")
+    mp = PanelDef("m", PanelSource(hm, "map_layer", {"stage": "strain", "z": 0}))
+    arr3, sx3, sy3 = panel_preview(mp)
+    assert arr3.shape == (6, 8) and (sx3, sy3) == (0.2, 0.4)
+    # traces have no ROI
+    tr = PanelDef("t", PanelSource(h5, "profiles_trace", {"job": JOB, "field": "strain"}))
+    with pytest.raises(ValueError):
+        panel_preview(tr)
+    # unavailable data -> ValueError with the reason, never a crash
+    gone = PanelDef("g", PanelSource(str(tmp_path / "nope.h5"), "profiles_ref", {"job": JOB}))
+    with pytest.raises(ValueError):
+        panel_preview(gone)

@@ -465,6 +465,33 @@ def draw_panel(
     raise StageUserError(f"unknown panel kind {data.kind!r}", hint="Recipe is corrupt.")
 
 
+def panel_preview(panel: PanelDef):
+    """Full-frame ``(array2d, sx_um, sy_um)`` of an image panel for the ROI
+    picker — the panel's own ``roi``/``crop_to_data`` are deliberately ignored
+    so the picker always shows the whole frame in the same pixel coordinates
+    the ROI is expressed in. Raises ``ValueError`` for trace panels (no ROI)
+    and for unavailable data (the placeholder reason)."""
+    if panel.source.kind == "profiles_trace":
+        raise ValueError("a trace panel has no ROI to pick")
+    full = PanelDef(panel.id, panel.source)  # roi=None, crop_to_data=False
+    data = load_panel(full)
+    if data.kind == "placeholder":
+        raise ValueError(str(data.payload.get("reason", "data unavailable")))
+    pay = data.payload
+    if data.kind == "map_layer":
+        return pay["layer"], float(pay["sx"]), float(pay["sy"])
+
+    def _step(axis):
+        axis = [float(v) for v in axis]
+        return abs(axis[1] - axis[0]) if len(axis) > 1 else 1.0
+
+    if data.kind == "slice_plane":
+        return pay["plane2d"], _step(pay["u"]), _step(pay["v"])
+    if data.kind == "profiles_ref":
+        return pay["plane"], _step(pay["u"]), _step(pay["v"])
+    raise ValueError(f"no preview for panel kind {data.kind!r}")
+
+
 def draw_placeholder(ax, reason: str) -> None:
     """Hatched grey cell for a panel whose data is unavailable — never a crash."""
     from matplotlib.patches import Rectangle

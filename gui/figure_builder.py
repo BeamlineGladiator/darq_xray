@@ -889,7 +889,17 @@ class FigureBuilderWindow(QMainWindow):
         self._ov_roi = QLineEdit()
         self._ov_roi.setPlaceholderText("r0,r1,c0,c1 (blank = full)")
         self._ov_roi.textChanged.connect(lambda _t: self._on_override_field_edited("roi"))
-        form.addRow("ROI crop (px)", self._ov_roi)
+        roi_row = QHBoxLayout()
+        roi_row.setContentsMargins(0, 0, 0, 0)
+        roi_row.addWidget(self._ov_roi, 1)
+        self._ov_roi_pick = QPushButton("Pick…")
+        self._ov_roi_pick.setToolTip(
+            "Draw the crop rectangle on this panel's full image (same picker as the replot "
+            "dialogs). Map, slice and reference panels only."
+        )
+        self._ov_roi_pick.clicked.connect(self._on_pick_panel_roi)
+        roi_row.addWidget(self._ov_roi_pick)
+        form.addRow("ROI crop (px)", roi_row)
 
         self._ov_crop = QCheckBox("Crop to data")
         self._ov_crop.setToolTip(
@@ -1028,6 +1038,31 @@ class FigureBuilderWindow(QMainWindow):
             self._inspector.setCurrentWidget(self._page_text)
         else:
             self._inspector.setCurrentWidget(self._page_hint)
+
+    def _on_pick_panel_roi(self) -> None:
+        """Open the app-wide ROI picker on the selected panel's FULL frame and
+        write the drawn rectangle into the ROI box (which applies it)."""
+        panel = self._override_panel
+        if panel is None:
+            return
+        from dfxm.compose.adapters import panel_preview
+
+        if panel.source.kind == "profiles_trace":
+            self._notes_label.setText("a trace panel has no ROI to pick")
+            return
+        import sys
+
+        _mod = sys.modules[__name__]
+        if not hasattr(_mod, "ROIPickerDialog"):
+            from .widgets.roi_picker import ROIPickerDialog  # imported on demand
+
+            _mod.ROIPickerDialog = ROIPickerDialog
+        title = panel.title or panel.id
+        previews = [(title, lambda p=panel: panel_preview(p))]
+        dlg = _mod.ROIPickerDialog(previews, initial=panel.roi, parent=self)
+        if dlg.exec() and dlg.result:
+            r0, r1, c0, c1 = dlg.result
+            self._ov_roi.setText(f"{r0},{r1},{c0},{c1}")  # textChanged -> apply
 
     def _on_override_field_edited(self, key: str) -> None:
         """Submit only the ONE widget the user actually changed.

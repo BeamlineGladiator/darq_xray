@@ -1707,7 +1707,11 @@ button:
   back the value already stored changes nothing at all — no dirty flag, no
   re-render.
   - **Panel** — edits its `PanelDef` in place: **ROI crop** as `r0,r1,c0,c1`
-    pixel text (blank = full frame; all four values are required together),
+    pixel text (blank = full frame; all four values are required together) —
+    or click **Pick…** next to it to draw the rectangle on the panel's full
+    image with the same interactive ROI picker the replot dialogs use (the
+    current ROI is pre-drawn; *Use* writes the pixel bounds back; trace panels
+    have no ROI) —
     a **Crop to data** checkbox (auto-crops the panel to the bounding box of
     its finite, non-NaN pixels plus a 3 % margin — the quickest way to get
     rid of the blank frame around an aligned map or oblique slice without
