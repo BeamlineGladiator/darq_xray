@@ -8,7 +8,12 @@ So the probe lives here, in a child process, and the parent
 
 This module MUST stay a leaf: under the ``spawn`` start method a child
 re-imports its module, and importing anything that reaches the GUI would spawn
-windows recursively. It imports ``pyvista`` inside :func:`main` only.
+windows recursively. It imports ``pyvista`` inside :func:`probe` only.
+
+This module reports the raw renderer string only; it does not classify it.
+Deciding whether a renderer is software (llvmpipe, swrast, ...) belongs to
+:func:`dfxm.common.machine.is_software_renderer`, the single owner of that
+rule.
 
 Contract: print exactly one JSON object on stdout, exit 0, always.
 """
@@ -17,15 +22,6 @@ from __future__ import annotations
 
 import json
 import sys
-
-_SOFTWARE_MARKERS = (
-    "llvmpipe",
-    "swrast",
-    "softpipe",
-    "software rasterizer",
-    "microsoft basic render",
-    "gdi generic",
-)
 
 
 def _parse_capabilities(caps: str) -> dict:

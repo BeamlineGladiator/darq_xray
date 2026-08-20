@@ -226,12 +226,13 @@ Qt-free ETA estimation for progress readouts. Pure module — no Qt, no I/O.
 Consumed by the GUI's busy overlay/progress text (`gui/widgets/busy.py`, `gui/stage_view.py`) but importable and testable without Qt.
 
 #### `_glprobe.py` (new)
-- **`_glprobe.py`** — out-of-process OpenGL capability probe, run as
-  `python -m dfxm.common._glprobe`. Prints one JSON object
-  (`status`, `renderer`, `vendor`, `version`, `max_3d_texture`, `error`) and
-  always exits 0. Kept a leaf module (pyvista imported inside `main()`) because
-  a broken GL driver segfaults rather than raising, and because `spawn`
-  re-imports the child's module.
+Out-of-process OpenGL capability probe, run as `python -m dfxm.common._glprobe`.
+Prints one JSON object (`status`, `renderer`, `vendor`, `version`,
+`max_3d_texture`, `error`) and always exits 0. Kept a leaf module (pyvista
+imported inside `probe()`) because a broken GL driver segfaults rather than
+raising, and because `spawn` re-imports the child's module. Reports the raw
+renderer string only — classifying it as software vs. hardware belongs to
+`machine.is_software_renderer`.
 
 #### `alignment.py`
 The **single source of truth** for putting volumes into the shared world frame.
