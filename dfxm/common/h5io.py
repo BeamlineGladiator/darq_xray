@@ -224,3 +224,29 @@ def sum_dataset_bytes(path: str) -> tuple[int, tuple[int, ...] | None, int]:
     except Exception:  # noqa: BLE001 - unreadable input -> unknown size
         return 0, None, 0
     return total, largest_shape, largest_itemsize
+
+
+def iter_dataset_sizes(path: str) -> list[tuple[str, tuple[int, ...], int]]:
+    """``(name, shape, itemsize)`` for every dataset in *path*, from shapes alone.
+
+    Same traversal as :func:`sum_dataset_bytes` (``f.visititems``, reads no
+    data) but returns one entry per dataset instead of a running total, so a
+    caller can size the *specific* dataset it is about to load rather than the
+    whole file. ``name`` matches the in-file path (e.g. ``"chi/Center of
+    mass"``). Returns ``[]`` for anything unreadable — sizing is advisory and
+    must never raise.
+    """
+    out: list[tuple[str, tuple[int, ...], int]] = []
+
+    def visit(name, obj):
+        if not isinstance(obj, h5py.Dataset):
+            return
+        shape = tuple(int(d) for d in obj.shape)
+        out.append((name, shape, int(obj.dtype.itemsize)))
+
+    try:
+        with h5py.File(path, "r") as f:
+            f.visititems(visit)
+    except Exception:  # noqa: BLE001 - unreadable input -> unknown size
+        return []
+    return out

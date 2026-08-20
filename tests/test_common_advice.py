@@ -97,3 +97,10 @@ def test_advise_3d_without_gl_recommends_nothing():
     advice = advise_3d(windows_no_vtk(), (100, 700, 2891), "volume")
     assert advice.downsample == 1
     assert advice.render_mode is None
+
+
+def test_advise_3d_survives_an_empty_shape():
+    """An estimate with no resolvable shape must not crash `max()` on empty."""
+    advice = advise_3d(workstation_sw_gl(), (), "volume")
+    assert advice.downsample == 1
+    assert advice.render_mode is None

@@ -39,7 +39,7 @@ from ..common import alignment as A
 from ..common import render as Rnd
 from ..common.errors import StageUserError
 from ..common.figures import FigureSpec, crop_roi_2d, register, resolve_clim
-from ..common.h5io import sum_dataset_bytes
+from ..common.h5io import iter_dataset_sizes, sum_dataset_bytes
 from ..common.plotting import (
     GROUP_BY_KIND,
     PlotStyle,
@@ -1150,30 +1150,77 @@ _SLICES_VOLUME_PARAMS = (
 def estimate(params: dict) -> CostEstimate:
     """Peak memory for a slices run, from HDF5 shapes only.
 
-    ``prepare_volume`` reads each selected volume with ``[:].astype(np.float64)``
-    — source and float64 copy live together — then alignment
-    (``apply_samy_shifts_to_volume`` / ``interpolate_to_uniform_z``) produces a
-    further float64 copy. Peak is therefore ``input + 2 * n * 8`` summed over
-    the selected volumes. Not chunkable: alignment is a whole-volume operation.
+    ``run()`` calls ``prepare_volume`` one selected dataset at a time, and
+    ``prep`` is a plain local that gets *rebound* each iteration — the
+    previous volume's prepared array stays fully alive while the next one is
+    being built, so the peak pairs the current volume's own load peak with the
+    largest OTHER selected volume's footprint (not the sum of all of them).
+
+    Within one ``prepare_volume`` call, ``elems_v * itemsize_v`` is the native
+    read (source dtype, coexisting briefly with its ``.astype(np.float64)``
+    copy). For a **stacked** source (``mosa_volume_file`` /
+    ``strain_volume_file``) three float64-sized copies of that field are then
+    alive at once: the raw float64 read (kept in its own variable), the
+    samy-shifted canvas, and ``interpolate_to_uniform_z``'s float64 output —
+    ``load_peak_v = elems_v * itemsize_v + 3 * elems_v * 8``. An **aligned**
+    source (``aligned_rocking_file`` / ``aligned_mosa_file``) is already
+    co-registered — no shift/interpolate step — so only the one float64 read
+    persists: ``load_peak_v = elems_v * itemsize_v + 1 * elems_v * 8``.
+
+    ``total_input`` is unchanged from the file-level ``sum_dataset_bytes``
+    total across the four volume-file params (every dataset in each selected
+    file, not filtered by the ``include_*`` toggles) — a deliberately
+    conservative input figure kept for continuity with the other estimators.
+    Not chunkable: alignment is a whole-volume operation.
     """
     p = {**STAGE.defaults(), **params}
     total_input = 0
-    total_elems = 0
     largest: tuple[int, ...] | None = None
     for name in _SLICES_VOLUME_PARAMS:
         path = str(p.get(name) or "")
         if not path:
             continue
-        nbytes, shape, itemsize = sum_dataset_bytes(path)
+        nbytes, shape, _itemsize = sum_dataset_bytes(path)
         if not nbytes:
             continue
         total_input += nbytes
-        total_elems += nbytes // max(1, itemsize)
         if shape is not None and (largest is None or len(shape) > len(largest)):
             largest = shape
     if not total_input:
         return CostEstimate(0, 0, None, False, "no readable volume files selected yet")
-    return CostEstimate(total_input + 2 * total_elems * 8, total_input, largest, False, None)
+
+    roi_x, roi_y = _parse_pair(p.get("align_roi_x")), _parse_pair(p.get("align_roi_y"))
+    try:
+        volumes = _standard_volumes(p, roi_x, roi_y)
+    except Exception:  # noqa: BLE001 - an estimate is advisory, never fatal
+        volumes = []
+
+    # (own_f64_footprint, load_peak) per selected dataset actually resolvable
+    load_infos: list[tuple[int, int]] = []
+    for cfg in volumes:
+        sizes = iter_dataset_sizes(cfg["h5_path"])
+        match = next((s for s in sizes if s[0] == cfg["dataset_path"]), None)
+        if match is None:
+            continue
+        _name, shape, itemsize = match
+        elems = 1
+        for dim in shape:
+            elems *= dim
+        copies = 3 if cfg["source"] == "stacked" else 1
+        load_peak = elems * itemsize + copies * elems * 8
+        load_infos.append((elems * 8, load_peak))
+
+    if not load_infos:
+        # Per-dataset sizing couldn't resolve anything selected (e.g. the
+        # named files don't hold the toggled quantities) — fall back to the
+        # coarser file-level figure rather than reporting zero.
+        return CostEstimate(total_input, total_input, largest, False, None)
+
+    peak = 0
+    for i, (_own_f64, load_peak_i) in enumerate(load_infos):
+        other = max((f64 for j, (f64, _lp) in enumerate(load_infos) if j != i), default=0)
+        peak = max(peak, load_peak_i + other)
+    return CostEstimate(peak, total_input, largest, False, None)
 
 
 # Relative Y-height spread beyond which volumes are flagged as misregistered.

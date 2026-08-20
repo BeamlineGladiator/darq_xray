@@ -450,12 +450,20 @@ def _display_info(dataset_name, is_strain=False):
 def estimate(params: dict) -> CostEstimate:
     """Peak memory for this run, from HDF5 shapes only.
 
-    Loads every dataset in the selected volume files together (see
-    ``load_mosa_datasets`` / ``load_strain_volume`` below), with no dtype
-    conversion, so the peak is simply their combined size.
+    Unlike ``paraview``, ``run()`` handles the mosaicity and strain sections
+    **inline in the same function scope**, not via separate helper calls — the
+    mosaicity ``datasets`` dict (raw, native dtype, every field) is never
+    deleted or reassigned, so it stays alive through the strain section too.
+    Peak is therefore ``total_input`` (both files' raw bytes, summed — not
+    maxed like paraview) plus one field's alignment chain at a time: each
+    ``_align`` call (``apply_roi_3d`` -> ``apply_samy_shifts_to_volume`` ->
+    ``interpolate_to_uniform_z``, upcasting to float64) leaves up to three
+    float64-sized temporaries live for the largest field simultaneously,
+    bounded as ``3 * largest_elems * 8``. ``chunkable=True``.
     """
     p = {**STAGE.defaults(), **params}
     total = 0
+    largest_elems = 0
     largest: tuple[int, ...] | None = None
     for name in ("mosa_volume_file", "strain_volume_file"):
         path = str(p.get(name) or "")
@@ -463,11 +471,18 @@ def estimate(params: dict) -> CostEstimate:
             continue
         nbytes, shape, _itemsize = sum_dataset_bytes(path)
         total += nbytes
-        if shape is not None and (largest is None or len(shape) > len(largest)):
-            largest = shape
+        if shape is not None:
+            elems = 1
+            for dim in shape:
+                elems *= dim
+            if elems > largest_elems:
+                largest_elems = elems
+            if largest is None or len(shape) > len(largest):
+                largest = shape
     if not total:
         return CostEstimate(0, 0, None, True, "no readable volume files selected yet")
-    return CostEstimate(total, total, largest, True, None)
+    peak = total + 3 * largest_elems * 8
+    return CostEstimate(peak, total, largest, True, None)
 
 
 # -----------------------------------------------------------------------------

@@ -192,12 +192,47 @@ def test_probe_gl_caches_to_disk_and_reuses(monkeypatch, tmp_path):
 
     monkeypatch.setattr(machine.subprocess, "run", _run)
     machine._GL_MEMO.clear()
-    first, _ = machine.probe_gl(use_cache=True)
-    machine._GL_MEMO.clear()  # drop the in-process memo; disk cache must carry it
-    second, _ = machine.probe_gl(use_cache=True)
-    assert len(calls) == 1
-    assert first == second
-    assert first.software is False
+    try:
+        first, _ = machine.probe_gl(use_cache=True)
+        machine._GL_MEMO.clear()  # drop the in-process memo; disk cache must carry it
+        second, _ = machine.probe_gl(use_cache=True)
+        assert len(calls) == 1
+        assert first == second
+        assert first.software is False
+    finally:
+        machine._GL_MEMO.clear()
+
+
+def test_probe_gl_memoises_a_crashed_result_in_process(monkeypatch, tmp_path):
+    """A crashing driver must not be re-spawned on every subsequent probe call.
+
+    A crashed probe IS memoised (deliberately — hammering a crashing driver on
+    every call would be worse than a stale "crashed" answer), unlike a
+    successful probe it is NOT written to the disk cache, so this in-process
+    memo is the only thing preventing a second child spawn here.
+    """
+    monkeypatch.setattr(machine, "gl_cache_path", lambda: str(tmp_path / "gl.json"))
+    calls = []
+
+    class _Killed:
+        returncode = -11  # SIGSEGV
+        stdout = ""
+        stderr = ""
+
+    def _run(*a, **k):
+        calls.append(1)
+        return _Killed()
+
+    monkeypatch.setattr(machine.subprocess, "run", _run)
+    machine._GL_MEMO.clear()
+    try:
+        first, first_status = machine.probe_gl(use_cache=True)
+        second, second_status = machine.probe_gl(use_cache=True)
+        assert len(calls) == 1, "second probe_gl(use_cache=True) spawned a second child"
+        assert first is None and second is None
+        assert first_status == second_status == "crashed"
+    finally:
+        machine._GL_MEMO.clear()
 
 
 def test_profile_does_not_probe_gl_unless_asked(monkeypatch, tmp_path):

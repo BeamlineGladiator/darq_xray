@@ -124,6 +124,8 @@ def advise_3d(profile, shape, mode: str) -> Advice:
     reasons: list[str] = []
     if mode != "volume" or profile.gl is None or not profile.gl.max_3d_texture:
         return Advice(1, None, ())
+    if not shape:
+        return Advice(1, None, ())
     limit = int(profile.gl.max_3d_texture)
     # The texture is sized in POINTS — one more than the voxel count per axis.
     longest = max(int(d) + 1 for d in shape)

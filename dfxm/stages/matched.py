@@ -318,12 +318,21 @@ def _rock_h5(raw_root, name):
 def estimate(params: dict) -> CostEstimate:
     """Peak memory for a matched run, from HDF5 shapes only.
 
-    ``load_pco_ff_frame`` reads a scan's detector stack with
-    ``ds[:].astype(np.float64)`` (source + float64 copy), then
-    ``np.nanmedian(stack, axis=0)`` builds one more float64 frame — so the
-    peak is ``input + n * 8 + frame_elems * 8`` for one scan folder, sized
-    once and multiplied by the number of matching scan folders. Not
-    chunkable: an exact median needs the whole stack.
+    ``run()`` loads **one** scan at a time via ``load_pco_ff_frame`` — the
+    matched-layer loop calls it per output layer, and ``stack``/``background``
+    are locals that die on return, so nothing accumulates across layers except
+    the small pooled-clim list. Within one call: ``ds[:].astype(np.float64)``
+    holds the source stack (native dtype) and its float64 copy together, and
+    ``np.nanmedian(stack, axis=0)`` needs its own internal float64-sized copy
+    of the stack to sort along axis 0 — ``scan_elems * (itemsize + 16)``. On
+    top of that, up to ~10 pooled clim arrays plus a couple of frame-sized
+    working copies (``background``, ``corrected``) persist at once, bounded as
+    ``12 * frame_elems * 8``. Peak is therefore
+    ``scan_elems * (itemsize + 16) + 12 * frame_elems * 8`` for one scan,
+    independent of the folder count — ``input_bytes`` still sums every
+    matching folder's stack (the data that will eventually be read, even
+    though only one is resident at a time). Not chunkable: an exact median
+    needs the whole stack.
     """
     p = {**STAGE.defaults(), **params}
     try:
@@ -347,7 +356,7 @@ def estimate(params: dict) -> CostEstimate:
         elems *= dim
     frame_elems = elems // scan_shape[0] if scan_shape and scan_shape[0] else elems
     input_bytes = len(folders) * elems * itemsize
-    peak = input_bytes + len(folders) * elems * 8 + frame_elems * 8
+    peak = elems * (itemsize + 16) + 12 * frame_elems * 8
     return CostEstimate(
         peak,
         input_bytes,

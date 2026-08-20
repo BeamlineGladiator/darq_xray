@@ -622,11 +622,24 @@ def _motors(raw_root: str, pattern: str, samy_path: str, samz_path: str):
 def estimate(params: dict) -> CostEstimate:
     """Peak memory for a rocking run, from HDF5 shapes only.
 
-    Sizes one raw scan's detector stack (``detector_path``, default
-    ``1.1/measurement/pco_ff``) and multiplies by the number of matching scan
-    folders — the peak is modelled as the combined detector stacks with no
-    dtype-conversion overhead, matching the bare ``dataset[:]`` read used by
-    the cold-replot path (``_replot_default_clim``, no ``.astype``).
+    ``run()`` streams scans one at a time, not all at once:
+    ``build_raw_volumes`` -> ``process_raw_scan`` reads one scan's detector
+    stack as uint16 and immediately ``.astype(np.float32)``\\ s it (source and
+    float32 copy coexist briefly), then ``del frames`` drops it before the next
+    scan. Only the running per-scan 2-D accumulators and the two final
+    ``(n_layers, H, W)`` float32 volumes (``sum_vol``/``spec_vol``, doubled
+    while ``np.stack`` builds each from its list of 2-D slices) persist across
+    the loop. Peak is modelled as
+    ``max(scan_elems * (itemsize + 4) + 2 * n_layers * layer_elems * 4,
+    20 * n_layers * layer_elems)`` — the first term is one scan's streaming
+    peak, the second is a floor for the list-and-stack accumulation once all
+    scans are collected. ``chunkable=True``.
+
+    The folder count is an upper bound on ``n_layers``: ``source_scan``
+    ``"mosaicity"`` uses a different glob pattern (every matched mosa folder,
+    no filtering) and the default ``"rocking"`` path additionally masks
+    folders to the mosa/strain samz union, which this shape-only estimate
+    cannot evaluate without reading motor positions from every folder.
     """
     p = {**STAGE.defaults(), **params}
     try:
@@ -645,11 +658,17 @@ def estimate(params: dict) -> CostEstimate:
     except Exception as exc:  # noqa: BLE001 - an estimate is advisory, never fatal
         return CostEstimate(0, 0, None, True, f"cannot size input: {type(exc).__name__}")
 
-    elems = 1
+    n = len(folders)
+    scan_elems = 1
     for dim in scan_shape:
-        elems *= dim
-    total = len(folders) * elems * itemsize
-    return CostEstimate(total, total, (len(folders), *scan_shape), True, None)
+        scan_elems *= dim
+    layer_elems = scan_elems // scan_shape[0] if scan_shape and scan_shape[0] else scan_elems
+    total = n * scan_elems * itemsize
+    peak = max(
+        scan_elems * (itemsize + 4) + 2 * n * layer_elems * 4,
+        20 * n * layer_elems,
+    )
+    return CostEstimate(peak, total, (n, *scan_shape), True, None)
 
 
 def _render(
