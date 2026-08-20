@@ -32,8 +32,12 @@ The repository is already better positioned than it looks:
   `oversize_note()` (`dfxm/common/render3d.py:356`) read
   `GL_MAX_3D_TEXTURE_SIZE` and warn when a volume exceeds it. This project
   generalises that seed.
-- `mosaicity.py:223` already streams layer-by-layer and is the template for
-  chunked IO.
+- `mosaicity.py:223` (`_volume_stats`, a plotting helper) already streams
+  layer-by-layer and is the template for chunked IO. **Note the stage itself
+  does not stream:** `mosaicity.run` collects every layer of all four datasets
+  (chi/mu × com/fwhm) in `collected` and then `np.stack`s each, so its peak is
+  roughly five volumes — on the real STO2 dataset, 4 × 1.31 GB plus a 1.31 GB
+  stacked copy ≈ 6.6 GB. It is one of the heaviest stages, not the light one.
 
 The gaps:
 
@@ -241,7 +245,7 @@ percentile-based `auto_clim`, the centring in `alignment.py`. Every one of the
 twelve full-load sites is classified as:
 
 1. **Trivially streamable** — layer-independent work. Direct conversion;
-   `mosaicity.py:223` is the template.
+   `mosaicity._volume_stats` (`mosaicity.py:223`) is the template.
 2. **Two-pass streamable** — needs a global statistic first: pass 1 accumulates,
    pass 2 applies, at the cost of one extra read.
 3. **Genuinely in-core** — irreducibly whole-array. Not chunked; instead run
