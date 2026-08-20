@@ -27,9 +27,9 @@ scoping itself.
    `git log --oneline -3` vs the note's recorded HEAD/rollback point?
    `git status --short` clean? Any mismatch → stop and report the discrepancy
    before executing anything.
-3. **Honor standing preferences from memory** without being re-told
-   (currently: mid-tier subagents on the `sonnet-4-6` agent type, never
-   Sonnet 5).
+3. **Honor standing preferences from memory** without being re-told (check the
+   project notes; note that subagent model routing is back to default — no
+   pinned tiers, subagents inherit the session model).
 4. **State the resume point and the single next action** — e.g. "Task 3
    implemented at d48e8ff but unreviewed; next: dispatch its review."
 5. **Ask scope via AskUserQuestion** (numbered, per CLAUDE.md):

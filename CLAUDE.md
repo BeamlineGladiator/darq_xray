@@ -19,19 +19,16 @@ single 9-stage pipeline. (DFXM — never call it XRD / X-ray diffraction.)
 
 ## Autonomous execution kickoff
 
-- **Subagent model tier:** dispatch mid-tier implementer subagents and
-  between-task reviewers on Sonnet (Sonnet 5 is fine — the earlier `sonnet-4-6`
-  pin is lifted as of 2026-07-10; that custom agent type remains available but
-  is only for explicit requests).
-  Planning → the custom `planner` agent (Fable 5, `effort: high`); ongoing
-  supervision/oversight of in-progress work → the custom `supervisor` agent
-  (Fable 5, `effort: high`). Both are read-only. Reserve fable for these two
-  roles and for final whole-branch reviews.
+- **Subagent model tier:** no pinned tiers — dispatch subagents with no `model`
+  override so they inherit the session model. Reach for a different tier only
+  when a particular dispatch clearly warrants it, and say which and why when you
+  do. The custom `planner`, `supervisor` (both Fable 5, `effort: high`,
+  read-only) and `sonnet-4-6` agent types still exist but are opt-in: use them
+  when asked for by name. A Fable review is not a required step of any flow.
 - **Kickoff confirmation:** before starting any autonomous multi-task run
   (subagent-driven-development, executing-plans), confirm via AskUserQuestion:
-  (1) the stop point — a named task/phase boundary or "run to completion",
-  (2) anything about subagent tiering that isn't already settled above, and
-  (3) execution mode — full SDD (per-task implementer + dual reviewers) vs
+  (1) the stop point — a named task/phase boundary or "run to completion", and
+  (2) execution mode — full SDD (per-task implementer + dual reviewers) vs
   inline execution with a single end review; recommend inline when the plan is
   <= ~4 small tasks in one subsystem.
 - **Bare "resume":** on a bare resume request, first state the resume point and
