@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import sys
+import tracemalloc
 from pathlib import Path
 
 import h5py
@@ -352,6 +353,72 @@ def test_centring_costs_one_extra_pass_when_the_volume_fits(center_method, expec
     )
     assert setup_reads == expected_reads - 1
     assert np.array_equal(rebuilt, reference.data, equal_nan=True)
+
+
+def _peak_bytes(fn):
+    """Peak traced allocation during *fn*, numpy's buffers included."""
+    tracemalloc.start()
+    try:
+        fn()
+        return tracemalloc.get_traced_memory()[1]
+    finally:
+        tracemalloc.stop()
+
+
+def test_median_cache_does_not_hold_a_second_aligned_volume():
+    """The `fits` branch must ADOPT its one block, never copy it into a second array.
+
+    ``fits`` is exactly ``out_step == nz``, so the stream yields one block that
+    already is the whole aligned volume. Copying it into a ``np.empty(shape)``
+    cache holds two at once — and since ``fits`` is true precisely when one
+    aligned volume fits ``budget_bytes``, the duplicate puts the run at **twice
+    the caller's budget**, on exactly the volume the branch exists to speed up.
+
+    Measured, and dead stable across repeats and shapes: the copy costs exactly
+    one extra aligned volume. Peak over the mean path's peak, in units of the
+    aligned volume, is 1.27 adopting and 2.27 copying at this fixture's size
+    (0.92 / 1.92 at another). The bound below sits between the two.
+    """
+    rng = np.random.default_rng(5)
+    vol = rng.normal(size=(40, 200, 260)).astype(np.float32)
+    samy = np.cumsum(rng.normal(scale=0.0005, size=40))
+    samz = np.sort(rng.normal(scale=0.01, size=40))
+    probe = A.align_volume_streamed(vol, samy, samz, scale_x=0.15, budget_bytes=1 << 40)
+    aligned = int(np.prod(probe.shape)) * probe.dtype.itemsize
+
+    def peak(center_method, budget):
+        return _peak_bytes(
+            lambda: A.align_volume_streamed(
+                vol,
+                samy,
+                samz,
+                scale_x=0.15,
+                center_method=center_method,
+                budget_bytes=budget,
+            )
+        )
+
+    # `budget_bytes` is exactly one aligned volume, so `fits` is true and the
+    # branch under test is the one that runs.
+    assert probe.shape[0] * probe.shape[1] * probe.shape[2] * probe.dtype.itemsize == aligned
+    mean_peak = peak("mean", aligned)
+    median_peak = peak("median", aligned)
+
+    # Liveness. If a future numpy stops routing its buffers through a traced
+    # domain, both figures collapse to a few kB of Python objects and every
+    # comparison below passes while measuring nothing. The fixture's aligned
+    # volume is ~31 MB, so a live measurement cannot be under it.
+    assert aligned > (8 << 20), "fixture too small for allocation noise to be negligible"
+    assert mean_peak > aligned, (
+        f"tracemalloc saw only {mean_peak} B for a {aligned} B volume — "
+        "the measurement is dead, not the code under test"
+    )
+
+    assert median_peak - mean_peak < 1.5 * aligned, (
+        f"median peak {median_peak} B vs mean {mean_peak} B — a difference of "
+        f"{(median_peak - mean_peak) / aligned:.2f} aligned volumes ({aligned} B each). "
+        "The median cache is holding a second full-size copy."
+    )
 
 
 def test_streamed_rejects_unknown_center_method():

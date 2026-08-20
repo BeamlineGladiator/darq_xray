@@ -356,10 +356,18 @@ def _input_span(z_um: np.ndarray, z_target: np.ndarray) -> tuple[int, int]:
 
     A decreasing or unsorted samz is handled by working in the sorted order and
     then spanning ``[min, max]`` of the original indices that order picked out.
-    That span can degenerate to the whole array — a larger read, never a wrong
-    answer, since adding input layers cannot loosen a bracket: the sub-range
-    always contains the pair the full array would have used, and no layer lies
-    between that pair.
+    The answer stays correct however scrambled samz is, because adding input
+    layers cannot loosen a bracket: the sub-range always contains the pair the
+    full array would have used, and no layer lies between that pair.
+
+    **But the span can degenerate to the whole array**, and then
+    ``dset[in_lo:in_hi]`` reads the entire input volume for that block —
+    ``budget_bytes`` bounds the *output* block, so a badly interleaved samz can
+    push the working set past the caller's budget. Only a non-monotonic samz
+    does this (a decreasing one is fine: reversing keeps neighbours adjacent),
+    and raster samz is monotone by construction, so this is a pathological-input
+    caveat rather than a live risk — but it is a memory caveat, not merely a
+    speed one.
 
     The sort is ``mergesort`` to match ``interp1d``'s own stable sort, so
     duplicated samz values keep the same layer pairing in both paths.
@@ -468,13 +476,18 @@ def align_volume_streamed(
         multi_pass = center_method.lower() == "median"
         fits = nz * per_out_layer <= budget_bytes
         if multi_pass and fits:
-            # It fits the caller's own budget by definition, so holding it is
-            # within contract, and it saves re-aligning the whole volume once
-            # per quantile pass. This is also the in-core facade's path.
-            cache = np.empty(shape, dtype=dtype)
-            for zsl, block in _blocks():
-                cache[zsl] = block
-            offset = _center_offset(lambda: [cache], center_method)
+            # `fits` is exactly the condition `out_step == nz`, so the stream
+            # yields ONE block and that block already IS the whole aligned
+            # volume — a fresh array nothing else holds. Adopt it.
+            #
+            # Copying it into a `np.empty(shape)` cache instead (the obvious
+            # spelling) would hold two full-size volumes at once: measured
+            # +43% peak on a 40x200x260 float32 volume, and — worse — it
+            # doubles the very budget that made `fits` true, so a Wave 3 stage
+            # handed the machine's advised RAM would allocate twice it and die
+            # on precisely the volume this branch was meant to make cheap.
+            cache = [block for _zsl, block in _blocks()]
+            offset = _center_offset(lambda: cache, center_method)
             del cache
         elif multi_pass and scratch_dir is not None:
             with volumeio.scratch_array(shape, dtype, dirpath=scratch_dir) as cache:
