@@ -1724,11 +1724,13 @@ button:
     image with the same interactive ROI picker the replot dialogs use (the
     current ROI is pre-drawn; *Use* writes the pixel bounds back; trace panels
     have no ROI). The picker's **Preview** dropdown offers *every* image panel
-    in the recipe (the selected panel first), and the rectangle carries over
-    between same-sized maps — so you can flip through the maps, check the crop
-    works on each, and nudge it (tick **Keep size** to move it without
-    resizing) before accepting; the result is still written to the selected
-    panel only. Then use **→ all maps** to copy this panel's ROI and Crop-to-data
+    in the recipe (the selected panel first), and **each map you place or move
+    the rectangle on gets its own ROI** when you click *Use* — flip to another
+    map (the rectangle carries over between same-sized maps as a starting
+    point, marked "not applied … until you move it"), tick **Keep size** to
+    move it without resizing, and drop it where that map needs it; maps you
+    only look at are left untouched, so browsing never overwrites an existing
+    crop. Use **→ all maps** instead to copy one identical ROI and Crop-to-data
     setting to every other image panel so they show the same region and get
     the same box size (the scale bar needs no such help — every map already
     shares the Style pane's *Scale (µm/cm)*, so "50 µm" is the same length on

@@ -18,6 +18,15 @@ def _previews():
     return [("layer 0", lambda a=arr: (a, 0.152, 0.385))]  # sx=0.152 (X), sy=0.385 (Y)
 
 
+def _two_previews():
+    a = np.arange(200 * 100, dtype=float).reshape(200, 100)
+    b = np.ones((200, 100))
+    return [
+        ("map A", lambda a=a: (a, 0.152, 0.385)),
+        ("map B", lambda b=b: (b, 0.152, 0.385)),
+    ]
+
+
 def test_dialog_selection_returns_indices_and_readout():
     from gui.widgets.roi_picker import ROIPickerDialog
 
@@ -110,6 +119,62 @@ def test_keep_size_unlock_frees_resizing():
     dlg._on_rect_change(0.0, 10.0, 0.0, 10.0)
     dlg._accept()
     assert dlg.result == (0, 10, 0, 10)
+    dlg.deleteLater()
+
+
+def test_per_preview_picks_collect_one_roi_per_moved_map():
+    """per_preview=True: every preview the user draws/moves on gets its OWN pick."""
+    from gui.widgets.roi_picker import ROIPickerDialog
+
+    _ = QApplication.instance() or QApplication([])
+    dlg = ROIPickerDialog(_two_previews(), per_preview=True)
+    dlg._on_rect_change(10.0, 50.0, 20.0, 80.0)  # user draws on map A
+    dlg._combo.setCurrentIndex(1)  # swap to map B (rect carries over as a hint)
+    assert dlg.picked == {0: (20, 80, 10, 50)}  # carry-over alone is NOT a pick
+    dlg._on_rect_change(30.0, 70.0, 100.0, 160.0)  # user moves it on map B
+    dlg._accept()
+    assert dlg.picked == {0: (20, 80, 10, 50), 1: (100, 160, 30, 70)}
+    assert dlg.result == (100, 160, 30, 70)
+    dlg.deleteLater()
+
+
+def test_per_preview_carried_rect_not_applied_until_moved():
+    from gui.widgets.roi_picker import ROIPickerDialog
+
+    _ = QApplication.instance() or QApplication([])
+    dlg = ROIPickerDialog(_two_previews(), per_preview=True)
+    dlg._on_rect_change(10.0, 50.0, 20.0, 80.0)
+    dlg._combo.setCurrentIndex(1)  # only LOOK at map B
+    assert "not applied" in dlg._readout.text()
+    dlg._accept()
+    assert dlg.picked == {0: (20, 80, 10, 50)}  # map B untouched → no pick for it
+    dlg.deleteLater()
+
+
+def test_per_preview_returning_restores_that_maps_own_pick():
+    from gui.widgets.roi_picker import ROIPickerDialog
+
+    _ = QApplication.instance() or QApplication([])
+    dlg = ROIPickerDialog(_two_previews(), per_preview=True)
+    dlg._on_rect_change(10.0, 50.0, 20.0, 80.0)  # pick on A
+    dlg._combo.setCurrentIndex(1)
+    dlg._on_rect_change(30.0, 70.0, 100.0, 160.0)  # different pick on B
+    dlg._combo.setCurrentIndex(0)  # back to A → A's own rectangle restored
+    assert tuple(round(v) for v in dlg._selector.extents) == (10, 50, 20, 80)
+    dlg.deleteLater()
+
+
+def test_per_preview_reset_drops_only_current_maps_pick():
+    from gui.widgets.roi_picker import ROIPickerDialog
+
+    _ = QApplication.instance() or QApplication([])
+    dlg = ROIPickerDialog(_two_previews(), per_preview=True)
+    dlg._on_rect_change(10.0, 50.0, 20.0, 80.0)
+    dlg._combo.setCurrentIndex(1)
+    dlg._on_rect_change(30.0, 70.0, 100.0, 160.0)
+    dlg._on_reset()  # forgets map B's pick only
+    assert dlg.picked == {0: (20, 80, 10, 50)}
+    assert dlg._use.isEnabled()  # map A's pick still accepts
     dlg.deleteLater()
 
 

@@ -6,6 +6,12 @@ types. Each call site supplies previews as ``(label, thunk)`` pairs where
 map exports (``origin="lower"``, physical aspect via ``set_aspect(sy/sx)``), so
 the crop you draw is the crop you get. On accept, :attr:`result` is the
 half-open ``(r0, r1, c0, c1)`` pixel-index tuple; otherwise ``None``.
+
+With ``per_preview=True`` the dialog additionally treats each preview as its own
+target: :attr:`picked` maps preview index -> ``(r0, r1, c0, c1)`` for every
+preview the user actually drew or moved the rectangle on (a rectangle merely
+carried over from another preview is a visual hint, never a pick), so a call
+site can give each map its own ROI position from one dialog session.
 """
 
 from __future__ import annotations
@@ -48,11 +54,16 @@ from .busy import busy_cursor  # noqa: E402
 class ROIPickerDialog(QDialog):
     """Drag a rectangle on a preview plane; read back half-open pixel bounds."""
 
-    def __init__(self, previews, initial=None, parent=None) -> None:
+    def __init__(self, previews, initial=None, parent=None, per_preview=False) -> None:
         super().__init__(parent)
         self._previews = list(previews)
         self._initial = initial
+        self._per_preview = bool(per_preview)
         self.result: tuple[int, int, int, int] | None = None
+        #: preview index -> (r0, r1, c0, c1) for every preview the user actually
+        #: drew or moved the rectangle on (carry-over display alone never counts);
+        #: per_preview call sites read this to give each map its own ROI
+        self.picked: dict[int, tuple[int, int, int, int]] = {}
         self._arr: np.ndarray | None = None
         self._sx = self._sy = 1.0
         self._rect: tuple[float, float, float, float] | None = None  # xmin,xmax,ymin,ymax
@@ -133,21 +144,31 @@ class ROIPickerDialog(QDialog):
             interactive=True,
             button=[1],
         )
-        # keep the rect only if the new preview has the same shape
-        if prev_shape is not None and prev_shape != (h, w):
+        # this preview's own pick wins; otherwise keep the rect only if the new
+        # preview has the same shape (as a carry-over hint, never a pick)
+        stored = self.picked.get(idx)
+        if stored is not None:
+            r0, r1, c0, c1 = stored
+            self._selector.extents = (c0, c1, r0, r1)
+            self._on_rect_change(c0, c1, r0, r1, user=False)
+        elif prev_shape is not None and prev_shape != (h, w):
             self._rect = None
-            self._use.setEnabled(False)
+            self._use.setEnabled(self._per_preview and bool(self.picked))
             self._readout.setText(f"shape {h}×{w} px — previous selection cleared")
         elif self._rect is None and self._initial is not None:
             r0, r1, c0, c1 = self._initial
             if self._selector is not None:
                 self._selector.extents = (c0, c1, r0, r1)
-            self._on_rect_change(c0, c1, r0, r1)
+            self._on_rect_change(c0, c1, r0, r1, user=False)
         elif self._rect is not None:
             xmin, xmax, ymin, ymax = self._rect
             if self._selector is not None:
                 self._selector.extents = (xmin, xmax, ymin, ymax)
-            self._on_rect_change(xmin, xmax, ymin, ymax)
+            self._on_rect_change(xmin, xmax, ymin, ymax, user=False)
+            if self._per_preview and prev_shape is not None:
+                self._readout.setText(
+                    self._readout.text() + "  — not applied to this map until you move it"
+                )
         self._canvas.draw_idle()
 
     def _on_lock_toggled(self, checked: bool) -> None:
@@ -159,9 +180,12 @@ class ROIPickerDialog(QDialog):
             r0, r1, c0, c1 = rect_to_indices(*self._rect, w=w, h=h)
             if r1 - r0 >= 1 and c1 - c0 >= 1:
                 self._lock_size = (c1 - c0, r1 - r0)
-                self._on_rect_change(*self._rect)  # refresh the "(size locked)" readout
+                # refresh the "(size locked)" readout without recording a pick
+                self._on_rect_change(*self._rect, user=False)
 
-    def _on_rect_change(self, xmin, xmax, ymin, ymax) -> None:
+    def _on_rect_change(self, xmin, xmax, ymin, ymax, user=True) -> None:
+        """`user=True` marks an actual draw/move/resize by the user — only those
+        record a per-preview pick; programmatic restores/seeds pass user=False."""
         if self._coercing or self._arr is None or None in (xmin, xmax, ymin, ymax):
             return
         self._rect = (xmin, xmax, ymin, ymax)
@@ -190,7 +214,11 @@ class ROIPickerDialog(QDialog):
                         self._coercing = False
         r0, r1, c0, c1 = rect_to_indices(xmin, xmax, ymin, ymax, w, h)
         dr, dc = r1 - r0, c1 - c0
-        self._use.setEnabled(dr >= 1 and dc >= 1)
+        if user and dr >= 1 and dc >= 1:
+            self.picked[max(0, self._combo.currentIndex())] = (r0, r1, c0, c1)
+        self._use.setEnabled(
+            (dr >= 1 and dc >= 1) or (self._per_preview and bool(self.picked))
+        )
         locked = "  (size locked)" if self._lock.isChecked() and self._lock_size else ""
         self._readout.setText(
             f"{dr}×{dc} px  =  {dr * self._sy:.1f} × {dc * self._sx:.1f} µm (Y×X){locked}"
@@ -199,15 +227,17 @@ class ROIPickerDialog(QDialog):
     def _on_reset(self) -> None:
         self._rect = None
         self._lock_size = None  # a fresh drag re-establishes the locked size
-        self._use.setEnabled(False)
+        self.picked.pop(max(0, self._combo.currentIndex()), None)  # this map only
+        self._use.setEnabled(self._per_preview and bool(self.picked))
         self._readout.setText("drag a rectangle")
         if self._selector is not None:
             self._selector.set_visible(False)
         self._canvas.draw_idle()
 
     def _accept(self) -> None:
-        if self._arr is None or self._rect is None:
+        if self._rect is None and not (self._per_preview and self.picked):
             return
-        h, w = self._arr.shape[:2]
-        self.result = rect_to_indices(*self._rect, w=w, h=h)
+        if self._rect is not None and self._arr is not None:
+            h, w = self._arr.shape[:2]
+            self.result = rect_to_indices(*self._rect, w=w, h=h)
         self.accept()

@@ -1473,7 +1473,7 @@ def test_pick_roi_button_writes_roi_from_picker(tmp_path, monkeypatch):
     seen = {}
 
     class FakeDlg:
-        def __init__(self, previews, initial=None, parent=None):
+        def __init__(self, previews, initial=None, parent=None, **kw):
             seen["previews"] = previews
             seen["initial"] = initial
             self.result = (1, 5, 2, 7)
@@ -1511,7 +1511,7 @@ def test_pick_roi_offers_all_image_panels(tmp_path, monkeypatch):
     seen = {}
 
     class FakeDlg:
-        def __init__(self, previews, initial=None, parent=None):
+        def __init__(self, previews, initial=None, parent=None, **kw):
             seen["previews"] = previews
             seen["labels"] = [lbl for lbl, _t in previews]
             self.result = (0, 2, 0, 2)
@@ -1526,6 +1526,43 @@ def test_pick_roi_offers_all_image_panels(tmp_path, monkeypatch):
     assert arr.shape == (4, 5)
     assert w.recipe().panel_by_id()["other"].roi == (0, 2, 0, 2)
     assert w.recipe().panel_by_id()["a"].roi is None  # only the selected panel is written
+
+
+def test_pick_roi_applies_per_map_positions(tmp_path, monkeypatch):
+    """A dialog reporting per-preview picks writes each map its OWN ROI: the
+    selected panel via the ROI box, every other picked panel directly."""
+    import gui.figure_builder as fb
+
+    w = _win()
+    w.add_panels(_obl_recipe_panels(tmp_path))
+    from dfxm.compose.recipe import PanelDef, PanelSource
+
+    h5 = w.recipe().panels[0].source.h5_path
+    sel = {"volume_id": "strain", "slice_name": "obl", "plane": 0}
+    other = PanelDef("other", PanelSource(h5, "slice_plane", dict(sel)))
+    third = PanelDef("third", PanelSource(h5, "slice_plane", dict(sel)))
+    w.add_panels([other, third])
+    w._select_outline_panel("a")
+    seen = {}
+
+    class FakeDlg:
+        def __init__(self, previews, initial=None, parent=None, per_preview=False):
+            seen["per_preview"] = per_preview
+            self.result = (1, 3, 2, 4)  # last-shown rect (map "other")
+            self.picked = {0: (0, 2, 0, 2), 1: (1, 3, 2, 4)}  # "third" never moved on
+
+        def exec(self):
+            return 1
+
+    monkeypatch.setattr(fb, "ROIPickerDialog", FakeDlg, raising=False)
+    w._ov_roi_pick.click()
+    assert seen["per_preview"] is True
+    assert w.recipe().panel_by_id()["a"].roi == (0, 2, 0, 2)  # its own pick, not `result`
+    assert w._ov_roi.text() == "0,2,0,2"
+    assert w.recipe().panel_by_id()["other"].roi == (1, 3, 2, 4)
+    assert w.recipe().panel_by_id()["third"].roi is None  # only looked at → untouched
+    assert w.is_dirty()
+    assert "1 other" in w._notes_label.text()
 
 
 def test_copy_roi_to_all_image_panels(tmp_path):

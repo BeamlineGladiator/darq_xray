@@ -895,10 +895,11 @@ class FigureBuilderWindow(QMainWindow):
         self._ov_roi_pick = QPushButton("Pick…")
         self._ov_roi_pick.setToolTip(
             "Draw the crop rectangle on this panel's full image (same picker as the replot "
-            "dialogs). The picker's Preview dropdown swaps between every image panel so you "
-            "can check the ROI fits each map, and its Keep size box locks the pixel size "
-            "while you move it. Map, slice and reference panels only; the result is written "
-            "to THIS panel (use → all maps to copy it onward)."
+            "dialogs). The picker's Preview dropdown swaps between every image panel, and "
+            "EACH map you place or move the rectangle on gets its own ROI on Use — tick "
+            "Keep size to move it without resizing. Maps you only look at are untouched. "
+            "Map, slice and reference panels only; → all maps copies one identical ROI "
+            "everywhere instead."
         )
         self._ov_roi_pick.clicked.connect(self._on_pick_panel_roi)
         roi_row.addWidget(self._ov_roi_pick)
@@ -1070,18 +1071,37 @@ class FigureBuilderWindow(QMainWindow):
 
             _mod.ROIPickerDialog = ROIPickerDialog
         # every image panel is offered (selected panel first) so the ROI can be
-        # checked — and moved — on each map before accepting; "Keep size" in the
-        # dialog locks the px size while doing so
-        previews = [(panel.title or panel.id, lambda p=panel: panel_preview(p))]
-        previews += [
-            (p.title or p.id, lambda p=p: panel_preview(p))
-            for p in self._recipe.panels
-            if p is not panel and p.source.kind != "profiles_trace"
+        # checked — and moved separately — on each map before accepting; "Keep
+        # size" in the dialog locks the px size while doing so
+        panels = [panel] + [
+            p for p in self._recipe.panels if p is not panel and p.source.kind != "profiles_trace"
         ]
-        dlg = _mod.ROIPickerDialog(previews, initial=panel.roi, parent=self)
-        if dlg.exec() and dlg.result:
-            r0, r1, c0, c1 = dlg.result
+        previews = [(p.title or p.id, lambda p=p: panel_preview(p)) for p in panels]
+        dlg = _mod.ROIPickerDialog(previews, initial=panel.roi, parent=self, per_preview=True)
+        if not dlg.exec():
+            return
+        # each preview the user placed/moved the rectangle on gets its OWN ROI;
+        # maps only looked at stay untouched (fall back to the single last-shown
+        # rect for monkeypatched/simple dialogs that report no per-preview picks)
+        picked = dict(getattr(dlg, "picked", None) or {})
+        if not picked and dlg.result:
+            picked = {0: dlg.result}
+        n_other = 0
+        for idx, roi in picked.items():
+            p = panels[idx] if 0 <= idx < len(panels) else None
+            if p is None or p is panel or p.roi == tuple(roi):
+                continue
+            p.roi = tuple(roi)
+            n_other += 1
+        if n_other:
+            self._after_inspector_mutation()
+        if 0 in picked:
+            r0, r1, c0, c1 = picked[0]
             self._ov_roi.setText(f"{r0},{r1},{c0},{c1}")  # textChanged -> apply
+        if n_other:
+            self._notes_label.setText(
+                f"ROI also applied to {n_other} other panel(s) moved in the picker"
+            )
 
     def _on_copy_roi_to_all(self) -> None:
         """Copy the selected panel's roi/crop_to_data onto every other image panel."""
