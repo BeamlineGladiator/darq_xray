@@ -80,6 +80,38 @@ def test_enum_param_requires_choices():
         Param("m", ParamType.ENUM, "M")
 
 
+def test_stage_spec_estimate_defaults_to_none():
+    spec = StageSpec(name="x", label="X", description="d", params=(Param("a", ParamType.INT, "A"),))
+    assert spec.estimate is None
+    assert spec.estimator() is None
+
+
+def test_stage_spec_estimator_resolves_lazily():
+    spec = StageSpec(
+        name="x",
+        label="X",
+        description="d",
+        params=(),
+        estimate="dfxm.common.sort:natural_sort_key",
+    )
+    fn = spec.estimator()
+    assert callable(fn)
+    assert fn.__name__ == "natural_sort_key"
+
+
+def test_cost_estimate_is_frozen_and_carries_chunkability():
+    import dataclasses
+
+    from dfxm.config.models import CostEstimate
+
+    est = CostEstimate(
+        peak_bytes=1000, input_bytes=500, shape=(10, 10, 5), chunkable=True, note=None
+    )
+    assert est.peak_bytes == 1000
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        est.peak_bytes = 1
+
+
 def test_stagespec_helpers():
     spec = StageSpec(
         "s",

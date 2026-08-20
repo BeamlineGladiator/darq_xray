@@ -22,9 +22,10 @@ import h5py
 import numpy as np
 
 from ..common import alignment as A
+from ..common.h5io import sum_dataset_bytes
 from ..common.raster import extract_motor_positions
 from ..common.sort import find_matching_folders
-from ..config.models import Param, ParamType, StageSpec
+from ..config.models import CostEstimate, Param, ParamType, StageSpec
 
 ProgressFn = Callable[[float, str], None]
 
@@ -343,6 +344,7 @@ STAGE = StageSpec(
             help="Where the .pvti files and their piece folders are written.",
         ),
     ),
+    estimate="dfxm.stages.paraview:estimate",
 )
 
 
@@ -581,6 +583,52 @@ def save_volumes_as_pvti(
         "padded_fraction": nan_fraction_overall,
     }
     return info
+
+
+def estimate(params: dict) -> CostEstimate:
+    """Peak memory for this run, from HDF5 shapes only.
+
+    ``run()`` processes the mosaicity and strain volume files **sequentially**
+    via separate helper calls (``_process_mosaicity`` then ``_process_strain``)
+    — each helper's locals, including the raw ``datasets`` dict it loads, die
+    when it returns, so the two files' peaks do not add. Within one file,
+    ``_process_mosaicity``/``_process_strain`` keep the raw dataset(s)
+    (native dtype, ``file_total`` bytes) alive in a dict while building an
+    aligned float64 copy of every field (``apply_roi_3d`` ->
+    ``apply_samy_shifts_to_volume`` -> ``interpolate_to_uniform_z``, the last
+    of which upcasts to float64) into a second dict — ``file_total +
+    file_elems * 8``. ``save_volumes_as_pvti`` then builds a further
+    ``np.where``-cleaned float64 copy of every field plus a boolean
+    ``valid_mask`` before downcasting to ``SAVE_DTYPE`` per piece at write
+    time — bounded as ``file_elems * 8 + largest_elems * 8``. Peak per file is
+    therefore ``file_total + 2 * file_elems * 8 + largest_elems * 8``, and the
+    run's peak is the max over the (at most two) files processed, not their
+    sum. ``chunkable=True``.
+    """
+    p = {**STAGE.defaults(), **params}
+    total = 0
+    peak = 0
+    largest: tuple[int, ...] | None = None
+    for name in ("mosa_volume_file", "strain_volume_file"):
+        path = str(p.get(name) or "")
+        if not path:
+            continue
+        file_total, shape, itemsize = sum_dataset_bytes(path)
+        if not file_total:
+            continue
+        total += file_total
+        file_elems = file_total // max(1, itemsize)
+        largest_elems = 1
+        if shape is not None:
+            for dim in shape:
+                largest_elems *= dim
+            if largest is None or len(shape) > len(largest):
+                largest = shape
+        file_peak = file_total + 2 * file_elems * 8 + largest_elems * 8
+        peak = max(peak, file_peak)
+    if not total:
+        return CostEstimate(0, 0, None, True, "no readable volume files selected yet")
+    return CostEstimate(peak, total, largest, True, None)
 
 
 # -----------------------------------------------------------------------------

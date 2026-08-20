@@ -30,10 +30,11 @@ from ..common import alignment as A
 from ..common import render as Rnd
 from ..common import render3d as R3
 from ..common.figures import FigureSpec, register
+from ..common.h5io import sum_dataset_bytes
 from ..common.plotting import apply_round_clim, resolve_cmap, style_from_params
 from ..common.raster import extract_motor_positions
 from ..common.sort import find_matching_folders
-from ..config.models import Param, ParamType, StageSpec
+from ..config.models import CostEstimate, Param, ParamType, StageSpec
 
 ProgressFn = Callable[[float, str], None]
 
@@ -355,6 +356,7 @@ STAGE = StageSpec(
             ),
         ),
     ),
+    estimate="dfxm.stages.visualize:estimate",
 )
 
 
@@ -443,6 +445,44 @@ def _display_info(dataset_name, is_strain=False):
     if "FWHM" in dataset_name:
         return (f"{axis} Peak Broadening", "Peak broadening (°)", "mosa_fwhm")
     return (dataset_name.replace("_", " "), "(°)", None)
+
+
+def estimate(params: dict) -> CostEstimate:
+    """Peak memory for this run, from HDF5 shapes only.
+
+    Unlike ``paraview``, ``run()`` handles the mosaicity and strain sections
+    **inline in the same function scope**, not via separate helper calls — the
+    mosaicity ``datasets`` dict (raw, native dtype, every field) is never
+    deleted or reassigned, so it stays alive through the strain section too.
+    Peak is therefore ``total_input`` (both files' raw bytes, summed — not
+    maxed like paraview) plus one field's alignment chain at a time: each
+    ``_align`` call (``apply_roi_3d`` -> ``apply_samy_shifts_to_volume`` ->
+    ``interpolate_to_uniform_z``, upcasting to float64) leaves up to three
+    float64-sized temporaries live for the largest field simultaneously,
+    bounded as ``3 * largest_elems * 8``. ``chunkable=True``.
+    """
+    p = {**STAGE.defaults(), **params}
+    total = 0
+    largest_elems = 0
+    largest: tuple[int, ...] | None = None
+    for name in ("mosa_volume_file", "strain_volume_file"):
+        path = str(p.get(name) or "")
+        if not path:
+            continue
+        nbytes, shape, _itemsize = sum_dataset_bytes(path)
+        total += nbytes
+        if shape is not None:
+            elems = 1
+            for dim in shape:
+                elems *= dim
+            if elems > largest_elems:
+                largest_elems = elems
+            if largest is None or len(shape) > len(largest):
+                largest = shape
+    if not total:
+        return CostEstimate(0, 0, None, True, "no readable volume files selected yet")
+    peak = total + 3 * largest_elems * 8
+    return CostEstimate(peak, total, largest, True, None)
 
 
 # -----------------------------------------------------------------------------

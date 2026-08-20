@@ -18,7 +18,22 @@
 - **Budget-independence is the equivalence guarantee.** Any reduction in `volumeio.py` must produce bit-identical results for *any* `budget_bytes`. Tests assert equality across budgets, NOT equality with `np.sum`.
 - **Estimators read `.shape` and `.dtype` only.** Never read dataset contents in an estimator.
 - Line length 100, ruff `E`/`F`/`I`, double quotes. `ruff format` runs automatically on Write/Edit via the repo hook.
-- Run the full suite with `python3 -m pytest -q` from the repo root.
+- **The full suite cannot complete on this machine, and that is expected.**
+  `python3 -m pytest -q` exits 139 (SIGSEGV) at
+  `tests/test_gui_viewer3d.py:38 test_window_builds_scene_from_source` →
+  `gui/widgets/viewer3d_window.py:426 rebuild` → `gui/widgets/pv_canvas.py:39 ensure`,
+  where `QtInteractor(self)` creates a Qt GL context. This box has software
+  OpenGL (Mesa llvmpipe, no GPU) and the pre-existing failure is documented in
+  the project's memory. It is unrelated to this plan.
+  **So "run the full suite" here means:**
+  `python3 -m pytest -q --deselect tests/test_gui_viewer3d.py`
+  which deselects 17 tests. **Measured baseline as of Task 1 complete
+  (commit 2bc39a7): 1035 passed, 13 skipped, 17 deselected** — verified by
+  running it, not derived. (1035 + 13 + 17 = 1065 collected = the original 1064
+  plus Task 1's one new test.) Each later task adds its own tests on top of
+  1035. Always state the deselection in your report — it is a disclosed
+  environment workaround, not suite-narrowing, and you do not need to
+  investigate or fix it.
 - This repo has **no git remote** — never pull, push, or open a PR.
 
 ---
@@ -107,7 +122,11 @@ So the probe lives here, in a child process, and the parent
 
 This module MUST stay a leaf: under the ``spawn`` start method a child
 re-imports its module, and importing anything that reaches the GUI would spawn
-windows recursively. It imports ``pyvista`` inside :func:`main` only.
+windows recursively. It imports ``pyvista`` inside :func:`probe` only.
+
+This module reports the raw renderer string and does NOT classify it —
+``machine.is_software_renderer`` is the single owner of that rule, so the
+classification lives in one place rather than being duplicated into the child.
 
 Contract: print exactly one JSON object on stdout, exit 0, always.
 """
@@ -116,15 +135,6 @@ from __future__ import annotations
 
 import json
 import sys
-
-_SOFTWARE_MARKERS = (
-    "llvmpipe",
-    "swrast",
-    "softpipe",
-    "software rasterizer",
-    "microsoft basic render",
-    "gdi generic",
-)
 
 
 def _parse_capabilities(caps: str) -> dict:
@@ -205,16 +215,21 @@ Expected: PASS. On this development box `status` will be `"ok"` with renderer `l
 
 - [ ] **Step 5: Document in Codebase.md**
 
-Add to the `dfxm/common/` section of `docs/Codebase.md`, matching the surrounding entry style:
+Add an entry for `_glprobe.py` to the `dfxm/common/` section of
+`docs/Codebase.md`. **Read the neighbouring entries first and match their
+format exactly** — do not paste the wording below as-is. In that section each
+entry opens with a `#### \`file.py\`` heading followed directly by prose; it
+does NOT repeat the filename as a bold bullet under a heading that already
+names it. Content to convey:
 
-```markdown
-- **`_glprobe.py`** — out-of-process OpenGL capability probe, run as
-  `python -m dfxm.common._glprobe`. Prints one JSON object
-  (`status`, `renderer`, `vendor`, `version`, `max_3d_texture`, `error`) and
-  always exits 0. Kept a leaf module (pyvista imported inside `main()`) because
-  a broken GL driver segfaults rather than raising, and because `spawn`
-  re-imports the child's module.
-```
+> Out-of-process OpenGL capability probe, run as
+> `python -m dfxm.common._glprobe`. Prints one JSON object
+> (`status`, `renderer`, `vendor`, `version`, `max_3d_texture`, `error`) and
+> always exits 0, so callers distinguish outcomes by `status` rather than exit
+> code. Kept a leaf module with pyvista imported inside `probe()`, because a
+> broken GL driver segfaults rather than raising and because `spawn` re-imports
+> the child's module. Reports the renderer string only; classifying it as
+> software rendering is `machine.is_software_renderer`'s job.
 
 - [ ] **Step 6: Commit**
 
@@ -1349,7 +1364,9 @@ def plan_run(profile, estimate, *, allow_downsample: bool = False, scratch_dir=N
         n_layers = estimate.shape[0] if estimate.shape else 1
         per_layer = max(1, int(effective_peak / max(1, n_layers)))
         chunk_layers = max(1, min(n_layers, int(max(budget, MIN_BUDGET_BYTES) / per_layer)))
-        reasons.append(f"streaming {chunk_layers} of {n_layers} layers at a time — slower, same result")
+        reasons.append(
+            f"chunking into groups of {chunk_layers} of {n_layers} layers — slower, same result"
+        )
         return RunPlan("chunked", budget, chunk_layers, downsample, None, tuple(reasons), None)
 
     needed = int(effective_peak)
@@ -1780,13 +1797,28 @@ Same contract as Task 7: shapes only, never raises, `peak_bytes` accounts for li
 
 Per-stage peak arithmetic, read off the actual load sites:
 
+> **CORRECTED by the fix wave (2026-08-20, commit b31d789 — the defective
+> models shipped in e48e69a..1a262c9 as this plan then specified them):** the
+> table below as originally written mismodelled five of these
+> five sites — `rocking.py:985` cited by the plan is actually
+> `_replot_default_clim` (the cold-replot helper), not `run()`'s real path;
+> `slices`, `paraview` and `visualize` all summed-across-files instead of
+> reading each `run()`'s actual sequencing (`paraview`/`slices` process one
+> file/volume at a time and free the previous one — `max`, not `sum`;
+> `visualize` keeps its mosaicity `datasets` dict alive through the strain
+> section too — genuinely `sum`); and `matched`'s peak scaled with the folder
+> count when `run()` only ever holds one scan at a time. The rows now show the
+> arithmetic actually implemented (verified against `run()`/the named helpers
+> and pinned by `tests/test_stage_estimates.py`); the struck-through original
+> readings are kept for history.
+
 | Stage | Site | Peak model | `chunkable` |
 |---|---|---|---|
-| `slices` | `slices.py:735`, `slices.py:751` | `[:].astype(np.float64)` holds source + copy, then alignment (`apply_samy_shifts_to_volume`, `interpolate_to_uniform_z`) holds another float64 copy → `input + 2 * n * 8` per selected volume | `False` — alignment is whole-volume |
-| `paraview` | `paraview.py:595`, `paraview.py:601` | every dataset in the file, loaded together → `sum(n_i * itemsize_i)` | `True` |
-| `visualize` | `visualize.py:457`, `visualize.py:463` | same whole-file sum as `paraview` | `True` |
-| `rocking` | `rocking.py:985` | bare `dataset[:]`, no conversion → `n_scans * frames * H * W * itemsize` | `True` |
-| `matched` | `matched.py:268`, `matched.py:272` | `ds[:].astype(np.float64)` then `np.nanmedian(stack, axis=0)` → `input + n * 8 + frame_bytes` | `False` — an exact median needs the whole stack |
+| `slices` | `slices.py:737` (stacked), `slices.py:753` (aligned), `slices.py:1327` (per-volume loop) | `run()` calls `prepare_volume` one selected dataset at a time; `prep` is rebound each iteration so the previous volume stays alive while the next is built. Per dataset `v`: stacked source (`mosa_volume_file`/`strain_volume_file`) = native read + 3 float64 copies (raw read, samy-shifted canvas, `interpolate_to_uniform_z` output) → `load_peak_v = elems_v*itemsize_v + 3*elems_v*8`; aligned source (`aligned_rocking_file`/`aligned_mosa_file`, already co-registered) = native read + 1 float64 copy → `load_peak_v = elems_v*itemsize_v + 1*elems_v*8`. `peak = max_v(load_peak_v + max_{w≠v}(elems_w*8))` — the max **pair**, not the sum across all selected volumes. ~~`input + 2 * n * 8` summed over every selected volume~~ | `False` — alignment is whole-volume |
+| `paraview` | `paraview.py:663` `_process_mosaicity`, `paraview.py:721` `_process_strain`, `paraview.py:496` `save_volumes_as_pvti` | `run()` calls the two helpers **sequentially** — each one's locals (including the raw `datasets` dict) die on return, so the files' peaks don't add. Per file: raw datasets alive (`file_total`) + aligned float64 copies of every field (`file_elems*8`) + `save_volumes_as_pvti`'s `np.where`-cleaned float64 copies + `valid_mask` (`file_elems*8 + largest_elems*8`) → `file_peak = file_total + 2*file_elems*8 + largest_elems*8`. `peak = max` over the (≤2) files processed. ~~every dataset in the file, loaded together → `sum(n_i * itemsize_i)`~~ | `True` |
+| `visualize` | `visualize.py:641` (mosaicity `datasets` load), `visualize.py:684` (strain load), `visualize.py:517` `_align` | Unlike `paraview`, the mosaicity and strain sections run **inline in the same function scope** — the mosaicity `datasets` dict is never deleted or reassigned, so it stays alive through the strain section too and the two files' input bytes **add**. `peak = total_input + 3 * largest_elems * 8` — one field's `_align` chain (ROI → samy-shift → `interpolate_to_uniform_z`, upcasting to float64) leaves up to three float64-sized temporaries of the largest field alive at once. ~~same whole-file sum as `paraview`~~ | `True` |
+| `rocking` | `rocking.py:438` `process_raw_scan`, `rocking.py:521` `build_raw_volumes`'s `np.stack` | ~~`rocking.py:985` bare `dataset[:]`~~ — that line is `_replot_default_clim` (cold replot), not `run()`. The real path streams **one scan at a time**: uint16 read + its `.astype(np.float32)` copy coexist briefly, `del frames` before the next scan — nothing scales with folder count there. Only the running 2-D accumulators and the two final float32 volumes (doubled while `np.stack` builds each) persist across the loop: `peak = max(scan_elems*(itemsize+4) + 2*n*layer_elems*4, 20*n*layer_elems)`. Folder count is an upper bound on `n` (samz-union masking / `source_scan="mosaicity"` are not evaluated here). | `True` |
+| `matched` | `matched.py:263` `load_pco_ff_frame`, `matched.py:467` matched-layer loop | `run()` loads **one scan at a time** (locals die on return each layer) — peak does not scale with folder count. `ds[:].astype(np.float64)` (native + float64 copy) + `np.nanmedian`'s own internal float64-sized sort copy → `scan_elems*(itemsize+16)`, plus ~10 pooled clim arrays + a couple of frame-sized working copies → `12*frame_elems*8`. `peak = scan_elems*(itemsize+16) + 12*frame_elems*8`. ~~`input + n * 8 + frame_bytes`~~ | `False` — an exact median needs the whole stack |
 
 **Reference figures from the real STO2 dataset** (76 layers, verified 2026-08-20)
 — use these to sanity-check your implementation:
@@ -1850,22 +1882,37 @@ def test_sum_dataset_bytes_on_a_missing_file_is_zero(tmp_path):
     assert sum_dataset_bytes(str(tmp_path / "nope.h5")) == (0, None, 0)
 
 
-def test_slices_is_not_chunkable_and_doubles_for_alignment(tmp_path):
-    """astype(float64) plus an aligned copy — three arrays' worth at the peak."""
+def test_slices_is_not_chunkable_and_peaks_at_four_arrays_worth(tmp_path):
+    """astype(float64) + shifted canvas + interpolated output — four arrays'
+    worth at the peak for a stacked-source volume."""
     from dfxm.stages.slices import estimate
 
     path = tmp_path / "mosa.h5"
     with h5py.File(path, "w") as f:
-        f.create_dataset("sum_intensity", data=np.zeros((4, 8, 16), dtype="float32"))
-    est = estimate({"mosa_volume_file": str(path)})
+        f.create_dataset("chi/Center of mass", data=np.zeros((4, 8, 16), dtype="float32"))
+    params = {"mosa_volume_file": str(path), "include_mosa_com_chi": True,
+              "include_mosa_fwhm_chi": False, "include_mosa_com_mu": False,
+              "include_mosa_fwhm_mu": False, "include_strain": False,
+              "include_raw_sum": False, "include_raw_specific": False,
+              "include_mosa_sum": False, "include_mosa_specific": False}
+    est = estimate(params)
     n = 4 * 8 * 16
     assert est.chunkable is False
     assert est.input_bytes == n * 4
-    assert est.peak_bytes == n * 4 + 2 * n * 8
+    assert est.peak_bytes == n * 4 + 3 * n * 8
+
+
+def test_slices_peak_across_two_volumes_is_the_max_pair_not_the_sum(tmp_path):
+    """run() holds at most the current + previous volume, never every volume."""
+    # (two toggled files: mosa chi/CoM (stacked, 3 copies) + aligned rocking
+    # sum_intensity (aligned, 1 copy); assert peak == max-pair, strictly less
+    # than the sum of both volumes' individual load peaks)
 
 
 def test_matched_is_not_chunkable(tmp_path):
-    """An exact median needs the whole stack — bucket 3, disk-backed."""
+    """An exact median needs the whole stack — bucket 3, disk-backed. Peak is
+    the per-scan astype(float64) + nanmedian's internal copy + pooled/frame
+    working set — independent of how many scan folders match."""
     from dfxm.stages.matched import estimate
 
     root = tmp_path / "raw"
@@ -1874,11 +1921,23 @@ def test_matched_is_not_chunkable(tmp_path):
     with h5py.File(scan / "rock__1.h5", "w") as f:
         f.create_dataset("1.1/measurement/pco_ff", data=np.zeros((6, 8, 16), dtype="uint16"))
     est = estimate({"raw_root": str(root), "rocking_pattern": "rock__*"})
+    scan_elems, frame_elems = 6 * 8 * 16, 8 * 16
     assert est.chunkable is False
+    assert est.peak_bytes == scan_elems * (2 + 16) + 12 * frame_elems * 8
+    assert est.peak_bytes == 26112
 
 
-def test_rocking_peak_has_no_conversion_overhead(tmp_path):
-    """rocking.py:985 is a bare `dataset[:]` — no float64 copy to account for."""
+def test_matched_peak_does_not_grow_with_folder_count(tmp_path):
+    """A second scan folder must double input_bytes but leave peak_bytes put."""
+    # (two rock__N folders, same (6, 8, 16) uint16 shape; assert peak_bytes ==
+    # 26112 unchanged while input_bytes doubles to 2 * 6 * 8 * 16 * 2)
+
+
+def test_rocking_peak_models_streaming_per_scan(tmp_path):
+    """run() streams one scan at a time (uint16 + float32 coexist briefly,
+    `del frames` before the next scan) — it does not hold every scan's stack
+    at once. `rocking.py:985`, the site the plan originally cited, is
+    `_replot_default_clim` (cold replot), not this path."""
     from dfxm.stages.rocking import estimate
 
     root = tmp_path / "raw"
@@ -1888,9 +1947,36 @@ def test_rocking_peak_has_no_conversion_overhead(tmp_path):
         with h5py.File(scan / f"rock__{i}.h5", "w") as f:
             f.create_dataset("1.1/measurement/pco_ff", data=np.zeros((3, 8, 16), dtype="uint16"))
     est = estimate({"raw_root": str(root), "rocking_pattern": "rock__*"})
-    assert est.peak_bytes == est.input_bytes
     assert est.input_bytes == 2 * 3 * 8 * 16 * 2  # 2 scans x 3 frames x uint16
+    assert est.input_bytes == 1536
+    assert est.peak_bytes == 5120
+
+
+def test_paraview_peak_is_the_max_over_files_not_the_sum(tmp_path):
+    """_process_mosaicity/_process_strain are separate calls — their locals
+    (including the raw datasets dict) die on return, so the two files' peaks
+    don't add."""
+    # (4-field mosa file + 1-field strain file, both (4, 8, 16) float64;
+    # assert peak == max(mosa_peak, strain_peak), strictly less than their sum)
+
+
+def test_visualize_peak_sums_inputs_because_datasets_dict_outlives_the_loop(tmp_path):
+    """Unlike paraview, mosaicity + strain share run()'s scope — the
+    mosaicity `datasets` dict is never freed before the strain section runs,
+    so the two files' input bytes DO add (unlike paraview's max-over-files)."""
+    # (same two files as the paraview test; assert peak == total_input +
+    # 3 * largest_field_elems * 8)
 ```
+
+**CORRECTED by the fix wave (2026-08-20):** the four snippets above
+(`test_slices_...`, `test_matched_is_not_chunkable`,
+`test_rocking_peak_has_no_conversion_overhead` -> `..._models_streaming_per_scan`)
+are shown with their corrected bodies; the new tests (`test_slices_peak_..._not_the_sum`,
+`test_matched_peak_does_not_grow_with_folder_count`, `test_paraview_peak_is_the_max_...`,
+`test_visualize_peak_sums_inputs_...`) are sketched rather than spelled out —
+see `tests/test_stage_estimates.py` for the exact fixtures and assertions;
+duplicating full fixture bodies here would just be a second place for them to
+drift out of sync.
 
 - [ ] **Step 2: Run tests to verify they fail**
 
@@ -2059,6 +2145,16 @@ peak as the `astype(np.float64)` conversion plus the median frame —
     )
 ```
 
+**CORRECTED by the fix wave (2026-08-20):** the `estimate()` bodies in Steps
+4-5 above are the ORIGINAL (defective) implementations, kept verbatim for
+history. All five were replaced with the corrected models from the
+peak-arithmetic table above — read `dfxm/common/h5io.py:iter_dataset_sizes`
+(new helper, added alongside `sum_dataset_bytes`) and the five stages'
+`estimate()` functions directly for the arithmetic actually shipped; it is
+not worth re-transcribing ~150 lines of corrected Python into the plan a
+second time when the module docstrings (also corrected) carry the same
+explanation next to the code they describe.
+
 Each of the five modules needs `CostEstimate` added to its existing
 `..config.models` import and `sum_dataset_bytes` / `resolve_input_file` /
 `find_matching_folders` added to its existing `..common.*` imports. **Read the
@@ -2085,7 +2181,7 @@ moved, adjust the root and say so in the commit message.
 python3 - <<'PY'
 from dfxm.common.advice import headroom_bytes, plan_run
 from dfxm.common.machine import profile
-from dfxm.stages import mosaicity, paraview, slices, strain
+from dfxm.stages import mosaicity, paraview, slices, strain, visualize
 
 ROOT = "/media/albert/DIC_SSD_3/ESRF/ma6778/id03/20251029/PROCESSED_DATA/STO2_overnight"
 p = profile()
@@ -2096,10 +2192,12 @@ cases = {
                         "folder_pattern": "STO2_overnight_layer_2x_energy_strain__*"}),
     "mosaicity": (mosaicity, {"mode": "batch", "root_folder": ROOT,
                               "folder_pattern": "STO2_overnight_layer_2x_mosa__*"}),
-    "slices": (slices, {"mosa_volume_file": f"{ROOT}/aligned_raw_mosa_volumes.h5",
+    "slices": (slices, {"aligned_mosa_file": f"{ROOT}/aligned_raw_mosa_volumes.h5",
                         "strain_volume_file": f"{ROOT}/stacked_strain_volumes.h5"}),
     "paraview": (paraview, {"mosa_volume_file": f"{ROOT}/stacked_volumes.h5",
                             "strain_volume_file": f"{ROOT}/stacked_strain_volumes.h5"}),
+    "visualize": (visualize, {"mosa_volume_file": f"{ROOT}/stacked_volumes.h5",
+                              "strain_volume_file": f"{ROOT}/stacked_strain_volumes.h5"}),
 }
 for name, (module, params) in cases.items():
     est = module.estimate(params)
@@ -2112,19 +2210,51 @@ for name, (module, params) in cases.items():
 PY
 ```
 
-Expected shape of the answer, from the verified file sizes: `strain` ≈ 2.6 GB
-peak, `mosaicity` ≈ 6.6 GB (4 collected volumes + 1 stacked), `paraview` ≈ 6.6 GB,
-`slices` ≈ 3.0 GB. On this 502 GB workstation every one stays `in-core`; on the
-16 GB laptop profile (5.4 GB headroom) `mosaicity` and `paraview` should tip to
-`chunked`. **If mosaicity does not exceed the laptop headroom, the estimator is
-under-counting — it must include all four collected volumes plus the stacked
-copy.**
+> **CORRECTED by the fix wave (2026-08-20):** the "expected shape of the
+> answer" paragraph below was wrong on two counts, both adjudicated during
+> Task 8's review and fixed in the peak-model table above. (1) `slices` ≈
+> "3.0 GB" was an authoring arithmetic error — the plan's own formula applied
+> to its own cited files gives ≈9.67 GB, which is what the as-shipped
+> (uncorrected) estimator actually printed. (2) `paraview` ≈ "6.6 GB" assumed
+> `peak == input`, which was simply wrong (`paraview` never modelled a
+> conversion at all). The actual, re-run figures — with the corrected
+> estimators and `visualize` added — are:
+>
+> | Stage | peak | input | chunkable | here (this box) | 16 GB laptop | 8 GB busy |
+> |---|---|---|---|---|---|---|
+> | strain | 2.63 GB | 1.31 GB | True | in-core | in-core | chunked |
+> | mosaicity | 6.57 GB | 5.25 GB | True | in-core | chunked | chunked |
+> | slices | 6.40 GB | 2.46 GB | False | in-core | disk-backed | disk-backed |
+> | paraview | 17.07 GB | 6.57 GB | True | in-core | chunked | chunked |
+> | visualize | 10.51 GB | 6.57 GB | True | in-core | chunked | chunked |
+>
+> (headroom here: 251.21 GB — this is the 502 GB workstation.) `strain` and
+> `mosaicity` are unchanged from the pre-fix-wave figures (2.63 / 6.57 GB) —
+> those two estimators (Task 7) were correct. `slices` **dropped** from the
+> as-shipped 9.67 GB to 6.40 GB (the max-pair model, not the file-level sum;
+> note the script's original slices case also slotted
+> `aligned_raw_mosa_volumes.h5` into `mosa_volume_file`, where its datasets
+> match no `include_*` toggle — the corrected `aligned_mosa_file` slot above
+> is what a real run uses, and adds the two aligned f32 datasets to the pair).
+> `paraview` **rose** ~2.6× over its `peak == input` figure (6.57 GB) to
+> 17.07 GB, now that it accounts for the aligned-copy + cleaned-copy +
+> valid-mask overhead `save_volumes_as_pvti` actually allocates. `visualize`
+> is a new figure (not estimated pre-fix-wave): 10.51 GB, between `mosaicity`
+> and `paraview` — it shares `mosaicity`'s alignment overhead per field but,
+> unlike `paraview`, its two input files' bytes add rather than max (the
+> `datasets` dict outlives the loop — see the peak-model table).
+>
+> On the 16 GB laptop profile (5.4 GB headroom), `mosaicity`, `paraview` and
+> `visualize` now tip to `chunked`, and `slices` (6.40 GB, not chunkable)
+> goes `disk-backed`. On the 8 GB busy profile (0.6 GB headroom) everything
+> chunkable tips to `chunked` and `slices` goes `disk-backed`.
 
 Record the printed table in the commit message. These figures decide which of
 the twelve sites phase 5 converts, and in what order.
 
-- [ ] **Step 9: Document in Codebase.md** — add `sum_dataset_bytes` to the
-`h5io.py` entry, and note the `estimate` function under each of the five stages.
+- [ ] **Step 9: Document in Codebase.md** — add `sum_dataset_bytes` (and, per
+the fix wave, `iter_dataset_sizes`) to the `h5io.py` entry, and note the
+`estimate` function under each of the five stages.
 
 - [ ] **Step 10: Commit**
 
@@ -2358,7 +2488,7 @@ Append to `tests/test_common_volumeio.py`:
 def wide_volume(tmp_path):
     """Values spanning many magnitudes — where naive summation loses bits."""
     rng = np.random.default_rng(20260820)
-    data = (rng.standard_normal((13, 9, 7)) * 10 ** rng.integers(-6, 7, (13, 9, 7))).astype(
+    data = (rng.standard_normal((13, 9, 7)) * 10.0 ** rng.integers(-15, 16, (13, 9, 7))).astype(
         np.float64
     )
     path = tmp_path / "wide.h5"
@@ -2395,16 +2525,19 @@ def test_block_nansum_ignores_nan(tmp_path):
         assert volumeio.block_nansum(f["vol"], budget_bytes=1) == 7.0
 
 
+def _running_max(acc, block):
+    return max(acc, float(np.nanmax(block)))
+
+
 @pytest.mark.parametrize("divisor", [1, 4, 100])
 def test_block_reduce_is_bit_identical_across_budgets(wide_volume, divisor):
     path, data = wide_volume
     with h5py.File(path, "r") as f:
-        fn = lambda acc, block: max(acc, float(np.nanmax(block)))
         reference = volumeio.block_reduce(
-            f["vol"], fn, budget_bytes=data.nbytes * 10, init=-np.inf
+            f["vol"], _running_max, budget_bytes=data.nbytes * 10, init=-np.inf
         )
         result = volumeio.block_reduce(
-            f["vol"], fn, budget_bytes=max(1, data.nbytes // divisor), init=-np.inf
+            f["vol"], _running_max, budget_bytes=max(1, data.nbytes // divisor), init=-np.inf
         )
     assert result == reference
 

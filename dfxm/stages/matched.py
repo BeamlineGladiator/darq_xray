@@ -21,10 +21,11 @@ from ..common import alignment as A
 from ..common import render as Rnd
 from ..common.errors import StageUserError
 from ..common.figures import FigureSpec, register
+from ..common.h5io import resolve_input_file
 from ..common.plotting import CMAP_CHOICES, apply_round_clim, style_from_params
 from ..common.raster import extract_motor_positions, find_h5_file
 from ..common.sort import find_matching_folders
-from ..config.models import Param, ParamType, StageSpec
+from ..config.models import CostEstimate, Param, ParamType, StageSpec
 
 ProgressFn = Callable[[float, str], None]
 
@@ -215,6 +216,7 @@ STAGE = StageSpec(
             help="Where the matched layer PNGs are written.",
         ),
     ),
+    estimate="dfxm.stages.matched:estimate",
 )
 
 
@@ -311,6 +313,57 @@ def _parse_float(text):
 
 def _rock_h5(raw_root, name):
     return find_h5_file(os.path.join(raw_root, name))
+
+
+def estimate(params: dict) -> CostEstimate:
+    """Peak memory for a matched run, from HDF5 shapes only.
+
+    ``run()`` loads **one** scan at a time via ``load_pco_ff_frame`` — the
+    matched-layer loop calls it per output layer, and ``stack``/``background``
+    are locals that die on return, so nothing accumulates across layers except
+    the small pooled-clim list. Within one call: ``ds[:].astype(np.float64)``
+    holds the source stack (native dtype) and its float64 copy together, and
+    ``np.nanmedian(stack, axis=0)`` needs its own internal float64-sized copy
+    of the stack to sort along axis 0 — ``scan_elems * (itemsize + 16)``. On
+    top of that, up to ~10 pooled clim arrays plus a couple of frame-sized
+    working copies (``background``, ``corrected``) persist at once, bounded as
+    ``12 * frame_elems * 8``. Peak is therefore
+    ``scan_elems * (itemsize + 16) + 12 * frame_elems * 8`` for one scan,
+    independent of the folder count — ``input_bytes`` still sums every
+    matching folder's stack (the data that will eventually be read, even
+    though only one is resident at a time). Not chunkable: an exact median
+    needs the whole stack.
+    """
+    p = {**STAGE.defaults(), **params}
+    try:
+        root = str(p.get("raw_root") or "").rstrip("/")
+        folders = find_matching_folders(root, p.get("rocking_pattern") or "*") if root else []
+        if not folders:
+            return CostEstimate(0, 0, None, False, "no scan folders resolved yet")
+        first = resolve_input_file(folders[0])
+        ds_path = str(p.get("pco_ff_path") or "1.1/measurement/pco_ff")
+        with h5py.File(first, "r") as f:
+            if ds_path not in f:
+                return CostEstimate(0, 0, None, False, f"{ds_path!r} not in {first!r}")
+            ds = f[ds_path]
+            scan_shape = tuple(int(d) for d in ds.shape)
+            itemsize = int(ds.dtype.itemsize)
+    except Exception as exc:  # noqa: BLE001 - an estimate is advisory, never fatal
+        return CostEstimate(0, 0, None, False, f"cannot size input: {type(exc).__name__}")
+
+    elems = 1
+    for dim in scan_shape:
+        elems *= dim
+    frame_elems = elems // scan_shape[0] if scan_shape and scan_shape[0] else elems
+    input_bytes = len(folders) * elems * itemsize
+    peak = elems * (itemsize + 16) + 12 * frame_elems * 8
+    return CostEstimate(
+        peak,
+        input_bytes,
+        (len(folders), *scan_shape),
+        False,
+        "exact median needs the whole stack",
+    )
 
 
 # -----------------------------------------------------------------------------

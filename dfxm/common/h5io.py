@@ -190,3 +190,63 @@ def validate_maps_file(path: str, required_paths: list[str]) -> MapsValidation:
         missing=missing,
         shapes=shapes,
     )
+
+
+def sum_dataset_bytes(path: str) -> tuple[int, tuple[int, ...] | None, int]:
+    """Total in-memory size of every dataset in *path*, from shapes alone.
+
+    Returns ``(total_bytes, largest_shape, largest_itemsize)``. Walks nested
+    groups, reads no data, and returns ``(0, None, 0)`` for anything it cannot
+    open — sizing is advisory and must never raise.
+    """
+    total = 0
+    largest_elems = 0
+    largest_shape: tuple[int, ...] | None = None
+    largest_itemsize = 0
+
+    def visit(_name, obj):
+        nonlocal total, largest_elems, largest_shape, largest_itemsize
+        if not isinstance(obj, h5py.Dataset):
+            return
+        n = 1
+        for dim in obj.shape:
+            n *= int(dim)
+        itemsize = int(obj.dtype.itemsize)
+        total += n * itemsize
+        if n > largest_elems:
+            largest_elems = n
+            largest_shape = tuple(int(d) for d in obj.shape)
+            largest_itemsize = itemsize
+
+    try:
+        with h5py.File(path, "r") as f:
+            f.visititems(visit)
+    except Exception:  # noqa: BLE001 - unreadable input -> unknown size
+        return 0, None, 0
+    return total, largest_shape, largest_itemsize
+
+
+def iter_dataset_sizes(path: str) -> list[tuple[str, tuple[int, ...], int]]:
+    """``(name, shape, itemsize)`` for every dataset in *path*, from shapes alone.
+
+    Same traversal as :func:`sum_dataset_bytes` (``f.visititems``, reads no
+    data) but returns one entry per dataset instead of a running total, so a
+    caller can size the *specific* dataset it is about to load rather than the
+    whole file. ``name`` matches the in-file path (e.g. ``"chi/Center of
+    mass"``). Returns ``[]`` for anything unreadable — sizing is advisory and
+    must never raise.
+    """
+    out: list[tuple[str, tuple[int, ...], int]] = []
+
+    def visit(name, obj):
+        if not isinstance(obj, h5py.Dataset):
+            return
+        shape = tuple(int(d) for d in obj.shape)
+        out.append((name, shape, int(obj.dtype.itemsize)))
+
+    try:
+        with h5py.File(path, "r") as f:
+            f.visititems(visit)
+    except Exception:  # noqa: BLE001 - unreadable input -> unknown size
+        return []
+    return out

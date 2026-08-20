@@ -41,10 +41,11 @@ from ..common.figures import (
     resolve_clim,
     volume_layer_specs,
 )
+from ..common.h5io import resolve_input_file
 from ..common.plotting import apply_round_clim, resolve_cmap, style_from_params
 from ..common.raster import extract_motor_positions, find_h5_file
 from ..common.sort import find_matching_folders
-from ..config.models import Param, ParamType, StageSpec
+from ..config.models import CostEstimate, Param, ParamType, StageSpec
 
 ProgressFn = Callable[[float, str], None]
 
@@ -384,6 +385,7 @@ STAGE = StageSpec(
             help="Upper intensity percentile for the colour scale of the rendered images.",
         ),
     ),
+    estimate="dfxm.stages.rocking:estimate",
 )
 
 
@@ -615,6 +617,58 @@ def _motors(raw_root: str, pattern: str, samy_path: str, samz_path: str):
     if not folders:
         return np.array([]), np.array([]), []
     return extract_motor_positions(folders, samy_path, samz_path)
+
+
+def estimate(params: dict) -> CostEstimate:
+    """Peak memory for a rocking run, from HDF5 shapes only.
+
+    ``run()`` streams scans one at a time, not all at once:
+    ``build_raw_volumes`` -> ``process_raw_scan`` reads one scan's detector
+    stack as uint16 and immediately ``.astype(np.float32)``\\ s it (source and
+    float32 copy coexist briefly), then ``del frames`` drops it before the next
+    scan. Only the running per-scan 2-D accumulators and the two final
+    ``(n_layers, H, W)`` float32 volumes (``sum_vol``/``spec_vol``, doubled
+    while ``np.stack`` builds each from its list of 2-D slices) persist across
+    the loop. Peak is modelled as
+    ``max(scan_elems * (itemsize + 4) + 2 * n_layers * layer_elems * 4,
+    20 * n_layers * layer_elems)`` — the first term is one scan's streaming
+    peak, the second is a floor for the list-and-stack accumulation once all
+    scans are collected. ``chunkable=True``.
+
+    The folder count is an upper bound on ``n_layers``: ``source_scan``
+    ``"mosaicity"`` uses a different glob pattern (every matched mosa folder,
+    no filtering) and the default ``"rocking"`` path additionally masks
+    folders to the mosa/strain samz union, which this shape-only estimate
+    cannot evaluate without reading motor positions from every folder.
+    """
+    p = {**STAGE.defaults(), **params}
+    try:
+        root = str(p.get("raw_root") or "").rstrip("/")
+        folders = find_matching_folders(root, p.get("rocking_pattern") or "*") if root else []
+        if not folders:
+            return CostEstimate(0, 0, None, True, "no scan folders resolved yet")
+        first = resolve_input_file(folders[0])
+        ds_path = str(p.get("detector_path") or "1.1/measurement/pco_ff")
+        with h5py.File(first, "r") as f:
+            if ds_path not in f:
+                return CostEstimate(0, 0, None, True, f"{ds_path!r} not in {first!r}")
+            ds = f[ds_path]
+            scan_shape = tuple(int(d) for d in ds.shape)
+            itemsize = int(ds.dtype.itemsize)
+    except Exception as exc:  # noqa: BLE001 - an estimate is advisory, never fatal
+        return CostEstimate(0, 0, None, True, f"cannot size input: {type(exc).__name__}")
+
+    n = len(folders)
+    scan_elems = 1
+    for dim in scan_shape:
+        scan_elems *= dim
+    layer_elems = scan_elems // scan_shape[0] if scan_shape and scan_shape[0] else scan_elems
+    total = n * scan_elems * itemsize
+    peak = max(
+        scan_elems * (itemsize + 4) + 2 * n * layer_elems * 4,
+        20 * n * layer_elems,
+    )
+    return CostEstimate(peak, total, (n, *scan_shape), True, None)
 
 
 def _render(
