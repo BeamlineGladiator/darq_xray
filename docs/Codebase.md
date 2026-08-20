@@ -247,6 +247,22 @@ Windows) keyed on OS/host/python/vtk. A child that segfaults, hangs or emits
 garbage yields `gl_status="crashed"` rather than an exception. `profile()`
 skips GL unless `probe_gl_now=True`.
 
+#### `advice.py` (new)
+Machine-aware policy: pure functions over a `MachineProfile` and a
+`CostEstimate` deciding what a run should actually do, with no Qt and no IO of
+its own. `RunPlan` / `Advice` are the frozen result dataclasses. `headroom_bytes`
+takes the tighter of two limits — 60% of available RAM (guards against other
+processes) and 50% of total RAM (guards against a misleading "available" behind
+a large page cache). `plan_run` escalates in-core -> chunked -> disk-backed as
+the estimate outgrows the headroom; nothing ever refuses to run for lack of
+RAM, the one genuine blocker is running out of scratch disk, reported before
+work starts. `advise_3d` downsamples a volume to fit
+`GL_MAX_3D_TEXTURE_SIZE` and steers software-GL machines toward geometry
+render modes (surface/isosurface upload geometry instead of one large 3-D
+texture, so volume mode silently renders blank past the limit). Every decision
+carries a plain-language reason string — written once here and reused by the
+log, the GUI banner and the stage result notes.
+
 #### `alignment.py`
 The **single source of truth** for putting volumes into the shared world frame.
 The fixed order is `abs(FWHM) → ROI → samy X-shift → uniform-Z interp → centre`.
