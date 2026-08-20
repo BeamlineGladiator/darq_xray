@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import tracemalloc
+
 import h5py
 import numpy as np
 import pytest
@@ -389,6 +391,42 @@ def test_stream_minmax_zero_sign_is_budget_independent(values, expect_lo, expect
     }
     assert len(results) == 1, f"the zero sign moves with the budget: {results}"
     assert results == {(expect_lo.hex(), expect_hi.hex())}
+
+
+def test_stream_minmax_zero_sign_costs_no_extra_copy():
+    """Deciding the sign must not allocate a second copy of the block.
+
+    Selecting the zeros first (`np.signbit(finite[finite == 0.0])`) copies
+    them, which on a zero-heavy block is a whole extra full-size array — and
+    zero-heavy is the shipping case, since the paraview volume's masked voxels
+    are exactly 0.0, so `min == 0.0` fires this branch in *every* block. That
+    would put a memory-budget helper over its own budget on the very data the
+    module was hardened for. `np.signbit(finite)` is one byte per value and
+    equivalent (a block whose min is zero holds no negative value).
+
+    Measured as the *marginal* peak against an identical block with no zeros,
+    so the pre-existing cost of `block[np.isfinite(block)]` cancels out.
+    """
+    count = 1 << 20  # 4 MB of float32
+    zero_heavy = np.zeros(count, dtype=np.float32).reshape(-1, 32, 32)
+    zero_heavy[0, 0, 0] = 5.0  # so the max is not itself a zero
+    no_zeros = np.full(count, 3.0, dtype=np.float32).reshape(-1, 32, 32)
+
+    def peak_bytes(data):
+        tracemalloc.start()
+        try:
+            tracemalloc.reset_peak()
+            volumeio.stream_minmax(volumeio.dataset_blocks(data, budget_bytes=data.nbytes))
+            return tracemalloc.get_traced_memory()[1]
+        finally:
+            tracemalloc.stop()
+
+    marginal = peak_bytes(zero_heavy) - peak_bytes(no_zeros)
+    limit = zero_heavy.nbytes // 2
+    assert marginal <= limit, (
+        f"the zero-sign branch adds {marginal / 1e6:.1f} MB on a "
+        f"{zero_heavy.nbytes / 1e6:.1f} MB block — it is copying the zeros"
+    )
 
 
 # -- exact streaming quantile -------------------------------------------------

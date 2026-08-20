@@ -304,11 +304,19 @@ def stream_minmax(blocks) -> tuple[float, float]:
             continue
         block_lo, block_hi = float(finite.min()), float(finite.max())
         if block_lo == 0.0 or block_hi == 0.0:
-            signs = np.signbit(finite[finite == 0.0])
-            # A block whose min is zero holds no negative value, so when the
-            # global minimum is a zero every block holding one is examined
-            # here — the argument that makes the flag correct is the same one
-            # that keeps it cheap. Mirrored for the maximum.
+            # `np.signbit(finite)`, not `np.signbit(finite[finite == 0.0])`:
+            # selecting the zeros first copies them, which on a zero-heavy
+            # block is a second full-size array — 16.8 MB extra on a 16.8 MB
+            # block, inside the one module whose job is to respect a memory
+            # budget, on exactly the data it was hardened for (the paraview
+            # volume's masked voxels are exactly 0.0, so this branch fires in
+            # every block). Looking at every value costs one byte each and is
+            # equivalent here: a block whose min is zero holds no negative
+            # value, so a set sign bit can only be a `-0.0`; a block whose max
+            # is zero holds no positive value, so a clear one can only be a
+            # `+0.0`. Those are also the blocks that can hold the global
+            # extreme, which is what makes the flags correct.
+            signs = np.signbit(finite)
             negative_zero_at_lo |= block_lo == 0.0 and bool(signs.any())
             positive_zero_at_hi |= block_hi == 0.0 and not bool(signs.all())
         lo = min(lo, block_lo)
@@ -595,8 +603,10 @@ def _select_among_ties(make_blocks, target: int, lo: float, hi: float) -> float:
     per distinct value is bounded and gives the exact answer directly.
 
     ``-0.0`` and ``0.0`` are one dict key here, so which sign survives depends
-    on which block was seen first. `stream_quantile` normalises the sign of a
-    zero on the way out, in one place, rather than each selector doing it.
+    on which block was seen first. `stream_quantile` settles the sign of a zero
+    from the data on the way out (:func:`_zero_sign`), in one place, rather
+    than each selector doing it — and settling is not normalising: an
+    unconditional ``+0.0`` would break numpy parity.
     """
     tally: dict[float, int] = {}
     for block in make_blocks():
