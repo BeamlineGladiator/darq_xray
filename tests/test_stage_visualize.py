@@ -54,6 +54,34 @@ def _setup(tmp_path):
     return proc, raw
 
 
+# -- lazy per-field loading ---------------------------------------------------
+def test_mosa_field_names_matches_dict_keys(tmp_path):
+    """The lazy API enumerates exactly what the old eager dict contained."""
+    path = str(tmp_path / "stacked_volumes.h5")
+    _write_mosa(path)
+
+    names = V.mosa_field_names(path)
+    assert names == sorted(names), "names must be deterministic across runs"
+    assert names == ["chi_Center_of_mass", "chi_FWHM", "mu_Center_of_mass", "mu_FWHM"]
+
+    # Every enumerated name reads back the same bytes an eager dict would hold.
+    with h5py.File(path, "r") as f:
+        eager = {
+            f"{grp}_{ds.replace(' ', '_')}": f[grp][ds][:] for grp in ("chi", "mu") for ds in f[grp]
+        }
+    assert sorted(eager) == names
+    for name in names:
+        field = V.load_mosa_field(path, name)
+        assert field is not None and field.ndim == 3
+        np.testing.assert_array_equal(field, eager[name])
+
+
+def test_load_mosa_field_unknown_name_returns_none(tmp_path):
+    path = str(tmp_path / "stacked_volumes.h5")
+    _write_mosa(path)
+    assert V.load_mosa_field(path, "not_a_field") is None
+
+
 def test_run_produces_layers_and_animation(tmp_path):
     proc, raw = _setup(tmp_path)
     out = tmp_path / "viz"

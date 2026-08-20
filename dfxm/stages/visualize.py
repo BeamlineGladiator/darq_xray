@@ -488,14 +488,31 @@ def estimate(params: dict) -> CostEstimate:
 # -----------------------------------------------------------------------------
 # Loading
 # -----------------------------------------------------------------------------
-def load_mosa_datasets(path):
-    out = {}
+def mosa_field_names(path) -> list[str]:
+    """Field names in a mosaicity volume file, without reading any data.
+
+    Sorted, so the field order (and therefore ``VisualizeResult.datasets``
+    order) is deterministic instead of inheriting h5py's group-key order.
+    """
+    names = []
     with h5py.File(path, "r") as f:
         for group in ("chi", "mu"):
             if group in f:
                 for ds in f[group].keys():
-                    out[f"{group}_{ds.replace(' ', '_')}"] = f[group][ds][:]
-    return out
+                    names.append(f"{group}_{ds.replace(' ', '_')}")
+    return sorted(names)
+
+
+def load_mosa_field(path, name):
+    """One field from a mosaicity volume file, or None if absent."""
+    with h5py.File(path, "r") as f:
+        for group in ("chi", "mu"):
+            if group not in f:
+                continue
+            for ds in f[group].keys():
+                if f"{group}_{ds.replace(' ', '_')}" == name:
+                    return f[group][ds][:]
+    return None
 
 
 def load_strain_volume(path):
@@ -653,15 +670,21 @@ def run(params: dict, progress: ProgressFn | None = None) -> VisualizeResult:
     mosa_file = p["mosa_volume_file"]
     if mosa_file and os.path.exists(mosa_file):
         progress(0.05, "loading mosaicity volume")
-        datasets = load_mosa_datasets(mosa_file)
+        names = mosa_field_names(mosa_file)
         samy, samz = _read_motors(raw_root, p["mosa_pattern"], p["samy_path"], p["samz_path"])
-        for i, (name, raw) in enumerate(datasets.items()):
-            progress(0.1 + 0.4 * i / max(1, len(datasets)), f"mosaicity: {name}")
+        for i, name in enumerate(names):
+            progress(0.1 + 0.4 * i / max(1, len(names)), f"mosaicity: {name}")
+            raw = load_mosa_field(mosa_file, name)
+            if raw is None:
+                continue
             title, cbar, group = _display_info(name)
             cmap = resolve_cmap(style, group)
             data, z_pos, scale_z = _align(
                 raw, samy, samz, scale_x=scale_x, samy_direction=samy_dir, roi_x=roi_x, roi_y=roi_y
             )
+            # _align has copied out of `raw` (unless there are no motors at all,
+            # in which case `data` is a view onto it and this frees nothing).
+            del raw
             if "Center_of_mass" in name:
                 data, vmin, vmax = _center_com_and_range(
                     data, p["center_method"], float(p["range_pct"])
@@ -670,7 +693,7 @@ def run(params: dict, progress: ProgressFn | None = None) -> VisualizeResult:
                 vmin, vmax = _colorbar_range(data)
             vmin, vmax, clim_note = apply_round_clim(vmin, vmax, style)
             if clim_note:
-                progress(0.1 + 0.4 * i / max(1, len(datasets)), f"{name}: {clim_note}")
+                progress(0.1 + 0.4 * i / max(1, len(names)), f"{name}: {clim_note}")
             prod = _process_dataset(
                 data,
                 z_pos,
@@ -736,16 +759,6 @@ def run(params: dict, progress: ProgressFn | None = None) -> VisualizeResult:
 # -----------------------------------------------------------------------------
 # Single-field alignment (used by the GUI's lazy 3-D viewer)
 # -----------------------------------------------------------------------------
-def mosa_field_names(path: str) -> list[str]:
-    """List the chi/mu field ids in a stacked mosaicity file (no data read)."""
-    names = []
-    with h5py.File(path, "r") as f:
-        for grp in ("chi", "mu"):
-            if grp in f:
-                names.extend(f"{grp}_{ds.replace(' ', '_')}" for ds in f[grp].keys())
-    return names
-
-
 def available_fields(params: dict) -> list[str]:
     """Field ids that can be aligned for 3-D, given the configured volume files."""
     p = {**STAGE.defaults(), **params}
@@ -783,12 +796,12 @@ def aligned_field(params: dict, name: str):
         cmap = resolve_cmap(None, "strain")
         meta = {"cbar_label": "Strain (ε)", "group": "strain"}
     else:
-        datasets = load_mosa_datasets(p["mosa_volume_file"])
-        if name not in datasets:
+        raw = load_mosa_field(p["mosa_volume_file"], name)
+        if raw is None:
             raise KeyError(name)
         samy, samz = _read_motors(raw_root, p["mosa_pattern"], p["samy_path"], p["samz_path"])
         data, _z, scale_z = _align(
-            datasets[name],
+            raw,
             samy,
             samz,
             scale_x=scale_x,
@@ -796,6 +809,7 @@ def aligned_field(params: dict, name: str):
             roi_x=roi_x,
             roi_y=roi_y,
         )
+        del raw
         if "Center_of_mass" in name:
             data, vmin, vmax = _center_com_and_range(
                 data, p["center_method"], float(p["range_pct"])
@@ -926,14 +940,14 @@ def figures(result: "VisualizeResult", params: dict) -> list[FigureSpec]:
                 _rp=float(p["range_pct"]),
             ):
                 if "vol" not in _cache:
-                    all_datasets = load_mosa_datasets(src)
-                    if name not in all_datasets:
+                    raw = load_mosa_field(src, name)
+                    if raw is None:
                         raise KeyError(f"mosaicity dataset {name!r} not found in {src!r}")
-                    raw = all_datasets[name]
                     samy, samz = _read_motors(_rr, pat, _sp, _szp)
                     vol, _zp, _sz = _align(
                         raw, samy, samz, scale_x=_sx, samy_direction=_sd, roi_x=_rx, roi_y=_ry
                     )
+                    del raw
                     # CoM volumes are centred at run() time and ds.vmin/vmax were
                     # derived from the CENTRED data — reproduce that here so the
                     # export matches the saved PNG (and the 3-D viewer).

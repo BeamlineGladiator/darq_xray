@@ -482,7 +482,7 @@ def test_visualize_figures_mosa_map_per_layer(tmp_path, monkeypatch):
         grp.create_dataset("Center of mass", data=aligned_vol)
 
     mosa_datasets = {"chi_Center_of_mass": aligned_vol.copy()}
-    monkeypatch.setattr(Visualize, "load_mosa_datasets", lambda path: mosa_datasets)
+    monkeypatch.setattr(Visualize, "load_mosa_field", lambda path, name: mosa_datasets.get(name))
 
     ds = Visualize.DatasetProducts(
         name="chi_Center_of_mass",
@@ -575,7 +575,7 @@ def test_visualize_figures_multi_dataset_no_collision(tmp_path, monkeypatch):
         "chi_Center_of_mass": vol2.copy(),
         "chi_FWHM": vol2.copy(),
     }
-    monkeypatch.setattr(Visualize, "load_mosa_datasets", lambda path: mosa_datasets)
+    monkeypatch.setattr(Visualize, "load_mosa_field", lambda path, name: mosa_datasets.get(name))
     monkeypatch.setattr(Visualize, "load_strain_volume", lambda path: vol2.copy())
 
     res = Visualize.VisualizeResult(

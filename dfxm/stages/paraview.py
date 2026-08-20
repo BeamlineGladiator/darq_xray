@@ -634,14 +634,31 @@ def estimate(params: dict) -> CostEstimate:
 # -----------------------------------------------------------------------------
 # Loading
 # -----------------------------------------------------------------------------
-def load_mosa_datasets(filepath: str) -> dict:
-    out = {}
+def mosa_field_names(filepath: str) -> list[str]:
+    """Field names in a mosaicity volume file, without reading any data.
+
+    Sorted, so the field order is deterministic instead of inheriting h5py's
+    group-key order.
+    """
+    names = []
     with h5py.File(filepath, "r") as f:
         for group in ("chi", "mu"):
             if group in f:
                 for ds in f[group].keys():
-                    out[f"{group}_{ds.replace(' ', '_')}"] = f[group][ds][:]
-    return out
+                    names.append(f"{group}_{ds.replace(' ', '_')}")
+    return sorted(names)
+
+
+def load_mosa_field(filepath: str, name: str):
+    """One field from a mosaicity volume file, or None if absent."""
+    with h5py.File(filepath, "r") as f:
+        for group in ("chi", "mu"):
+            if group not in f:
+                continue
+            for ds in f[group].keys():
+                if f"{group}_{ds.replace(' ', '_')}" == name:
+                    return f[group][ds][:]
+    return None
 
 
 def load_strain_volume(filepath: str):
@@ -684,15 +701,18 @@ def _pvti_kwargs(p: dict) -> dict:
 # Per-volume processing
 # -----------------------------------------------------------------------------
 def _process_mosaicity(p, out_dir, scale_x, scale_y, samy_dir, roi_x, roi_y) -> ExportInfo | None:
-    datasets = load_mosa_datasets(p["mosa_volume_file"])
-    if not datasets:
+    names = mosa_field_names(p["mosa_volume_file"])
+    if not names:
         return None
     samy, samz = _motors(p["raw_root"], p["mosa_pattern"], p["samy_path"], p["samz_path"])
 
     processed = {}
     scale_z = None
     z_positions = None
-    for name, raw in datasets.items():
+    for name in names:
+        raw = load_mosa_field(p["mosa_volume_file"], name)
+        if raw is None:
+            continue
         is_com = "Center_of_mass" in name
         is_fwhm = "FWHM" in name
         if is_fwhm and bool(p["abs_mosa_fwhm"]):
@@ -700,6 +720,10 @@ def _process_mosaicity(p, out_dir, scale_x, scale_y, samy_dir, roi_x, roi_y) -> 
         data = A.apply_roi_3d(raw, roi_x, roi_y)
         if len(samy) > 0:
             data = A.apply_samy_shifts_to_volume(data, samy, scale_x, samy_dir)
+        # apply_roi_3d returns a view, so `raw` stays alive until the samy shift
+        # allocates. With no samy motors `data` is still a view and this is a
+        # harmless no-op.
+        del raw
         if len(samz) > 0:
             data, z_pos, sz = A.interpolate_to_uniform_z(data, samz)
         else:

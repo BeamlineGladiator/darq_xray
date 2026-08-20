@@ -78,6 +78,28 @@ def _setup(tmp_path):
     return proc, raw
 
 
+def test_mosa_field_names_and_load_mosa_field(tmp_path):
+    """The lazy API enumerates exactly what the old eager dict contained."""
+    proc, _raw = _setup(tmp_path)
+    path = str(proc / "stacked_volumes.h5")
+
+    names = PV.mosa_field_names(path)
+    assert names == sorted(names), "names must be deterministic across runs"
+    assert names == ["chi_Center_of_mass", "chi_FWHM", "mu_Center_of_mass", "mu_FWHM"]
+
+    with h5py.File(path, "r") as f:
+        eager = {
+            f"{grp}_{ds.replace(' ', '_')}": f[grp][ds][:] for grp in ("chi", "mu") for ds in f[grp]
+        }
+    assert sorted(eager) == names
+    for name in names:
+        field = PV.load_mosa_field(path, name)
+        assert field is not None and field.ndim == 3
+        np.testing.assert_array_equal(field, eager[name])
+
+    assert PV.load_mosa_field(path, "not_a_field") is None
+
+
 def test_run_writes_pvti_and_info(tmp_path):
     proc, raw = _setup(tmp_path)
     out = tmp_path / "pv"
