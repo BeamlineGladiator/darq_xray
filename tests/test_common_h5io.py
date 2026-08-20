@@ -172,6 +172,66 @@ def test_stacked_volume_file_abort_then_clean_exit_is_a_noop(tmp_path):
     assert list(tmp_path.glob("*.part")) == []
 
 
+def test_stacked_volume_file_opens_lazily(tmp_path):
+    """Nothing touches the filesystem until the first append, so a stage may
+    construct the writer before a loop that turns out to produce no layers —
+    even when the output directory does not exist (single mode pointed at a
+    missing folder must stay a skip, not a raw FileNotFoundError)."""
+    missing = tmp_path / "nope"
+    out = StackedVolumeFile(str(missing / "stacked.h5"), compression=None)
+    assert not missing.exists()
+    out.close()  # clean exit with nothing appended commits nothing
+    assert not missing.exists()
+
+
+def test_stacked_volume_file_set_attrs_before_append_raises(tmp_path):
+    """Attributes must never be silently dropped for want of an open file."""
+    out = StackedVolumeFile(str(tmp_path / "stacked.h5"), compression=None)
+    with pytest.raises(ValueError, match="no layer has been appended"):
+        out.set_attrs(num_layers=0)
+    with pytest.raises(ValueError, match="no layer has been appended"):
+        out.shape("strain")
+
+
+def test_stacked_volume_file_rejects_dtype_change(tmp_path):
+    """The dataset dtype is fixed by the first layer, so a wider later layer
+    would be truncated on write where np.stack promoted. Refuse instead."""
+    path = str(tmp_path / "stacked.h5")
+    with pytest.raises(ValueError, match="differing dtypes"):
+        with StackedVolumeFile(path, compression=None) as out:
+            out.append("strain", np.zeros((3, 4), dtype=np.float32))
+            out.append("strain", np.zeros((3, 4), dtype=np.float64))
+    assert not (tmp_path / "stacked.h5").exists()
+
+
+def test_stacked_volume_file_removes_orphaned_part_file(tmp_path):
+    """A cancelled run is SIGKILLed, so its .part survives; the next run of the
+    same output reclaims it instead of leaving a multi-GB orphan behind."""
+    path = tmp_path / "stacked.h5"
+    orphan = tmp_path / "stacked.h5.part"
+    orphan.write_bytes(b"not even valid HDF5")
+    with StackedVolumeFile(str(path), compression=None) as out:
+        out.append("strain", np.zeros((2, 2)))
+    assert path.exists()
+    assert not orphan.exists()
+
+
+def test_stacked_volume_file_first_close_failure_still_raises(tmp_path):
+    """The _closed flag makes *repeat* calls no-ops; it must never swallow a
+    genuinely failing first commit. Here the destination is a directory, so
+    os.replace cannot succeed."""
+    path = tmp_path / "stacked.h5"
+    path.mkdir()  # os.replace(file, dir) fails
+    out = StackedVolumeFile(str(path), compression=None)
+    out.append("strain", np.zeros((2, 2)))
+    with pytest.raises(OSError):
+        out.close()
+    # the failure left the part file in place — nothing was silently discarded
+    assert (tmp_path / "stacked.h5.part").exists()
+    out.abort()  # and it is still cleanable afterwards
+    assert not (tmp_path / "stacked.h5.part").exists()
+
+
 def test_stacked_volume_file_abort_after_close_is_a_noop(tmp_path):
     """The mirror case: a committed file is never unlinked by a late abort()."""
     path = str(tmp_path / "stacked.h5")

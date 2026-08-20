@@ -266,6 +266,20 @@ class StackedVolumeFile:
     Writes to ``<path>.part`` and renames on a clean close, so a failure
     mid-run leaves nothing behind — the same all-or-nothing behaviour the
     write-at-the-end version had for free.
+
+    The part file is opened **lazily, on the first :meth:`append`**, not in
+    ``__init__``. A stage can therefore construct the writer before its layer
+    loop (which is what keeps the loop's peak at one layer) without touching
+    the filesystem for a run that turns out to produce no layers — e.g. single
+    mode pointed at a folder that does not exist, which must stay a
+    ``result.skipped`` entry rather than becoming a raw ``FileNotFoundError``.
+
+    Opening also unlinks any ``<path>.part`` left over from an earlier run.
+    This pipeline runs one stage at a time (``StageRunner`` spawns a single
+    child per run and the GUI serialises them), so a part file already sitting
+    there is by definition the orphan of a run that was cancelled — the runner
+    SIGTERM/SIGKILLs the child, so nothing gets the chance to clean up — and
+    for a large volume that orphan is worth reclaiming.
     """
 
     def __init__(self, path: str, *, compression: str | None = "gzip") -> None:
@@ -274,20 +288,36 @@ class StackedVolumeFile:
         self._compression = compression
         self._shapes: dict[str, set[tuple[int, ...]]] = {}
         self._closed = False
-        self._f = h5py.File(self._part, "w")
+        self._f: h5py.File | None = None
+
+    def _open(self) -> h5py.File:
+        """The part file, created on first use (see the class docstring)."""
+        if self._f is None:
+            try:
+                os.unlink(self._part)  # orphan of a cancelled run
+            except OSError:
+                pass
+            self._f = h5py.File(self._part, "w")
+        return self._f
+
+    def _require_open(self, what: str) -> h5py.File:
+        if self._f is None:
+            raise ValueError(f"cannot {what}: no layer has been appended yet")
+        return self._f
 
     def append(self, dataset_path: str, layer: np.ndarray) -> None:
         """Add one 2-D layer to *dataset_path*, creating the dataset if needed."""
         layer = np.asarray(layer)
         seen = self._shapes.setdefault(dataset_path, set())
         seen.add(tuple(layer.shape))
-        if dataset_path not in self._f:
+        f = self._open()
+        if dataset_path not in f:
             kw: dict = {}
             if self._compression:
                 kw["compression"] = self._compression
                 if self._compression == "gzip":
                     kw["compression_opts"] = 4
-            self._f.create_dataset(
+            f.create_dataset(
                 dataset_path,
                 shape=(0, *layer.shape),
                 maxshape=(None, *layer.shape),
@@ -295,22 +325,33 @@ class StackedVolumeFile:
                 chunks=(1, *layer.shape),
                 **kw,
             )
-        dset = self._f[dataset_path]
+        dset = f[dataset_path]
         if tuple(layer.shape) != tuple(dset.shape[1:]):
             raise ValueError(f"{dataset_path}: maps have differing shapes {seen}; fix ROI")
+        if layer.dtype != dset.dtype:
+            # The dataset's dtype is fixed by the first layer, so a wider layer
+            # arriving later would be silently truncated on write (np.stack
+            # promoted instead). Refuse rather than corrupt the volume.
+            raise ValueError(
+                f"{dataset_path}: maps have differing dtypes "
+                f"({dset.dtype} for the first layer, {layer.dtype} for this one); "
+                "every layer of one volume must share a dtype"
+            )
         n = dset.shape[0]
         dset.resize(n + 1, axis=0)
         dset[n] = layer
 
     def shape(self, dataset_path: str) -> tuple[int, ...]:
-        return tuple(int(d) for d in self._f[dataset_path].shape)
+        f = self._require_open(f"report the shape of {dataset_path!r}")
+        return tuple(int(d) for d in f[dataset_path].shape)
 
     def datasets(self) -> list[str]:
         return sorted(self._shapes)
 
     def set_attrs(self, **attrs) -> None:
+        f = self._require_open("set file attributes")
         for key, value in attrs.items():
-            self._f.attrs[key] = value
+            f.attrs[key] = value
 
     def close(self) -> None:
         """Flush, close and move the part file into place.
@@ -318,9 +359,14 @@ class StackedVolumeFile:
         A no-op once the file has been committed or aborted: a stage that calls
         :meth:`abort` and then ``return``s from inside the ``with`` block leaves
         ``__exit__`` to call ``close()`` on an already-discarded part file, and
-        that must not raise. A *first* close still propagates whatever failed.
+        that must not raise. Likewise a no-op when nothing was ever appended —
+        there is no part file to commit. A *first* close still propagates
+        whatever failed.
         """
         if self._closed:
+            return
+        if self._f is None:
+            self._closed = True
             return
         self._f.close()
         os.replace(self._part, self._path)
@@ -331,6 +377,8 @@ class StackedVolumeFile:
         if self._closed:
             return
         self._closed = True
+        if self._f is None:
+            return
         try:
             self._f.close()
         except Exception:  # noqa: BLE001 - already-broken file

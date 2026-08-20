@@ -99,6 +99,16 @@ def test_mosaicity_absent_dataset_creates_no_group(tmp_path):
         assert list(f["chi"].keys()) == ["Center of mass"]
 
 
+def test_single_mode_missing_folder_skips_rather_than_raising(tmp_path):
+    """A stale 'Input folder' must come back as a skip banner, not a raw h5py
+    FileNotFoundError from the writer eagerly creating its part file."""
+    missing = tmp_path / "nope"
+    res = M.run({"mode": "single", "input_folder": str(missing)})
+    assert res.n_layers == 0 and res.stacked_path is None
+    assert res.skipped == ["nope: maps.h5 not found"]
+    assert not missing.exists()
+
+
 def test_batch_missing_maps_file_records_reason(tmp_path):
     root = tmp_path / "root"
     _write_mosa(str(root / "layer__1"), 0)

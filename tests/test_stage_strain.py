@@ -184,6 +184,24 @@ def test_strain_no_layers_leaves_no_stacked_file(tmp_path):
     assert list(root.glob("*.part")) == []
 
 
+def test_single_mode_missing_folder_skips_rather_than_raising(tmp_path):
+    """A stale 'Input folder' (free-text, persisted across sessions) must come
+    back as a skip banner, not a raw h5py FileNotFoundError from the writer
+    eagerly creating its part file in a directory that does not exist."""
+    missing = tmp_path / "nope"
+    res = S.run(
+        {
+            "mode": "single",
+            "input_folder": str(missing),
+            "ccmth_ref_deg": 7.144,
+            "save_plots": False,
+        }
+    )
+    assert res.n_layers == 0 and res.stacked_path is None
+    assert res.skipped == ["nope: maps.h5 not found"]
+    assert not missing.exists()
+
+
 def test_batch_missing_maps_file_records_reason(tmp_path):
     root = tmp_path / "root"
     _write_maps(str(root / "layer__1"), _synthetic_ccmth())
