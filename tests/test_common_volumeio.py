@@ -268,6 +268,58 @@ def test_iter_with_context_single_block():
     assert interior == slice(0, 4) and window.shape[0] == 4 and within == slice(0, 4)
 
 
+def test_iter_with_context_carries_two_rows_when_asked():
+    data = np.arange(9 * 2 * 2, dtype=np.float64).reshape(9, 2, 2)
+
+    def generated():
+        for start in range(0, 9, 3):
+            yield slice(start, start + 3), data[start : start + 3]
+
+    windows = list(volumeio.iter_with_context(generated(), trailing=2))
+    assert [w.shape[0] for _i, w, _wi in windows] == [5, 5, 3]
+    for interior, window, within in windows[:-1]:
+        assert np.array_equal(window[within], data[interior])
+        assert np.array_equal(window[within.stop :], data[interior.stop : interior.stop + 2])
+
+
+def test_iter_with_context_refuses_a_successor_too_short_for_trailing():
+    """A short successor must fail loudly, not hand back a truncated window.
+
+    Silently returning one halo row where two were asked for corrupts exactly
+    one block edge — invisible to the budget-independence tests, because every
+    budget corrupts it the same way.
+    """
+    data = np.arange(7 * 2 * 2, dtype=np.float64).reshape(7, 2, 2)
+
+    def generated():
+        for sl in (slice(0, 3), slice(3, 6), slice(6, 7)):
+            yield sl, data[sl]
+
+    with pytest.raises(ValueError, match="trailing=2.*only 1"):
+        list(volumeio.iter_with_context(generated(), trailing=2))
+
+
+def test_iter_with_context_over_axis_1_blocks():
+    """Context must follow the blocking axis, or it is context from nowhere.
+
+    Over an ``axis=1`` stream the interior mapping happens to survive an
+    axis-0 implementation (``within`` spans the whole of axis 0), so only the
+    appended rows expose the bug: they would be the next block's first
+    *Z-layer* rather than its first *column*.
+    """
+    data = np.arange(4 * 12 * 3, dtype=np.float64).reshape(4, 12, 3)
+    blocks = volumeio.iter_blocks(data, budget_bytes=data.nbytes // 3, axis=1)
+    windows = list(volumeio.iter_with_context(blocks, trailing=1, axis=1))
+    assert len(windows) == 3
+    for interior, window, within in windows:
+        assert np.array_equal(window[within], data[:, interior])
+    for interior, window, _within in windows[:-1]:
+        assert window.shape[1] == (interior.stop - interior.start) + 1
+        assert np.array_equal(window[:, -1], data[:, interior.stop])
+    last_interior, last_window, _ = windows[-1]
+    assert last_window.shape[1] == last_interior.stop - last_interior.start
+
+
 def test_iter_blocks_axis_1():
     data = np.arange(4 * 12 * 3, dtype=np.float64).reshape(4, 12, 3)
     rebuilt = np.concatenate(

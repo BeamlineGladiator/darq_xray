@@ -134,7 +134,7 @@ def iter_blocks(dset, *, budget_bytes: int, axis: int = 0) -> Iterator[tuple[sli
         yield sl, (dset[sl] if axis == 0 else dset[:, sl])
 
 
-def iter_with_context(blocks, *, trailing: int = 1):
+def iter_with_context(blocks, *, trailing: int = 1, axis: int = 0):
     """Re-yield *blocks*, each carrying the next block's first rows.
 
     Yields ``(interior, window, within)``: ``window`` is the block with
@@ -152,22 +152,51 @@ def iter_with_context(blocks, *, trailing: int = 1):
     blocks needing context are often generated — an aligned volume that is
     never materialised — and cannot be re-indexed to widen a read window.
 
+    *axis* must match the axis the stream was blocked along (see
+    :func:`iter_blocks`), because "the next rows" means the next rows *along
+    that axis*. Getting it wrong is not a shape error that stops you: over an
+    ``axis=1`` stream an axis-0 implementation still recovers each interior
+    correctly — ``within`` happens to span the whole of axis 0 — and only the
+    appended context is wrong, silently supplying the successor's first
+    Z-layer where its first column was meant. Hence the parameter rather than
+    an assumption. ``within`` is a plain slice for ``axis=0`` and a tuple for
+    ``axis=1``; either way ``window[within]`` is the interior.
+
+    Raises ``ValueError`` if a successor cannot supply *trailing* rows. The
+    alternative — handing back a window one row short — corrupts exactly one
+    block edge and hides from the budget-independence tests, since every
+    budget corrupts it identically.
+
     Memory cost is *trailing* rows above the block itself, so a budget is
     exceeded by that much; with the default of one row against any realistic
     block that is negligible, but it is stated because an unstated
     approximation in a memory-budget module is how budgets stop being trusted.
     """
+    if axis not in (0, 1):
+        raise ValueError(f"only axis=0 and axis=1 context are supported, got {axis}")
+
+    def _interior(block):
+        n = block.shape[axis]
+        return slice(0, n) if axis == 0 else (slice(None), slice(0, n))
+
     previous = None
     for sl, block in blocks:
         if previous is not None:
             prev_sl, prev_block = previous
-            head = block[:trailing]
-            window = np.concatenate([prev_block, head], axis=0) if head.size else prev_block
-            yield prev_sl, window, slice(0, prev_block.shape[0])
+            head = block[:trailing] if axis == 0 else block[:, :trailing]
+            available = head.shape[axis]
+            if available < trailing:
+                raise ValueError(
+                    f"block {sl} cannot supply the trailing={trailing} rows of context "
+                    f"requested along axis={axis}: it has only {available}. Use a larger "
+                    "budget so blocks exceed the context width, or a smaller trailing."
+                )
+            window = np.concatenate([prev_block, head], axis=axis) if trailing else prev_block
+            yield prev_sl, window, _interior(prev_block)
         previous = (sl, block)
     if previous is not None:
         prev_sl, prev_block = previous
-        yield prev_sl, prev_block, slice(0, prev_block.shape[0])
+        yield prev_sl, prev_block, _interior(prev_block)
 
 
 class BlockReader:
