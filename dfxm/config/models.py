@@ -95,6 +95,28 @@ class Param:
 
 
 @dataclass(frozen=True)
+class CostEstimate:
+    """What a stage run will cost, computed from HDF5 shapes alone.
+
+    Produced by a stage's ``estimate(params)`` function, which opens the input
+    and reads ``.shape``/``.dtype`` **only** — never data — so it is cheap
+    enough to recompute on every form change.
+
+    ``peak_bytes`` is the in-core high-water mark of the whole-volume strategy,
+    including transient copies: a ``[:].astype(np.float64)`` on a float32 source
+    holds both arrays at once and costs 3x the on-disk size, not 1x.
+    ``chunkable`` is False for work that is irreducibly whole-array and must run
+    disk-backed instead.
+    """
+
+    peak_bytes: int
+    input_bytes: int
+    shape: tuple[int, ...] | None
+    chunkable: bool
+    note: str | None = None
+
+
+@dataclass(frozen=True)
 class StageSpec:
     """A stage's identity plus the list of parameters it accepts."""
 
@@ -102,6 +124,20 @@ class StageSpec:
     label: str
     description: str
     params: tuple[Param, ...]
+    estimate: str | None = None  # "module:function" target, resolved lazily
+
+    def estimator(self):
+        """Resolve :attr:`estimate` to a callable, or None when unset.
+
+        Kept as a string on the spec so importing the stage registry never
+        drags in h5py/matplotlib; resolution happens only when a caller
+        actually wants a prediction.
+        """
+        if self.estimate is None:
+            return None
+        from dfxm.stages.registry import resolve
+
+        return resolve(self.estimate)
 
     def defaults(self) -> dict[str, Any]:
         """Default value for every parameter, as a plain dict."""
