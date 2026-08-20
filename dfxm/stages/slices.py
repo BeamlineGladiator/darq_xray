@@ -1189,7 +1189,12 @@ def estimate(params: dict) -> CostEstimate:
     if not total_input:
         return CostEstimate(0, 0, None, False, "no readable volume files selected yet")
 
-    roi_x, roi_y = _parse_pair(p.get("align_roi_x")), _parse_pair(p.get("align_roi_y"))
+    try:
+        # A mid-typed ROI string ("10,", "abc") must not break the estimate —
+        # the ROI plays no part in the sizing arithmetic anyway.
+        roi_x, roi_y = _parse_pair(p.get("align_roi_x")), _parse_pair(p.get("align_roi_y"))
+    except Exception:  # noqa: BLE001 - an estimate is advisory, never fatal
+        roi_x = roi_y = None
     try:
         volumes = _standard_volumes(p, roi_x, roi_y)
     except Exception:  # noqa: BLE001 - an estimate is advisory, never fatal

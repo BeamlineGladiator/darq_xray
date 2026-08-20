@@ -1797,8 +1797,9 @@ Same contract as Task 7: shapes only, never raises, `peak_bytes` accounts for li
 
 Per-stage peak arithmetic, read off the actual load sites:
 
-> **CORRECTED by the fix wave (2026-08-20, commit range e48e69a..1a262c9 + this
-> commit):** the table below as originally written mismodelled five of these
+> **CORRECTED by the fix wave (2026-08-20, commit b31d789 — the defective
+> models shipped in e48e69a..1a262c9 as this plan then specified them):** the
+> table below as originally written mismodelled five of these
 > five sites — `rocking.py:985` cited by the plan is actually
 > `_replot_default_clim` (the cold-replot helper), not `run()`'s real path;
 > `slices`, `paraview` and `visualize` all summed-across-files instead of
@@ -2191,7 +2192,7 @@ cases = {
                         "folder_pattern": "STO2_overnight_layer_2x_energy_strain__*"}),
     "mosaicity": (mosaicity, {"mode": "batch", "root_folder": ROOT,
                               "folder_pattern": "STO2_overnight_layer_2x_mosa__*"}),
-    "slices": (slices, {"mosa_volume_file": f"{ROOT}/aligned_raw_mosa_volumes.h5",
+    "slices": (slices, {"aligned_mosa_file": f"{ROOT}/aligned_raw_mosa_volumes.h5",
                         "strain_volume_file": f"{ROOT}/stacked_strain_volumes.h5"}),
     "paraview": (paraview, {"mosa_volume_file": f"{ROOT}/stacked_volumes.h5",
                             "strain_volume_file": f"{ROOT}/stacked_strain_volumes.h5"}),
@@ -2223,14 +2224,18 @@ PY
 > |---|---|---|---|---|---|---|
 > | strain | 2.63 GB | 1.31 GB | True | in-core | in-core | chunked |
 > | mosaicity | 6.57 GB | 5.25 GB | True | in-core | chunked | chunked |
-> | slices | 5.25 GB | 2.46 GB | False | in-core | in-core | disk-backed |
+> | slices | 6.40 GB | 2.46 GB | False | in-core | disk-backed | disk-backed |
 > | paraview | 17.07 GB | 6.57 GB | True | in-core | chunked | chunked |
 > | visualize | 10.51 GB | 6.57 GB | True | in-core | chunked | chunked |
 >
 > (headroom here: 251.21 GB — this is the 502 GB workstation.) `strain` and
 > `mosaicity` are unchanged from the pre-fix-wave figures (2.63 / 6.57 GB) —
 > those two estimators (Task 7) were correct. `slices` **dropped** from the
-> as-shipped 9.67 GB to 5.25 GB (the max-pair model, not the file-level sum).
+> as-shipped 9.67 GB to 6.40 GB (the max-pair model, not the file-level sum;
+> note the script's original slices case also slotted
+> `aligned_raw_mosa_volumes.h5` into `mosa_volume_file`, where its datasets
+> match no `include_*` toggle — the corrected `aligned_mosa_file` slot above
+> is what a real run uses, and adds the two aligned f32 datasets to the pair).
 > `paraview` **rose** ~2.6× over its `peak == input` figure (6.57 GB) to
 > 17.07 GB, now that it accounts for the aligned-copy + cleaned-copy +
 > valid-mask overhead `save_volumes_as_pvti` actually allocates. `visualize`
@@ -2240,10 +2245,9 @@ PY
 > `datasets` dict outlives the loop — see the peak-model table).
 >
 > On the 16 GB laptop profile (5.4 GB headroom), `mosaicity`, `paraview` and
-> `visualize` now tip to `chunked`; `slices`, now `False`/disk-backed-capable
-> but small enough to fit, stays `in-core`. On the 8 GB busy profile (0.6 GB
-> headroom) everything chunkable tips to `chunked` and `slices` (not
-> chunkable) goes `disk-backed`.
+> `visualize` now tip to `chunked`, and `slices` (6.40 GB, not chunkable)
+> goes `disk-backed`. On the 8 GB busy profile (0.6 GB headroom) everything
+> chunkable tips to `chunked` and `slices` goes `disk-backed`.
 
 Record the printed table in the commit message. These figures decide which of
 the twelve sites phase 5 converts, and in what order.

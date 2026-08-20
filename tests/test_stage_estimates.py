@@ -225,6 +225,25 @@ def test_slices_is_not_chunkable_and_peaks_at_four_arrays_worth(tmp_path):
     assert est.peak_bytes == n * 4 + 3 * n * 8
 
 
+def test_slices_estimate_survives_mid_typed_roi_strings(tmp_path):
+    """A half-typed ROI ("10,", "abc") with a readable file must not raise —
+    the estimator runs on every keystroke, and the ROI plays no part in the
+    sizing arithmetic, so the peak must match the no-ROI case exactly.
+    """
+    from dfxm.stages.slices import estimate
+
+    path = tmp_path / "mosa.h5"
+    with h5py.File(path, "w") as f:
+        f.create_dataset("chi/Center of mass", data=np.zeros((4, 8, 16), dtype="float32"))
+    params = {"mosa_volume_file": str(path), **_SLICES_ALL_TOGGLES_OFF}
+    params["include_mosa_com_chi"] = True
+    baseline = estimate(params)
+    for junk in ("10,", "abc", "1,2,3"):
+        est = estimate({**params, "align_roi_x": junk})
+        assert isinstance(est, CostEstimate)
+        assert est.peak_bytes == baseline.peak_bytes
+
+
 def test_slices_peak_across_two_volumes_is_the_max_pair_not_the_sum(tmp_path):
     """run() holds at most the current + previous volume, never every volume."""
     from dfxm.stages.slices import estimate
