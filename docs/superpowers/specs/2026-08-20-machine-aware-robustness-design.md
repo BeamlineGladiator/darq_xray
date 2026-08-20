@@ -1,7 +1,8 @@
 # Machine-aware robustness — design
 
 **Date:** 2026-08-20
-**Status:** approved design, not yet planned
+**Status:** approved. Phases 1–4 approved for implementation planning;
+phases 5–8 deferred pending the estimator's real numbers.
 **Scope:** sub-projects A (machine profile + advisory) and B (memory-safe data
 path), brainstormed and specced together.
 
@@ -388,6 +389,20 @@ Plus offscreen GUI tests for the four surfaces via the existing
 Eight phases, each independently reviewable. Phases 1–4 are infrastructure with
 no user-visible change; phase 5 is where the promise lands; phase 6 is where it
 becomes visible.
+
+**Approved split (2026-08-20): phases 1–4 are implemented first as one run.**
+Phase 5 is reconsidered afterwards, once the phase-3 estimators report real peak
+figures for the STO2 dataset — those numbers are expected to redirect the
+conversion order, and possibly to show that some of the twelve sites never
+exceed the headroom budget on any target machine and need no conversion at all.
+Deciding the conversion order before measuring would be guesswork.
+
+**Equivalence policy (confirmed): bit-identical.** Every chunked path
+accumulates in a fixed, size-independent order — pairwise or Kahan within a
+block, then a deterministic combine — so a laptop and the workstation produce
+byte-identical products, and diffing two outputs remains a valid proof of
+equivalence. This constrains how each phase-5 conversion is written, and the
+phase-4 harness asserts exact equality rather than a tolerance.
 
 1. `machine.py` + out-of-process `_glprobe.py` + disk cache
 2. `advice.py` + `CostEstimate` + the `StageSpec.estimate` field
