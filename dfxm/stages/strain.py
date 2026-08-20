@@ -48,8 +48,8 @@ from ..common.plotting import (
     styled_figure,
     symmetric_limits,
 )
-from ..common.sort import find_matching_folders
-from ..config.models import Param, ParamType, StageSpec
+from ..common.sort import find_matching_folders, resolve_layer_work
+from ..config.models import CostEstimate, Param, ParamType, StageSpec
 
 ProgressFn = Callable[[float, str], None]
 
@@ -245,6 +245,7 @@ STAGE = StageSpec(
             ),
         ),
     ),
+    estimate="dfxm.stages.strain:estimate",
 )
 
 
@@ -366,6 +367,42 @@ def load_map(filepath: str, dataset_path: str) -> np.ndarray:
         if dataset_path not in f:
             raise KeyError(f"dataset {dataset_path!r} not found in {filepath!r}")
         return f[dataset_path][:]
+
+
+def estimate(params: dict) -> CostEstimate:
+    """Peak memory for a strain run, from HDF5 shapes only.
+
+    Reads ``.shape``/``.dtype`` of ONE layer and multiplies by the layer count,
+    never touching data, so the GUI can call this on every form change. Never
+    raises: an unreadable input reports an unknown cost with the reason in
+    ``note``.
+
+    The peak is ``2 * n_layers * H * W * 8``: ``run()`` accumulates a float64
+    strain map per layer in ``slices`` and then ``np.stack`` builds a contiguous
+    copy, so both are resident at the high-water mark.
+    """
+    p = {**STAGE.defaults(), **params}
+    try:
+        work = resolve_layer_work(p, maps_filename=str(p["maps_filename"] or "maps.h5"))
+        if not work:
+            return CostEstimate(0, 0, None, True, "no layer folders resolved yet")
+        ds_path = str(p["ccmth_com_path"])
+        with h5py.File(work[0], "r") as f:
+            if ds_path not in f:
+                return CostEstimate(0, 0, None, True, f"{ds_path!r} not in {work[0]!r}")
+            ds = f[ds_path]
+            layer_shape = tuple(int(d) for d in ds.shape)
+            itemsize = int(ds.dtype.itemsize)
+    except Exception as exc:  # noqa: BLE001 - an estimate is advisory, never fatal
+        return CostEstimate(0, 0, None, True, f"cannot size input: {type(exc).__name__}")
+
+    layer_elems = 1
+    for dim in layer_shape:
+        layer_elems *= dim
+    n_layers = len(work)
+    input_bytes = n_layers * layer_elems * itemsize
+    peak_bytes = 2 * n_layers * layer_elems * 8
+    return CostEstimate(peak_bytes, input_bytes, (n_layers, *layer_shape), True, None)
 
 
 # -----------------------------------------------------------------------------

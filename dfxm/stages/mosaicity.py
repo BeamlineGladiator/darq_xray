@@ -33,8 +33,8 @@ from ..common.figures import (
     volume_layer_specs,
 )
 from ..common.plotting import build_histogram
-from ..common.sort import find_matching_folders
-from ..config.models import Param, ParamType, StageSpec
+from ..common.sort import find_matching_folders, resolve_layer_work
+from ..config.models import CostEstimate, Param, ParamType, StageSpec
 
 ProgressFn = Callable[[float, str], None]
 
@@ -181,6 +181,7 @@ STAGE = StageSpec(
             help="HDF5 compression for the volume: gzip (small, slower), lzf (fast, larger), none.",
         ),
     ),
+    estimate="dfxm.stages.mosaicity:estimate",
 )
 
 
@@ -396,6 +397,52 @@ def render_replot(h5_path, selections, style, clim, out_dir, roi=None, params=No
 def _read_dataset(h5f: h5py.File, path: str) -> np.ndarray | None:
     obj = h5f.get(path)
     return obj[:] if isinstance(obj, h5py.Dataset) else None
+
+
+def estimate(params: dict) -> CostEstimate:
+    """Peak memory for a mosaicity run, from HDF5 shapes only.
+
+    ``run()`` holds every layer of all present datasets (chi/mu x com/fwhm) in
+    ``collected`` at once, then ``np.stack`` builds one more contiguous volume
+    per dataset. Peak is therefore ``(n_present + 1)`` volumes, which makes this
+    one of the heaviest stages — not the layer-streaming one the comment at
+    ``_streamed_clim`` might suggest.
+    """
+    p = {**STAGE.defaults(), **params}
+    try:
+        work = resolve_layer_work(p, maps_filename=str(p["maps_filename"] or "maps.h5"))
+        if not work:
+            return CostEstimate(0, 0, None, True, "no layer folders resolved yet")
+        present = 0
+        layer_shape: tuple[int, ...] = ()
+        itemsize = 8
+        with h5py.File(work[0], "r") as f:
+            for key, _default, _group, _name in _DATASETS:
+                ds_path = str(p.get(key) or "")
+                if ds_path and ds_path in f:
+                    ds = f[ds_path]
+                    layer_shape = tuple(int(d) for d in ds.shape)
+                    itemsize = int(ds.dtype.itemsize)
+                    present += 1
+        if not present:
+            return CostEstimate(0, 0, None, True, "none of the mosaicity datasets found")
+    except Exception as exc:  # noqa: BLE001 - an estimate is advisory, never fatal
+        return CostEstimate(0, 0, None, True, f"cannot size input: {type(exc).__name__}")
+
+    layer_elems = 1
+    for dim in layer_shape:
+        layer_elems *= dim
+    n_layers = len(work)
+    per_volume = n_layers * layer_elems * itemsize
+    input_bytes = present * per_volume
+    peak_bytes = (present + 1) * per_volume
+    return CostEstimate(
+        peak_bytes,
+        input_bytes,
+        (n_layers, *layer_shape),
+        True,
+        f"{present} datasets stacked together",
+    )
 
 
 def run(params: dict, progress: ProgressFn | None = None) -> MosaicityResult:

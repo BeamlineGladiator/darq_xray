@@ -1,0 +1,137 @@
+"""Shape-only cost estimators for stages (never read data, never raise)."""
+
+from __future__ import annotations
+
+import h5py
+import numpy as np
+import pytest
+
+from dfxm.config.models import CostEstimate
+
+H, W = 8, 16
+CCMTH_PATH = "/entry/ccmth/Center of mass/Center of mass"
+MOSA_PATHS = {
+    "chi_com_path": "/entry/chi/Center of mass/Center of mass",
+    "chi_fwhm_path": "/entry/chi/FWHM/FWHM",
+    "mu_com_path": "/entry/mu/Center of mass/Center of mass",
+    "mu_fwhm_path": "/entry/mu/FWHM/FWHM",
+}
+
+
+def _make_layers(tmp_path, n_layers=3, dtype="float32", *, mosa=False):
+    """A root with *n_layers* ``layer__N`` folders, each holding a maps.h5."""
+    root = tmp_path / "root"
+    root.mkdir()
+    for i in range(n_layers):
+        folder = root / f"layer__{i + 1}"
+        folder.mkdir()
+        with h5py.File(folder / "maps.h5", "w") as f:
+            layer = np.zeros((H, W), dtype=dtype)
+            paths = MOSA_PATHS.values() if mosa else (CCMTH_PATH,)
+            for path in paths:
+                f.create_dataset(path, data=layer)
+    return str(root)
+
+
+def _strain_params(root, **over):
+    params = {
+        "mode": "batch",
+        "root_folder": root,
+        "folder_pattern": "layer__*",
+        "maps_filename": "maps.h5",
+        "ccmth_com_path": CCMTH_PATH,
+    }
+    params.update(over)
+    return params
+
+
+def test_strain_estimate_reports_shape_and_peak(tmp_path):
+    from dfxm.stages.strain import estimate
+
+    root = _make_layers(tmp_path, n_layers=3, dtype="float32")
+    est = estimate(_strain_params(root))
+    assert isinstance(est, CostEstimate)
+    assert est.shape == (3, H, W)
+    assert est.input_bytes == 3 * H * W * 4
+    # run() holds a float64 map per layer AND the np.stack copy simultaneously
+    assert est.peak_bytes == 2 * 3 * H * W * 8
+
+
+def test_strain_estimate_sizes_one_layer_not_all_of_them(tmp_path, monkeypatch):
+    """It must open the first maps.h5 only — this runs on every form change."""
+    from dfxm.stages import strain
+
+    root = _make_layers(tmp_path, n_layers=5)
+    opened = []
+    real_open = h5py.File
+
+    def counting_open(name, *a, **k):
+        opened.append(str(name))
+        return real_open(name, *a, **k)
+
+    monkeypatch.setattr(strain.h5py, "File", counting_open)
+    strain.estimate(_strain_params(root))
+    assert len(opened) == 1, f"opened {len(opened)} files: {opened}"
+
+
+def test_mosaicity_estimate_accounts_for_all_four_datasets(tmp_path):
+    """run() holds chi/mu x com/fwhm at once, then np.stack adds one more."""
+    from dfxm.stages.mosaicity import estimate
+
+    root = _make_layers(tmp_path, n_layers=3, dtype="float32", mosa=True)
+    params = {
+        "mode": "batch",
+        "root_folder": root,
+        "folder_pattern": "layer__*",
+        "maps_filename": "maps.h5",
+        **MOSA_PATHS,
+    }
+    est = estimate(params)
+    per_volume = 3 * H * W * 4
+    assert est.input_bytes == 4 * per_volume
+    assert est.peak_bytes == 5 * per_volume  # four collected + one stacked
+
+
+def test_estimators_never_raise_on_a_missing_root(tmp_path):
+    from dfxm.stages.mosaicity import estimate as mosa_estimate
+    from dfxm.stages.strain import estimate as strain_estimate
+
+    missing = str(tmp_path / "nope")
+    for fn in (strain_estimate, mosa_estimate):
+        est = fn({"mode": "batch", "root_folder": missing, "folder_pattern": "*"})
+        assert est.peak_bytes == 0
+        assert est.shape is None
+        assert est.note  # says why it is unknown
+
+
+def test_estimators_never_read_data(tmp_path, monkeypatch):
+    """Guard the cheapness contract: shapes only, so it can run on every keystroke."""
+    from dfxm.stages.strain import estimate
+
+    root = _make_layers(tmp_path, n_layers=2)
+
+    def explode(*a, **k):
+        raise AssertionError("estimator read dataset contents")
+
+    monkeypatch.setattr(h5py.Dataset, "__getitem__", explode)
+    est = estimate(_strain_params(root))
+    assert est.shape == (2, H, W)
+
+
+def test_specs_declare_their_estimators():
+    from dfxm.stages import mosaicity, strain
+
+    for module in (strain, mosaicity):
+        assert module.STAGE.estimate is not None
+        assert callable(module.STAGE.estimator())
+
+
+@pytest.mark.parametrize("dtype,itemsize", [("float32", 4), ("float64", 8), ("uint16", 2)])
+def test_strain_input_bytes_follow_the_source_dtype(tmp_path, dtype, itemsize):
+    """input_bytes tracks the file; peak is always float64 because run() converts."""
+    from dfxm.stages.strain import estimate
+
+    root = _make_layers(tmp_path, n_layers=2, dtype=dtype)
+    est = estimate(_strain_params(root))
+    assert est.input_bytes == 2 * H * W * itemsize
+    assert est.peak_bytes == 2 * 2 * H * W * 8

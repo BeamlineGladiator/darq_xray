@@ -32,3 +32,20 @@ def find_matching_folders(root_folder: str, pattern: str) -> list[str]:
     folders = [f for f in glob.glob(search) if os.path.isdir(f)]
     folders.sort(key=lambda x: natural_sort_key(os.path.basename(x)))
     return folders
+
+
+def resolve_layer_work(params: dict, *, maps_filename: str) -> list[str]:
+    """The ``<folder>/<maps_filename>`` paths a folder-based stage would process.
+
+    Mirrors the work-list resolution in ``strain.run`` / ``mosaicity.run``
+    (single -> ``input_folder``; batch -> ``root_folder`` + ``folder_pattern``)
+    so an estimator predicts the same job the run will do. Returns [] rather
+    than raising when nothing resolves — estimators are advisory.
+    """
+    if params.get("mode") == "single":
+        folder = str(params.get("input_folder") or "")
+        folders = [folder] if folder else []
+    else:
+        root = str(params.get("root_folder") or "").rstrip("/")
+        folders = find_matching_folders(root, params.get("folder_pattern") or "*") if root else []
+    return [os.path.join(f, maps_filename) for f in folders if f]
