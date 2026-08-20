@@ -204,16 +204,27 @@ def test_stacked_volume_file_rejects_dtype_change(tmp_path):
     assert not (tmp_path / "stacked.h5").exists()
 
 
-def test_stacked_volume_file_removes_orphaned_part_file(tmp_path):
-    """A cancelled run is SIGKILLed, so its .part survives; the next run of the
-    same output reclaims it instead of leaving a multi-GB orphan behind."""
-    path = tmp_path / "stacked.h5"
+def test_stacked_volume_file_removes_orphaned_part_file_on_construction(tmp_path):
+    """A cancelled run is SIGKILLed, so its .part survives — gigabytes, in the
+    experiment root. Reclaiming it must not depend on the re-run producing any
+    layers, because a run that produces none never opens the part file at all.
+    So: construct, append nothing, and the orphan is already gone."""
     orphan = tmp_path / "stacked.h5.part"
     orphan.write_bytes(b"not even valid HDF5")
-    with StackedVolumeFile(str(path), compression=None) as out:
-        out.append("strain", np.zeros((2, 2)))
-    assert path.exists()
+    out = StackedVolumeFile(str(tmp_path / "stacked.h5"), compression=None)
     assert not orphan.exists()
+    out.close()  # nothing appended -> commits nothing
+    assert not (tmp_path / "stacked.h5").exists()
+
+
+def test_stacked_volume_file_construction_creates_nothing(tmp_path):
+    """The orphan reclaim must not itself touch the filesystem when there is
+    no orphan — in particular it must not create the missing directory of a
+    mistyped single-mode input folder."""
+    missing = tmp_path / "nope"
+    StackedVolumeFile(str(missing / "stacked.h5"), compression=None)
+    assert not missing.exists()
+    assert list(tmp_path.iterdir()) == []
 
 
 def test_stacked_volume_file_first_close_failure_still_raises(tmp_path):

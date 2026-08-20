@@ -387,7 +387,11 @@ was two (strain) to five (mosaicity) whole volumes for a product written once
 and never re-read. StackedVolumeFile appends into a resizable dataset, so the
 peak is one layer.
 
-Products are unchanged; the file is now chunked rather than contiguous.
+Products are unchanged; what differs is the HDF5 layout parameters — maxshape
+is now unlimited on the layer axis, and each volume is chunked one layer per
+chunk (under the default gzip the old code was already chunked, just with
+h5py's auto-chosen chunk shape; only mosaicity at compression=none was
+genuinely contiguous).
 Usage.md needs no edit: nothing user-visible changed."
 ```
 

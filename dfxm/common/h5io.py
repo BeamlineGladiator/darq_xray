@@ -274,12 +274,19 @@ class StackedVolumeFile:
     mode pointed at a folder that does not exist, which must stay a
     ``result.skipped`` entry rather than becoming a raw ``FileNotFoundError``.
 
-    Opening also unlinks any ``<path>.part`` left over from an earlier run.
-    This pipeline runs one stage at a time (``StageRunner`` spawns a single
-    child per run and the GUI serialises them), so a part file already sitting
-    there is by definition the orphan of a run that was cancelled — the runner
-    SIGTERM/SIGKILLs the child, so nothing gets the chance to clean up — and
-    for a large volume that orphan is worth reclaiming.
+    **Constructing** the writer unlinks any ``<path>.part`` left over from an
+    earlier run. This pipeline runs one stage at a time (``StageRunner`` spawns
+    a single child per run and the GUI serialises them), so a part file already
+    sitting there is by definition the orphan of a run that was cancelled — the
+    runner SIGTERM/SIGKILLs the child, so nothing gets the chance to clean up —
+    and for a real volume that orphan is gigabytes. Reclaiming it at
+    construction rather than at open means it happens even for a re-run that
+    goes on to produce no layers, which never opens anything. Deleting the
+    orphan and then failing leaves the user with neither file; that is
+    deliberate, since a truncated ``.part`` is unusable either way.
+
+    Construction still creates nothing — no file, and no directory for a
+    ``path`` whose parent does not exist.
     """
 
     def __init__(self, path: str, *, compression: str | None = "gzip") -> None:
@@ -289,14 +296,16 @@ class StackedVolumeFile:
         self._shapes: dict[str, set[tuple[int, ...]]] = {}
         self._closed = False
         self._f: h5py.File | None = None
+        try:
+            os.unlink(self._part)  # orphan of a cancelled run (see class docstring)
+        except OSError:
+            # Missing part file, or a missing directory to hold one (the
+            # mistyped-single-mode-folder case) — nothing to reclaim either way.
+            pass
 
     def _open(self) -> h5py.File:
         """The part file, created on first use (see the class docstring)."""
         if self._f is None:
-            try:
-                os.unlink(self._part)  # orphan of a cancelled run
-            except OSError:
-                pass
             self._f = h5py.File(self._part, "w")
         return self._f
 
