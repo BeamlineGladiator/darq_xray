@@ -31,6 +31,8 @@ class LoadedVolume:
     clim: tuple | None
     cbar_label: str
     group: str | None
+    decimation: int = 1
+    notes: tuple[str, ...] = ()
 
 
 @dataclass
@@ -47,28 +49,62 @@ class VolumeSourceSpec:
     loader: dict
 
 
+def _viewer_headroom_bytes() -> int:
+    """How much RAM a viewer load may use. Wrapped so tests can shrink it."""
+    from dfxm.common import advice, machine
+
+    return advice.headroom_bytes(machine.profile())
+
+
+def _decimation_for(dset) -> int:
+    """Smallest power-of-two stride bringing *dset* within the viewer's headroom."""
+    from dfxm.common.volumeio import volume_bytes
+
+    budget = _viewer_headroom_bytes()
+    # float64 is what the viewer holds, whatever the stored dtype.
+    needed = volume_bytes(dset) // max(1, dset.dtype.itemsize) * 8
+    step = 1
+    while step < 16 and needed // (step**3) > budget:
+        step *= 2
+    return step
+
+
 def _rocking_source(aligned_path: str, dataset: str) -> Callable[[], LoadedVolume]:
     def _load() -> LoadedVolume:
+        notes: list[str] = []
         with h5py.File(aligned_path, "r") as f:
-            vol = f[dataset][:].astype(float)
+            dset = f[dataset]
+            full_shape = tuple(int(d) for d in dset.shape)
+            step = _decimation_for(dset)
+            vol = dset[::step, ::step, ::step].astype(float)
             sx = float(f.attrs.get("scale_x_um_per_px", 1.0))
             sy = float(f.attrs.get("scale_y_um_per_px", 1.0))
             sz = float(f.attrs.get("scale_z_um_per_px", 1.0))
-        valid = vol[np.isfinite(vol)]
+        if step > 1:
+            notes.append(
+                f"decimated {step}x for display ({full_shape[2]}x{full_shape[1]}x{full_shape[0]} "
+                f"exceeds this machine's memory headroom) — the stored data is unchanged"
+            )
+        finite = vol[np.isfinite(vol)]
         clim = (
-            (float(np.percentile(valid, 1)), float(np.percentile(valid, 99)))
-            if valid.size
+            (float(np.percentile(finite, 1)), float(np.percentile(finite, 99)))
+            if finite.size
             else None
         )
+        del finite
         from dfxm.common.plotting import resolve_cmap
 
         return LoadedVolume(
             volume=vol,
-            spacing=(sx, sy, sz),
+            # Scaled by the stride: a decimated volume with unscaled spacing
+            # would render at 1/step of its true physical size.
+            spacing=(sx * step, sy * step, sz * step),
             cmap=resolve_cmap(None, "raw"),
             clim=clim,
             cbar_label="Intensity",
             group="raw",
+            decimation=step,
+            notes=tuple(notes),
         )
 
     return _load

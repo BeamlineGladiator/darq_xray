@@ -144,6 +144,66 @@ def test_rocking_source_spec_carries_meta_and_loader(tmp_path):
     assert loaded.volume.ndim == 3
 
 
+def test_rocking_source_decimates_when_over_headroom(tmp_path, monkeypatch):
+    path = str(tmp_path / "aligned.h5")
+    with h5py.File(path, "w") as f:
+        f.create_dataset("sum_intensity", data=np.random.rand(16, 16, 16))
+        f.attrs["scale_x_um_per_px"] = 1.0
+
+    monkeypatch.setattr(viewers, "_viewer_headroom_bytes", lambda: 1024)
+    loaded = viewers._rocking_source(path, "sum_intensity")()
+    assert loaded.decimation > 1
+    assert loaded.volume.shape[0] < 16
+    assert any("decimat" in n.lower() for n in loaded.notes)
+
+
+def test_rocking_source_decimation_scales_spacing(tmp_path, monkeypatch):
+    """A decimated volume must render at its true physical size, not 1/step of it."""
+    path = str(tmp_path / "aligned.h5")
+    with h5py.File(path, "w") as f:
+        f.create_dataset("sum_intensity", data=np.random.rand(16, 16, 16))
+        f.attrs["scale_x_um_per_px"] = 0.5
+        f.attrs["scale_y_um_per_px"] = 2.0
+        f.attrs["scale_z_um_per_px"] = 4.0
+
+    monkeypatch.setattr(viewers, "_viewer_headroom_bytes", lambda: 1024)
+    loaded = viewers._rocking_source(path, "sum_intensity")()
+    step = loaded.decimation
+    assert step > 1
+    assert loaded.spacing == (0.5 * step, 2.0 * step, 4.0 * step)
+
+
+def test_rocking_source_full_fidelity_when_it_fits(tmp_path, monkeypatch):
+    path = str(tmp_path / "aligned.h5")
+    with h5py.File(path, "w") as f:
+        f.create_dataset("sum_intensity", data=np.random.rand(8, 8, 8))
+
+    monkeypatch.setattr(viewers, "_viewer_headroom_bytes", lambda: 1 << 30)
+    loaded = viewers._rocking_source(path, "sum_intensity")()
+    assert loaded.decimation == 1
+    assert loaded.volume.shape == (8, 8, 8)
+    assert loaded.notes == ()
+
+
+def test_viewer3d_status_carries_the_decimation_note():
+    """The window's status label must surface LoadedVolume.notes.
+
+    Called unbound on a stand-in so no Qt widget (and no GL context) is built —
+    ``tests/test_gui_viewer3d.py`` is deselected in this environment.
+    """
+    pytest.importorskip("PySide6")
+    from gui.widgets.viewer3d_window import Viewer3DWindow
+
+    loaded = types.SimpleNamespace(notes=("decimated 4x for display",))
+    stand_in = types.SimpleNamespace(loaded=loaded)
+    assert (
+        Viewer3DWindow._with_notes(stand_in, "vol: shape (4, 4, 4)")
+        == "vol: shape (4, 4, 4) — decimated 4x for display"
+    )
+    plain = types.SimpleNamespace(loaded=types.SimpleNamespace(notes=()))
+    assert Viewer3DWindow._with_notes(plain, "vol: shape (8, 8, 8)") == "vol: shape (8, 8, 8)"
+
+
 def test_volume_sources_empty_for_other_stages():
     assert viewers.volume_sources("concat", None, {}) == {}
     assert (
