@@ -295,16 +295,74 @@ _QUANTILE_BINS = 1 << 16
 _QUANTILE_EXACT_CAP = 1 << 20
 
 
-def _lerp(lo: float, hi: float, t: float) -> float:
+def _finite64(block) -> np.ndarray:
+    """The finite values of *block*, as float64.
+
+    The cast is load-bearing, not tidiness. numpy 1.x compares a float32 array
+    against a Python float by **value-based casting** — it demotes the scalar
+    to float32 — so a float64 bin edge silently rounds and a mask can exclude
+    a value that the float64 `searchsorted` counted *into* that bin. The
+    counted bin and the collected bin then disagree: an empty survivor set (a
+    bare `ValueError` out of `np.concatenate`) at best, a selection from the
+    wrong candidates at worst. This project stores volumes as float32, so that
+    is the common case, not the exotic one. Widening float32 to float64 is
+    exact — it moves no order statistic — and it makes every comparison in
+    this file happen in one dtype. The cost is one float64 copy of a block's
+    finite values (2× the block for float32), which the mask made anyway.
+    """
+    return np.asarray(block[np.isfinite(block)], dtype=np.float64)
+
+
+def _zero_sign(make_blocks) -> float:
+    """``-0.0`` when every zero in the data is negative, otherwise ``+0.0``.
+
+    ``-0.0`` and ``0.0`` compare equal, so every `min`, `sort` and dict key on
+    the way to an answer keeps whichever it *met first* — which the budget
+    decides, since it decides the blocking. That is a budget-dependent bit in
+    the result, invisible to `assert_budget_independent` (`array_equal` calls
+    the two equal) but plain in `float.hex()`.
+
+    Settling it from the data restores both properties at once. When every
+    zero present is negative there is no ambiguity and ``-0.0`` is also what
+    numpy reports, so the bit-for-bit match holds. When both signs are present
+    numpy's own answer comes from an arbitrary partition order — there is no
+    bit to match without sorting the whole volume — so ``+0.0`` is chosen and
+    the answer at least stops moving with the budget.
+
+    Costs one traversal, and only when the answer is a zero.
+    """
+    for block in make_blocks():
+        finite = _finite64(block)
+        zeros = finite[finite == 0.0]
+        if zeros.size and not np.signbit(zeros).all():
+            return 0.0
+    return -0.0
+
+
+def _lerp(lo: float, hi: float, t: float, dtype=np.float64) -> float:
     """numpy's linear interpolation for percentiles, reproduced bit-for-bit.
 
-    numpy switches formula at ``t >= 0.5`` for numerical stability; matching it
-    is the difference between "the same number" and "a very close number", and
-    the whole point of an exact quantile is the former.
+    Two details make this the same number rather than a very close one.
+    numpy switches formula at ``t >= 0.5`` for numerical stability; and it
+    computes ``hi - lo`` **in the array's own dtype** before widening, so on
+    float32 data — what this project stores — that difference is rounded to
+    float32 first. Subtracting in float64 instead diverges by ~1e-8 relative
+    whenever the two bracketing order statistics differ by more than about 2×,
+    which a heavy-tailed, heavily-masked volume produces readily.
+
+    *dtype* is the data's dtype. Non-floating dtypes fall back to float64:
+    numpy would subtract in the integer type, which agrees with float64 for
+    every value below 2**53 and differs only by overflowing.
     """
-    result = lo + (hi - lo) * t
-    if t >= 0.5 and hi != lo:
-        result = hi - (hi - lo) * (1.0 - t)
+    work = np.dtype(dtype) if np.issubdtype(dtype, np.floating) else np.dtype(np.float64)
+    lo_w, hi_w = np.asarray(lo, dtype=work), np.asarray(hi, dtype=work)
+    diff = np.subtract(hi_w, lo_w)  # in the data's dtype, as numpy does
+    result = np.add(np.asarray(lo, dtype=np.float64), diff * np.float64(t))
+    if t >= 0.5:
+        # No `hi != lo` guard: numpy has none, and the two forms differ for
+        # equal endpoints in exactly one case — the sign of a zero, which form
+        # 1 normalises to `+0.0` and form 2 leaves as `-0.0`.
+        result = np.subtract(np.asarray(hi, dtype=np.float64), diff * np.float64(1.0 - t))
     return float(result)
 
 
@@ -315,24 +373,35 @@ def stream_quantile(make_blocks, q: float) -> float:
     Colour limits are computed this way, so an approximation would shift every
     existing figure's colours; exactness is the requirement.
 
-    Three passes. Pass 1 takes the finite min, max and count. Pass 2
-    histograms into the range and locates the bin holding the target rank,
-    narrowing and repeating while that bin holds too many values to sort. Pass
-    3 collects the survivors — a small array — and selects exactly.
+    Pass 1 takes the finite min, max and count. Pass 2 histograms into that
+    range and locates the bin holding the target rank. Pass 3 collects the
+    survivors of that bin — a small array — and selects exactly. A bin holding
+    more than ``_QUANTILE_EXACT_CAP`` values is narrowed into and the histogram
+    repeated, at two traversals a round (see :func:`_observed_bounds`); with
+    65536 bins that is uncommon, and a handful of rounds when it happens.
 
     *make_blocks* is a zero-argument callable returning a fresh iterable of
     arrays, because the algorithm traverses more than once.
 
     Working set is a few tens of MB above the caller's block, whatever the
-    volume's size: the histogram's 65537 edges and counts, plus the survivors
-    of one bin (at most ``_QUANTILE_EXACT_CAP`` values) held twice while they
-    are concatenated and sorted.
+    volume's size: the histogram's 65537 edges and counts, the survivors of
+    one bin (at most ``_QUANTILE_EXACT_CAP`` values) held twice while they are
+    concatenated and sorted, and — for float32 input — the float64 widening of
+    a block's finite values (see :func:`_finite64`).
 
     One deliberate divergence from ``np.percentile``: on a rank that needs no
     interpolation the order statistic is returned as-is, so a spread wide
     enough to overflow ``hi - lo`` gives that value rather than the ``nan``
     numpy's unconditional lerp produces there. Every rank that does
     interpolate reproduces numpy, overflow included.
+
+    A zero always comes back as ``+0.0``, which is both what numpy returns for
+    every zero input (its ``a + diff * t`` normalises the sign) and the only
+    budget-independent answer available: ``-0.0`` and ``0.0`` compare equal, so
+    which one a selector happens to carry out depends on which block it saw
+    first. `assert_budget_independent` cannot see such a difference —
+    `array_equal` calls the two equal — but ``.hex()`` can, so the sign is
+    settled here, once, rather than in each selector.
     """
     if not 0.0 <= q <= 100.0:
         # numpy raises here; returning a clamped answer instead would be a
@@ -342,11 +411,11 @@ def stream_quantile(make_blocks, q: float) -> float:
     if not np.isfinite(lo):
         return float("nan")
     count = 0
+    dtype = None
     for block in make_blocks():
-        count += int(np.count_nonzero(np.isfinite(block)))
-    if count == 1 or lo == hi:
-        return float(lo)
-
+        array = np.asarray(block)
+        dtype = array.dtype if dtype is None else np.promote_types(dtype, array.dtype)
+        count += int(np.count_nonzero(np.isfinite(array)))
     # numpy's rank convention for the "linear" method. The expression is
     # numpy's own `get_virtual_index` — `(n - 1) * (q / 100)`, evaluated in
     # that grouping. The algebraically equal `n*qq + (1 - qq) - 1` (numpy's
@@ -356,17 +425,34 @@ def stream_quantile(make_blocks, q: float) -> float:
     rank_lo = int(np.floor(pos))
     frac = pos - rank_lo
 
+    if count == 1 or lo == hi:
+        # Every value is identical, so both bracketing ranks are `lo` and no
+        # selection is needed. Still go through `_lerp`: with equal endpoints
+        # it is a no-op for every value except a zero, whose sign numpy decides
+        # by which of the two forms the fraction selects.
+        if lo == 0.0:
+            lo = _zero_sign(make_blocks)
+        return _lerp(lo, lo, frac, dtype)
+
     lo_val = _select_rank(make_blocks, rank_lo, lo, hi)
     if frac == 0.0:
         # The rank is exact, so there is nothing to interpolate — and returning
         # here also skips a whole second selection (several more traversals of
         # the volume) for a neighbour that would carry zero weight. q=0 and
-        # q=100 always land here.
-        return float(lo_val)
+        # q=100 always land here. `+ 0.0` is exact and gives a zero the sign
+        # numpy's zero-weight lerp would have given it (form 1 normalises).
+        return float(lo_val) + 0.0
     # A non-zero fraction means `pos` is not an integer, so `rank_lo` is at most
     # `count - 2` and its successor is always in range.
     hi_val = _select_rank(make_blocks, rank_lo + 1, lo, hi)
-    return _lerp(lo_val, hi_val, frac)
+    if lo_val == 0.0 or hi_val == 0.0:
+        # A selected zero carries whichever sign the selection path met first,
+        # which the blocking decides; settle it from the data before the sign
+        # reaches `_lerp`, which propagates it (see :func:`_zero_sign`).
+        zero = _zero_sign(make_blocks)
+        lo_val = zero if lo_val == 0.0 else lo_val
+        hi_val = zero if hi_val == 0.0 else hi_val
+    return _lerp(lo_val, hi_val, frac, dtype)
 
 
 def _bin_edges(lo: float, hi: float) -> np.ndarray:
@@ -402,7 +488,7 @@ def _select_rank(make_blocks, rank: int, lo: float, hi: float) -> float:
         edges = _bin_edges(lo, hi)
         counts = np.zeros(_QUANTILE_BINS, dtype=np.int64)
         for block in make_blocks():
-            finite = block[np.isfinite(block)]
+            finite = _finite64(block)
             window = finite[(finite >= lo) & (finite <= hi)]
             if window.size:
                 idx = np.clip(
@@ -415,23 +501,51 @@ def _select_rank(make_blocks, rank: int, lo: float, hi: float) -> float:
         bin_index = min(bin_index, _QUANTILE_BINS - 1)
         in_bin = int(counts[bin_index])
         before = int(cumulative[bin_index - 1]) if bin_index else 0
+        bin_lo, bin_hi = float(edges[bin_index]), float(edges[bin_index + 1])
+        last = bin_index == _QUANTILE_BINS - 1
         if in_bin <= _QUANTILE_EXACT_CAP:
             survivors = []
-            bin_lo, bin_hi = float(edges[bin_index]), float(edges[bin_index + 1])
-            last = bin_index == _QUANTILE_BINS - 1
             for block in make_blocks():
-                finite = block[np.isfinite(block)]
+                finite = _finite64(block)
                 mask = (finite >= bin_lo) & ((finite <= bin_hi) if last else (finite < bin_hi))
                 if mask.any():
                     survivors.append(finite[mask])
             values = np.sort(np.concatenate(survivors))
             return float(values[target - before])
-        # Too many to sort: narrow to this bin and go again.
-        new_lo, new_hi = float(edges[bin_index]), float(edges[bin_index + 1])
+        # Too many to sort: narrow and go again — to the bin's *observed*
+        # [min, max] rather than to its edges. Edges alone narrow the range
+        # geometrically but the *exponent* only linearly, so converging onto a
+        # tie at 0.0 walks the whole denormal range: a masked background of
+        # exact zeros cost ~144 traversals of the volume, versus 16 for a
+        # background of 1.0. On the 17 GB paraview volume, whose masked voxels
+        # are exactly 0.0, that is hours of reading — indistinguishable from a
+        # hang. Observed bounds collapse a tied bin to `lo == hi` in one round,
+        # for one extra traversal per narrowing (and narrowing is rare).
+        new_lo, new_hi = _observed_bounds(make_blocks, bin_lo, bin_hi, last)
+        if not np.isfinite(new_lo):  # counted but nothing collected: keep the edges
+            new_lo, new_hi = bin_lo, bin_hi
         if new_lo == lo and new_hi == hi:
             return _select_among_ties(make_blocks, target, lo, hi)
         below += before
         lo, hi = new_lo, new_hi
+
+
+def _observed_bounds(make_blocks, bin_lo: float, bin_hi: float, last: bool):
+    """The smallest and largest values actually present in one histogram bin.
+
+    Uses the same membership rule as the survivor pass — half-open, closed on
+    the last bin — so the window the caller narrows to cannot exclude a value
+    the histogram counted.
+    """
+    obs_lo, obs_hi = np.inf, -np.inf
+    for block in make_blocks():
+        finite = _finite64(block)
+        mask = (finite >= bin_lo) & ((finite <= bin_hi) if last else (finite < bin_hi))
+        if mask.any():
+            inside = finite[mask]
+            obs_lo = min(obs_lo, float(inside.min()))
+            obs_hi = max(obs_hi, float(inside.max()))
+    return obs_lo, obs_hi
 
 
 def _select_among_ties(make_blocks, target: int, lo: float, hi: float) -> float:
@@ -448,10 +562,14 @@ def _select_among_ties(make_blocks, target: int, lo: float, hi: float) -> float:
     An interval that narrow holds at most a couple of distinct floats (that is
     what "cannot be split" means), however many values sit on them, so counting
     per distinct value is bounded and gives the exact answer directly.
+
+    ``-0.0`` and ``0.0`` are one dict key here, so which sign survives depends
+    on which block was seen first. `stream_quantile` normalises the sign of a
+    zero on the way out, in one place, rather than each selector doing it.
     """
     tally: dict[float, int] = {}
     for block in make_blocks():
-        finite = block[np.isfinite(block)]
+        finite = _finite64(block)
         window = finite[(finite >= lo) & (finite <= hi)]
         if window.size:
             values, counts = np.unique(window, return_counts=True)

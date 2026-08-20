@@ -589,6 +589,172 @@ def test_stream_quantile_passes_the_shared_budget_independence_harness():
     )
 
 
+def test_stream_quantile_subtracts_in_the_arrays_dtype():
+    """numpy computes `hi - lo` in float32 for a float32 array; so must this.
+
+    This pair brackets q≈59.9 and the two order statistics differ by ~2000×,
+    so rounding the difference to float32 (what numpy does) and keeping it in
+    float64 (what a dtype-blind implementation does) disagree in the 8th
+    significant figure. The project stores volumes as float32 — paraview.py's
+    SAVE_DTYPE, rocking.py, slices.py — and clims come from `np.percentile`
+    over exactly those arrays, so this is the shipping path, not a curiosity.
+    """
+    values = np.array([14.359252, 31153.064], dtype=np.float32)
+    data = values.reshape(2, 1, 1)
+    expected = float(np.percentile(values, 59.94683904708903))
+    assert expected == 18681.02878953133  # float64 subtraction gives ...740256337
+    got = volumeio.stream_quantile(
+        lambda: volumeio.dataset_blocks(data, budget_bytes=4), 59.94683904708903
+    )
+    assert got == expected
+
+
+def test_stream_quantile_agrees_with_its_own_histogram_on_float32():
+    """A float32 value on a bin edge must not be counted in one bin, collected from another.
+
+    numpy 1.x demotes a Python float compared against a float32 array
+    (value-based casting), so the float64 bin edge the histogram used gets
+    rounded in the survivor mask. This array reproduces it: the bin holding
+    the target rank counts one value, and the mask then finds none of it —
+    `ValueError: need at least one array to concatenate`, the lucky outcome.
+    The unlucky one is a selection from the wrong candidates.
+    """
+    values = np.array(
+        [
+            7.4209438e03,
+            4.1942276e01,
+            6.3505867e01,
+            2.0944195e08,
+            3.0033918e03,
+            1.7869806e08,
+            4.4543552e07,
+        ],
+        dtype=np.float32,
+    )
+    data = values.reshape(7, 1, 1)
+    q = 69.60232745249438
+    got = volumeio.stream_quantile(lambda: volumeio.dataset_blocks(data, budget_bytes=4), q)
+    assert got == float(np.percentile(values, q))
+
+
+@pytest.mark.parametrize("q", [1.0, 25.0, 50.0, 90.0, 99.0, 99.5])
+def test_stream_quantile_matches_numpy_on_float32_volumes(q):
+    """float32 is what this project stores, and it is not float64 in miniature.
+
+    Two ways to fail, both live before this test existed. numpy computes
+    `hi - lo` in the array's dtype, so a float64 subtraction diverges by ~1e-8
+    relative once the bracketing order statistics differ by more than about 2×
+    — which a heavy tail under heavy masking produces constantly. And numpy 1.x
+    demotes a Python float compared against a float32 array (value-based
+    casting), so a float64 bin edge rounds and the survivor mask stops agreeing
+    with the histogram — an empty survivor set or a selection from the wrong
+    candidates. The old float64-only fuzz could not see either.
+    """
+    rng = np.random.default_rng(2)
+    data = (10.0 ** rng.uniform(0, 10, size=(60, 20, 20))).astype(np.float32)
+    data[rng.random(data.shape) < 0.9] = np.nan  # heavily masked, heavy tailed
+    finite = data[np.isfinite(data)]
+    assert finite.dtype == np.float32
+    for divisor in (1, 3, 1000):
+        got = volumeio.stream_quantile(
+            lambda d=divisor: volumeio.dataset_blocks(data, budget_bytes=max(1, data.nbytes // d)),
+            q,
+        )
+        assert got == float(np.percentile(finite, q)), "float32 must be bit-equal too"
+
+
+def test_stream_quantile_does_not_walk_the_exponent_range_on_a_zero_background(monkeypatch):
+    """A masked background of exact zeros must not cost ~150 reads of the volume.
+
+    Bin edges narrow the *range* geometrically but the *exponent* only
+    linearly, so converging onto a tie at 0.0 walks the whole denormal range.
+    Measured on a realistic float32 intensity volume at q=50: 142 traversals
+    for a 0.0 background against 16 for 1.0 — on the 17 GB paraview volume,
+    hours of reading that a user cannot tell from a hang. Narrowing to the
+    bin's observed [min, max] collapses a tied bin in one round instead.
+    """
+    monkeypatch.setattr(volumeio, "_QUANTILE_EXACT_CAP", 4)
+    rng = np.random.default_rng(4)
+    data = np.zeros(2048, dtype=np.float32)
+    data[:256] = rng.gamma(2.0, 500.0, size=256).astype(np.float32)
+    data = data.reshape(-1, 8, 8)
+    traversals = 0
+
+    def make_blocks():
+        nonlocal traversals
+        traversals += 1
+        return volumeio.dataset_blocks(data, budget_bytes=data.nbytes // 4)
+
+    got = volumeio.stream_quantile(make_blocks, 50.0)
+    assert got == float(np.percentile(data, 50.0)) == 0.0
+    assert traversals <= 12, f"{traversals} traversals — bisection is walking the exponent range"
+
+
+@pytest.mark.parametrize(
+    "values",
+    [
+        [-0.0] * 12,  # every value is negative zero
+        [-0.0] * 10 + [1.0, 2.0],  # a negative-zero background under signal
+    ],
+    ids=["all-negative", "background"],
+)
+@pytest.mark.parametrize("q", [0.0, 10.0, 25.0, 50.0, 75.0])
+def test_stream_quantile_carries_numpys_sign_of_zero(values, q, monkeypatch):
+    """The sign of a zero follows numpy, which means following its two forms.
+
+    numpy's `_lerp` normalises `-0.0` to `+0.0` in form 1 (`a + diff * t`) and
+    keeps it in form 2 (`b - diff * (1 - t)`), so on an all-`-0.0` array the
+    sign flips with the fraction: `+0.0` at q=10, `-0.0` at q=25 and q=50.
+    Reproducing that needs `_lerp` to be applied even when the endpoints are
+    equal — a `hi != lo` short-circuit answers `+0.0` throughout — and needs
+    the sign fed into it to come from the data rather than from whichever
+    block `stream_minmax` happened to see first.
+    """
+    monkeypatch.setattr(volumeio, "_QUANTILE_EXACT_CAP", 4)
+    data = np.array(values).reshape(len(values), 1, 1)
+    expected = float(np.percentile(data, q))
+    got = {
+        volumeio.stream_quantile(
+            lambda d=d: volumeio.dataset_blocks(data, budget_bytes=max(1, data.nbytes // d)), q
+        ).hex()
+        for d in (1, 3, len(values))
+    }
+    assert got == {expected.hex()}, f"numpy says {expected.hex()}, we say {got}"
+
+
+def test_stream_quantile_sign_of_zero_is_budget_independent_when_signs_are_mixed(monkeypatch):
+    """Mixed ±0.0 has no numpy bit to match, so the requirement is stability.
+
+    numpy's sign there comes from an arbitrary partition order (it reports
+    `-0.0` at q=25 and `+0.0` at q=50 for this very array), and reproducing it
+    would mean sorting the whole volume — the thing this helper exists not to
+    do. What is *not* negotiable is that the answer stops depending on the
+    budget, which it did: `-0.0` at one blocking and `+0.0` at another.
+    `assert_budget_independent` cannot see this, since `array_equal` calls the
+    two equal; `.hex()` can.
+    """
+    monkeypatch.setattr(volumeio, "_QUANTILE_EXACT_CAP", 4)
+    tiny = float(np.nextafter(0.0, 1.0))
+    datasets = {
+        "zeros only": [-0.0] * 8 + [0.0] * 8,  # every value a zero
+        "under signal": [-0.0] * 8 + [0.0] * 8 + [1.0, 2.0, 3.0, 4.0],  # via selection
+        "against a denormal": [-0.0] * 8 + [0.0] * 8 + [tiny] * 4,  # via the tie handler
+    }
+    for name, values in datasets.items():
+        data = np.array(values).reshape(len(values), 1, 1)
+        for q in (10.0, 25.0, 50.0):
+            got = {
+                volumeio.stream_quantile(
+                    lambda d=d: volumeio.dataset_blocks(
+                        data, budget_bytes=max(1, data.nbytes // d)
+                    ),
+                    q,
+                ).hex()
+                for d in (1, 2, 3, 5, len(values))
+            }
+            assert got == {(0.0).hex()}, f"{name} q={q}: sign depends on the budget, got {got}"
+
+
 def test_stream_quantile_accepts_a_generated_block_stream():
     """The factory may build blocks that exist nowhere on disk."""
     rng = np.random.default_rng(5)
