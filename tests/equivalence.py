@@ -28,7 +28,10 @@ def assert_budget_independent(fn, dset, *, budgets=None, nbytes=None) -> None:
 
     Compares with ``np.array_equal(..., equal_nan=True)`` so NaN placement is
     part of the guarantee — a chunked path that moves a NaN has changed the
-    product just as surely as one that changes a number.
+    product just as surely as one that changes a number. (One known blind
+    spot: ``-0.0 == +0.0`` under array_equal, so a sign flip on a zero would
+    pass. Passing a single-element *budgets* is a vacuous pass — always give
+    at least two.)
     """
     total = nbytes if nbytes is not None else dset.nbytes
     budgets = budgets or [max(1, int(total // d)) for d in DEFAULT_DIVISORS]

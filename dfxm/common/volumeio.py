@@ -1,13 +1,13 @@
 """Bounded-memory volume reading (Qt-free).
 
 One shared implementation so every stage streams the same way instead of eight
-divergent schemes. ``mosaicity._volume_stats`` already streamed layer-by-layer
+divergent schemes. ``mosaicity._streamed_clim`` already streamed layer-by-layer
 for plotting; this generalises that pattern and adds a memory budget. (Note that
 ``mosaicity.run`` itself does NOT stream — it collects four whole volumes.)
 
 The governing guarantee is **budget-independence**: for any ``budget_bytes``,
 these helpers produce bit-identical results. That is what makes a laptop and a
-workstation emit the same publishable data product. See :func:`block_reduce`
+workstation emit the same publishable data product. See :func:`neumaier_sum`
 for why ordinary summation would break it.
 """
 
@@ -113,8 +113,13 @@ def neumaier_sum(values, *, state: tuple[float, float] | None = None) -> tuple[f
 def block_reduce(dset, fn, *, budget_bytes: int, init):
     """Fold *dset* block-by-block with ``fn(acc, block) -> acc``.
 
-    *fn* must be associative in the order blocks are produced (they always
-    arrive in ascending order), so the result is budget-independent.
+    Budget-independence requires *fn* to be **partition-invariant**, which is
+    stricter than intuitive associativity: ``fn(fn(acc, A), B)`` must
+    *bit-equal* ``fn(acc, concat(A, B))`` for adjacent blocks. Per-block
+    ``np.sum`` fails exactly this (pairwise ordering changes with the block
+    size) even though summation is "associative" on paper — carry compensated
+    state via :func:`neumaier_sum` instead. Blocks always arrive in ascending
+    order.
     """
     acc = init
     for _sl, block in iter_blocks(dset, budget_bytes=budget_bytes):
@@ -123,9 +128,13 @@ def block_reduce(dset, fn, *, budget_bytes: int, init):
 
 
 def block_nansum(dset, *, budget_bytes: int) -> float:
-    """NaN-ignoring sum of *dset*, bit-identical for any budget.
+    """Sum of the FINITE values of *dset*, bit-identical for any budget.
 
-    Differs from ``np.nansum`` by up to ~1 ulp — deliberately. Budget-
+    Ignores all non-finite values — NaN *and* ±inf — unlike ``np.nansum``,
+    which propagates inf. (Propagating inf through compensated summation would
+    poison the compensation term to NaN; dropping non-finite values is the
+    right semantics for the DFXM statistics this serves.) On all-finite data
+    it differs from ``np.nansum`` by up to ~1 ulp — deliberately: budget-
     independence is the property worth having; matching numpy's pairwise
     ordering is not.
     """
@@ -164,6 +173,12 @@ def scratch_array(shape, dtype, *, dirpath: str, prefix: str = "dfxm_scratch"):
     ``out = a * b + c`` on a memmapped ``a`` materialises a full-size temporary
     and defeats the purpose. Bucket-3 code must operate in slabs with in-place
     operations (``np.multiply(a, b, out=a)``).
+
+    Second caveat: **the array is dead once the block exits.** Never return it
+    or stash a reference for later — the backing file is deleted on exit, and
+    on Windows the mapping is explicitly closed first, so a post-exit element
+    access there is a hard process-killing fault (on POSIX the pages merely
+    outlive the unlinked file until garbage collection).
     """
     os.makedirs(dirpath, exist_ok=True)
     handle, path = tempfile.mkstemp(prefix=prefix, suffix=".dat", dir=dirpath)
@@ -173,15 +188,18 @@ def scratch_array(shape, dtype, *, dirpath: str, prefix: str = "dfxm_scratch"):
         memmap = np.memmap(path, dtype=dtype, mode="w+", shape=tuple(shape))
         yield memmap
     finally:
-        # Windows refuses to unlink a file while it is still mapped, so drop the
-        # mapping before deleting. flush() then del is the documented way; the
-        # gc call is what actually releases the handle on CPython/Windows.
+        # Windows refuses to unlink a file while it is still mapped, so there —
+        # and only there — the mapping is force-closed before deleting, which
+        # turns any lingering caller reference into a hard fault on access.
+        # POSIX unlinks mapped files fine, so the close is skipped and a stale
+        # reference reads harmless (soon-to-be-collected) pages instead of
+        # segfaulting.
         if memmap is not None:
             try:
                 memmap.flush()
             except Exception:  # noqa: BLE001 - already-broken mapping
                 pass
-            if hasattr(memmap, "_mmap") and memmap._mmap is not None:
+            if os.name == "nt" and getattr(memmap, "_mmap", None) is not None:
                 try:
                     memmap._mmap.close()
                 except Exception:  # noqa: BLE001

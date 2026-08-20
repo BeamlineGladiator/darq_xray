@@ -2488,7 +2488,7 @@ Append to `tests/test_common_volumeio.py`:
 def wide_volume(tmp_path):
     """Values spanning many magnitudes — where naive summation loses bits."""
     rng = np.random.default_rng(20260820)
-    data = (rng.standard_normal((13, 9, 7)) * 10.0 ** rng.integers(-6, 7, (13, 9, 7))).astype(
+    data = (rng.standard_normal((13, 9, 7)) * 10.0 ** rng.integers(-15, 16, (13, 9, 7))).astype(
         np.float64
     )
     path = tmp_path / "wide.h5"
