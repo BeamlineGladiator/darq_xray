@@ -2488,7 +2488,7 @@ Append to `tests/test_common_volumeio.py`:
 def wide_volume(tmp_path):
     """Values spanning many magnitudes — where naive summation loses bits."""
     rng = np.random.default_rng(20260820)
-    data = (rng.standard_normal((13, 9, 7)) * 10 ** rng.integers(-6, 7, (13, 9, 7))).astype(
+    data = (rng.standard_normal((13, 9, 7)) * 10.0 ** rng.integers(-6, 7, (13, 9, 7))).astype(
         np.float64
     )
     path = tmp_path / "wide.h5"
@@ -2525,16 +2525,19 @@ def test_block_nansum_ignores_nan(tmp_path):
         assert volumeio.block_nansum(f["vol"], budget_bytes=1) == 7.0
 
 
+def _running_max(acc, block):
+    return max(acc, float(np.nanmax(block)))
+
+
 @pytest.mark.parametrize("divisor", [1, 4, 100])
 def test_block_reduce_is_bit_identical_across_budgets(wide_volume, divisor):
     path, data = wide_volume
     with h5py.File(path, "r") as f:
-        fn = lambda acc, block: max(acc, float(np.nanmax(block)))
         reference = volumeio.block_reduce(
-            f["vol"], fn, budget_bytes=data.nbytes * 10, init=-np.inf
+            f["vol"], _running_max, budget_bytes=data.nbytes * 10, init=-np.inf
         )
         result = volumeio.block_reduce(
-            f["vol"], fn, budget_bytes=max(1, data.nbytes // divisor), init=-np.inf
+            f["vol"], _running_max, budget_bytes=max(1, data.nbytes // divisor), init=-np.inf
         )
     assert result == reference
 

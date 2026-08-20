@@ -13,6 +13,9 @@ for why ordinary summation would break it.
 
 from __future__ import annotations
 
+import contextlib
+import os
+import tempfile
 from collections.abc import Iterator
 
 import numpy as np
@@ -146,3 +149,48 @@ def two_pass(dset, stat_fn, apply_fn, *, budget_bytes: int, init):
     stat = block_reduce(dset, stat_fn, budget_bytes=budget_bytes, init=init)
     for sl, block in iter_blocks(dset, budget_bytes=budget_bytes):
         yield sl, apply_fn(stat, block)
+
+
+@contextlib.contextmanager
+def scratch_array(shape, dtype, *, dirpath: str, prefix: str = "dfxm_scratch"):
+    """A disk-backed working array, deleted on exit even if the caller raises.
+
+    Yields a ``np.memmap`` — an ``ndarray`` subclass, so numerical code needs no
+    changes; its pages spill to disk instead of occupying RAM. This is what lets
+    irreducibly whole-array work (an exact median, a global fit) run on a
+    machine that cannot hold the volume: slower, but it finishes.
+
+    Caveat the caller must respect: **temporaries still allocate in RAM**.
+    ``out = a * b + c`` on a memmapped ``a`` materialises a full-size temporary
+    and defeats the purpose. Bucket-3 code must operate in slabs with in-place
+    operations (``np.multiply(a, b, out=a)``).
+    """
+    os.makedirs(dirpath, exist_ok=True)
+    handle, path = tempfile.mkstemp(prefix=prefix, suffix=".dat", dir=dirpath)
+    os.close(handle)
+    memmap = None
+    try:
+        memmap = np.memmap(path, dtype=dtype, mode="w+", shape=tuple(shape))
+        yield memmap
+    finally:
+        # Windows refuses to unlink a file while it is still mapped, so drop the
+        # mapping before deleting. flush() then del is the documented way; the
+        # gc call is what actually releases the handle on CPython/Windows.
+        if memmap is not None:
+            try:
+                memmap.flush()
+            except Exception:  # noqa: BLE001 - already-broken mapping
+                pass
+            if hasattr(memmap, "_mmap") and memmap._mmap is not None:
+                try:
+                    memmap._mmap.close()
+                except Exception:  # noqa: BLE001
+                    pass
+            del memmap
+            import gc
+
+            gc.collect()
+        try:
+            os.unlink(path)
+        except OSError:
+            pass  # never mask the caller's exception with a cleanup failure
