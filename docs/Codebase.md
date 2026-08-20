@@ -266,6 +266,19 @@ texture, so volume mode silently renders blank past the limit). Every decision
 carries a plain-language reason string — written once here and reused by the
 log, the GUI banner and the stage result notes.
 
+#### `volumeio.py` (new)
+Bounded-memory HDF5 volume reading. Pure module — no Qt, no stage-specific
+logic. The governing guarantee is **budget-independence**: for any
+`budget_bytes`, these helpers produce bit-identical results, so a laptop and a
+workstation streaming under different budgets emit the same data product.
+
+| Function / type | What it does |
+|---|---|
+| `volume_bytes(dset)` | In-memory size of an HDF5 dataset if fully loaded, in bytes. |
+| `iter_blocks(dset, *, budget_bytes, axis=0)` | Yields `(slice, array)` blocks along `axis`, each within the budget, covering the dataset exactly once in ascending order; a budget smaller than one layer still yields single layers rather than stalling. |
+| `BlockReader(dset, budget_bytes, axis=0)` | A dataset too large for the budget, presented as an iterable of `(slice, array)` blocks; carries `.shape`/`.dtype`/`.nbytes` but is deliberately not an ndarray look-alike. |
+| `load_or_stream(dset, *, budget_bytes)` | The whole array (`dset[:]`) when it fits the budget, else a `BlockReader`. |
+
 #### `alignment.py`
 The **single source of truth** for putting volumes into the shared world frame.
 The fixed order is `abs(FWHM) → ROI → samy X-shift → uniform-Z interp → centre`.
