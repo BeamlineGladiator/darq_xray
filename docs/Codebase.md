@@ -240,8 +240,11 @@ renderer string only — classifying it as software vs. hardware belongs to
 `profile`). Every probe is individually wrapped: `profile()` never raises, and
 unmeasured fields report `None`/`0` with the reason in `probe_errors`. `psutil`
 is used when importable, with `os.sysconf` / `GlobalMemoryStatusEx` fallbacks.
-`profile()`'s GL fields are `None`/`"unprobed"` for now — wiring in
-`_glprobe.py`'s out-of-process probe is a later task.
+GL is probed out of process (`_glprobe.py`) via `probe_gl()`, memoised and
+cached to `~/.cache/dfxm/gl_probe.json` (`%LOCALAPPDATA%\dfxm\cache` on
+Windows) keyed on OS/host/python/vtk. A child that segfaults, hangs or emits
+garbage yields `gl_status="crashed"` rather than an exception. `profile()`
+skips GL unless `probe_gl_now=True`.
 
 #### `alignment.py`
 The **single source of truth** for putting volumes into the shared world frame.

@@ -93,3 +93,116 @@ def test_profile_survives_every_probe_failing(monkeypatch, tmp_path):
     assert prof.ram_total == 0
     assert prof.cpu_logical == 1  # documented floor
     assert len(prof.probe_errors) == 4
+
+
+def test_probe_gl_reads_the_child_and_classifies_software(monkeypatch, tmp_path):
+    """A well-formed child answer becomes a GLInfo with `software` classified."""
+    monkeypatch.setattr(machine, "gl_cache_path", lambda: str(tmp_path / "gl.json"))
+    payload = json.dumps(
+        {
+            "status": "ok",
+            "renderer": "llvmpipe (LLVM 20.1.2, 256 bits)",
+            "vendor": "Mesa",
+            "version": "4.5 (Core Profile)",
+            "max_3d_texture": 2048,
+            "error": None,
+        }
+    )
+
+    class _Done:
+        returncode = 0
+        stdout = payload + "\n"
+        stderr = ""
+
+    monkeypatch.setattr(machine.subprocess, "run", lambda *a, **k: _Done())
+    info, status = machine.probe_gl(use_cache=False)
+    assert status == "ok"
+    assert info.software is True
+    assert info.max_3d_texture == 2048
+
+
+def test_probe_gl_treats_a_segfaulting_child_as_crashed(monkeypatch, tmp_path):
+    """A driver that kills the child is a normal answer, not an exception.
+
+    This is the whole reason the probe is out of process.
+    """
+    monkeypatch.setattr(machine, "gl_cache_path", lambda: str(tmp_path / "gl.json"))
+
+    class _Killed:
+        returncode = -11  # SIGSEGV
+        stdout = ""
+        stderr = ""
+
+    monkeypatch.setattr(machine.subprocess, "run", lambda *a, **k: _Killed())
+    info, status = machine.probe_gl(use_cache=False)
+    assert info is None
+    assert status == "crashed"
+
+
+def test_probe_gl_treats_a_hanging_child_as_crashed(monkeypatch, tmp_path):
+    monkeypatch.setattr(machine, "gl_cache_path", lambda: str(tmp_path / "gl.json"))
+
+    def _hang(*a, **k):
+        raise subprocess.TimeoutExpired(cmd="glprobe", timeout=1.0)
+
+    monkeypatch.setattr(machine.subprocess, "run", _hang)
+    info, status = machine.probe_gl(use_cache=False)
+    assert info is None
+    assert status == "crashed"
+
+
+def test_probe_gl_handles_garbage_output(monkeypatch, tmp_path):
+    monkeypatch.setattr(machine, "gl_cache_path", lambda: str(tmp_path / "gl.json"))
+
+    class _Garbage:
+        returncode = 0
+        stdout = "not json at all\n"
+        stderr = ""
+
+    monkeypatch.setattr(machine.subprocess, "run", lambda *a, **k: _Garbage())
+    info, status = machine.probe_gl(use_cache=False)
+    assert info is None
+    assert status == "crashed"
+
+
+def test_probe_gl_caches_to_disk_and_reuses(monkeypatch, tmp_path):
+    """Second call must not spawn a child — probing costs a process + a context."""
+    cache = tmp_path / "gl.json"
+    monkeypatch.setattr(machine, "gl_cache_path", lambda: str(cache))
+    calls = []
+    payload = json.dumps(
+        {
+            "status": "ok",
+            "renderer": "NVIDIA GeForce RTX 3080/PCIe/SSE2",
+            "vendor": "NVIDIA",
+            "version": "4.6",
+            "max_3d_texture": 16384,
+            "error": None,
+        }
+    )
+
+    class _Done:
+        returncode = 0
+        stdout = payload + "\n"
+        stderr = ""
+
+    def _run(*a, **k):
+        calls.append(1)
+        return _Done()
+
+    monkeypatch.setattr(machine.subprocess, "run", _run)
+    machine._GL_MEMO.clear()
+    first, _ = machine.probe_gl(use_cache=True)
+    machine._GL_MEMO.clear()  # drop the in-process memo; disk cache must carry it
+    second, _ = machine.probe_gl(use_cache=True)
+    assert len(calls) == 1
+    assert first == second
+    assert first.software is False
+
+
+def test_profile_does_not_probe_gl_unless_asked(monkeypatch, tmp_path):
+    """Default profile() must stay instant — no child process at startup."""
+    called = []
+    monkeypatch.setattr(machine, "probe_gl", lambda **k: called.append(1) or (None, "ok"))
+    machine.profile(output_dir=str(tmp_path))
+    assert called == []

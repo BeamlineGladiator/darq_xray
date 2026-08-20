@@ -16,9 +16,12 @@ missing optional dependency degrades one field rather than breaking launch.
 
 from __future__ import annotations
 
+import json
 import os
 import platform
 import shutil
+import subprocess
+import sys
 from dataclasses import dataclass, field
 
 _SOFTWARE_MARKERS = (
@@ -135,8 +138,138 @@ def probe_ffmpeg() -> str | None:
     return shutil.which("ffmpeg")
 
 
-def profile(*, output_dir: str | None = None) -> MachineProfile:
-    """Measure this machine. Never raises; failures land in ``probe_errors``."""
+# The GL answer costs a process spawn plus a context creation, and cannot change
+# while the app runs — memoised in-process and cached on disk between runs.
+_GL_MEMO: dict = {}
+_GL_CACHE_VERSION = 1
+
+
+def _cache_dir() -> str:
+    """Per-user cache directory, without adding a dependency on platformdirs."""
+    if os.name == "nt":
+        base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
+        return os.path.join(base, "dfxm", "cache")
+    base = os.environ.get("XDG_CACHE_HOME") or os.path.join(os.path.expanduser("~"), ".cache")
+    return os.path.join(base, "dfxm")
+
+
+def gl_cache_path() -> str:
+    return os.path.join(_cache_dir(), "gl_probe.json")
+
+
+def _cache_key() -> str:
+    """Identity of the GL stack: re-probe when any of these change."""
+    try:
+        # Import the version symbol ONLY — `vtkmodules.all` would pull in the
+        # entire VTK surface (slow, and it defeats the lazy-import discipline).
+        from vtkmodules.vtkCommonCore import vtkVersion
+
+        vtk_version = vtkVersion.GetVTKVersion()
+    except Exception:  # noqa: BLE001 - no vtk -> still a valid key
+        vtk_version = "none"
+    return "|".join(
+        [
+            str(_GL_CACHE_VERSION),
+            platform.system(),
+            platform.node(),
+            platform.python_version(),
+            vtk_version,
+        ]
+    )
+
+
+def _read_gl_cache(key: str) -> dict | None:
+    try:
+        with open(gl_cache_path(), encoding="utf-8") as fh:
+            blob = json.load(fh)
+    except Exception:  # noqa: BLE001 - absent/corrupt cache -> re-probe
+        return None
+    return blob.get("result") if blob.get("key") == key else None
+
+
+def _write_gl_cache(key: str, result: dict) -> None:
+    try:
+        os.makedirs(os.path.dirname(gl_cache_path()), exist_ok=True)
+        with open(gl_cache_path(), "w", encoding="utf-8") as fh:
+            json.dump({"key": key, "result": result}, fh)
+    except Exception:  # noqa: BLE001 - an unwritable cache is not an error
+        pass
+
+
+def _run_gl_child(timeout: float) -> dict | None:
+    """Run the probe child. None means it died, hung or spoke nonsense."""
+    try:
+        proc = subprocess.run(
+            [sys.executable, "-m", "dfxm.common._glprobe"],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except Exception:  # noqa: BLE001 - TimeoutExpired, OSError, ...
+        return None
+    if proc.returncode != 0:  # includes negative codes: killed by a signal
+        return None
+    for line in proc.stdout.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            return json.loads(line)
+        except ValueError:
+            return None
+    return None
+
+
+def probe_gl(*, timeout: float = 120.0, use_cache: bool = True) -> tuple[GLInfo | None, str]:
+    """Ask the child what the GL stack can do. Returns ``(info, status)``.
+
+    ``status`` is "ok", "no-gl", "no-vtk" or "crashed"; ``info`` is non-None
+    only for "ok". A crashed or hanging child is a *result*, not an exception —
+    that is the entire reason this runs out of process.
+    """
+    key = _cache_key()
+    if use_cache and "result" in _GL_MEMO:
+        raw = _GL_MEMO["result"]
+    else:
+        raw = _read_gl_cache(key) if use_cache else None
+        if raw is None:
+            raw = _run_gl_child(timeout)
+            if use_cache and raw is not None:
+                _write_gl_cache(key, raw)
+        if use_cache:
+            _GL_MEMO["result"] = raw
+
+    if raw is None:
+        return None, "crashed"
+    status = raw.get("status", "no-gl")
+    if status != "ok":
+        return None, status if status in ("no-gl", "no-vtk") else "crashed"
+    renderer = str(raw.get("renderer", ""))
+    limit = raw.get("max_3d_texture")
+    return (
+        GLInfo(
+            renderer=renderer,
+            vendor=str(raw.get("vendor", "")),
+            version=str(raw.get("version", "")),
+            max_3d_texture=int(limit) if limit else None,
+            software=is_software_renderer(renderer),
+        ),
+        "ok",
+    )
+
+
+def profile(
+    *,
+    output_dir: str | None = None,
+    probe_gl_now: bool = False,
+    gl_timeout: float = 120.0,
+) -> MachineProfile:
+    """Measure this machine. Never raises; failures land in ``probe_errors``.
+
+    GL is probed only when *probe_gl_now* is set: it costs a child process, so
+    callers that just need CPU/RAM (the status bar, a cost estimate) stay
+    instant and a broken driver can never delay startup.
+    """
     errors: list[str] = []
 
     def _try(label, fn, fallback):
@@ -151,6 +284,10 @@ def profile(*, output_dir: str | None = None) -> MachineProfile:
     disk_free = _try("disk", lambda: probe_disk(output_dir or os.getcwd()), 0)
     ffmpeg = _try("ffmpeg", probe_ffmpeg, None)
 
+    gl_info, gl_status = (None, "unprobed")
+    if probe_gl_now:
+        gl_info, gl_status = _try("gl", lambda: probe_gl(timeout=gl_timeout), (None, "crashed"))
+
     return MachineProfile(
         os_name=platform.system() or "unknown",
         cpu_logical=cpu_logical,
@@ -158,8 +295,8 @@ def profile(*, output_dir: str | None = None) -> MachineProfile:
         ram_total=ram_total,
         ram_available=ram_available,
         disk_free=disk_free,
-        gl=None,
-        gl_status="unprobed",
+        gl=gl_info,
+        gl_status=gl_status,
         ffmpeg=ffmpeg,
         probe_errors=tuple(errors),
     )
