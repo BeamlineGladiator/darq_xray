@@ -81,3 +81,68 @@ def load_or_stream(dset, *, budget_bytes: int):
     if volume_bytes(dset) <= budget_bytes:
         return dset[:]
     return BlockReader(dset, budget_bytes)
+
+
+def neumaier_sum(values, *, state: tuple[float, float] | None = None) -> tuple[float, float]:
+    """Compensated sum of *values*, continuable across blocks.
+
+    Returns ``(total, compensation)``; the true sum is ``total + compensation``.
+    Pass a previous return value back as *state* to continue an accumulation —
+    that is what makes the result independent of how the data was blocked.
+
+    Why not ``np.sum``: numpy reduces pairwise with a 128-element base case, so
+    summing an array whole and summing it in blocks give different bits. This
+    walks elements in a fixed order with an explicit compensation term, so the
+    answer depends only on the data — never on the memory budget.
+    """
+    total, comp = state if state is not None else (0.0, 0.0)
+    for value in np.asarray(values, dtype=np.float64).ravel():
+        item = float(value)
+        tentative = total + item
+        if abs(total) >= abs(item):
+            comp += (total - tentative) + item
+        else:
+            comp += (item - tentative) + total
+        total = tentative
+    return total, comp
+
+
+def block_reduce(dset, fn, *, budget_bytes: int, init):
+    """Fold *dset* block-by-block with ``fn(acc, block) -> acc``.
+
+    *fn* must be associative in the order blocks are produced (they always
+    arrive in ascending order), so the result is budget-independent.
+    """
+    acc = init
+    for _sl, block in iter_blocks(dset, budget_bytes=budget_bytes):
+        acc = fn(acc, block)
+    return acc
+
+
+def block_nansum(dset, *, budget_bytes: int) -> float:
+    """NaN-ignoring sum of *dset*, bit-identical for any budget.
+
+    Differs from ``np.nansum`` by up to ~1 ulp — deliberately. Budget-
+    independence is the property worth having; matching numpy's pairwise
+    ordering is not.
+    """
+
+    def fold(acc, block):
+        finite = block[np.isfinite(block)]
+        return neumaier_sum(finite, state=acc)
+
+    total, comp = block_reduce(dset, fold, budget_bytes=budget_bytes, init=(0.0, 0.0))
+    return total + comp
+
+
+def two_pass(dset, stat_fn, apply_fn, *, budget_bytes: int, init):
+    """Global statistic first, then apply it block-wise.
+
+    Pass 1 folds every block through ``stat_fn(acc, block) -> acc``. Pass 2
+    yields ``(slice, apply_fn(stat, block))`` for each block. Costs one extra
+    read of the dataset — the price of a lossless global operation in bounded
+    memory.
+    """
+    stat = block_reduce(dset, stat_fn, budget_bytes=budget_bytes, init=init)
+    for sl, block in iter_blocks(dset, budget_bytes=budget_bytes):
+        yield sl, apply_fn(stat, block)

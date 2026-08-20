@@ -278,6 +278,10 @@ workstation streaming under different budgets emit the same data product.
 | `iter_blocks(dset, *, budget_bytes, axis=0)` | Yields `(slice, array)` blocks along `axis`, each within the budget, covering the dataset exactly once in ascending order; a budget smaller than one layer still yields single layers rather than stalling. |
 | `BlockReader(dset, budget_bytes, axis=0)` | A dataset too large for the budget, presented as an iterable of `(slice, array)` blocks; carries `.shape`/`.dtype`/`.nbytes` but is deliberately not an ndarray look-alike. |
 | `load_or_stream(dset, *, budget_bytes)` | The whole array (`dset[:]`) when it fits the budget, else a `BlockReader`. |
+| `neumaier_sum(values, *, state=None)` | Compensated `(total, compensation)` sum, continuable across blocks by passing a previous result back in as `state`; walks elements in a fixed order so the answer never depends on how the data was blocked. |
+| `block_reduce(dset, fn, *, budget_bytes, init)` | Folds `dset` block-by-block through `fn(acc, block) -> acc`, in ascending block order. |
+| `block_nansum(dset, *, budget_bytes)` | NaN-ignoring sum built on `block_reduce` + `neumaier_sum`; bit-identical for any `budget_bytes`. Differs from `np.nansum` by up to ~1 ulp — numpy's pairwise reduction order is itself budget-dependent and cannot give the cross-budget guarantee. |
+| `two_pass(dset, stat_fn, apply_fn, *, budget_bytes, init)` | Pass 1 folds every block into a global statistic via `stat_fn`; pass 2 yields `(slice, apply_fn(stat, block))` per block — the pattern for e.g. mean-subtraction in bounded memory, at the cost of reading the dataset twice. |
 
 #### `alignment.py`
 The **single source of truth** for putting volumes into the shared world frame.
