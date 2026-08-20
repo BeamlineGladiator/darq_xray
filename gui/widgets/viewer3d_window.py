@@ -690,11 +690,13 @@ class Viewer3DWindow(QWidget):
     def _finish_video_ok(self, result) -> None:
         self._stop_video_timer()
         path = result.get("video") if isinstance(result, dict) else result
+        job_notes = tuple(result.get("notes") or ()) if isinstance(result, dict) else ()
         # None = the job ran fine but had nothing to render (empty scene) —
         # "saved to None" would read as a success with a broken path.
-        self._status.setText(
-            f"rotation video saved to {path}" if path else "nothing to export (empty scene)"
-        )
+        text = f"rotation video saved to {path}" if path else "nothing to export (empty scene)"
+        # The child re-reads the volume itself, so it decides its own decimation:
+        # report the job's notes, not this window's.
+        self._status.setText(" — ".join([text, *job_notes]))
         self._video_btn.setEnabled(self._canvas.available)
         self._video_runner = None
 

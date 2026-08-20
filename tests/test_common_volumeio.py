@@ -224,3 +224,25 @@ def test_harness_catches_a_budget_dependent_function(wide_volume):
     with h5py.File(path, "r") as f:
         with pytest.raises(AssertionError, match="different bits"):
             assert_budget_independent(naive_sum, f["vol"], nbytes=data.nbytes)
+
+
+# -- display decimation (render paths) ---------------------------------------
+def test_display_decimation_budgets_two_copies(tmp_path):
+    """The peak is ~2 copies, so a volume that fits ONCE must still be decimated."""
+    path = tmp_path / "d.h5"
+    with h5py.File(path, "w") as f:
+        f.create_dataset("vol", data=np.zeros((16, 16, 16)))  # float64 -> 32768 B
+    with h5py.File(path, "r") as f:
+        dset = f["vol"]
+        assert volumeio.volume_bytes(dset) == 32768
+        # One copy fits inside 40000 B; two do not.
+        assert volumeio.display_decimation(dset, 40000) > 1
+        # Room for both copies -> full fidelity.
+        assert volumeio.display_decimation(dset, 1 << 30) == 1
+
+
+def test_decimation_note_prints_shape_in_dataset_order():
+    note = volumeio.decimation_note(4, (76, 700, 2891))
+    assert "(76, 700, 2891)" in note
+    assert "2891x700x76" not in note  # reversed reads as a contradiction
+    assert "decimated 4x" in note and "stored data is unchanged" in note

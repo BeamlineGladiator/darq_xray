@@ -51,22 +51,21 @@ class VolumeSourceSpec:
 
 def _viewer_headroom_bytes() -> int:
     """How much RAM a viewer load may use. Wrapped so tests can shrink it."""
-    from dfxm.common import advice, machine
+    from dfxm.common.volumeio import display_headroom_bytes
 
-    return advice.headroom_bytes(machine.profile())
+    return display_headroom_bytes()
 
 
 def _decimation_for(dset) -> int:
-    """Smallest power-of-two stride bringing *dset* within the viewer's headroom."""
-    from dfxm.common.volumeio import volume_bytes
+    """Smallest power-of-two stride bringing *dset* within the viewer's headroom.
 
-    budget = _viewer_headroom_bytes()
-    # float64 is what the viewer holds, whatever the stored dtype.
-    needed = volume_bytes(dset) // max(1, dset.dtype.itemsize) * 8
-    step = 1
-    while step < 16 and needed // (step**3) > budget:
-        step *= 2
-    return step
+    The policy itself lives in :mod:`dfxm.common.volumeio` so the rotation-video
+    export child (``dfxm.viewer_jobs``) decimates identically — ``dfxm/`` cannot
+    import ``gui/``. Only the budget lookup stays here, as the monkeypatch seam.
+    """
+    from dfxm.common.volumeio import display_decimation
+
+    return display_decimation(dset, _viewer_headroom_bytes())
 
 
 def _rocking_source(aligned_path: str, dataset: str) -> Callable[[], LoadedVolume]:
@@ -81,10 +80,9 @@ def _rocking_source(aligned_path: str, dataset: str) -> Callable[[], LoadedVolum
             sy = float(f.attrs.get("scale_y_um_per_px", 1.0))
             sz = float(f.attrs.get("scale_z_um_per_px", 1.0))
         if step > 1:
-            notes.append(
-                f"decimated {step}x for display ({full_shape[2]}x{full_shape[1]}x{full_shape[0]} "
-                f"exceeds this machine's memory headroom) — the stored data is unchanged"
-            )
+            from dfxm.common.volumeio import decimation_note
+
+            notes.append(decimation_note(step, full_shape))
         finite = vol[np.isfinite(vol)]
         clim = (
             (float(np.percentile(finite, 1)), float(np.percentile(finite, 99)))

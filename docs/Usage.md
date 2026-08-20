@@ -1912,9 +1912,14 @@ geometry instead of a 3-D texture.
 > volume that would not fit inside this machine's memory headroom is read with
 > a stride — every 2nd, 4th, 8th … voxel along each axis — instead of failing
 > to open. When that happens the status line under the view says so, naming the
-> factor and the full stored shape, e.g. *"decimated 4x for display
-> (2891x700x76 exceeds this machine's memory headroom) — the stored data is
-> unchanged"*. The physical size of the render is unaffected: the voxel spacing
+> factor and the full stored shape — in the same `(z, y, x)` order the line's own
+> `shape (…)` uses — e.g. *"decimated 4x for display (full shape (76, 700, 2891)
+> exceeds this machine's memory headroom) — the stored data is unchanged"*. The
+> same rule applies to **Save rotation video…**: that export reloads the volume
+> in a child process and decimates it by the same policy, so the video matches
+> what you saw, and it tells you so both in the progress dialog while it renders
+> and in the status line when it finishes. The physical size of the render is
+> unaffected: the voxel spacing
 > is scaled by the same factor, so distances, the bounds axes and any exported
 > scale bar stay correct — the picture is just coarser. Nothing is written: the
 > `.h5` on disk keeps its full resolution, and every other stage (profiles,

@@ -204,6 +204,41 @@ def test_viewer3d_status_carries_the_decimation_note():
     assert Viewer3DWindow._with_notes(plain, "vol: shape (8, 8, 8)") == "vol: shape (8, 8, 8)"
 
 
+def test_viewer3d_rebuild_surfaces_the_note_without_gl():
+    """`rebuild()` must actually CALL `_with_notes` — the helper existing isn't enough.
+
+    Driven unbound on a stand-in down the no-GL branch (`scene=None`, a canvas
+    whose `ensure()` is False), so no GL context and no Qt widget is needed.
+    """
+    pytest.importorskip("PySide6")
+    from gui.widgets.viewer3d_window import Viewer3DWindow
+
+    class _Label:
+        def __init__(self):
+            self.text = ""
+
+        def setText(self, text):  # noqa: N802 - QLabel API
+            self.text = text
+
+    class _Canvas:
+        available = False
+
+        def ensure(self):
+            return False
+
+    stand_in = types.SimpleNamespace(
+        scene=None,
+        _canvas=_Canvas(),
+        _status=_Label(),
+        loaded=types.SimpleNamespace(notes=("decimated 4x for display",)),
+        _sync_export_enabled=lambda: None,
+    )
+    stand_in._with_notes = types.MethodType(Viewer3DWindow._with_notes, stand_in)
+    Viewer3DWindow.rebuild(stand_in)
+    assert "decimated 4x for display" in stand_in._status.text
+    assert "no OpenGL context" in stand_in._status.text
+
+
 def test_volume_sources_empty_for_other_stages():
     assert viewers.volume_sources("concat", None, {}) == {}
     assert (

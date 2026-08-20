@@ -29,6 +29,65 @@ def volume_bytes(dset) -> int:
     return n * int(dset.dtype.itemsize)
 
 
+# -- display (render) paths ---------------------------------------------------
+# A render path uploads the whole array to VTK, so streaming cannot help it and
+# coarsening is the only lever left. These three helpers are the single policy
+# both render loaders use — the GUI's 3-D viewer (`gui.viewers._rocking_source`)
+# and the rotation-video export child (`dfxm.viewer_jobs._load_volume`) — so the
+# on-screen view and the video it exports cannot drift apart. Living here rather
+# than in `gui/` is what lets `dfxm/` use them: the GUI depends on the core,
+# never the reverse.
+
+# A render loader peaks at roughly TWICE the volume it keeps: the strided read is
+# upcast by `.astype(float)` (a transient copy of the same size), and then a
+# second full-size array is built alongside it — `vol[np.isfinite(vol)]` for the
+# percentile clim in the viewer, `Scene3D.prepared()`'s masked copy for the video.
+# Sizing the stride against ONE copy would let a volume landing just under
+# headroom take stride 1 and then allocate about twice headroom, which is exactly
+# the OOM the decimation exists to prevent.
+DISPLAY_COPIES = 2
+
+# Above this the picture is 4096x coarser in every axis; not reachable in practice
+# (~32 G voxels) but it bounds the loop.
+MAX_DISPLAY_DECIMATION = 16
+
+
+def display_headroom_bytes() -> int:
+    """How much RAM a display load (3-D viewer / video export) may use here."""
+    from . import advice, machine
+
+    return advice.headroom_bytes(machine.profile())
+
+
+def display_decimation(dset, budget_bytes: int) -> int:
+    """Smallest power-of-two stride bringing *dset* within *budget_bytes* for display.
+
+    ``budget_bytes`` is the machine's headroom; the peak is budgeted at
+    :data:`DISPLAY_COPIES` copies of the strided array (see the note above).
+    """
+    # float64 is what a render path holds, whatever the stored dtype.
+    needed = volume_bytes(dset) // max(1, int(dset.dtype.itemsize)) * 8
+    budget = max(1, int(budget_bytes) // DISPLAY_COPIES)
+    step = 1
+    while step < MAX_DISPLAY_DECIMATION and needed // (step**3) > budget:
+        step *= 2
+    return step
+
+
+def decimation_note(step: int, full_shape) -> str:
+    """The user-facing sentence for a display load that was decimated.
+
+    ``full_shape`` is printed in the dataset's own ``(z, y, x)`` order — the same
+    order the viewer's status line prints the loaded shape in, so the two read as
+    one statement instead of contradicting each other.
+    """
+    shape = tuple(int(d) for d in full_shape)
+    return (
+        f"decimated {step}x for display (full shape {shape} exceeds this machine's "
+        "memory headroom) — the stored data is unchanged"
+    )
+
+
 def _layers_per_block(dset, budget_bytes: int, axis: int) -> int:
     """How many slices along *axis* fit in the budget. Always at least 1."""
     n_layers = int(dset.shape[axis])
