@@ -55,14 +55,14 @@ runs over, they are not. The fixed alignment chain decomposes:
 | `abs` (FWHM only) | elementwise | Z |
 | `apply_roi_3d` | crops Y/X only | Z |
 | `apply_samy_shifts_to_volume` | independent per Z-layer; canvas width comes from the 1-D `samy` array | Z, given a globally computed pad |
-| `interpolate_to_uniform_z` | `interp1d(kind="linear")` — each output Z reads only its two bracketing input layers | Z, with a 1-layer halo |
+| `interpolate_to_uniform_z` | `interp1d(kind="linear")` — each output Z reads only its two bracketing input layers | Z, with one row of forward context |
 | `center_around_zero` | global `nanmean` / `nanmedian` | no — a genuine reduction |
 
 **2. `slices` is chunkable; its `chunkable=False` is wrong.** The estimator says
 "alignment is a whole-volume operation". Sampling is
 `map_coordinates(prep["data"], coords, order=1, ...)` (`slices.py:622`), so each
 output sample depends on the eight voxels bracketing it — two in Z. A Z-block
-plus a one-layer halo computes exactly those samples whose Z coordinate falls
+plus one row of forward context computes exactly those samples whose Z falls
 inside it and scatters them into the output image, which is a small 2-D array.
 One pass over Z serves every requested plane at once.
 
@@ -118,25 +118,32 @@ earns its use. The escalation ladder in `advice.py` is unchanged.
 
 ## Architecture
 
-### `volumeio.py` — a halo, a second axis, three reductions
+### `volumeio.py` — block context, a second axis, three reductions
 
 ```python
-def iter_blocks(dset, *, budget_bytes, axis=0, halo=0)
-    # -> Iterator[tuple[slice, np.ndarray, slice]]  when halo > 0
+def iter_blocks(dset, *, budget_bytes, axis=0)        # axis=1 is new
+def iter_with_context(blocks, *, trailing=1)
+    # -> Iterator[tuple[slice, np.ndarray, slice]]
 
 def stream_mean(blocks) -> float                      # Neumaier sum / finite count
 def stream_minmax(blocks) -> tuple[float, float]
 def stream_quantile(blocks_factory, q) -> float       # exact, three passes
 ```
 
-`halo` extends each block's *read* window by *n* layers on both sides, clipped
-at the dataset bounds. With `halo > 0` the iterator yields a third element: the
-slice, relative to the returned array, identifying the block's own interior —
-so a consumer writes `block[interior]` and never has to redo the clipping
-arithmetic at the dataset's ends, where the halo is truncated asymmetrically.
-With `halo == 0` the two-element yield is unchanged, so every phase-1–4 caller
-is untouched. Blocks still cover the dataset exactly once in ascending order;
-only the read windows overlap.
+`iter_with_context` re-yields a stream of blocks with each block carrying the
+first *trailing* rows of its successor, plus the slice identifying the block's
+own interior within the enlarged window — so a consumer writes `window[interior]`
+and never redoes the arithmetic. The final block gets no context, which is
+correct: it ends where the source ends, so its edge behaviour must match the
+source's.
+
+This is deliberately a function over a *block stream* rather than a widened read
+window on `iter_blocks`. The operations needing context look **forward** — both
+linear interpolation and `map_coordinates(order=1)` read the row after the one
+they land on — so a symmetric halo would read a row nothing uses. More
+importantly, the blocks needing context are frequently *generated* rather than
+stored: an aligned volume that is never materialised cannot be re-indexed to
+widen a read. One implementation serves an HDF5 dataset and a generator alike.
 
 `axis` gains support for `axis=1`, which `matched` needs. The existing
 `ValueError("only axis=0 blocking is supported")` is replaced, not worked around.
@@ -326,7 +333,7 @@ get a wave-3 conversion.
 
 **Wave 2 — machinery.**
 
-5. `volumeio` — halo-aware `iter_blocks`, `axis=1` support, `stream_mean`,
+5. `volumeio` — `iter_with_context`, `axis=1` support, `stream_mean`,
    `stream_minmax`
 6. `volumeio.stream_quantile` — exact streaming order statistic
 7. `alignment` — `pad` / `z_uniform` parameters, `align_volume_streamed`,
@@ -368,7 +375,10 @@ and this task is where it gets caught.
   none, which means `RunPlan.blocked` — the insufficient-disk error — becomes
   reachable from a stage that merely chose `center_method="median"`. The
   estimator must account for the cache so the block is predicted before the run
-  starts rather than raised halfway through it.
+  starts rather than raised halfway through it. This is the phase's one widening
+  of a phase-1–4 interface: `CostEstimate` gains `scratch_bytes: int = 0`, which
+  `plan_run` folds into the check it already makes against `profile.disk_free`.
+  Defaulting to zero leaves every other estimator unaffected.
 - **Scope.** Thirteen tasks touching seven stage modules and the shared
   alignment. Smaller than the parent spec's "eight stages, the bulk of the work"
   estimate for the conversions themselves, but wider, because it also rewrites
