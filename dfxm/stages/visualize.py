@@ -712,6 +712,17 @@ def run(params: dict, progress: ProgressFn | None = None) -> VisualizeResult:
             if clim_note:
                 prod.notes.append(clim_note)
             result.datasets.append(prod)
+        # Release the last field's aligned volume (float64, and the largest
+        # object alive in this section) before the strain section loads and
+        # aligns its own — otherwise both are live at once and the stage's peak
+        # is the *sum* of the two sections instead of their max. Rebinding
+        # rather than `del` keeps this safe when the loop body never ran (no
+        # fields, or every field unreadable). `prod` is already in
+        # result.datasets; only the dead local binding goes. Everything else the
+        # loop leaves behind is scalar (`scale_z`, `vmin`, `vmax`, `clim_note`,
+        # `cmap`, `title`, `cbar`, `group`) or a per-layer 1-D array (`z_pos`),
+        # and the strain section rebinds each before reading it.
+        data = prod = None
     elif mosa_file:
         result.skipped.append(f"mosaicity volume not found: {mosa_file}")
 
@@ -727,6 +738,7 @@ def run(params: dict, progress: ProgressFn | None = None) -> VisualizeResult:
             data, z_pos, scale_z = _align(
                 vol, samy, samz, scale_x=scale_x, samy_direction=samy_dir, roi_x=roi_x, roi_y=roi_y
             )
+            del vol  # same as the mosaicity `del raw`: _align has copied out
             vmin, vmax = _symmetric_range(data)
             vmin, vmax, clim_note = apply_round_clim(vmin, vmax, style)
             if clim_note:
