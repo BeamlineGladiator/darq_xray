@@ -352,6 +352,45 @@ def test_stream_mean_of_nothing_is_nan():
     assert np.isnan(volumeio.stream_mean(volumeio.dataset_blocks(data, budget_bytes=16)))
 
 
+@pytest.mark.parametrize(
+    ("values", "expect_lo", "expect_hi"),
+    [
+        ([-0.0] * 8 + [0.0] * 8 + [1.0, 2.0], -0.0, 2.0),  # mixed zeros, positive signal
+        ([0.0] * 8 + [-0.0] * 8 + [1.0, 2.0], -0.0, 2.0),  # same data, other order
+        ([-2.0, -1.0] + [0.0] * 4 + [-0.0] * 4, -2.0, 0.0),  # zeros are the maximum
+        ([-0.0] * 6, -0.0, -0.0),  # every zero negative
+        ([0.0] * 6, 0.0, 0.0),  # every zero positive
+    ],
+    ids=["mixed-min", "mixed-min-reordered", "mixed-max", "all-negative", "all-positive"],
+)
+def test_stream_minmax_zero_sign_is_budget_independent(values, expect_lo, expect_hi):
+    """`-0.0` and `0.0` compare equal, so a block-wise min keeps whichever came first.
+
+    That made the *sign* of a zero bound a function of the budget: on the
+    mixed-min dataset this returned `0x0.0p+0` whole-array and `-0x0.0p+0` at
+    every smaller budget — a budget-dependent bit in a helper whose governing
+    guarantee is bit-identical results at any budget. The project's own harness
+    cannot catch it: `tests/equivalence.py` documents that `array_equal` calls
+    `-0.0` and `+0.0` equal, so only `.hex()` sees this.
+
+    There is no numpy parity to honour — `np.min` on mixed zeros is just as
+    arbitrary — so the rule is the sign-aware one: the minimum prefers `-0.0`,
+    the maximum prefers `+0.0`, decided by the data and not by the blocking.
+    """
+    data = np.array(values).reshape(len(values), 1, 1)
+    results = {
+        tuple(
+            v.hex()
+            for v in volumeio.stream_minmax(
+                volumeio.dataset_blocks(data, budget_bytes=max(1, data.nbytes // d))
+            )
+        )
+        for d in (1, 2, 3, 5, len(values))
+    }
+    assert len(results) == 1, f"the zero sign moves with the budget: {results}"
+    assert results == {(expect_lo.hex(), expect_hi.hex())}
+
+
 # -- exact streaming quantile -------------------------------------------------
 @pytest.mark.parametrize("q", [0.0, 1.0, 25.0, 50.0, 99.0, 100.0])
 def test_stream_quantile_matches_numpy_exactly(q):

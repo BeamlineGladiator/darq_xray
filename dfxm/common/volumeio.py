@@ -279,15 +279,46 @@ def stream_mean(blocks) -> float:
 
 
 def stream_minmax(blocks) -> tuple[float, float]:
-    """Min and max of the finite values across *blocks*."""
+    """Min and max of the finite values across *blocks*.
+
+    The sign of a zero bound is decided by the data, never by the blocking:
+    the minimum prefers ``-0.0`` and the maximum ``+0.0`` whenever that sign is
+    present among the zeros. Without this the sign is a *budget-dependent* bit,
+    because ``-0.0 == 0.0`` means each block-wise `min`/`max` simply keeps
+    whichever it met first — on ``[-0.0]*8 + [0.0]*8 + [1, 2]`` this returned
+    ``+0.0`` over the whole array and ``-0.0`` at every smaller budget. There
+    is no numpy parity at stake (``np.min`` over mixed zeros is equally
+    arbitrary) and no numerical information either way, since the two compare
+    equal; what is at stake is the module's governing guarantee, and this is
+    the one violation of it the project's own harness cannot see —
+    `tests/equivalence.py` notes that `array_equal` calls the two zeros equal.
+
+    The extra scan runs only for a block whose own min or max is exactly zero.
+    """
     lo, hi = np.inf, -np.inf
+    negative_zero_at_lo = False  # a `-0.0` sits at the minimum
+    positive_zero_at_hi = False  # a `+0.0` sits at the maximum
     for block in blocks:
         finite = block[np.isfinite(block)]
-        if finite.size:
-            lo = min(lo, float(finite.min()))
-            hi = max(hi, float(finite.max()))
+        if not finite.size:
+            continue
+        block_lo, block_hi = float(finite.min()), float(finite.max())
+        if block_lo == 0.0 or block_hi == 0.0:
+            signs = np.signbit(finite[finite == 0.0])
+            # A block whose min is zero holds no negative value, so when the
+            # global minimum is a zero every block holding one is examined
+            # here — the argument that makes the flag correct is the same one
+            # that keeps it cheap. Mirrored for the maximum.
+            negative_zero_at_lo |= block_lo == 0.0 and bool(signs.any())
+            positive_zero_at_hi |= block_hi == 0.0 and not bool(signs.all())
+        lo = min(lo, block_lo)
+        hi = max(hi, block_hi)
     if not np.isfinite(lo):
         return float("nan"), float("nan")
+    if lo == 0.0:
+        lo = -0.0 if negative_zero_at_lo else 0.0
+    if hi == 0.0:
+        hi = 0.0 if positive_zero_at_hi else -0.0
     return lo, hi
 
 
@@ -395,13 +426,13 @@ def stream_quantile(make_blocks, q: float) -> float:
     numpy's unconditional lerp produces there. Every rank that does
     interpolate reproduces numpy, overflow included.
 
-    A zero always comes back as ``+0.0``, which is both what numpy returns for
-    every zero input (its ``a + diff * t`` normalises the sign) and the only
-    budget-independent answer available: ``-0.0`` and ``0.0`` compare equal, so
-    which one a selector happens to carry out depends on which block it saw
-    first. `assert_budget_independent` cannot see such a difference —
-    `array_equal` calls the two equal — but ``.hex()`` can, so the sign is
-    settled here, once, rather than in each selector.
+    The sign of a zero answer follows :func:`_zero_sign`, not a blanket
+    normalisation: ``-0.0`` when every zero in the data is negative — which is
+    what numpy returns for such an array, and it is *not* always ``+0.0``,
+    since numpy's form 2 (taken at ``t >= 0.5``) keeps the sign — and ``+0.0``
+    when both signs are present, where numpy's own answer comes from an
+    arbitrary partition order and there is no bit to match. Normalising
+    unconditionally would look tidier and would break numpy parity.
     """
     if not 0.0 <= q <= 100.0:
         # numpy raises here; returning a clamped answer instead would be a
