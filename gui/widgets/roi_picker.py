@@ -216,9 +216,7 @@ class ROIPickerDialog(QDialog):
         dr, dc = r1 - r0, c1 - c0
         if user and dr >= 1 and dc >= 1:
             self.picked[max(0, self._combo.currentIndex())] = (r0, r1, c0, c1)
-        self._use.setEnabled(
-            (dr >= 1 and dc >= 1) or (self._per_preview and bool(self.picked))
-        )
+        self._use.setEnabled((dr >= 1 and dc >= 1) or (self._per_preview and bool(self.picked)))
         locked = "  (size locked)" if self._lock.isChecked() and self._lock_size else ""
         self._readout.setText(
             f"{dr}×{dc} px  =  {dr * self._sy:.1f} × {dc * self._sx:.1f} µm (Y×X){locked}"
