@@ -135,3 +135,101 @@ def test_strain_input_bytes_follow_the_source_dtype(tmp_path, dtype, itemsize):
     est = estimate(_strain_params(root))
     assert est.input_bytes == 2 * H * W * itemsize
     assert est.peak_bytes == 2 * 2 * H * W * 8
+
+
+ALL_ESTIMATOR_STAGES = (
+    "strain",
+    "mosaicity",
+    "slices",
+    "rocking",
+    "matched",
+    "paraview",
+    "visualize",
+)
+
+
+@pytest.mark.parametrize("stage_name", ALL_ESTIMATOR_STAGES)
+def test_every_volume_stage_declares_an_estimator(stage_name):
+    import importlib
+
+    module = importlib.import_module(f"dfxm.stages.{stage_name}")
+    assert module.STAGE.estimate == f"dfxm.stages.{stage_name}:estimate"
+    assert callable(module.STAGE.estimator())
+
+
+@pytest.mark.parametrize("stage_name", ALL_ESTIMATOR_STAGES)
+def test_every_estimator_survives_junk_params(stage_name):
+    """Called on every form change, including while the user is mid-typing."""
+    import importlib
+
+    module = importlib.import_module(f"dfxm.stages.{stage_name}")
+    junk = (
+        {},
+        {"raw_root": "", "mosa_volume_file": ""},
+        {"raw_root": "/nonexistent", "mosa_volume_file": "/nonexistent/x.h5"},
+    )
+    for params in junk:
+        est = module.estimate(params)
+        assert isinstance(est, CostEstimate)
+        assert est.peak_bytes >= 0
+
+
+def test_sum_dataset_bytes_walks_nested_groups(tmp_path):
+    from dfxm.common.h5io import sum_dataset_bytes
+
+    path = tmp_path / "v.h5"
+    with h5py.File(path, "w") as f:
+        f.create_dataset("chi/Center of mass", data=np.zeros((3, 4, 5), dtype="float64"))
+        f.create_dataset("mu/FWHM", data=np.zeros((3, 4, 5), dtype="float32"))
+    total, largest, itemsize = sum_dataset_bytes(str(path))
+    assert total == 3 * 4 * 5 * 8 + 3 * 4 * 5 * 4
+    assert largest == (3, 4, 5)
+    assert itemsize == 8  # the largest dataset's itemsize
+
+
+def test_sum_dataset_bytes_on_a_missing_file_is_zero(tmp_path):
+    from dfxm.common.h5io import sum_dataset_bytes
+
+    assert sum_dataset_bytes(str(tmp_path / "nope.h5")) == (0, None, 0)
+
+
+def test_slices_is_not_chunkable_and_doubles_for_alignment(tmp_path):
+    """astype(float64) plus an aligned copy — three arrays' worth at the peak."""
+    from dfxm.stages.slices import estimate
+
+    path = tmp_path / "mosa.h5"
+    with h5py.File(path, "w") as f:
+        f.create_dataset("sum_intensity", data=np.zeros((4, 8, 16), dtype="float32"))
+    est = estimate({"mosa_volume_file": str(path)})
+    n = 4 * 8 * 16
+    assert est.chunkable is False
+    assert est.input_bytes == n * 4
+    assert est.peak_bytes == n * 4 + 2 * n * 8
+
+
+def test_matched_is_not_chunkable(tmp_path):
+    """An exact median needs the whole stack — bucket 3, disk-backed."""
+    from dfxm.stages.matched import estimate
+
+    root = tmp_path / "raw"
+    scan = root / "rock__1"
+    scan.mkdir(parents=True)
+    with h5py.File(scan / "rock__1.h5", "w") as f:
+        f.create_dataset("1.1/measurement/pco_ff", data=np.zeros((6, 8, 16), dtype="uint16"))
+    est = estimate({"raw_root": str(root), "rocking_pattern": "rock__*"})
+    assert est.chunkable is False
+
+
+def test_rocking_peak_has_no_conversion_overhead(tmp_path):
+    """rocking.py:985 is a bare `dataset[:]` — no float64 copy to account for."""
+    from dfxm.stages.rocking import estimate
+
+    root = tmp_path / "raw"
+    for i in range(2):
+        scan = root / f"rock__{i}"
+        scan.mkdir(parents=True)
+        with h5py.File(scan / f"rock__{i}.h5", "w") as f:
+            f.create_dataset("1.1/measurement/pco_ff", data=np.zeros((3, 8, 16), dtype="uint16"))
+    est = estimate({"raw_root": str(root), "rocking_pattern": "rock__*"})
+    assert est.peak_bytes == est.input_bytes
+    assert est.input_bytes == 2 * 3 * 8 * 16 * 2  # 2 scans x 3 frames x uint16

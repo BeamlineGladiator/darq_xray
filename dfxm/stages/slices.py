@@ -39,6 +39,7 @@ from ..common import alignment as A
 from ..common import render as Rnd
 from ..common.errors import StageUserError
 from ..common.figures import FigureSpec, crop_roi_2d, register, resolve_clim
+from ..common.h5io import sum_dataset_bytes
 from ..common.plotting import (
     GROUP_BY_KIND,
     PlotStyle,
@@ -56,7 +57,7 @@ from ..common.plotting import (
 )
 from ..common.raster import extract_motor_positions
 from ..common.sort import find_matching_folders
-from ..config.models import Param, ParamType, StageSpec
+from ..config.models import CostEstimate, Param, ParamType, StageSpec
 
 ProgressFn = Callable[[float, str], None]
 
@@ -477,6 +478,7 @@ STAGE = StageSpec(
             help="Write a PNG per plane in addition to the HDF5.",
         ),
     ),
+    estimate="dfxm.stages.slices:estimate",
 )
 
 
@@ -1135,6 +1137,43 @@ def _standard_volumes(p, roi_x, roi_y):
             cfg.update(raw_root=raw_root, raw_pattern=pattern, roi_x=roi_x, roi_y=roi_y)
         out.append(cfg)
     return out
+
+
+_SLICES_VOLUME_PARAMS = (
+    "mosa_volume_file",
+    "strain_volume_file",
+    "aligned_rocking_file",
+    "aligned_mosa_file",
+)
+
+
+def estimate(params: dict) -> CostEstimate:
+    """Peak memory for a slices run, from HDF5 shapes only.
+
+    ``prepare_volume`` reads each selected volume with ``[:].astype(np.float64)``
+    — source and float64 copy live together — then alignment
+    (``apply_samy_shifts_to_volume`` / ``interpolate_to_uniform_z``) produces a
+    further float64 copy. Peak is therefore ``input + 2 * n * 8`` summed over
+    the selected volumes. Not chunkable: alignment is a whole-volume operation.
+    """
+    p = {**STAGE.defaults(), **params}
+    total_input = 0
+    total_elems = 0
+    largest: tuple[int, ...] | None = None
+    for name in _SLICES_VOLUME_PARAMS:
+        path = str(p.get(name) or "")
+        if not path:
+            continue
+        nbytes, shape, itemsize = sum_dataset_bytes(path)
+        if not nbytes:
+            continue
+        total_input += nbytes
+        total_elems += nbytes // max(1, itemsize)
+        if shape is not None and (largest is None or len(shape) > len(largest)):
+            largest = shape
+    if not total_input:
+        return CostEstimate(0, 0, None, False, "no readable volume files selected yet")
+    return CostEstimate(total_input + 2 * total_elems * 8, total_input, largest, False, None)
 
 
 # Relative Y-height spread beyond which volumes are flagged as misregistered.

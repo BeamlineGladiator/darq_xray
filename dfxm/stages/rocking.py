@@ -41,10 +41,11 @@ from ..common.figures import (
     resolve_clim,
     volume_layer_specs,
 )
+from ..common.h5io import resolve_input_file
 from ..common.plotting import apply_round_clim, resolve_cmap, style_from_params
 from ..common.raster import extract_motor_positions, find_h5_file
 from ..common.sort import find_matching_folders
-from ..config.models import Param, ParamType, StageSpec
+from ..config.models import CostEstimate, Param, ParamType, StageSpec
 
 ProgressFn = Callable[[float, str], None]
 
@@ -384,6 +385,7 @@ STAGE = StageSpec(
             help="Upper intensity percentile for the colour scale of the rendered images.",
         ),
     ),
+    estimate="dfxm.stages.rocking:estimate",
 )
 
 
@@ -615,6 +617,39 @@ def _motors(raw_root: str, pattern: str, samy_path: str, samz_path: str):
     if not folders:
         return np.array([]), np.array([]), []
     return extract_motor_positions(folders, samy_path, samz_path)
+
+
+def estimate(params: dict) -> CostEstimate:
+    """Peak memory for a rocking run, from HDF5 shapes only.
+
+    Sizes one raw scan's detector stack (``detector_path``, default
+    ``1.1/measurement/pco_ff``) and multiplies by the number of matching scan
+    folders — the peak is modelled as the combined detector stacks with no
+    dtype-conversion overhead, matching the bare ``dataset[:]`` read used by
+    the cold-replot path (``_replot_default_clim``, no ``.astype``).
+    """
+    p = {**STAGE.defaults(), **params}
+    try:
+        root = str(p.get("raw_root") or "").rstrip("/")
+        folders = find_matching_folders(root, p.get("rocking_pattern") or "*") if root else []
+        if not folders:
+            return CostEstimate(0, 0, None, True, "no scan folders resolved yet")
+        first = resolve_input_file(folders[0])
+        ds_path = str(p.get("detector_path") or "1.1/measurement/pco_ff")
+        with h5py.File(first, "r") as f:
+            if ds_path not in f:
+                return CostEstimate(0, 0, None, True, f"{ds_path!r} not in {first!r}")
+            ds = f[ds_path]
+            scan_shape = tuple(int(d) for d in ds.shape)
+            itemsize = int(ds.dtype.itemsize)
+    except Exception as exc:  # noqa: BLE001 - an estimate is advisory, never fatal
+        return CostEstimate(0, 0, None, True, f"cannot size input: {type(exc).__name__}")
+
+    elems = 1
+    for dim in scan_shape:
+        elems *= dim
+    total = len(folders) * elems * itemsize
+    return CostEstimate(total, total, (len(folders), *scan_shape), True, None)
 
 
 def _render(

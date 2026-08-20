@@ -30,10 +30,11 @@ from ..common import alignment as A
 from ..common import render as Rnd
 from ..common import render3d as R3
 from ..common.figures import FigureSpec, register
+from ..common.h5io import sum_dataset_bytes
 from ..common.plotting import apply_round_clim, resolve_cmap, style_from_params
 from ..common.raster import extract_motor_positions
 from ..common.sort import find_matching_folders
-from ..config.models import Param, ParamType, StageSpec
+from ..config.models import CostEstimate, Param, ParamType, StageSpec
 
 ProgressFn = Callable[[float, str], None]
 
@@ -355,6 +356,7 @@ STAGE = StageSpec(
             ),
         ),
     ),
+    estimate="dfxm.stages.visualize:estimate",
 )
 
 
@@ -443,6 +445,29 @@ def _display_info(dataset_name, is_strain=False):
     if "FWHM" in dataset_name:
         return (f"{axis} Peak Broadening", "Peak broadening (°)", "mosa_fwhm")
     return (dataset_name.replace("_", " "), "(°)", None)
+
+
+def estimate(params: dict) -> CostEstimate:
+    """Peak memory for this run, from HDF5 shapes only.
+
+    Loads every dataset in the selected volume files together (see
+    ``load_mosa_datasets`` / ``load_strain_volume`` below), with no dtype
+    conversion, so the peak is simply their combined size.
+    """
+    p = {**STAGE.defaults(), **params}
+    total = 0
+    largest: tuple[int, ...] | None = None
+    for name in ("mosa_volume_file", "strain_volume_file"):
+        path = str(p.get(name) or "")
+        if not path:
+            continue
+        nbytes, shape, _itemsize = sum_dataset_bytes(path)
+        total += nbytes
+        if shape is not None and (largest is None or len(shape) > len(largest)):
+            largest = shape
+    if not total:
+        return CostEstimate(0, 0, None, True, "no readable volume files selected yet")
+    return CostEstimate(total, total, largest, True, None)
 
 
 # -----------------------------------------------------------------------------
