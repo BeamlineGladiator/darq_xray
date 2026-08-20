@@ -352,6 +352,255 @@ def test_stream_mean_of_nothing_is_nan():
     assert np.isnan(volumeio.stream_mean(volumeio.dataset_blocks(data, budget_bytes=16)))
 
 
+# -- exact streaming quantile -------------------------------------------------
+@pytest.mark.parametrize("q", [0.0, 1.0, 25.0, 50.0, 99.0, 100.0])
+def test_stream_quantile_matches_numpy_exactly(q):
+    rng = np.random.default_rng(7)
+    data = rng.normal(size=(40, 6, 6))
+    data[data > 1.8] = np.nan
+    finite = data[np.isfinite(data)]
+    got = volumeio.stream_quantile(
+        lambda: volumeio.dataset_blocks(data, budget_bytes=data.nbytes // 5), q
+    )
+    assert got == float(np.percentile(finite, q)), "must be bit-equal, not merely close"
+
+
+def test_stream_quantile_is_budget_independent():
+    rng = np.random.default_rng(11)
+    data = rng.normal(size=(33, 5, 5))
+    values = [
+        volumeio.stream_quantile(
+            lambda d=d: volumeio.dataset_blocks(data, budget_bytes=max(1, data.nbytes // d)), 99.0
+        )
+        for d in (1, 2, 7, 10_000)
+    ]
+    assert len({v.hex() for v in values}) == 1
+
+
+def test_stream_quantile_handles_constant_data():
+    data = np.full((10, 3, 3), 4.25)
+    got = volumeio.stream_quantile(lambda: volumeio.dataset_blocks(data, budget_bytes=72), 50.0)
+    assert got == 4.25
+
+
+def test_stream_quantile_of_nothing_is_nan():
+    data = np.full((4, 2, 2), np.nan)
+    got = volumeio.stream_quantile(lambda: volumeio.dataset_blocks(data, budget_bytes=16), 50.0)
+    assert np.isnan(got)
+
+
+def test_stream_quantile_single_finite_value():
+    data = np.full((4, 2, 2), np.nan)
+    data[1, 1, 1] = 2.5
+    got = volumeio.stream_quantile(lambda: volumeio.dataset_blocks(data, budget_bytes=16), 90.0)
+    assert got == 2.5
+
+
+@pytest.mark.parametrize("q", [-1.0, 101.0, float("nan")])
+def test_stream_quantile_rejects_a_percentile_outside_0_to_100(q):
+    """Out of range is an error, as it is in numpy — never a clamped answer.
+
+    Before the guard, q=-1 returned the minimum and q=101 the maximum: a
+    plausible-looking number for a caller that had computed its percentile
+    wrongly, which is precisely the failure this helper exists to rule out.
+    """
+    data = np.arange(8.0).reshape(8, 1, 1)
+    with pytest.raises(ValueError, match=r"\[0, 100\]"):
+        volumeio.stream_quantile(lambda: volumeio.dataset_blocks(data, budget_bytes=8), q)
+
+
+@pytest.mark.parametrize("q", [0.5, 2.0, 50.0, 98.0, 99.5])
+def test_stream_quantile_is_exact_on_adversarial_data_at_eight_budgets(q):
+    """Wide dynamic range + heavy NaN, at eight budgets, bit-equal to numpy.
+
+    The colour-limit call sites run over volumes spanning many decades with a
+    large fraction of the voxels masked out; an implementation that is exact
+    only on tame Gaussian data would not serve them. Eight budgets (down to one
+    that forces single-layer blocks) is the standard Task 5's review applied.
+    """
+    rng = np.random.default_rng(23)
+    data = 10.0 ** rng.uniform(-12, 12, size=(24, 7, 7))
+    data[rng.random(data.shape) < 0.1] = np.nan
+    data[rng.random(data.shape) < 0.02] = np.inf  # non-finite values must be ignored
+    data[0, 0, :3] = data[0, 0, 0]  # a tie, so the rank must break it consistently
+    expected = float(np.percentile(data[np.isfinite(data)], q))
+    values = [
+        volumeio.stream_quantile(
+            lambda d=d: volumeio.dataset_blocks(data, budget_bytes=max(1, data.nbytes // d)), q
+        )
+        for d in (1, 2, 3, 5, 7, 13, 1000, 10_000)
+    ]
+    assert len({v.hex() for v in values}) == 1, "the budget must not move the answer"
+    assert values[0] == expected, "must be bit-equal to np.percentile, not merely close"
+
+
+def test_stream_quantile_refines_when_a_bin_is_overfull(monkeypatch):
+    """Force the narrowing branch: with 2 bins, a bin holds more than the cap.
+
+    Without refinement the helper would either sort the whole overfull bin
+    (unbounded memory, the thing this exists to avoid) or return a bin edge.
+    Shrinking both constants makes the multi-round path the one under test.
+    """
+    monkeypatch.setattr(volumeio, "_QUANTILE_BINS", 2)
+    monkeypatch.setattr(volumeio, "_QUANTILE_EXACT_CAP", 4)
+    rng = np.random.default_rng(3)
+    data = rng.normal(size=(20, 4, 4))
+    for q in (10.0, 50.0, 90.0):
+        got = volumeio.stream_quantile(
+            lambda: volumeio.dataset_blocks(data, budget_bytes=data.nbytes // 4), q
+        )
+        assert got == float(np.percentile(data, q))
+
+
+def test_stream_quantile_uses_numpys_two_form_interpolation():
+    """A triple where the naive one-form interpolation is one ulp off.
+
+    numpy switches from ``lo + (hi - lo) * t`` to ``hi - (hi - lo) * (1 - t)``
+    at ``t >= 0.5``; here q=30 puts the target at t=0.6 between the first two
+    values and the two forms disagree in the last bit. Without this case the
+    random-data tests pass with either form, so the switch would look optional.
+    """
+    data = np.array([[[-69938.68585729932]], [[16485.831736166052]], [[16486.831736166052]]])
+    expected = float(np.percentile(data, 30.0))
+    assert expected == -18083.975301220096  # the one-form value is ...220104
+    got = volumeio.stream_quantile(lambda: volumeio.dataset_blocks(data, budget_bytes=8), 30.0)
+    assert got == expected
+
+
+@pytest.mark.parametrize("q", [0.0, 22.5, 25.0, 50.0, 62.5, 75.0, 97.5, 100.0])
+def test_stream_quantile_bins_values_that_sit_exactly_on_bin_edges(q, monkeypatch):
+    """Values landing exactly on a bin edge must be counted where they are collected.
+
+    With four bins over 0..8 the edges are 0, 2, 4, 6, 8 and every value is an
+    edge or an interior point, so the histogram convention is fully exercised:
+    ``side="right"`` puts an edge value in the bin it *starts*, matching the
+    survivor pass's ``[bin_lo, bin_hi)``, and the final bin is closed so the
+    maximum belongs somewhere. Either half of that wrong and the counted bin
+    disagrees with the collected one — an IndexError or a silently wrong value,
+    not a rounding difference.
+    """
+    monkeypatch.setattr(volumeio, "_QUANTILE_BINS", 4)
+    data = np.repeat(np.arange(9.0), 9).reshape(9, 3, 3)
+    got = volumeio.stream_quantile(lambda: volumeio.dataset_blocks(data, budget_bytes=72), q)
+    assert got == float(np.percentile(data, q))
+
+
+def test_stream_quantile_terminates_when_bin_edges_collapse(monkeypatch):
+    """A run of identical values narrows the window until it cannot be split.
+
+    Refinement halves toward the repeated value until `hi` is the float
+    immediately above `lo`. Every interior edge then rounds onto an endpoint,
+    the chosen bin *is* the whole window and re-bisecting reproduces the same
+    round forever — and `lo == hi` never becomes true, so the guard at the top
+    of the loop does not end it; `_select_among_ties` does. At the shipped
+    constants this needs a run of more than 2**20 identical values, which a
+    constant background region in a full-size volume supplies. The traversal
+    cap turns the failure mode into a fast assertion instead of a hung suite.
+    """
+    monkeypatch.setattr(volumeio, "_QUANTILE_BINS", 2)
+    monkeypatch.setattr(volumeio, "_QUANTILE_EXACT_CAP", 4)
+    data = np.full((12, 3, 3), 0.5)
+    data[0, 0, 0] = 0.0
+    data[0, 0, 1] = 1.0
+    traversals = 0
+
+    def make_blocks():
+        nonlocal traversals
+        traversals += 1
+        if traversals > 20_000:
+            raise AssertionError("refinement never terminated")
+        return volumeio.dataset_blocks(data, budget_bytes=data.nbytes // 3)
+
+    assert volumeio.stream_quantile(make_blocks, 50.0) == float(np.percentile(data, 50.0)) == 0.5
+
+
+@pytest.mark.parametrize("q", [0.0, 50.0, 80.0, 95.0, 100.0])
+def test_stream_quantile_selects_across_an_unsplittable_window(q, monkeypatch):
+    """The whole window is two adjacent floats, and the answer is the upper one.
+
+    `stream_quantile`'s min and max here differ by a single ulp, so the very
+    first histogram cannot split them and the search lands straight in the
+    tie handler with a target that runs past the repeated lower value. A
+    handler that only ever returned the window's lower end — or that walked
+    the distinct values in the wrong order — would answer 0.5 for the top
+    percentiles instead of the float above it. The 16/5 split with q=80 puts
+    the target exactly on the first upper value (rank 16 of 21), the rank an
+    off-by-one in the running count gets wrong and every other rank forgives.
+    """
+    monkeypatch.setattr(volumeio, "_QUANTILE_BINS", 2)
+    monkeypatch.setattr(volumeio, "_QUANTILE_EXACT_CAP", 4)
+    above = float(np.nextafter(0.5, 1.0))
+    values = np.array([0.5] * 16 + [above] * 5)
+    data = values.reshape(21, 1, 1)
+    traversals = 0
+
+    def make_blocks():
+        nonlocal traversals
+        traversals += 1
+        if traversals > 20_000:
+            raise AssertionError("refinement never terminated")
+        return volumeio.dataset_blocks(data, budget_bytes=8)
+
+    got = volumeio.stream_quantile(make_blocks, q)
+    assert got == float(np.percentile(values, q))
+    if q >= 80.0:
+        assert got == above  # and not 0.5, which is only one ulp away
+
+
+def test_stream_quantile_skips_interpolation_when_the_rank_is_exact():
+    """On a rank that needs no interpolation, no interpolation is performed.
+
+    A spread wide enough to overflow `hi - lo` makes this visible: numpy runs
+    its lerp regardless and returns `nan` here (its `subtract` overflows to
+    inf, then `inf * 0`), while the value asked for is simply the smaller of
+    two order statistics. This is the one input class where this helper
+    deliberately does **not** reproduce `np.percentile` — it returns the exact
+    order statistic instead of an overflow artefact — and it is unreachable
+    for the colour limits it serves, whose data never spans 1e308.
+    """
+    data = np.array([[[-1e308]], [[1e308]]])
+    with np.errstate(over="ignore", invalid="ignore"):  # the overflow is the subject
+        got = volumeio.stream_quantile(lambda: volumeio.dataset_blocks(data, budget_bytes=8), 0.0)
+        assert got == -1e308
+        assert np.isnan(float(np.percentile(data, 0.0)))  # what we decline to reproduce
+        # Ranks that genuinely interpolate still track numpy, overflow included.
+        for q in (25.0, 50.0, 100.0):
+            streamed = volumeio.stream_quantile(
+                lambda: volumeio.dataset_blocks(data, budget_bytes=8), q
+            )
+            assert streamed == float(np.percentile(data, q))
+
+
+def test_stream_quantile_passes_the_shared_budget_independence_harness():
+    """Checked by the same instrument as every other phase-5 conversion."""
+    from tests.equivalence import assert_budget_independent
+
+    rng = np.random.default_rng(31)
+    data = 10.0 ** rng.uniform(-12, 12, size=(24, 7, 7))
+    data[rng.random(data.shape) < 0.1] = np.nan
+
+    def run(dset, *, budget_bytes):
+        return volumeio.stream_quantile(
+            lambda: volumeio.dataset_blocks(dset, budget_bytes=budget_bytes), 99.0
+        )
+
+    assert_budget_independent(
+        run, data, budgets=[max(1, data.nbytes // d) for d in (1, 3, 7, 1000)]
+    )
+
+
+def test_stream_quantile_accepts_a_generated_block_stream():
+    """The factory may build blocks that exist nowhere on disk."""
+    rng = np.random.default_rng(5)
+    layers = [rng.normal(size=(3, 3)) for _ in range(9)]
+
+    def make_blocks():
+        return (layer * 2.0 for layer in layers)
+
+    expected = float(np.percentile(np.concatenate([layer.ravel() for layer in layers]) * 2.0, 30.0))
+    assert volumeio.stream_quantile(make_blocks, 30.0) == expected
+
+
 # -- display decimation (render paths) ---------------------------------------
 def test_display_decimation_budgets_two_copies(tmp_path):
     """The peak is ~2 copies, so a volume that fits ONCE must still be decimated."""

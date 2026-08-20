@@ -291,6 +291,180 @@ def stream_minmax(blocks) -> tuple[float, float]:
     return lo, hi
 
 
+_QUANTILE_BINS = 1 << 16
+_QUANTILE_EXACT_CAP = 1 << 20
+
+
+def _lerp(lo: float, hi: float, t: float) -> float:
+    """numpy's linear interpolation for percentiles, reproduced bit-for-bit.
+
+    numpy switches formula at ``t >= 0.5`` for numerical stability; matching it
+    is the difference between "the same number" and "a very close number", and
+    the whole point of an exact quantile is the former.
+    """
+    result = lo + (hi - lo) * t
+    if t >= 0.5 and hi != lo:
+        result = hi - (hi - lo) * (1.0 - t)
+    return float(result)
+
+
+def stream_quantile(make_blocks, q: float) -> float:
+    """The *q*-th percentile of the finite values, exactly, in bounded memory.
+
+    Returns what ``np.percentile(finite_values, q)`` returns — not an estimate.
+    Colour limits are computed this way, so an approximation would shift every
+    existing figure's colours; exactness is the requirement.
+
+    Three passes. Pass 1 takes the finite min, max and count. Pass 2
+    histograms into the range and locates the bin holding the target rank,
+    narrowing and repeating while that bin holds too many values to sort. Pass
+    3 collects the survivors — a small array — and selects exactly.
+
+    *make_blocks* is a zero-argument callable returning a fresh iterable of
+    arrays, because the algorithm traverses more than once.
+
+    Working set is a few tens of MB above the caller's block, whatever the
+    volume's size: the histogram's 65537 edges and counts, plus the survivors
+    of one bin (at most ``_QUANTILE_EXACT_CAP`` values) held twice while they
+    are concatenated and sorted.
+
+    One deliberate divergence from ``np.percentile``: on a rank that needs no
+    interpolation the order statistic is returned as-is, so a spread wide
+    enough to overflow ``hi - lo`` gives that value rather than the ``nan``
+    numpy's unconditional lerp produces there. Every rank that does
+    interpolate reproduces numpy, overflow included.
+    """
+    if not 0.0 <= q <= 100.0:
+        # numpy raises here; returning a clamped answer instead would be a
+        # silently wrong number, the one failure mode this helper must not have.
+        raise ValueError(f"Percentiles must be in the range [0, 100], got {q!r}")
+    lo, hi = stream_minmax(make_blocks())
+    if not np.isfinite(lo):
+        return float("nan")
+    count = 0
+    for block in make_blocks():
+        count += int(np.count_nonzero(np.isfinite(block)))
+    if count == 1 or lo == hi:
+        return float(lo)
+
+    # numpy's rank convention for the "linear" method. The expression is
+    # numpy's own `get_virtual_index` — `(n - 1) * (q / 100)`, evaluated in
+    # that grouping. The algebraically equal `n*qq + (1 - qq) - 1` (numpy's
+    # generic Hyndman-Fan form, which "linear" does *not* take) differs in the
+    # last bits, and the last bits are exactly what this function promises.
+    pos = (q / 100.0) * (count - 1)
+    rank_lo = int(np.floor(pos))
+    frac = pos - rank_lo
+
+    lo_val = _select_rank(make_blocks, rank_lo, lo, hi)
+    if frac == 0.0:
+        # The rank is exact, so there is nothing to interpolate — and returning
+        # here also skips a whole second selection (several more traversals of
+        # the volume) for a neighbour that would carry zero weight. q=0 and
+        # q=100 always land here.
+        return float(lo_val)
+    # A non-zero fraction means `pos` is not an integer, so `rank_lo` is at most
+    # `count - 2` and its successor is always in range.
+    hi_val = _select_rank(make_blocks, rank_lo + 1, lo, hi)
+    return _lerp(lo_val, hi_val, frac)
+
+
+def _bin_edges(lo: float, hi: float) -> np.ndarray:
+    """`_QUANTILE_BINS` + 1 sorted edges spanning ``[lo, hi]`` inclusive.
+
+    A blend (``lo * (1 - t) + hi * t``) rather than ``np.linspace``, which
+    computes ``hi - lo`` first and therefore overflows to inf — and then to nan
+    edges, an all-empty histogram and a bare `ValueError` out of
+    `np.concatenate` — on a range wider than float64 can subtract. The blend
+    stays inside ``[lo, hi]`` for every weight. Rounding can still leave two
+    neighbours out of order by an ulp, which `np.searchsorted` would silently
+    mis-answer, so the edges are clamped and made non-decreasing.
+    """
+    weights = np.linspace(0.0, 1.0, _QUANTILE_BINS + 1)
+    edges = np.clip(lo * (1.0 - weights) + hi * weights, lo, hi)
+    edges = np.maximum.accumulate(edges)
+    edges[0], edges[-1] = lo, hi
+    return edges
+
+
+def _select_rank(make_blocks, rank: int, lo: float, hi: float) -> float:
+    """The *rank*-th smallest finite value (0-based), by histogram refinement."""
+    below = 0  # count of finite values strictly below `lo`
+    while True:
+        if lo == hi:
+            # A fast path, not the termination guarantee: a window that has
+            # collapsed entirely holds one value, so return it without
+            # histogramming a zero-width range. What actually guarantees
+            # termination is the unsplittable-window branch below, which also
+            # covers this case (every edge equal, so the chosen bin is the
+            # whole window) should this ever be removed.
+            return float(lo)
+        edges = _bin_edges(lo, hi)
+        counts = np.zeros(_QUANTILE_BINS, dtype=np.int64)
+        for block in make_blocks():
+            finite = block[np.isfinite(block)]
+            window = finite[(finite >= lo) & (finite <= hi)]
+            if window.size:
+                idx = np.clip(
+                    np.searchsorted(edges, window, side="right") - 1, 0, _QUANTILE_BINS - 1
+                )
+                counts += np.bincount(idx, minlength=_QUANTILE_BINS)
+        cumulative = np.cumsum(counts)
+        target = rank - below
+        bin_index = int(np.searchsorted(cumulative, target, side="right"))
+        bin_index = min(bin_index, _QUANTILE_BINS - 1)
+        in_bin = int(counts[bin_index])
+        before = int(cumulative[bin_index - 1]) if bin_index else 0
+        if in_bin <= _QUANTILE_EXACT_CAP:
+            survivors = []
+            bin_lo, bin_hi = float(edges[bin_index]), float(edges[bin_index + 1])
+            last = bin_index == _QUANTILE_BINS - 1
+            for block in make_blocks():
+                finite = block[np.isfinite(block)]
+                mask = (finite >= bin_lo) & ((finite <= bin_hi) if last else (finite < bin_hi))
+                if mask.any():
+                    survivors.append(finite[mask])
+            values = np.sort(np.concatenate(survivors))
+            return float(values[target - before])
+        # Too many to sort: narrow to this bin and go again.
+        new_lo, new_hi = float(edges[bin_index]), float(edges[bin_index + 1])
+        if new_lo == lo and new_hi == hi:
+            return _select_among_ties(make_blocks, target, lo, hi)
+        below += before
+        lo, hi = new_lo, new_hi
+
+
+def _select_among_ties(make_blocks, target: int, lo: float, hi: float) -> float:
+    """Select rank *target* when the window can no longer be split.
+
+    Reached when the chosen bin *is* the whole window, which happens once
+    `hi - lo` is down to about one ulp: every interior edge has rounded onto an
+    endpoint, so bisecting again reproduces the same round forever. A run of
+    more than `_QUANTILE_EXACT_CAP` identical values takes the search here — a
+    constant background region in a full-size volume does exactly that — and
+    the `lo == hi` guard does not catch it, because `hi` is the float *above*
+    `lo`, not `lo`.
+
+    An interval that narrow holds at most a couple of distinct floats (that is
+    what "cannot be split" means), however many values sit on them, so counting
+    per distinct value is bounded and gives the exact answer directly.
+    """
+    tally: dict[float, int] = {}
+    for block in make_blocks():
+        finite = block[np.isfinite(block)]
+        window = finite[(finite >= lo) & (finite <= hi)]
+        if window.size:
+            values, counts = np.unique(window, return_counts=True)
+            for value, n in zip(values.tolist(), counts.tolist()):
+                tally[value] = tally.get(value, 0) + n
+    seen = 0
+    for value in sorted(tally):
+        seen += tally[value]
+        if target < seen:
+            return float(value)
+    return float(hi)
+
+
 def block_reduce(dset, fn, *, budget_bytes: int, init):
     """Fold *dset* block-by-block with ``fn(acc, block) -> acc``.
 
