@@ -345,6 +345,31 @@ def test_run_matching_grids_no_grid_note(tmp_path):
     assert not any("grid" in n for n in res.notes)
 
 
+def _two_volume_slices_params(tmp_path):
+    """Synthetic params that select several volumes (both map files + rocking)."""
+    proc, raw = _setup(tmp_path)
+    return _minimal_params(proc, raw, tmp_path / "sl_lifetime")
+
+
+def test_slices_releases_previous_volume(tmp_path, monkeypatch):
+    """The previous prepared volume is dead before the next one is built."""
+    import weakref
+
+    seen: list = []
+    real = SL.prepare_volume
+
+    def spy(cfg, p, *args, **kwargs):
+        # Every previously prepared volume must already be collectable.
+        assert all(ref() is None for ref in seen), "previous volume still alive"
+        prep = real(cfg, p, *args, **kwargs)
+        seen.append(weakref.ref(prep["data"]))
+        return prep
+
+    monkeypatch.setattr(SL, "prepare_volume", spy)
+    SL.run(_two_volume_slices_params(tmp_path))
+    assert len(seen) >= 2, "test needs at least two volumes to be meaningful"
+
+
 def test_run_warns_on_mismatched_y_heights(tmp_path):
     """An aligned raw volume built with a different detector-row crop is taller
     than the map volumes — the run must flag the Y misregistration in notes."""

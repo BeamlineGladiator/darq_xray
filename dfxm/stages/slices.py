@@ -741,6 +741,10 @@ def prepare_volume(cfg, p, scale_x, scale_y, samy_dir, style=None):
         data = A.apply_roi_3d(raw, cfg.get("roi_x"), cfg.get("roi_y"))
         if len(samy) > 0:
             data = A.apply_samy_shifts_to_volume(data, samy, scale_x, samy_dir)
+            # Only here: apply_roi_3d returns a *view*, so raw stays alive until
+            # the shift allocates a new array. With no shift, data is still that
+            # view and dropping the name would free nothing.
+            del raw
         if len(samz) > 0:
             data, _z, scale_z = A.interpolate_to_uniform_z(data, samz)
         else:
@@ -1150,22 +1154,29 @@ _SLICES_VOLUME_PARAMS = (
 def estimate(params: dict) -> CostEstimate:
     """Peak memory for a slices run, from HDF5 shapes only.
 
-    ``run()`` calls ``prepare_volume`` one selected dataset at a time, and
-    ``prep`` is a plain local that gets *rebound* each iteration — the
-    previous volume's prepared array stays fully alive while the next one is
-    being built, so the peak pairs the current volume's own load peak with the
-    largest OTHER selected volume's footprint (not the sum of all of them).
+    ``run()`` calls ``prepare_volume`` one selected dataset at a time. The
+    model below is the *old* loop, in which ``prep`` was a plain local merely
+    *rebound* each iteration, so the previous volume's prepared array stayed
+    fully alive while the next one was built — hence a peak pairing the
+    current volume's own load peak with the largest OTHER selected volume's
+    footprint. ``run()`` now releases the previous ``prep`` before calling
+    ``prepare_volume`` again, so that cross-volume term no longer applies.
 
     Within one ``prepare_volume`` call, ``elems_v * itemsize_v`` is the native
     read (source dtype, coexisting briefly with its ``.astype(np.float64)``
     copy). For a **stacked** source (``mosa_volume_file`` /
-    ``strain_volume_file``) three float64-sized copies of that field are then
-    alive at once: the raw float64 read (kept in its own variable), the
-    samy-shifted canvas, and ``interpolate_to_uniform_z``'s float64 output —
-    ``load_peak_v = elems_v * itemsize_v + 3 * elems_v * 8``. An **aligned**
-    source (``aligned_rocking_file`` / ``aligned_mosa_file``) is already
-    co-registered — no shift/interpolate step — so only the one float64 read
-    persists: ``load_peak_v = elems_v * itemsize_v + 1 * elems_v * 8``.
+    ``strain_volume_file``) the model counts three float64-sized copies of
+    that field alive at once: the raw float64 read (kept in its own variable),
+    the samy-shifted canvas, and ``interpolate_to_uniform_z``'s float64 output
+    — ``load_peak_v = elems_v * itemsize_v + 3 * elems_v * 8``. The raw read
+    is now dropped as soon as the samy shift has copied out of it, so only two
+    are really coexistent. An **aligned** source (``aligned_rocking_file`` /
+    ``aligned_mosa_file``) is already co-registered — no shift/interpolate
+    step — so only the one float64 read persists:
+    ``load_peak_v = elems_v * itemsize_v + 1 * elems_v * 8``.
+
+    Both corrections make the returned figure a large **over**-estimate,
+    pending recalibration; the arithmetic is deliberately left unchanged here.
 
     ``total_input`` is unchanged from the file-level ``sum_dataset_bytes``
     total across the four volume-file params (every dataset in each selected
@@ -1375,9 +1386,11 @@ def run(params: dict, progress: ProgressFn | None = None) -> SlicesResult:
     fh.attrs["center_method"] = p["center_method"]
     fh.attrs["range_pct"] = float(p["range_pct"])
     fh.attrs["frame"] = "origin-0 PVTI frame: world(X,Y,Z) = (i*scale_x, j*scale_y, k*scale_z)"
+    prep = None
     try:
         for vi, cfg in enumerate(volumes):
             progress(0.1 + 0.85 * vi / len(volumes), f"slicing {cfg['kind']} {cfg['dataset_path']}")
+            prep = None  # release the previous volume before building the next
             try:
                 prep = prepare_volume(cfg, p, scale_x, scale_y, samy_dir, style=style)
             except (KeyError, OSError, ValueError) as exc:
