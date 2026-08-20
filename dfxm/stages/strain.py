@@ -378,9 +378,34 @@ def estimate(params: dict) -> CostEstimate:
     raises: an unreadable input reports an unknown cost with the reason in
     ``note``.
 
-    The peak is ``2 * n_layers * H * W * 8``: ``run()`` accumulates a float64
-    strain map per layer in ``slices`` and then ``np.stack`` builds a contiguous
-    copy, so both are resident at the high-water mark.
+    The arithmetic below, ``2 * n_layers * H * W * 8``, models the *old*
+    ``run()``: it accumulated a float64 strain map per layer in a ``slices``
+    list, and then ``save_stacked_volume`` called ``np.stack`` to build one
+    contiguous copy alongside it, so a whole volume and its duplicate were
+    resident together at the high-water mark. Neither survives — the ``slices``
+    local and ``save_stacked_volume`` were both deleted. ``run()`` now
+    ``append``s each layer to a ``StackedVolumeFile`` and drops it immediately,
+    so the resident set no longer scales with ``n_layers`` at all: the real peak
+    is a handful of layer-sized float64 arrays — ``process_maps_file``'s detrend
+    chain (``ccmth_original``, ``ccmth_map``, ``surface``) plus the ``strain``
+    map it returns.
+
+    **Recalibration warning — the fix is not simply dropping ``n_layers``.**
+    The current figure over-predicts, which is the safe direction, and is
+    deliberately left unchanged here. Two things a per-layer model must account
+    for before it can replace it:
+
+    * With ``save_plots`` on (the default), each layer rasterises three figures
+      at 120-200 dpi. An Agg canvas is sized by figure inches and dpi, **not**
+      by the data, so on modest layer shapes the rendering buffers — not the
+      arrays — are the high-water mark, and a model in bare ``H * W * 8`` units
+      **under**-predicts. Under-prediction is the dangerous direction: it
+      greenlights a run that then OOMs.
+    * ``StackedVolumeFile`` writes ``strain`` gzip-compressed one chunk per
+      layer, so h5py holds a compression buffer of about one layer on top.
+
+    ``total_input`` and the reported ``shape`` still legitimately scale with
+    ``n_layers``; only ``peak_bytes`` is the stale part.
     """
     p = {**STAGE.defaults(), **params}
     try:

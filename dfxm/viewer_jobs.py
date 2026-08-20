@@ -21,8 +21,11 @@ def _load_volume(loader: dict):
     load: the whole array is uploaded to VTK, so streaming cannot help it and an
     oversized volume is decimated on read instead of dying. Both loaders share
     :mod:`dfxm.common.volumeio`'s display policy, so the exported video is
-    coarsened exactly as much as the view the user was looking at. ``notes``
-    carries the user-facing sentence when that happened (empty otherwise).
+    coarsened by the same *rule* as the view the user was looking at — not
+    necessarily by the same *factor*, since ``display_headroom_bytes()`` re-reads
+    available RAM here, in a separate process that may meet different memory
+    pressure than the window did. ``notes`` carries the user-facing sentence
+    naming the factor actually used (empty when nothing was decimated).
     """
     if loader["kind"] == "h5_dataset":
         notes: tuple[str, ...] = ()

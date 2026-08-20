@@ -5,10 +5,16 @@ divergent schemes. ``mosaicity._streamed_clim`` already streamed layer-by-layer
 for plotting; this generalises that pattern and adds a memory budget. (Note that
 ``mosaicity.run`` itself does NOT stream — it collects four whole volumes.)
 
-The governing guarantee is **budget-independence**: for any ``budget_bytes``,
-these helpers produce bit-identical results. That is what makes a laptop and a
-workstation emit the same publishable data product. See :func:`neumaier_sum`
-for why ordinary summation would break it.
+The governing guarantee for the **streaming** helpers is **budget-independence**:
+for any ``budget_bytes`` they produce bit-identical results. That is what makes a
+laptop and a workstation emit the same publishable data product. See
+:func:`neumaier_sum` for why ordinary summation would break it.
+
+The **display** helpers (:func:`display_headroom_bytes`,
+:func:`display_decimation`, :func:`decimation_note`) are deliberately outside
+that guarantee: they coarsen a volume that a render path cannot stream, so a
+different budget yields a different stride and therefore different data on
+screen. They never touch the stored file.
 """
 
 from __future__ import annotations
@@ -34,7 +40,9 @@ def volume_bytes(dset) -> int:
 # coarsening is the only lever left. These three helpers are the single policy
 # both render loaders use — the GUI's 3-D viewer (`gui.viewers._rocking_source`)
 # and the rotation-video export child (`dfxm.viewer_jobs._load_volume`) — so the
-# on-screen view and the video it exports cannot drift apart. Living here rather
+# on-screen view and the video it exports cannot drift apart in *rule*. They can
+# still land on different strides: `display_headroom_bytes()` re-reads available
+# RAM, and the export child runs under its own memory pressure. Living here rather
 # than in `gui/` is what lets `dfxm/` use them: the GUI depends on the core,
 # never the reverse.
 
@@ -47,8 +55,8 @@ def volume_bytes(dset) -> int:
 # the OOM the decimation exists to prevent.
 DISPLAY_COPIES = 2
 
-# Above this the picture is 4096x coarser in every axis; not reachable in practice
-# (~32 G voxels) but it bounds the loop.
+# At the cap the picture is 16x coarser per axis, i.e. 4096x fewer voxels; not
+# reachable in practice (~32 G voxels) but it bounds the loop.
 MAX_DISPLAY_DECIMATION = 16
 
 
@@ -64,7 +72,19 @@ def display_decimation(dset, budget_bytes: int) -> int:
 
     ``budget_bytes`` is the machine's headroom; the peak is budgeted at
     :data:`DISPLAY_COPIES` copies of the strided array (see the note above).
+
+    *dset* must be **3-D**: the returned stride is applied as ``[::s, ::s, ::s]``
+    by every caller and the budget divides by ``s ** 3``, so the number is only
+    meaningful for a volume. A render path has nothing to do with a 2-D dataset
+    anyway, and without this guard one reaches the caller's slicing as an
+    opaque "too many indices" ``IndexError``.
     """
+    ndim = len(dset.shape)
+    if ndim != 3:
+        raise ValueError(
+            f"display decimation needs a 3-D volume, got a {ndim}-D dataset "
+            f"with shape {tuple(int(d) for d in dset.shape)}"
+        )
     # float64 is what a render path holds, whatever the stored dtype.
     needed = volume_bytes(dset) // max(1, int(dset.dtype.itemsize)) * 8
     budget = max(1, int(budget_bytes) // DISPLAY_COPIES)

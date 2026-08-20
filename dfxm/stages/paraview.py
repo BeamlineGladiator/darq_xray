@@ -590,20 +590,43 @@ def estimate(params: dict) -> CostEstimate:
 
     ``run()`` processes the mosaicity and strain volume files **sequentially**
     via separate helper calls (``_process_mosaicity`` then ``_process_strain``)
-    — each helper's locals, including the raw ``datasets`` dict it loads, die
-    when it returns, so the two files' peaks do not add. Within one file,
-    ``_process_mosaicity``/``_process_strain`` keep the raw dataset(s)
-    (native dtype, ``file_total`` bytes) alive in a dict while building an
-    aligned float64 copy of every field (``apply_roi_3d`` ->
-    ``apply_samy_shifts_to_volume`` -> ``interpolate_to_uniform_z``, the last
-    of which upcasts to float64) into a second dict — ``file_total +
-    file_elems * 8``. ``save_volumes_as_pvti`` then builds a further
-    ``np.where``-cleaned float64 copy of every field plus a boolean
-    ``valid_mask`` before downcasting to ``SAVE_DTYPE`` per piece at write
-    time — bounded as ``file_elems * 8 + largest_elems * 8``. Peak per file is
-    therefore ``file_total + 2 * file_elems * 8 + largest_elems * 8``, and the
-    run's peak is the max over the (at most two) files processed, not their
-    sum. ``chunkable=True``.
+    — each helper's locals die when it returns, so the two files' peaks do not
+    add, and the run's peak is the max over the (at most two) files processed.
+    ``chunkable=True``.
+
+    The ``file_total`` term in the arithmetic below models the *old*
+    ``_process_mosaicity``, which called ``load_mosa_datasets`` to hold every
+    raw field (native dtype, ``file_total`` bytes) in a dict for the whole
+    alignment pass. That dict is gone: ``mosa_field_names`` +
+    ``load_mosa_field`` read **one** field at a time and ``del`` the raw read as
+    soon as ``apply_samy_shifts_to_volume`` has copied out of it, so only one
+    field's raw bytes are ever resident. ``_process_strain`` was not converted
+    — it loads a single dataset and keeps it in a local for the whole call, so
+    for the strain file ``file_total`` is still an honest one-volume term.
+
+    Everything after the read is unchanged: the aligned float64 copy of every
+    field (``apply_roi_3d`` -> ``apply_samy_shifts_to_volume`` ->
+    ``interpolate_to_uniform_z``, the last of which upcasts to float64)
+    accumulates in ``processed`` — ``file_elems * 8`` — and
+    ``save_volumes_as_pvti`` then builds a further ``np.where``-cleaned float64
+    copy of every field plus a boolean ``valid_mask`` before downcasting to
+    ``SAVE_DTYPE`` per piece at write time, bounded as ``file_elems * 8 +
+    largest_elems * 8``.
+
+    **Recalibration warning — do not just delete the ``file_total`` term.** The
+    current figure over-predicts on the mosaicity file, which is the safe
+    direction, and is deliberately left unchanged here. The mosaicity saving is
+    only ``file_total`` minus one field's raw bytes, and the two
+    ``file_elems * 8`` terms that remain are expressed in *unpadded* elements:
+    ``apply_samy_shifts_to_volume`` widens the canvas along image-X by the
+    extreme samy offsets and ``interpolate_to_uniform_z`` resamples onto a grid
+    that exceeds the layer count whenever samz is irregular, and the two
+    inflations multiply — so every aligned copy is *larger* than
+    ``file_elems``. Neither extent is derivable from HDF5 shapes alone (both
+    depend on motor values), so the retired term is in part accidental headroom
+    covering that; removing it without replacing it can turn an over-estimate
+    into an under-estimate, which is the dangerous direction (it greenlights a
+    run that then OOMs).
     """
     p = {**STAGE.defaults(), **params}
     total = 0

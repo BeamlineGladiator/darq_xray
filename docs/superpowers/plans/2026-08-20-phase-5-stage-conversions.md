@@ -4,7 +4,7 @@
 
 **Goal:** Every volume stage completes the real STO2 dataset under an enforced memory ceiling, producing output bit-identical to an unconstrained run.
 
-**Architecture:** Three families of fix. Two stages (`strain`, `mosaicity`) *build* volumes by collecting per-layer maps and `np.stack`ing them — they get an incremental HDF5 writer and never hold a volume at all. Three stages (`visualize`, `paraview`, `slices`) load whole volumes and run the fixed alignment chain — they get a lifecycle fix first, then a streaming alignment that blocks along Z, each block seeing the one row of context its interpolation reads. Three sites (`rocking`, `matched`, the 3-D viewer) are each one localised change: a streaming quantile, in-plane blocking, and decimation on read.
+**Architecture:** Three families of fix. Two stages (`strain`, `mosaicity`) *build* volumes by collecting per-layer maps and `np.stack`ing them — they get an incremental HDF5 writer and never hold a volume at all. Three stages (`visualize`, `paraview`, `slices`) load whole volumes and run the fixed alignment chain — they get a lifecycle fix first, then a streaming alignment that blocks along Z, each block seeing the one row of context its interpolation reads. Three sites (`rocking`, `matched`, the two render loads) are each one localised change: a streaming quantile, in-plane blocking, and decimation on read. That last one covers **two** of the spec's thirteen sites — `gui/viewers.py:53` (the 3-D viewer) and `dfxm/viewer_jobs.py:20` (the rotation-video export child) — under one shared policy in `dfxm/common/volumeio.py`.
 
 **Tech Stack:** Python 3, numpy, h5py, scipy (`interp1d`, `ndimage.shift`, `map_coordinates`), psutil, pytest.
 
@@ -669,11 +669,17 @@ float64 read once the samy shift has copied out of it."
 
 ### Task 4: Decimate the 3-D viewer's volume on read
 
-`gui/viewers.py:53` reads the whole volume, upcasts it with `.astype(float)`, and then builds `vol[np.isfinite(vol)]` for the percentile clim — a second full-size copy. VTK needs the array whole, so streaming cannot help; decimation can. This is a display path, so coarsening is allowed, but it must be visible.
+Two of the spec's thirteen sites, one conversion:
+
+- `gui/viewers.py:53` (the on-screen 3-D viewer) reads the whole volume, upcasts it with `.astype(float)`, and then builds `vol[np.isfinite(vol)]` for the percentile clim — a second full-size copy.
+- `dfxm/viewer_jobs.py:20` (`_load_volume`, the rotation-video export child) reads the same dataset with a plain `[:]`.
+
+VTK needs the array whole, so streaming cannot help; decimation can. This is a display path, so coarsening is allowed, but it must be visible. Both loads must decimate by the **same policy**, or the exported video and the view it came from drift apart — so the policy (`display_headroom_bytes`, `display_decimation`, `decimation_note`) lives in `dfxm/common/volumeio.py`, which both may import (`dfxm/` may not import `gui/`). Each still measures headroom in its own process, so the *factor* can differ; the note names the one actually used.
 
 **Files:**
 - Modify: `gui/viewers.py:25-74` (`LoadedVolume`, `_rocking_source`)
-- Test: `tests/test_gui_viewers.py`
+- Modify: `dfxm/viewer_jobs.py:17-46` (`_load_volume`), `dfxm/common/volumeio.py` (the shared display policy)
+- Test: `tests/test_gui_viewers.py`, `tests/test_viewer_jobs.py`, `tests/test_common_volumeio.py`
 - Docs: `docs/Usage.md` (user-visible coarsening), `docs/Codebase.md`
 
 **Interfaces:**

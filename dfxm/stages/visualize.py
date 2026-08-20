@@ -450,16 +450,40 @@ def _display_info(dataset_name, is_strain=False):
 def estimate(params: dict) -> CostEstimate:
     """Peak memory for this run, from HDF5 shapes only.
 
-    Unlike ``paraview``, ``run()`` handles the mosaicity and strain sections
-    **inline in the same function scope**, not via separate helper calls — the
-    mosaicity ``datasets`` dict (raw, native dtype, every field) is never
-    deleted or reassigned, so it stays alive through the strain section too.
-    Peak is therefore ``total_input`` (both files' raw bytes, summed — not
-    maxed like paraview) plus one field's alignment chain at a time: each
-    ``_align`` call (``apply_roi_3d`` -> ``apply_samy_shifts_to_volume`` ->
-    ``interpolate_to_uniform_z``, upcasting to float64) leaves up to three
-    float64-sized temporaries live for the largest field simultaneously,
-    bounded as ``3 * largest_elems * 8``. ``chunkable=True``.
+    The ``total_input`` term in the arithmetic below models the *old* ``run()``,
+    which loaded the mosaicity file with ``load_mosa_datasets`` into a
+    ``datasets`` dict (raw, native dtype, every field) that was never deleted or
+    reassigned — so it stayed alive through the strain section, and both files'
+    raw bytes had to be summed rather than maxed. That dict is gone.
+    ``load_mosa_datasets`` was replaced by ``mosa_field_names`` +
+    ``load_mosa_field``: ``run()`` reads **one** field at a time, ``del``s the
+    raw read once ``_align`` has copied out of it, resets ``data`` before the
+    next read, and drops the last field's aligned volume before the strain
+    section starts. Only one field's worth of raw data is ever resident, and the
+    two sections' peaks are now a max, not a sum.
+
+    The second term is still live: each ``_align`` call (``apply_roi_3d`` ->
+    ``apply_samy_shifts_to_volume`` -> ``interpolate_to_uniform_z``, upcasting
+    to float64) leaves up to three float64-sized arrays alive for the field
+    being processed, bounded as ``3 * largest_elems * 8``. ``chunkable=True``.
+
+    **Recalibration warning — do not just swap the sum for a max.** The current
+    figure over-predicts, which is the safe direction, and is deliberately left
+    unchanged here. Two hazards for whoever narrows it:
+
+    * The ``3 * largest_elems * 8`` bound is expressed in *unpadded* elements.
+      ``apply_samy_shifts_to_volume`` widens the canvas along image-X by the
+      extreme samy offsets and ``interpolate_to_uniform_z`` resamples onto a
+      grid that exceeds the layer count whenever samz is irregular, and the two
+      inflations multiply — so each surviving copy is *larger* than
+      ``largest_elems``. Neither extent is derivable from HDF5 shapes alone
+      (both depend on motor values); the retired ``total_input`` term was in
+      effect accidental headroom masking that. Removing it without replacing it
+      turns an over-estimate into an under-estimate, which is the dangerous
+      direction (it greenlights a run that then OOMs).
+    * One field's raw read (native dtype) is still coexistent with the first
+      arrays of its own alignment chain, so the per-field term is not purely
+      float64.
     """
     p = {**STAGE.defaults(), **params}
     total = 0
@@ -674,6 +698,15 @@ def run(params: dict, progress: ProgressFn | None = None) -> VisualizeResult:
         samy, samz = _read_motors(raw_root, p["mosa_pattern"], p["samy_path"], p["samz_path"])
         for i, name in enumerate(names):
             progress(0.1 + 0.4 * i / max(1, len(names)), f"mosaicity: {name}")
+            # Release the PREVIOUS field's aligned volume before reading the next
+            # one. `data` is only rebound by the `_align` call below, i.e. after
+            # the read and the whole alignment chain have allocated — so without
+            # this the previous field's float64 volume coexists with the next
+            # field's raw read and its alignment temporaries. (CoM fields happen
+            # to be rebound by `_center_com_and_range`, which masks the leak on
+            # those; FWHM->next transitions carry the full volume across.)
+            # Rebinding rather than `del` keeps the first iteration safe.
+            data = None
             raw = load_mosa_field(mosa_file, name)
             if raw is None:
                 continue

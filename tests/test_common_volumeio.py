@@ -241,6 +241,16 @@ def test_display_decimation_budgets_two_copies(tmp_path):
         assert volumeio.display_decimation(dset, 1 << 30) == 1
 
 
+def test_display_decimation_rejects_a_non_3d_dataset(tmp_path):
+    """A 2-D dataset gets a legible error, not the caller's IndexError."""
+    path = tmp_path / "flat.h5"
+    with h5py.File(path, "w") as f:
+        f.create_dataset("map", data=np.zeros((8, 8)))
+    with h5py.File(path, "r") as f:
+        with pytest.raises(ValueError, match="3-D volume"):
+            volumeio.display_decimation(f["map"], 1 << 30)
+
+
 def test_decimation_note_prints_shape_in_dataset_order():
     note = volumeio.decimation_note(4, (76, 700, 2891))
     assert "(76, 700, 2891)" in note

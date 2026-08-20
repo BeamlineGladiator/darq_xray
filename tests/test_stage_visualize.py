@@ -4,7 +4,9 @@ datasets; alignment reuses the golden-tested common.alignment primitives.
 
 from __future__ import annotations
 
+import gc
 import os
+import weakref
 
 import h5py
 import numpy as np
@@ -80,6 +82,52 @@ def test_load_mosa_field_unknown_name_returns_none(tmp_path):
     path = str(tmp_path / "stacked_volumes.h5")
     _write_mosa(path)
     assert V.load_mosa_field(path, "not_a_field") is None
+
+
+def test_previous_aligned_volume_is_dead_before_the_next_align(tmp_path, monkeypatch):
+    """No field's aligned volume survives into the next field's alignment.
+
+    ``data`` is only rebound by the ``_align`` call itself, i.e. *after* the
+    next field has been read and its whole alignment chain has allocated. A
+    weakref on every ``_align`` output, checked at each subsequent entry, is
+    what distinguishes "released in time" from "released eventually": without
+    the pre-read reset the chi_FWHM volume is still alive when mu_Center_of_mass
+    is aligned. (Center-of-mass fields are rebound by ``_center_com_and_range``
+    and so would pass either way — the FWHM -> next transition is the probe.)
+    """
+    proc, raw = _setup(tmp_path)
+    real_align = V._align
+    refs: list[weakref.ref] = []
+    alive_at_entry: list[list[bool]] = []
+
+    def spy(*args, **kwargs):
+        gc.collect()
+        alive_at_entry.append([r() is not None for r in refs])
+        aligned, z_pos, scale_z = real_align(*args, **kwargs)
+        refs.append(weakref.ref(aligned))
+        return aligned, z_pos, scale_z
+
+    monkeypatch.setattr(V, "_align", spy)
+    V.run(
+        {
+            "mosa_volume_file": str(proc / "stacked_volumes.h5"),
+            "strain_volume_file": str(proc / "stacked_strain_volumes.h5"),
+            "raw_root": str(raw),
+            "mosa_pattern": "mosa__*",
+            "strain_pattern": "strain__*",
+            "output_dir": str(tmp_path / "viz"),
+            "save_layers": False,
+            "save_animation": False,
+            "save_topview": False,
+        }
+    )
+
+    # 4 mosaicity fields + strain, in sorted order.
+    assert len(refs) == 5
+    # The third entry is mu_Center_of_mass; index 1 in its list is chi_FWHM.
+    assert alive_at_entry[2][1] is False, "chi_FWHM's aligned volume outlived its field"
+    # And nothing else lingers either, including across into the strain section.
+    assert not any(any(flags) for flags in alive_at_entry)
 
 
 def test_run_produces_layers_and_animation(tmp_path):

@@ -1916,9 +1916,12 @@ geometry instead of a 3-D texture.
 > `shape (…)` uses — e.g. *"decimated 4x for display (full shape (76, 700, 2891)
 > exceeds this machine's memory headroom) — the stored data is unchanged"*. The
 > same rule applies to **Save rotation video…**: that export reloads the volume
-> in a child process and decimates it by the same policy, so the video matches
-> what you saw, and it tells you so both in the progress dialog while it renders
-> and in the status line when it finishes. The physical size of the render is
+> in a child process and decimates it by the same policy, so the video is
+> coarsened by the same rule as the view — though not necessarily by the same
+> factor, since the child measures this machine's free memory for itself and may
+> meet different memory pressure than the window did. It always tells you which
+> factor it used, both in the progress dialog while it renders and in the status
+> line when it finishes. The physical size of the render is
 > unaffected: the voxel spacing
 > is scaled by the same factor, so distances, the bounds axes and any exported
 > scale bar stay correct — the picture is just coarser. Nothing is written: the
