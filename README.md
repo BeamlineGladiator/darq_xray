@@ -63,7 +63,7 @@ python3 -m dfxm.stages.concat --help
 ### Dependencies
 
 ```bash
-pip install --user numpy h5py scipy matplotlib pyyaml PySide6 pyvista pyvistaqt vtk
+pip install --user numpy h5py scipy matplotlib pyyaml psutil PySide6 pyvista pyvistaqt vtk
 # plus: pytest (to run the test suite); ffmpeg on PATH for MP4 export
 ```
 
