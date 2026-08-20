@@ -71,9 +71,17 @@ def test_load_or_stream_returns_a_reader_when_it_does_not_fit(volume):
 
 @pytest.fixture
 def wide_volume(tmp_path):
-    """Values spanning many magnitudes — where naive summation loses bits."""
+    """Values spanning many magnitudes — where naive summation loses bits.
+
+    Exponent range widened from the plan's (-6, 7) to (-15, 16): at the
+    narrower range a naive per-block ``np.nansum`` summed in a different
+    order per budget still landed on the same float64 bits every time (see
+    task-12-report.md), so the negative harness test never actually
+    exercised the failure path it exists to catch. (-15, 16) spans enough
+    magnitudes that catastrophic cancellation differs across block orderings.
+    """
     rng = np.random.default_rng(20260820)
-    data = (rng.standard_normal((13, 9, 7)) * 10.0 ** rng.integers(-6, 7, (13, 9, 7))).astype(
+    data = (rng.standard_normal((13, 9, 7)) * 10.0 ** rng.integers(-15, 16, (13, 9, 7))).astype(
         np.float64
     )
     path = tmp_path / "wide.h5"
@@ -184,3 +192,35 @@ def test_scratch_array_behaves_like_an_ndarray(tmp_path):
         np.multiply(arr, 2.0, out=arr)  # in-place: the bucket-3 discipline
         assert np.array_equal(np.asarray(arr), np.arange(5) * 2.0)
         assert float(np.nanmean(arr)) == 4.0
+
+
+def test_harness_passes_a_budget_independent_function(wide_volume):
+    from tests.equivalence import assert_budget_independent
+
+    path, data = wide_volume
+    with h5py.File(path, "r") as f:
+        assert_budget_independent(
+            lambda d, budget_bytes: volumeio.block_nansum(d, budget_bytes=budget_bytes),
+            f["vol"],
+            nbytes=data.nbytes,
+        )
+
+
+def test_harness_catches_a_budget_dependent_function(wide_volume):
+    """The harness is only worth having if it actually fails on a bad impl."""
+    from tests.equivalence import assert_budget_independent
+
+    path, data = wide_volume
+
+    def naive_sum(dset, *, budget_bytes):
+        # np.sum per block then adding up: pairwise ordering varies with budget
+        return float(
+            sum(
+                float(np.nansum(b))
+                for _sl, b in volumeio.iter_blocks(dset, budget_bytes=budget_bytes)
+            )
+        )
+
+    with h5py.File(path, "r") as f:
+        with pytest.raises(AssertionError, match="different bits"):
+            assert_budget_independent(naive_sum, f["vol"], nbytes=data.nbytes)
