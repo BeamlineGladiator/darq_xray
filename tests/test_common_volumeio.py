@@ -226,6 +226,80 @@ def test_harness_catches_a_budget_dependent_function(wide_volume):
             assert_budget_independent(naive_sum, f["vol"], nbytes=data.nbytes)
 
 
+# -- block context, second axis, streaming reductions -------------------------
+def test_iter_with_context_appends_the_next_block_head():
+    data = np.arange(20 * 3 * 4, dtype=np.float64).reshape(20, 3, 4)
+    seen = np.zeros(20, dtype=int)
+    windows = []
+    blocks = volumeio.iter_blocks(data, budget_bytes=data.nbytes // 4)
+    for interior, window, within in volumeio.iter_with_context(blocks, trailing=1):
+        assert np.array_equal(window[within], data[interior])
+        seen[interior] += 1
+        windows.append((interior, window))
+    assert np.array_equal(seen, np.ones(20, dtype=int)), "interiors must tile exactly once"
+    # Every block but the last carries one row of the next.
+    for interior, window in windows[:-1]:
+        assert window.shape[0] == (interior.stop - interior.start) + 1
+        assert np.array_equal(window[-1], data[interior.stop])
+    last_interior, last_window = windows[-1]
+    assert last_window.shape[0] == last_interior.stop - last_interior.start
+
+
+def test_iter_with_context_works_on_a_generated_stream():
+    """The point of taking a stream, not a dataset: generated blocks work too."""
+    data = np.arange(12 * 2 * 2, dtype=np.float64).reshape(12, 2, 2)
+
+    def generated():
+        for start in range(0, 12, 5):
+            stop = min(start + 5, 12)
+            yield slice(start, stop), data[start:stop] * 2.0
+
+    rebuilt = np.concatenate(
+        [w[i] for _sl, w, i in volumeio.iter_with_context(generated(), trailing=1)], axis=0
+    )
+    assert np.array_equal(rebuilt, data * 2.0)
+
+
+def test_iter_with_context_single_block():
+    data = np.zeros((4, 2, 2))
+    items = list(volumeio.iter_with_context(volumeio.iter_blocks(data, budget_bytes=1 << 30)))
+    assert len(items) == 1
+    interior, window, within = items[0]
+    assert interior == slice(0, 4) and window.shape[0] == 4 and within == slice(0, 4)
+
+
+def test_iter_blocks_axis_1():
+    data = np.arange(4 * 12 * 3, dtype=np.float64).reshape(4, 12, 3)
+    rebuilt = np.concatenate(
+        [block for _sl, block in volumeio.iter_blocks(data, budget_bytes=data.nbytes // 3, axis=1)],
+        axis=1,
+    )
+    assert np.array_equal(rebuilt, data)
+
+
+def test_stream_mean_matches_nanmean_closely_and_is_budget_independent():
+    rng = np.random.default_rng(0)
+    data = rng.normal(size=(30, 8, 8))
+    data[data > 2] = np.nan
+    means = [
+        volumeio.stream_mean(volumeio.dataset_blocks(data, budget_bytes=data.nbytes // d))
+        for d in (1, 3, 7, 1000)
+    ]
+    assert len({m.hex() for m in means}) == 1, "mean must not depend on the budget"
+    assert means[0] == pytest.approx(float(np.nanmean(data)), rel=1e-12)
+
+
+def test_stream_minmax_ignores_non_finite():
+    data = np.array([[[1.0, np.nan]], [[np.inf, -3.0]], [[5.0, 2.0]]])
+    lo, hi = volumeio.stream_minmax(volumeio.dataset_blocks(data, budget_bytes=8))
+    assert (lo, hi) == (-3.0, 5.0)
+
+
+def test_stream_mean_of_nothing_is_nan():
+    data = np.full((4, 2, 2), np.nan)
+    assert np.isnan(volumeio.stream_mean(volumeio.dataset_blocks(data, budget_bytes=16)))
+
+
 # -- display decimation (render paths) ---------------------------------------
 def test_display_decimation_budgets_two_copies(tmp_path):
     """The peak is ~2 copies, so a volume that fits ONCE must still be decimated."""

@@ -120,19 +120,54 @@ def _layers_per_block(dset, budget_bytes: int, axis: int) -> int:
 def iter_blocks(dset, *, budget_bytes: int, axis: int = 0) -> Iterator[tuple[slice, np.ndarray]]:
     """Yield ``(slice, array)`` blocks along *axis*, each within the budget.
 
-    Blocks are yielded in ascending order and together cover the dataset exactly
-    once, so concatenating them along *axis* reproduces the whole volume. A
-    budget smaller than one layer still yields single layers rather than
-    stalling — progress always beats precision here.
+    Blocks are yielded in ascending order and together cover the dataset
+    exactly once, so concatenating them along *axis* reproduces the whole
+    dataset. A budget smaller than one slice still yields single slices rather
+    than stalling — progress always beats precision here.
     """
-    if axis != 0:
-        raise ValueError("only axis=0 blocking is supported")
-    n_layers = int(dset.shape[0])
+    if axis not in (0, 1):
+        raise ValueError(f"only axis=0 and axis=1 blocking are supported, got {axis}")
+    n_layers = int(dset.shape[axis])
     step = _layers_per_block(dset, budget_bytes, axis)
     for start in range(0, n_layers, step):
-        stop = min(start + step, n_layers)
-        sl = slice(start, stop)
-        yield sl, dset[sl]
+        sl = slice(start, min(start + step, n_layers))
+        yield sl, (dset[sl] if axis == 0 else dset[:, sl])
+
+
+def iter_with_context(blocks, *, trailing: int = 1):
+    """Re-yield *blocks*, each carrying the next block's first rows.
+
+    Yields ``(interior, window, within)``: ``window`` is the block with
+    *trailing* rows of its successor appended, ``interior`` is the block's own
+    range in source coordinates, and ``within`` indexes that range inside
+    ``window``, so a consumer writes ``window[within]`` and never redoes the
+    arithmetic. The final block gets no context, which is correct — it ends
+    where the source ends, so its edge behaviour must match the source's.
+
+    This is what lets an operation with a forward-looking local dependency
+    stream: linear interpolation and ``map_coordinates(order=1)`` both read
+    the row after the one they land on.
+
+    It takes a *stream* of blocks rather than a dataset deliberately. The
+    blocks needing context are often generated — an aligned volume that is
+    never materialised — and cannot be re-indexed to widen a read window.
+
+    Memory cost is *trailing* rows above the block itself, so a budget is
+    exceeded by that much; with the default of one row against any realistic
+    block that is negligible, but it is stated because an unstated
+    approximation in a memory-budget module is how budgets stop being trusted.
+    """
+    previous = None
+    for sl, block in blocks:
+        if previous is not None:
+            prev_sl, prev_block = previous
+            head = block[:trailing]
+            window = np.concatenate([prev_block, head], axis=0) if head.size else prev_block
+            yield prev_sl, window, slice(0, prev_block.shape[0])
+        previous = (sl, block)
+    if previous is not None:
+        prev_sl, prev_block = previous
+        yield prev_sl, prev_block, slice(0, prev_block.shape[0])
 
 
 class BlockReader:
@@ -187,6 +222,44 @@ def neumaier_sum(values, *, state: tuple[float, float] | None = None) -> tuple[f
             comp += (item - tentative) + total
         total = tentative
     return total, comp
+
+
+def dataset_blocks(dset, *, budget_bytes: int, axis: int = 0) -> Iterator[np.ndarray]:
+    """Just the arrays from :func:`iter_blocks`, for feeding the reductions."""
+    for _sl, block in iter_blocks(dset, budget_bytes=budget_bytes, axis=axis):
+        yield block
+
+
+def stream_mean(blocks) -> float:
+    """Mean of the finite values across *blocks*, bit-identical for any blocking.
+
+    Takes an iterable of arrays rather than a dataset, because the statistics
+    this serves are over *generated* blocks — the aligned volume a stage never
+    materialises — not over anything on disk.
+    """
+    state = (0.0, 0.0)
+    count = 0
+    for block in blocks:
+        finite = block[np.isfinite(block)]
+        if finite.size:
+            state = neumaier_sum(finite, state=state)
+            count += int(finite.size)
+    if not count:
+        return float("nan")
+    return (state[0] + state[1]) / count
+
+
+def stream_minmax(blocks) -> tuple[float, float]:
+    """Min and max of the finite values across *blocks*."""
+    lo, hi = np.inf, -np.inf
+    for block in blocks:
+        finite = block[np.isfinite(block)]
+        if finite.size:
+            lo = min(lo, float(finite.min()))
+            hi = max(hi, float(finite.max()))
+    if not np.isfinite(lo):
+        return float("nan"), float("nan")
+    return lo, hi
 
 
 def block_reduce(dset, fn, *, budget_bytes: int, init):
