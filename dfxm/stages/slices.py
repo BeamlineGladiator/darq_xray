@@ -1175,8 +1175,31 @@ def estimate(params: dict) -> CostEstimate:
     step — so only the one float64 read persists:
     ``load_peak_v = elems_v * itemsize_v + 1 * elems_v * 8``.
 
-    Both corrections make the returned figure a large **over**-estimate,
-    pending recalibration; the arithmetic is deliberately left unchanged here.
+    **Recalibration warning — do not simply change the 3 to a 2.** The two
+    surviving stacked copies are each *larger* than ``elems_v``, so counting
+    them in bare ``elems_v * 8`` units **under**-predicts, and under-prediction
+    is the dangerous direction (it greenlights a run that then OOMs). Both
+    survivors are inflated, and on the second the inflations compound:
+
+    * ``apply_samy_shifts_to_volume`` expands the canvas along image-X so
+      nothing is clipped — ``nx_new = nx_orig + pad_left + pad_right``, the
+      pads being the extreme samy offsets in pixels
+      (``alignment.py:81-86``). Its output is ``(n_layers, ny, nx_new)``.
+    * ``interpolate_to_uniform_z`` resamples onto
+      ``n_uniform = max(2, round((z_max - z_min) / median|Δz|) + 1)``
+      (``alignment.py:122``), which **exceeds** ``n_use`` whenever samz is
+      irregular: one large gap drags the median step down and stretches the
+      uniform grid. Its output is ``(n_uniform, ny, nx_new)`` — it inherits
+      the X-padding, so both inflations multiply.
+
+    A correct model therefore needs the padded/resampled extents, not
+    ``elems_v``; neither is derivable from HDF5 shapes alone (both depend on
+    the samy/samz motor values), so recalibration must either read the motors
+    or carry an explicit, documented safety factor. The arithmetic is
+    deliberately left unchanged here. Net of everything above the current
+    figure still **over**-estimates on regular-samz data — the dropped third
+    copy was in effect accidental headroom masking the inflation — but that
+    margin is not guaranteed on a large sweep or an irregular samz.
 
     ``total_input`` is unchanged from the file-level ``sum_dataset_bytes``
     total across the four volume-file params (every dataset in each selected
