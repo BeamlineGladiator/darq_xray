@@ -32,6 +32,7 @@ from ..common.figures import (
     resolve_clim,
     volume_layer_specs,
 )
+from ..common.h5io import StackedVolumeFile
 from ..common.plotting import build_histogram
 from ..common.sort import find_matching_folders, resolve_layer_work
 from ..config.models import CostEstimate, Param, ParamType, StageSpec
@@ -488,51 +489,44 @@ def run(params: dict, progress: ProgressFn | None = None) -> MosaicityResult:
         work = [(os.path.basename(f), os.path.join(f, maps_filename)) for f in folders]
         default_out_root = root
 
-    collected: dict[str, list[np.ndarray]] = {key: [] for key in config}
-    result = MosaicityResult()
-
-    for i, (name, maps_path) in enumerate(work):
-        progress(i / len(work), f"mosaicity: {name}")
-        if not os.path.exists(maps_path):
-            result.skipped.append(f"{name}: {maps_filename} not found")
-            continue
-        try:
-            with h5py.File(maps_path, "r") as f:
-                data = {key: _read_dataset(f, path) for key, path in config.items()}
-        except OSError as exc:
-            result.skipped.append(f"{name}: {exc}")
-            continue
-        if all(v is None for v in data.values()):
-            result.skipped.append(f"{name}: no datasets")
-            continue
-        for key, arr in data.items():
-            if arr is not None:
-                collected[key].append(arr)
-        result.layers.append(name)
-
-    if not result.layers:
-        progress(1.0, "no mosaicity layers produced")
-        return result
-
     compression = None if p["compression"] == "none" else p["compression"]
     stacked_path = os.path.join(default_out_root, p["stacked_filename"])
-    with h5py.File(stacked_path, "w") as f:
-        groups = {g: f.require_group(g) for _k, _d, g, _n in _DATASETS}
-        for key, slices in collected.items():
-            if not slices:
+    result = MosaicityResult()
+
+    with StackedVolumeFile(stacked_path, compression=compression) as out:
+        for i, (name, maps_path) in enumerate(work):
+            progress(i / len(work), f"mosaicity: {name}")
+            if not os.path.exists(maps_path):
+                result.skipped.append(f"{name}: {maps_filename} not found")
                 continue
-            volume = np.stack(slices, axis=0)
-            group_name, ds_name = routing[key]
-            kw = {}
-            if compression:
-                kw["compression"] = compression
-                if compression == "gzip":
-                    kw["compression_opts"] = 4
-            groups[group_name].create_dataset(ds_name, data=volume, **kw)
-            result.datasets[f"/{group_name}/{ds_name}"] = tuple(volume.shape)
-        f.attrs["num_layers"] = len(result.layers)
-        f.attrs["source_folders"] = "\n".join(result.layers)
-        f.attrs["description"] = "Stacked 3D volumes from 2D darfix maps"
+            try:
+                with h5py.File(maps_path, "r") as f:
+                    data = {key: _read_dataset(f, path) for key, path in config.items()}
+            except OSError as exc:
+                result.skipped.append(f"{name}: {exc}")
+                continue
+            if all(v is None for v in data.values()):
+                result.skipped.append(f"{name}: no datasets")
+                continue
+            for key, arr in data.items():
+                if arr is not None:
+                    group_name, ds_name = routing[key]
+                    out.append(f"{group_name}/{ds_name}", arr)
+            del data
+            result.layers.append(name)
+
+        if not result.layers:
+            out.abort()
+            progress(1.0, "no mosaicity layers produced")
+            return result
+
+        for ds_path in out.datasets():
+            result.datasets[f"/{ds_path}"] = out.shape(ds_path)
+        out.set_attrs(
+            num_layers=len(result.layers),
+            source_folders="\n".join(result.layers),
+            description="Stacked 3D volumes from 2D darfix maps",
+        )
 
     result.stacked_path = stacked_path
     progress(1.0, f"stacked {len(result.layers)} layers -> {os.path.basename(stacked_path)}")
