@@ -33,6 +33,7 @@ from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg  # noqa: E402
 from matplotlib.figure import Figure  # noqa: E402
 from matplotlib.widgets import RectangleSelector  # noqa: E402
 from PySide6.QtWidgets import (  # noqa: E402
+    QCheckBox,
     QComboBox,
     QDialog,
     QHBoxLayout,
@@ -62,6 +63,16 @@ class ROIPickerDialog(QDialog):
             self._combo.addItem(label)
         self._combo.currentIndexChanged.connect(self._load_current)
 
+        self._lock = QCheckBox("Keep size")
+        self._lock.setToolTip(
+            "Lock the rectangle's current pixel size: dragging then MOVES the ROI "
+            "without resizing it, so the exact same crop size can be placed on each "
+            "preview. Uncheck to resize freely again; Reset also forgets the size."
+        )
+        self._lock.toggled.connect(self._on_lock_toggled)
+        self._lock_size: tuple[int, int] | None = None  # (cols, rows) locked px size
+        self._coercing = False  # guard: writing coerced extents back into the selector
+
         self._fig = Figure(figsize=(5, 6), layout="tight")
         self._canvas = FigureCanvasQTAgg(self._fig)
         self._ax = self._fig.add_subplot(111)
@@ -79,6 +90,7 @@ class ROIPickerDialog(QDialog):
         top = QHBoxLayout()
         top.addWidget(QLabel("Preview:"))
         top.addWidget(self._combo, 1)
+        top.addWidget(self._lock)
         btns = QHBoxLayout()
         btns.addWidget(self._readout, 1)
         btns.addWidget(self._reset)
@@ -138,20 +150,55 @@ class ROIPickerDialog(QDialog):
             self._on_rect_change(xmin, xmax, ymin, ymax)
         self._canvas.draw_idle()
 
+    def _on_lock_toggled(self, checked: bool) -> None:
+        """Lock the CURRENT rectangle's integer px size (or, with no rectangle
+        yet, the next drawn one's); unchecking frees resizing again."""
+        self._lock_size = None
+        if checked and self._rect is not None and self._arr is not None:
+            h, w = self._arr.shape[:2]
+            r0, r1, c0, c1 = rect_to_indices(*self._rect, w=w, h=h)
+            if r1 - r0 >= 1 and c1 - c0 >= 1:
+                self._lock_size = (c1 - c0, r1 - r0)
+                self._on_rect_change(*self._rect)  # refresh the "(size locked)" readout
+
     def _on_rect_change(self, xmin, xmax, ymin, ymax) -> None:
-        if self._arr is None or None in (xmin, xmax, ymin, ymax):
+        if self._coercing or self._arr is None or None in (xmin, xmax, ymin, ymax):
             return
         self._rect = (xmin, xmax, ymin, ymax)
         h, w = self._arr.shape[:2]
+        if self._lock.isChecked():
+            if self._lock_size is None:
+                r0, r1, c0, c1 = rect_to_indices(xmin, xmax, ymin, ymax, w, h)
+                if r1 - r0 >= 1 and c1 - c0 >= 1:
+                    self._lock_size = (c1 - c0, r1 - r0)
+            else:
+                # keep the drawn rect's centre, coerce to the locked size on whole
+                # pixels, and shift back fully inside the image
+                dc, dr = self._lock_size
+                c0 = int(round((xmin + xmax) / 2 - dc / 2))
+                r0 = int(round((ymin + ymax) / 2 - dr / 2))
+                c0 = max(0, min(c0, w - dc)) if dc <= w else 0
+                r0 = max(0, min(r0, h - dr)) if dr <= h else 0
+                c1, r1 = min(w, c0 + dc), min(h, r0 + dr)
+                xmin, xmax, ymin, ymax = float(c0), float(c1), float(r0), float(r1)
+                self._rect = (xmin, xmax, ymin, ymax)
+                if self._selector is not None:
+                    self._coercing = True
+                    try:
+                        self._selector.extents = (xmin, xmax, ymin, ymax)
+                    finally:
+                        self._coercing = False
         r0, r1, c0, c1 = rect_to_indices(xmin, xmax, ymin, ymax, w, h)
         dr, dc = r1 - r0, c1 - c0
         self._use.setEnabled(dr >= 1 and dc >= 1)
+        locked = "  (size locked)" if self._lock.isChecked() and self._lock_size else ""
         self._readout.setText(
-            f"{dr}×{dc} px  =  {dr * self._sy:.1f} × {dc * self._sx:.1f} µm (Y×X)"
+            f"{dr}×{dc} px  =  {dr * self._sy:.1f} × {dc * self._sx:.1f} µm (Y×X){locked}"
         )
 
     def _on_reset(self) -> None:
         self._rect = None
+        self._lock_size = None  # a fresh drag re-establishes the locked size
         self._use.setEnabled(False)
         self._readout.setText("drag a rectangle")
         if self._selector is not None:

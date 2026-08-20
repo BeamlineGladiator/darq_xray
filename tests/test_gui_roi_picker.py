@@ -52,3 +52,78 @@ def test_initial_rectangle_drawn_on_open():
     assert dlg._use.isEnabled()
     assert tuple(round(v) for v in dlg._selector.extents) == (12, 88, 40, 160)
     dlg.deleteLater()
+
+
+# -- "Keep size" lock ---------------------------------------------------------
+def test_keep_size_lock_moves_without_resizing():
+    """With the lock on, a drag keeps the locked px size, centred on the new rect."""
+    from gui.widgets.roi_picker import ROIPickerDialog
+
+    _ = QApplication.instance() or QApplication([])
+    dlg = ROIPickerDialog(_previews())
+    dlg._on_rect_change(10.0, 50.0, 20.0, 80.0)  # 40 cols × 60 rows
+    dlg._lock.setChecked(True)
+    dlg._on_rect_change(30.0, 96.0, 100.0, 190.0)  # attempted move + resize
+    assert "lock" in dlg._readout.text().lower()
+    # centre (63, 145) kept, size coerced back to 40×60, snapped to whole px
+    assert tuple(round(v) for v in dlg._selector.extents) == (43, 83, 115, 175)
+    dlg._accept()
+    assert dlg.result == (115, 175, 43, 83)
+    dlg.deleteLater()
+
+
+def test_keep_size_lock_clamps_inside_image():
+    from gui.widgets.roi_picker import ROIPickerDialog
+
+    _ = QApplication.instance() or QApplication([])
+    dlg = ROIPickerDialog(_previews())  # image is 200 rows × 100 cols
+    dlg._on_rect_change(10.0, 50.0, 20.0, 80.0)  # lock 40×60
+    dlg._lock.setChecked(True)
+    dlg._on_rect_change(80.0, 98.0, 150.0, 198.0)  # centre near the top-right corner
+    dlg._accept()
+    assert dlg.result == (140, 200, 60, 100)  # shifted back fully inside
+    dlg.deleteLater()
+
+
+def test_keep_size_lock_first_drag_establishes_size():
+    """Lock checked before any rectangle: the first drag defines the locked size."""
+    from gui.widgets.roi_picker import ROIPickerDialog
+
+    _ = QApplication.instance() or QApplication([])
+    dlg = ROIPickerDialog(_previews())
+    dlg._lock.setChecked(True)
+    dlg._on_rect_change(10.0, 50.0, 20.0, 80.0)  # establishes 40×60
+    dlg._on_rect_change(0.0, 10.0, 0.0, 10.0)  # too small — coerced to 40×60 at the corner
+    dlg._accept()
+    assert dlg.result == (0, 60, 0, 40)
+    dlg.deleteLater()
+
+
+def test_keep_size_unlock_frees_resizing():
+    from gui.widgets.roi_picker import ROIPickerDialog
+
+    _ = QApplication.instance() or QApplication([])
+    dlg = ROIPickerDialog(_previews())
+    dlg._on_rect_change(10.0, 50.0, 20.0, 80.0)
+    dlg._lock.setChecked(True)
+    dlg._lock.setChecked(False)
+    dlg._on_rect_change(0.0, 10.0, 0.0, 10.0)
+    dlg._accept()
+    assert dlg.result == (0, 10, 0, 10)
+    dlg.deleteLater()
+
+
+def test_reset_clears_locked_size():
+    """Reset forgets the locked size; the next drag re-establishes it."""
+    from gui.widgets.roi_picker import ROIPickerDialog
+
+    _ = QApplication.instance() or QApplication([])
+    dlg = ROIPickerDialog(_previews())
+    dlg._on_rect_change(10.0, 50.0, 20.0, 80.0)  # 40×60
+    dlg._lock.setChecked(True)
+    dlg._on_reset()
+    dlg._on_rect_change(0.0, 10.0, 0.0, 10.0)  # fresh drag → new locked size 10×10
+    dlg._on_rect_change(20.0, 26.0, 30.0, 40.0)  # still 10×10, recentred
+    dlg._accept()
+    assert dlg.result == (30, 40, 18, 28)
+    dlg.deleteLater()

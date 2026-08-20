@@ -895,7 +895,10 @@ class FigureBuilderWindow(QMainWindow):
         self._ov_roi_pick = QPushButton("Pick…")
         self._ov_roi_pick.setToolTip(
             "Draw the crop rectangle on this panel's full image (same picker as the replot "
-            "dialogs). Map, slice and reference panels only."
+            "dialogs). The picker's Preview dropdown swaps between every image panel so you "
+            "can check the ROI fits each map, and its Keep size box locks the pixel size "
+            "while you move it. Map, slice and reference panels only; the result is written "
+            "to THIS panel (use → all maps to copy it onward)."
         )
         self._ov_roi_pick.clicked.connect(self._on_pick_panel_roi)
         roi_row.addWidget(self._ov_roi_pick)
@@ -1066,8 +1069,15 @@ class FigureBuilderWindow(QMainWindow):
             from .widgets.roi_picker import ROIPickerDialog  # imported on demand
 
             _mod.ROIPickerDialog = ROIPickerDialog
-        title = panel.title or panel.id
-        previews = [(title, lambda p=panel: panel_preview(p))]
+        # every image panel is offered (selected panel first) so the ROI can be
+        # checked — and moved — on each map before accepting; "Keep size" in the
+        # dialog locks the px size while doing so
+        previews = [(panel.title or panel.id, lambda p=panel: panel_preview(p))]
+        previews += [
+            (p.title or p.id, lambda p=p: panel_preview(p))
+            for p in self._recipe.panels
+            if p is not panel and p.source.kind != "profiles_trace"
+        ]
         dlg = _mod.ROIPickerDialog(previews, initial=panel.roi, parent=self)
         if dlg.exec() and dlg.result:
             r0, r1, c0, c1 = dlg.result

@@ -290,6 +290,18 @@ The **strain**, **visualize**, **paraview**, and **slices** stages show a
 opens a visual picker pre-loaded with the stage's representative map or volume
 layer; drag a rectangle and click **OK** to fill the ROI field(s) automatically.
 
+Every picker has a **Keep size** checkbox next to the preview dropdown: tick it
+and the rectangle's current pixel size is locked — dragging (or dragging a
+handle) then *moves* the ROI without resizing it, snapped to whole pixels and
+kept fully inside the image, so you can try the exact same crop size in a
+different spot or on a different preview. With the box ticked before any
+rectangle exists, the first drag establishes the locked size. Untick to resize
+freely again; **Reset** also forgets the locked size. Where the picker offers
+several previews, the drawn rectangle carries over when you switch between
+same-sized previews (a differently-sized preview clears it, but the locked
+size is remembered), so you can flip through the maps and check the one crop
+works on each before accepting.
+
 The picker is **per-stage** — accepting a rectangle writes only into the current
 stage's form and does not propagate to sibling stages. If you want the same crop
 on multiple stages you pick separately on each. Rocking does not have a picker
@@ -1711,7 +1723,12 @@ button:
     or click **Pick…** next to it to draw the rectangle on the panel's full
     image with the same interactive ROI picker the replot dialogs use (the
     current ROI is pre-drawn; *Use* writes the pixel bounds back; trace panels
-    have no ROI), and **→ all maps** to copy this panel's ROI and Crop-to-data
+    have no ROI). The picker's **Preview** dropdown offers *every* image panel
+    in the recipe (the selected panel first), and the rectangle carries over
+    between same-sized maps — so you can flip through the maps, check the crop
+    works on each, and nudge it (tick **Keep size** to move it without
+    resizing) before accepting; the result is still written to the selected
+    panel only. Then use **→ all maps** to copy this panel's ROI and Crop-to-data
     setting to every other image panel so they show the same region and get
     the same box size (the scale bar needs no such help — every map already
     shares the Style pane's *Scale (µm/cm)*, so "50 µm" is the same length on

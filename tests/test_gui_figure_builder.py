@@ -1493,6 +1493,41 @@ def test_pick_roi_button_writes_roi_from_picker(tmp_path, monkeypatch):
     assert seen["initial"] == (1, 5, 2, 7)
 
 
+def test_pick_roi_offers_all_image_panels(tmp_path, monkeypatch):
+    """Pick… previews every image panel (selected first, traces excluded) so the
+    ROI can be checked on each map; the result still lands on the selected panel."""
+    import gui.figure_builder as fb
+
+    w = _win()
+    w.add_panels(_obl_recipe_panels(tmp_path))
+    from dfxm.compose.recipe import PanelDef, PanelSource
+
+    h5 = w.recipe().panels[0].source.h5_path
+    sel = {"volume_id": "strain", "slice_name": "obl", "plane": 0}
+    other = PanelDef("other", PanelSource(h5, "slice_plane", dict(sel)), title="Other map")
+    trace = PanelDef("tr", PanelSource(h5, "profiles_trace", {"job": {}, "field": "strain"}))
+    w.add_panels([other, trace])
+    w._select_outline_panel("other")
+    seen = {}
+
+    class FakeDlg:
+        def __init__(self, previews, initial=None, parent=None):
+            seen["previews"] = previews
+            seen["labels"] = [lbl for lbl, _t in previews]
+            self.result = (0, 2, 0, 2)
+
+        def exec(self):
+            return 1
+
+    monkeypatch.setattr(fb, "ROIPickerDialog", FakeDlg, raising=False)
+    w._ov_roi_pick.click()
+    assert seen["labels"] == ["Other map", "a"]  # selected first; trace excluded
+    arr, _sx, _sy = seen["previews"][1][1]()  # the other map's thunk really loads
+    assert arr.shape == (4, 5)
+    assert w.recipe().panel_by_id()["other"].roi == (0, 2, 0, 2)
+    assert w.recipe().panel_by_id()["a"].roi is None  # only the selected panel is written
+
+
 def test_copy_roi_to_all_image_panels(tmp_path):
     w = _win()
     w.add_panels(_obl_recipe_panels(tmp_path))
