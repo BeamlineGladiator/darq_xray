@@ -1478,35 +1478,56 @@ def test_slices_peak_stays_under_budget(tmp_path):
     assert result.n_planes_total == 28
 
 
-def _sweep_peak_params(proc, raw, out, *, half=40.0, d=0.1, step=1.0, span=100.0):
+# The sweep fixture for the two peak tests below. The volume is 8x256x128 —
+# world box 19.4 x 98.6 x 6.0 µm — and the sweep is 201 planes of 801x801
+# float32 (2.45 MiB each, 492 MiB of stack) at 0.1 µm pitch, centred so that:
+#
+# * **every** plane's Z lies inside the volume (origin Z 3.0 µm, sweep ±2.9 µm
+#   against a 0-6 µm box), so no plane is skipped for being out of range, and
+# * ~23% of each plane's samples land in the volume — the plane is 80 µm wide
+#   against a 19.4 µm X extent, and covers Y entirely.
+#
+# That last number is the point of the geometry. The first version of this
+# fixture put an 80 µm plane over a 3.6 x 9.2 µm volume and swept ±100 µm, which
+# was **99.97% NaN** — 0.027% of the sweep finite. It measured the right byte
+# counts, but it is the exact fixture shape this project has already had to
+# repair twice, and a sampler that had stopped sampling would have passed it.
+# `_assert_sweep_samples_the_volume` is what stops that coming back.
+_SWEEP_ORIGIN = (9.7, 49.0, 3.0)
+_SWEEP_SHAPE = (8, 256, 128)
+_MIN_SWEEP_FINITE_FRACTION = 0.15
+
+
+def _sweep_peak_params(proc, raw, out, *, half=40.0, d=0.1, step=0.029, span=2.9):
     """One volume, PNGs off, and a sweep whose PLANE STACK dwarfs the volume.
 
-    The volume is deliberately tiny (kilobytes) so nothing but the sampled
-    planes can account for the peak: whatever this run costs above its process
-    image is the sweep. Only `include_strain` is on — seven volumes would
-    multiply the runtime without changing what is being measured, since the
-    stage releases each volume before preparing the next.
+    The volume is deliberately tiny (2 MB) so nothing but the sampled planes can
+    account for the peak: whatever this run costs above its process image is the
+    sweep. Only `include_strain` is on — seven volumes would multiply the
+    runtime without changing what is being measured, since the stage releases
+    each volume before preparing the next.
+
+    Returns `(params, n_planes, (nv, nu))`. The plane count comes from
+    `SL.slice_plane_offsets` on the actual spec rather than from arithmetic
+    here, so a floating-point edge in the sweep window cannot silently make the
+    two disagree.
     """
+    spec = {
+        "name": "wide",
+        "normal": [0, 0, 1],
+        "origin": list(_SWEEP_ORIGIN),
+        "half_u": half,
+        "half_v": half,
+        "du": d,
+        "dv": d,
+        "sweep_step_um": step,
+        "sweep_start_um": -span,
+        "sweep_stop_um": span,
+    }
     params = {
         **_peak_params(proc, raw, out),
-        "slices_json": json.dumps(
-            [
-                {
-                    "name": "wide",
-                    "normal": [0, 0, 1],
-                    "origin": [1.0, 4.0, 3.0],
-                    "half_u": half,
-                    "half_v": half,
-                    "du": d,
-                    "dv": d,
-                    "sweep_step_um": step,
-                    "sweep_start_um": -span,
-                    "sweep_stop_um": span,
-                }
-            ]
-        ),
+        "slices_json": json.dumps([spec]),
         "save_png": False,
-        "_budget_bytes": 64 << 20,
     }
     for key in (
         "include_mosa_com_chi",
@@ -1518,9 +1539,76 @@ def _sweep_peak_params(proc, raw, out, *, half=40.0, d=0.1, step=1.0, span=100.0
     ):
         params[key] = False
     params["include_strain"] = True
-    n_planes = int(2 * span / step) + 1
-    nu = nv = int(round(2 * half / d)) + 1
-    return params, n_planes, (nv, nu)
+    u_um, v_um = SL._plane_axes(half, half, d, d)
+    return params, len(SL.slice_plane_offsets(spec)), (len(v_um), len(u_um))
+
+
+def _sweep_strain_cfg(proc, raw):
+    """The one volume `_sweep_peak_params` selects, as a `prepare_volume` cfg."""
+    return {
+        "h5_path": str(proc / "stacked_strain_volumes.h5"),
+        "dataset_path": "strain",
+        "kind": "strain",
+        "source": "stacked",
+        "raw_root": str(raw),
+        "raw_pattern": "strain__*",
+        "roi_x": None,
+        "roi_y": None,
+    }
+
+
+def _sweep_rung_is_in_core(proc, raw, tmp_path, budget_bytes):
+    """Whether `budget_bytes` puts the sweep fixture's volume on the in-core rung.
+
+    Run in-process against the same 2 MB volume the child gets, because the
+    child cannot be spied on — and the rung a peak test claims to measure has to
+    be asserted, not assumed. It was assumed once here: `_budget_bytes = 64 MiB`
+    was documented as the in-core rung and in fact streamed, because
+    `align_volume_streamed` prices a layer at ~41 B per float64 element and 8 of
+    them did not fit in the 9.1 MiB alignment share.
+    """
+    import contextlib
+
+    p = {**SL.STAGE.defaults(), **_peak_params(proc, raw, tmp_path / "unused")}
+    with contextlib.ExitStack() as opened:
+        prep = SL.prepare_volume(
+            _sweep_strain_cfg(proc, raw),
+            p,
+            0.152,
+            0.385,
+            -1,
+            style=None,
+            stack=opened,
+            budget_bytes=budget_bytes,
+        )
+        return prep["data"] is not None
+
+
+def _assert_sweep_samples_the_volume(h5_path, n_planes):
+    """The stored sweep must really carry samples, on every plane, everywhere.
+
+    Three separate ways this fixture could go quietly degenerate, each checked:
+    the aligned volume could be mostly NaN (the defect repaired in `_setup` and
+    in `test_stage_visualize.py`), the sweep could miss the volume in Z so most
+    planes are empty, or a pruning bug could drop a band out of some planes. A
+    single `> 100 finite somewhere` guard sees none of the three.
+    """
+    sampled = range(0, n_planes, 10)
+    with h5py.File(h5_path, "r") as f:
+        stored = f["strain"]["wide"]["slices"]
+        assert stored.shape[0] == n_planes
+        per_plane = [int(np.isfinite(stored[k]).sum()) for k in sampled]
+        plane_size = stored.shape[1] * stored.shape[2]
+    fraction = sum(per_plane) / (len(per_plane) * plane_size)
+    assert fraction >= _MIN_SWEEP_FINITE_FRACTION, (
+        f"the sweep is only {100 * fraction:.2f}% finite — the planes have slid "
+        "off the volume, so this fixture measures byte counts over NaN"
+    )
+    assert min(per_plane) >= 0.5 * _MIN_SWEEP_FINITE_FRACTION * plane_size, (
+        f"the emptiest sampled plane carries only {min(per_plane)} finite samples "
+        f"of {plane_size} — the sweep is meant to lie wholly inside the volume "
+        "in Z, so every plane should sample it"
+    )
 
 
 # Holding the sweep's stack ONCE must already blow the limit below, or this test
@@ -1601,7 +1689,7 @@ def test_plane_by_plane_write_is_byte_identical_to_a_whole_stack_write(tmp_path)
 
 
 def test_plane_writer_refuses_a_short_sweep(tmp_path):
-    """A sized dataset left partly unwritten is a silently zero-filled product."""
+    """A sized dataset left partly unwritten is an unfinished product."""
     with h5py.File(tmp_path / "short.h5", "w") as f:
         dset = SL.open_slice_dataset(f.create_group("vol"), _slice_rec(11, 20, 30))
         writer = SL.PlaneWriter(dset)
@@ -1610,37 +1698,87 @@ def test_plane_writer_refuses_a_short_sweep(tmp_path):
             writer.close()
 
 
-def test_slices_never_holds_the_whole_plane_stack(tmp_path):
+def test_unwritten_planes_read_as_nan_not_zeros(tmp_path):
+    """An aborted sweep must leave NaN where it never sampled, never zeros.
+
+    Sizing the dataset up front means a run killed mid-sweep leaves a group whose
+    unwritten planes are readable, where the old whole-stack write left no group
+    at all — and `PlaneWriter.close()`'s count check cannot fire on that path,
+    because nothing calls it. HDF5's default fill is zero, and a plane of zeros
+    reads as *data*: `profiles` averages it into a CSV with no skip and no note.
+    NaN is what every reader here already treats as "no sample".
+
+    Simulated the way it really happens — the writer is abandoned mid-sweep with
+    no `close()` — rather than by trusting the creation-property list.
+    """
+    with h5py.File(tmp_path / "aborted.h5", "w") as f:
+        dset = SL.open_slice_dataset(f.create_group("vol"), _slice_rec(11, 20, 30))
+        assert np.isnan(dset.fillvalue), "the dataset must be NaN-filled, not zero-filled"
+        writer = SL.PlaneWriter(dset)
+        for _ in range(3):
+            writer.append(np.full((20, 30), 7.0, np.float32))
+        writer.flush()  # 3 of 11 planes on disk; the run then dies
+        stored = dset[()]
+    assert np.all(stored[:3] == 7.0)
+    assert np.isnan(stored[3:]).all(), "unwritten planes came back as data, not as NaN"
+
+
+# The rungs the two peak tests below pin, and the budgets that reach them. Both
+# are asserted at run time by `_sweep_rung_is_in_core`, never assumed: 64 MiB was
+# once documented here as the in-core rung and in fact streamed.
+_SWEEP_RUNGS = {"in_core": 1 << 30, "streamed": 4096}
+
+# Holding the sweep's stack ONCE must already exceed the limit by this much, or
+# the test would pass on code that holds it. The pre-change peak was about twice
+# the stack again, since `np.stack(planes)` held the list and the stack together.
+_STACK_OVER_LIMIT = 1.4
+_SWEEP_PEAK_LIMIT = 350 << 20
+
+
+@pytest.mark.parametrize("rung", sorted(_SWEEP_RUNGS))
+def test_slices_never_holds_the_whole_plane_stack(tmp_path, rung):
     """A sweep's planes must be written as they are sampled, not accumulated.
 
     The Z-blocked gather bounded the stage's *input*; on the shipped default
     geometry the *output* is the larger term — ~172 planes of 2528x1789 float32
     is 2.90 GiB for `oblique_full` alone against a 1.15 GiB volume, and
     `np.stack(planes)` doubled it transiently. This fixture reproduces that
-    shape at 1/8th the size and asserts the peak no longer carries it.
+    shape at 1/6th the size and asserts the peak no longer carries it.
 
-    Measured in the real child, one 8x24x24 volume (37 kB) and a 201-plane
+    **Both rungs, because both matter.** An earlier version measured only what
+    it called the in-core rung, on the argument that a 1.15 GiB STO2 volume fits
+    an 8 GB machine's 1.65-2.58 GiB budget. That was wrong twice over: measured,
+    `align_volume_streamed` returns `block_layers == 1` for STO2 at that budget
+    (it prices the alignment chain at ~41 B per float64 element and gets a 254 MB
+    share, against a 285 MB minimum), so the target machine takes the
+    **streaming** rung — and the budget that test pinned took the streaming rung
+    too, so its own claim about which code it measured was false. Both rungs are
+    now measured, and which one each budget reaches is asserted rather than
+    described.
+
+    Measured in the real child, one 8x256x128 volume (2 MB) and a 201-plane
     sweep of 801x801 float32 (2.45 MiB a plane, 492 MiB of stack), PNGs off:
 
-        before this commit   1111.9 MiB   (~104 MiB floor + 2x the stack)
-        after                 201.6 MiB   (~104 MiB floor + a 32 MiB chunk-row
-                                           buffer + ~37 MiB of plane scratch)
+        rung        before      after
+        in-core     1117.7      205.0 MiB
+        streamed    1105.8      239.3 MiB
 
-    The 300 MiB limit sits between the two with ~3.7x of failing margin and
-    ~1.5x of passing margin. `_budget_bytes` is pinned so the figure does not
+    The 350 MiB limit sits between them with ~3.2x of failing margin and
+    1.5-1.7x of passing margin. `_budget_bytes` is pinned so the figures do not
     depend on the runner's RAM, and the stack-vs-limit precondition below is
     what stops the test going insensitive if the fixture is ever shrunk.
-
-    It is the **in-core** rung that is measured, deliberately: that is the rung a
-    1.15 GiB STO2 volume takes on the 8 GB machine this phase supports (its
-    budget comes out at 1.6-2.6 GiB), so it is the rung on which the sweep really
-    was the largest array in the stage. The streaming rung's own bound is
-    `test_slices_gather_batches_a_sweep_without_changing_a_value`.
     """
     from tests.peak_rss import assert_peak_under
 
-    proc, raw, _bytes = _peak_setup(tmp_path, 8, 24, 24)
-    params, n_planes, (nv, nu) = _sweep_peak_params(proc, raw, tmp_path / "sl_sweep")
+    budget = _SWEEP_RUNGS[rung]
+    proc, raw, _bytes = _peak_setup(tmp_path, *_SWEEP_SHAPE)
+    params, n_planes, (nv, nu) = _sweep_peak_params(proc, raw, tmp_path / f"sl_{rung}")
+    params["_budget_bytes"] = budget
+
+    assert _sweep_rung_is_in_core(proc, raw, tmp_path, budget) == (rung == "in_core"), (
+        f"budget {budget} does not reach the {rung} rung — this test would then "
+        "measure the same code twice and claim to have covered both"
+    )
     stack_bytes = n_planes * nv * nu * 4
     assert stack_bytes > _STACK_OVER_LIMIT * _SWEEP_PEAK_LIMIT, (
         f"the sweep's stack is only {stack_bytes / (1 << 20):.1f} MiB against a "
@@ -1652,12 +1790,63 @@ def test_slices_never_holds_the_whole_plane_stack(tmp_path):
     assert result.volume_ids == ["strain"], "the run must actually have sliced a volume"
     assert result.n_planes_total == n_planes
     with h5py.File(result.output_h5, "r") as f:
-        stored = f["strain"]["wide"]["slices"]
-        assert stored.shape == (n_planes, nv, nu)
-        assert stored.dtype == np.float32
-        # …and the planes are not all NaN: an overhanging plane is the point, a
-        # plane that sampled nothing would make the write path untested.
-        assert np.isfinite(stored[n_planes // 2]).sum() > 100
+        assert f["strain"]["wide"]["slices"].dtype == np.float32
+    _assert_sweep_samples_the_volume(result.output_h5, n_planes)
+
+
+def test_slices_run_bounds_the_streamed_sweep(tmp_path):
+    """`run` must hand the gather a real `max_resident_bytes`, not `None`.
+
+    Everything under `iter_planes_streamed` is bounded and pinned, and none of it
+    matters if the one call site stops asking for a bound: dropping
+    `max_resident_bytes=_sweep_resident_bytes(...)` in `run` puts the whole sweep
+    back in memory on the streaming rung — 172 resident planes, 2.90 GiB, on the
+    shipped default — and leaves every other test in this module green. So the
+    call site is pinned here, by counting the walks of the Z-block stream that
+    `run` actually causes.
+
+    Not by asserting the argument was passed, which a refactor renames away, and
+    not by asserting the run merely finished. `n_planes` walks means every plane
+    got its own traversal, i.e. the budget really sized the batch; `None` would
+    be exactly one walk however long the sweep.
+    """
+    proc, raw, _bytes = _peak_setup(tmp_path, 4, 24, 24)
+    params, n_planes, (nv, nu) = _sweep_peak_params(
+        proc, raw, tmp_path / "sl_bound", half=2.0, d=0.2, step=0.5, span=1.0
+    )
+    params["_budget_bytes"] = 4096
+    assert n_planes >= 4, "a one-plane sweep cannot tell the two batchings apart"
+
+    rungs, walks = [], []
+    real = SL.prepare_volume
+
+    def spy(*args, **kwargs):
+        prep = real(*args, **kwargs)
+        rungs.append(prep["data"] is not None)
+        inner = prep["blocks"]
+        # Wrapped AFTER prepare_volume returns, so the colour-limit reductions
+        # it ran internally are not counted — only the sampling walks.
+        prep["blocks"] = lambda: (walks.append(1), inner())[1]
+        return prep
+
+    monkeypatch = pytest.MonkeyPatch()
+    try:
+        monkeypatch.setattr(SL, "prepare_volume", spy)
+        result = SL.run(params)
+    finally:
+        monkeypatch.undo()
+
+    assert rungs == [False], "the tiny budget must take the streaming rung"
+    assert result.n_planes_total == n_planes
+    plane_bytes = nv * nu * 4
+    assert (
+        SL.sweep_batch_size(n_planes, plane_bytes, SL._sweep_resident_bytes(4096, plane_bytes, 1))
+        == 1
+    )
+    assert sum(walks) == n_planes, (
+        f"the sweep walked the Z stream {sum(walks)} times for {n_planes} planes; "
+        "1 means `run` passed no `max_resident_bytes` and held the whole sweep"
+    )
 
 
 def test_rss_floor_covers_the_measured_process_image(tmp_path):

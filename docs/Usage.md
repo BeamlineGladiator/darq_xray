@@ -925,15 +925,32 @@ through the aligned volumes — all in one world frame so the slices co-register
 >   default slices on a 2891×700×76 dataset and 8 GB of RAM that is two or three
 >   passes for the whole 172-plane oblique sweep.
 >
-> **The sweep itself is bounded too, and no longer needs watching.** A sweep's
-> planes used to be held in memory together until the volume's group was
-> written, which on the shipped default slices was the largest thing the stage
-> touched — about 2.9 GB of planes cut from a 1.1 GB volume, briefly doubled
-> while they were stacked. The HDF5 dataset is now created at full size before
-> any sampling and each plane is written as it is cut, so a finer
-> `sweep_step_um` or a larger `extent: "auto"` costs **time and disk**, not
-> memory. Measured on a 201-plane, 801×801 sweep: 1112 MB of peak memory before,
-> 202 MB after.
+> **The sweep itself is bounded too.** A sweep's planes used to be held in
+> memory together until the volume's group was written, which on the shipped
+> default slices was the largest thing the stage touched — about 2.9 GB of
+> planes cut from a 1.1 GB volume, briefly doubled while they were stacked. The
+> HDF5 dataset is now created at full size before any sampling and each plane is
+> written as it is cut. Measured on a 201-plane, 801×801 sweep: **1118 MB of
+> peak memory before, 205 MB after** (in one piece; 1106 → 239 MB in blocks).
+>
+> What that changes is which knob costs what. **Adding planes** — a finer
+> `sweep_step_um`, a wider sweep window — now costs time and disk only; the
+> memory is flat in the number of planes. **Making each plane bigger** — a larger
+> `extent: "auto"`, a smaller `du`/`dv` — still costs memory, because what is
+> held is a handful of whole planes: a write buffer of a few planes plus about
+> fifteen planes' worth of sampling scratch, roughly 0.35 GB together on the
+> shipped default. That is a plane-area cost, not a sweep-length one, so coarsen
+> `du`/`dv` or shrink the extent if a sweep is what makes a run too large —
+> never the step.
+
+> [!warning] A run killed mid-sweep leaves the planes it never reached as NaN
+> Because the dataset is sized before sampling, a slices run that is interrupted
+> — killed, or out of memory — leaves an `oblique_slices.h5` whose finished
+> planes are real and whose unreached planes are **all-NaN**. They are readable,
+> so `profiles` and the viewers will open the file; the unfinished planes simply
+> show as empty rather than as a flat value. Re-run the stage to fill them in.
+> Before this change an interrupted run left the volume's whole group missing
+> instead, which was more obvious but no more recoverable.
 
 > [!note] Plot orientation
 > Slice plots follow the same convention as the per-layer renders: the vertical

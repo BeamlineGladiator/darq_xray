@@ -1578,6 +1578,17 @@ def open_slice_dataset(vg, rec):
     which is what makes h5py chunk the dataset, and it guesses the same chunk
     shape from ``(shape, dtype)`` whether the data is supplied at creation or
     written afterwards.
+
+    ``fillvalue=nan``, and it is load-bearing. Sizing the dataset up front means
+    a run that dies mid-sweep — a `MemoryError`, a kill — leaves a group whose
+    unwritten planes are readable, where the old whole-stack write left no group
+    at all; :meth:`PlaneWriter.close`'s count check cannot fire on that path,
+    because nothing calls it. HDF5's default fill is **zero**, and a plane of
+    zeros reads as data: `profiles` will happily average it into a CSV with no
+    skip and no note. NaN is what every reader in this pipeline already treats as
+    "no sample" (`map_coordinates`' own ``cval``, the colour-limit reductions,
+    `profiles`' finite masks), so an interrupted sweep degrades to a plane that
+    is visibly absent rather than one that is quietly flat.
     """
     sg = vg.create_group(rec["name"])
     dset = sg.create_dataset(
@@ -1586,6 +1597,7 @@ def open_slice_dataset(vg, rec):
         dtype=np.float32,
         compression="gzip",
         compression_opts=4,
+        fillvalue=np.float32(np.nan),
     )
     sg.create_dataset("u_um", data=rec["u_um"].astype(np.float64))
     sg.create_dataset("v_um", data=rec["v_um"].astype(np.float64))
@@ -1906,17 +1918,21 @@ def estimate(params: dict) -> CostEstimate:
     not been recalibrated for the streamed one — the same caveat Task 9 left on
     paraview's and Task 10 on visualize's.
 
-    **The model has never counted the OUTPUT side, and no longer needs to.** A
-    sweep's planes used to be held whole, and on the shipped default geometry
-    that was the largest array the stage touched by a factor of three (2.90 GiB
-    of ``oblique_full`` against a 1.15 GiB volume, transiently doubled by
-    ``np.stack``). ``run`` now sizes the HDF5 dataset up front and writes plane
-    by plane, so what survives of that term is a :class:`PlaneWriter` chunk-row
-    buffer (~``stack_bytes ** (2/3)``, 104 MiB for that 2.90 GiB sweep) and
-    :data:`GATHER_SCRATCH_PLANE_MULTIPLE` planes of coordinate scratch — both
-    functions of one plane's size, not of the sweep's length. Deriving even
-    those from ``params`` would mean resolving ``slices_json`` against the data
-    box here, which this estimator does not do.
+    **The model has never counted the OUTPUT side, and the term it is missing is
+    now small but not zero.** A sweep's planes used to be held whole, and on the
+    shipped default geometry that was the largest array the stage touched by a
+    factor of three (2.90 GiB of ``oblique_full`` against a 1.15 GiB volume,
+    transiently doubled by ``np.stack``). ``run`` now sizes the HDF5 dataset up
+    front and writes plane by plane, so what survives is a :class:`PlaneWriter`
+    chunk-row buffer (~``stack_bytes ** (2/3)``, 104 MiB for that 2.90 GiB
+    sweep) plus :data:`GATHER_SCRATCH_PLANE_MULTIPLE` planes of coordinate
+    scratch (259 MiB) — both functions of one **plane's** size rather than of
+    the sweep's length, but together still about **0.35 GiB unmodelled on the
+    shipped default, ~9% of an 8 GB machine's headroom**. That is a residual to
+    fold into the next recalibration, not something to ignore. Deriving it from
+    ``params`` means resolving ``slices_json`` against the data box here, which
+    this estimator does not do; the arithmetic once a plane's ``(nv, nu)`` is
+    known is `(GATHER_SCRATCH_PLANE_MULTIPLE + chunks[0]) * nv * nu * 4`.
     """
     p = {**STAGE.defaults(), **params}
     total_input = 0
