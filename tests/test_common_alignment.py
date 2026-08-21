@@ -368,6 +368,44 @@ def test_streamed_single_layer_volume_matches_in_core():
     assert np.array_equal(rebuilt, reference.data, equal_nan=True)
 
 
+def test_streamed_block_does_not_retain_its_input_span():
+    """The block generator must not pin its raw read across the ``yield``.
+
+    A generator frame stays alive between yields, so a span still bound there is
+    retained for as long as the consumer holds the block. That is invisible with
+    one stream and expensive with several — `paraview` keeps one open per field,
+    and four suspended frames each pinning their own span cost four whole input
+    volumes on top of the four blocks. Asserted by weak reference rather than by
+    measuring memory, so it cannot pass by being too small to notice.
+    """
+    import weakref
+
+    vol = np.arange(6 * 4 * 5, dtype=np.float64).reshape(6, 4, 5)
+    reads: list = []
+
+    class _Dset:
+        """Duck-typed like an h5py dataset: every slice is a fresh array."""
+
+        shape = vol.shape
+        dtype = vol.dtype
+
+        def __getitem__(self, item):
+            out = np.array(vol[item])
+            reads.append(weakref.ref(out))
+            return out
+
+    streamed = A.align_volume_streamed(
+        _Dset(), np.zeros(6), np.linspace(0.0, 0.005, 6), scale_x=0.15, budget_bytes=None
+    )
+    blocks = streamed.blocks()
+    _zsl, block = next(blocks)  # the generator is now suspended at the yield
+    assert reads, "the stream read nothing — this test would measure nothing"
+    assert block.shape[1:] == streamed.shape[1:]
+    alive = [i for i, ref in enumerate(reads) if ref() is not None]
+    assert not alive, f"input span(s) {alive} of {len(reads)} still alive at the yield"
+    del blocks
+
+
 @pytest.mark.parametrize("take_abs", [False, True])
 def test_streamed_matches_in_core_float32(take_abs):
     """Stage volumes are float32 on disk; the chain upcasts and both paths must agree.

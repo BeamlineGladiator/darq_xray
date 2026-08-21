@@ -725,7 +725,7 @@ rendering, with a `valid_mask` and NaN sentinels.
 | Param | Meaning |
 |---|---|
 | `roi_x` / `roi_y` | map-frame crop in map pixels (`c0,c1` / `r0,r1`), relative to the darfix window, NOT absolute detector pixels; pre-filled from the experiment's analysis window |
-| `num_pieces_z` | Z pieces — match your `pvserver` MPI rank count |
+| `num_pieces_z` | Z pieces — match your `pvserver` MPI rank count. It also sets how much memory the export needs: one piece of every field is held at a time, so **more pieces means a lower peak** |
 | `anchor_origin_to_reference` | place the world origin in the raw-detector frame so all volumes co-register |
 | `mosa_darfix_origin_xy` / `strain_darfix_origin_xy` | the darfix crop origin for the mosaicity / strain maps, in absolute detector pixels `x,y` — copy verbatim from darfix's ROI widget. Only used when `anchor_origin_to_reference` is on; NOT pre-filled from the experiment, so update them by hand for a non-STO2 dataset |
 
@@ -735,6 +735,16 @@ rendering, with a `valid_mask` and NaN sentinels.
 > volumes. Drag a rectangle and click **OK** — the `roi_x` and `roi_y` fields
 > are filled automatically. Returns no preview when the volume files cannot be
 > read.
+
+> [!info] Large exports stream — same files, more patience
+> This is the heaviest stage in the pipeline, and it no longer needs the whole
+> aligned dataset in memory. It measures the machine's free memory when the run
+> starts and, if the export will not fit, reads and aligns the volumes in
+> Z-blocks and writes one `.vti` piece at a time instead. Nothing about the
+> result changes — the pieces are byte-for-byte what a machine with unlimited
+> memory would write — but a run that has to stream reads each volume more than
+> once and takes correspondingly longer. If a large export is still tight,
+> raising **Z pieces** lowers the peak further (see the table above).
 
 > [!example] ParaView workflow
 > ```bash

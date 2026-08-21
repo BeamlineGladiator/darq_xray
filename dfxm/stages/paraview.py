@@ -481,6 +481,100 @@ def write_pvti_master(
         fh.write("\n".join(lines) + "\n")
 
 
+def _sentinel_for(global_min: float, global_max: float) -> float:
+    """The NaN replacement value, from the finite range of every field together.
+
+    One definition for both writers: an in-core caller passes the range it read
+    off the arrays, a streaming caller the range :func:`volumeio.stream_minmax`
+    accumulated. ``global_min`` non-finite means no field held a finite voxel.
+    """
+    if not np.isfinite(global_min):
+        return -1e30
+    return global_min - 1000.0 * max(global_max - global_min, 1.0)
+
+
+def _write_partitioned_vti(
+    piece_fields,
+    field_names: list,
+    dims_zyx: tuple,
+    spacing: tuple,
+    output_path_pvti: str,
+    *,
+    origin: tuple,
+    n_pieces: int,
+    compression: bool,
+    replace_nan: bool,
+    write_valid_mask: bool,
+    sentinel: float | None,
+    nan_fraction_overall: float,
+) -> dict:
+    """Write the pieces and the ``.pvti`` manifest, and describe what was written.
+
+    The single place that decides piece extents, file names, the manifest and
+    the returned dict, so the in-core and streaming writers cannot drift apart
+    in any of them — only in how they produce a piece's arrays.
+
+    *piece_fields* is a callable ``(z0, z1) -> {name: array}`` returning the
+    already-cleaned fields for the **inclusive** Z extent ``[z0, z1]``, sized to
+    the piece. *field_names* is what those dicts will be keyed by, in order,
+    needed up front for the manifest.
+    """
+    if not output_path_pvti.endswith(".pvti"):
+        raise ValueError(f"output_path_pvti must end with .pvti: {output_path_pvti}")
+    nz, ny, nx = dims_zyx
+
+    extents = compute_piece_extents_z(nz, n_pieces)
+    out_dir = os.path.dirname(os.path.abspath(output_path_pvti))
+    base_no_ext = os.path.splitext(os.path.basename(output_path_pvti))[0]
+    pieces_subdir_name = f"{base_no_ext}_pieces"
+    pieces_dir = os.path.join(out_dir, pieces_subdir_name)
+    os.makedirs(pieces_dir, exist_ok=True)
+
+    whole_dims = (nx, ny, nz)
+    spacing_tuple = tuple(float(s) for s in spacing)
+    origin_tuple = tuple(float(o) for o in origin)
+    n_pad = max(3, len(str(len(extents) - 1)))
+    piece_specs = []
+    total_size_bytes = 0
+
+    for k, (z0, z1) in enumerate(extents):
+        piece_basename = f"{base_no_ext}_piece_{k:0{n_pad}d}.vti"
+        piece_path = os.path.join(pieces_dir, piece_basename)
+        piece_rel = f"{pieces_subdir_name}/{piece_basename}"
+        field_slices = piece_fields(z0, z1)
+        write_piece_vti(
+            field_slices, (z0, z1), whole_dims, spacing_tuple, origin_tuple, piece_path, compression
+        )
+        # Dropped before the next piece is built, so at most one piece's arrays
+        # are ever resident — the whole point of the streaming writer.
+        del field_slices
+        total_size_bytes += os.path.getsize(piece_path)
+        piece_specs.append((piece_rel, (z0, z1)))
+
+    field_specs = [(name, _numpy_to_vtk_type_str(SAVE_DTYPE)) for name in field_names]
+    write_pvti_master(
+        output_path_pvti, whole_dims, spacing_tuple, origin_tuple, piece_specs, field_specs
+    )
+
+    return {
+        "path_pvti": output_path_pvti,
+        "pieces_dir": pieces_dir,
+        "n_pieces": len(extents),
+        "piece_extents_z": extents,
+        "dimensions_xyz": [int(nx), int(ny), int(nz)],
+        "spacing_um_xyz": list(spacing_tuple),
+        "origin_um_xyz": list(origin_tuple),
+        "fields": list(field_names),
+        "dtype": np.dtype(SAVE_DTYPE).name,
+        "total_size_MB": round(total_size_bytes / (1024**2), 2),
+        "compression": "zlib" if compression else "none",
+        "replace_nan": replace_nan,
+        "write_valid_mask": write_valid_mask,
+        "nan_sentinel": sentinel,
+        "padded_fraction": nan_fraction_overall,
+    }
+
+
 def save_volumes_as_pvti(
     volumes: dict,
     spacing: tuple,
@@ -523,11 +617,7 @@ def save_volumes_as_pvti(
                 if len(f):
                     global_min = min(global_min, float(f.min()))
                     global_max = max(global_max, float(f.max()))
-            sentinel = (
-                -1e30
-                if not np.isfinite(global_min)
-                else global_min - 1000.0 * max(global_max - global_min, 1.0)
-            )
+            sentinel = _sentinel_for(global_min, global_max)
 
     cleaned_volumes = {}
     for name, vol in volumes.items():
@@ -535,54 +625,233 @@ def save_volumes_as_pvti(
     if write_valid_mask:
         cleaned_volumes["valid_mask"] = valid_mask.astype(SAVE_DTYPE)
 
-    extents = compute_piece_extents_z(nz, n_pieces)
-    out_dir = os.path.dirname(os.path.abspath(output_path_pvti))
-    base_no_ext = os.path.splitext(os.path.basename(output_path_pvti))[0]
-    pieces_subdir_name = f"{base_no_ext}_pieces"
-    pieces_dir = os.path.join(out_dir, pieces_subdir_name)
-    os.makedirs(pieces_dir, exist_ok=True)
-
-    whole_dims = (nx, ny, nz)
-    spacing_tuple = tuple(float(s) for s in spacing)
-    origin_tuple = tuple(float(o) for o in origin)
-    n_pad = max(3, len(str(len(extents) - 1)))
-    piece_specs = []
-    total_size_bytes = 0
-
-    for k, (z0, z1) in enumerate(extents):
-        piece_basename = f"{base_no_ext}_piece_{k:0{n_pad}d}.vti"
-        piece_path = os.path.join(pieces_dir, piece_basename)
-        piece_rel = f"{pieces_subdir_name}/{piece_basename}"
-        field_slices = {name: vol[z0 : z1 + 1] for name, vol in cleaned_volumes.items()}
-        write_piece_vti(
-            field_slices, (z0, z1), whole_dims, spacing_tuple, origin_tuple, piece_path, compression
-        )
-        total_size_bytes += os.path.getsize(piece_path)
-        piece_specs.append((piece_rel, (z0, z1)))
-
-    field_specs = [(name, _numpy_to_vtk_type_str(SAVE_DTYPE)) for name in cleaned_volumes]
-    write_pvti_master(
-        output_path_pvti, whole_dims, spacing_tuple, origin_tuple, piece_specs, field_specs
+    return _write_partitioned_vti(
+        lambda z0, z1: {name: vol[z0 : z1 + 1] for name, vol in cleaned_volumes.items()},
+        list(cleaned_volumes.keys()),
+        (nz, ny, nx),
+        spacing,
+        output_path_pvti,
+        origin=origin,
+        n_pieces=n_pieces,
+        compression=compression,
+        replace_nan=replace_nan,
+        write_valid_mask=write_valid_mask,
+        sentinel=sentinel,
+        nan_fraction_overall=nan_fraction_overall,
     )
 
-    info = {
-        "path_pvti": output_path_pvti,
-        "pieces_dir": pieces_dir,
-        "n_pieces": len(extents),
-        "piece_extents_z": extents,
-        "dimensions_xyz": [int(nx), int(ny), int(nz)],
-        "spacing_um_xyz": list(spacing_tuple),
-        "origin_um_xyz": list(origin_tuple),
-        "fields": list(cleaned_volumes.keys()),
-        "dtype": np.dtype(SAVE_DTYPE).name,
-        "total_size_MB": round(total_size_bytes / (1024**2), 2),
-        "compression": "zlib" if compression else "none",
-        "replace_nan": replace_nan,
-        "write_valid_mask": write_valid_mask,
-        "nan_sentinel": sentinel,
-        "padded_fraction": nan_fraction_overall,
-    }
-    return info
+
+# -----------------------------------------------------------------------------
+# Streaming PVTI writer
+# -----------------------------------------------------------------------------
+class _FieldStream:
+    """One field's blocks, buffered so ascending, overlapping Z ranges can be served.
+
+    :func:`compute_piece_extents_z` makes adjacent pieces share one Z index, so
+    requests overlap and a consume-and-discard reader would drop a row it still
+    needs. This keeps the buffered blocks that a pending request can still
+    reach, and no more.
+    """
+
+    def __init__(self, provider) -> None:
+        self._it = provider.blocks()
+        self._buffer: list = []
+        self._exhausted = False
+        self._empty = np.empty((0,) + tuple(provider.shape[1:]), dtype=provider.dtype)
+
+    def _prune(self, z0: int) -> None:
+        self._buffer = [(sl, b) for sl, b in self._buffer if sl.stop > z0]
+
+    def slab(self, z0: int, z1: int) -> np.ndarray:
+        """This field over the half-open range ``[z0, z1)``, concatenated."""
+        self._prune(z0)
+        while not self._exhausted and (not self._buffer or self._buffer[-1][0].stop < z1):
+            item = next(self._it, None)
+            if item is None:
+                self._exhausted = True
+                break
+            self._buffer.append(item)
+        self._prune(z0)  # again: the fill may have pulled blocks that end below z0
+        parts = [
+            block[max(sl.start, z0) - sl.start : min(sl.stop, z1) - sl.start]
+            for sl, block in self._buffer
+            if min(sl.stop, z1) > max(sl.start, z0)
+        ]
+        # An empty Z axis (or a degenerate extent) covers no block at all; the
+        # in-core writer slices an empty piece there rather than failing, so
+        # match it instead of raising.
+        if not parts:
+            return self._empty
+        # One part is a *slice of the buffered block*, so returning it directly
+        # costs nothing where concatenating would copy. That matters most where
+        # the copy is largest: a budget generous enough to leave one block per
+        # field makes every slab a slice of a whole aligned volume, and copying
+        # it holds a second one. Measured on a 128x192x192 four-field export at
+        # an unbounded budget: 524 MiB peak RSS concatenating unconditionally,
+        # 413 MiB with this.
+        return parts[0] if len(parts) == 1 else np.concatenate(parts, axis=0)
+
+
+class _SlabReader:
+    """Serve ascending, possibly overlapping Z ranges of every field at once.
+
+    One :class:`_FieldStream` per field rather than one interleaved walk,
+    because **the providers do not block alike**: a centred CoM field carries
+    the centring statistic's working set and a plain FWHM field does not, so
+    :func:`~dfxm.common.alignment.align_volume_streamed` solves a different
+    block size for each out of the same budget. Every field is on the same Z
+    axis, which is what makes a shared ``[z0, z1)`` request meaningful; how each
+    gets there is its own business.
+    """
+
+    def __init__(self, providers) -> None:
+        self._streams = {name: _FieldStream(prov) for name, prov in providers.items()}
+
+    def slab(self, z0: int, z1: int) -> dict:
+        """Every field over the half-open range ``[z0, z1)``."""
+        return {name: stream.slab(z0, z1) for name, stream in self._streams.items()}
+
+
+def _combined_finite_mask(fields: dict) -> np.ndarray:
+    """Voxels finite in EVERY field — the in-core ``valid_mask &= isfinite(v)``."""
+    mask = None
+    for block in fields.values():
+        finite = np.isfinite(block)
+        mask = finite if mask is None else (mask & finite)
+    return mask
+
+
+def _survey(providers, *, count_invalid: bool, find_range: bool) -> tuple[int, float, float]:
+    """One traversal for both global quantities a piece cannot compute itself.
+
+    Returns ``(invalid_voxels, global_min, global_max)`` — the count of voxels
+    non-finite in ANY field (the in-core ``valid_mask`` semantics) and the
+    finite range across ALL fields. Deliberately one walk rather than two:
+    ``StreamedAlignment.blocks`` is a factory and every call re-runs the whole
+    alignment chain, so surveying the count and the range separately would
+    align each field twice before the piece pass aligns it a third time. This
+    is a time saving, not a memory one — the peak is set by how much is
+    resident within a walk, not by how many walks there are.
+    """
+    from ..common import volumeio
+
+    nz = int(next(iter(providers.values())).shape[0])
+    # Walk in slabs no larger than the smallest block any provider will yield,
+    # so this pass never holds more than the piece pass does.
+    step = max(1, min(int(prov.block_layers) for prov in providers.values()))
+    reader = _SlabReader(providers)
+    invalid = 0
+    global_min, global_max = np.inf, -np.inf
+    for z0 in range(0, nz, step):
+        fields = reader.slab(z0, min(z0 + step, nz))
+        if count_invalid:
+            invalid += int(np.count_nonzero(~_combined_finite_mask(fields)))
+        if find_range:
+            for block in fields.values():
+                # Per block, so the finite-value filtering is `volumeio`'s
+                # definition rather than a second one here; min/max merge
+                # across blocks exactly as `stream_minmax` merges them
+                # internally.
+                lo, hi = volumeio.stream_minmax([block])
+                if np.isfinite(lo):
+                    global_min = min(global_min, lo)
+                    global_max = max(global_max, hi)
+    return invalid, global_min, global_max
+
+
+def save_volumes_streamed(
+    providers: dict,
+    spacing: tuple,
+    output_path_pvti: str,
+    *,
+    origin: tuple = (0.0, 0.0, 0.0),
+    n_pieces: int = 16,
+    compression: bool = False,
+    replace_nan: bool = True,
+    write_valid_mask: bool = True,
+    nan_sentinel: float | None = None,
+) -> dict:
+    """Write a partitioned VTI dataset from streamed fields, one piece at a time.
+
+    ``providers`` maps field name to a
+    :class:`~dfxm.common.alignment.StreamedAlignment`. Every provider must share
+    one shape — they are co-registered by construction, so a mismatch is a bug
+    rather than a case to handle.
+
+    Two passes. The first computes only what a piece cannot know locally: the
+    NaN sentinel's global range and the overall invalid fraction. The second
+    builds each piece's valid mask and cleaned arrays from that piece's Z-slab
+    alone, so peak memory is one piece per field rather than one volume per
+    field.
+
+    **What this does and does not bound.** The aligned volume is never
+    materialised, but a ``.vti`` piece is written in one call, so a piece's
+    Z-slab *is* resident for every field at once. The peak therefore scales as
+    ``n_fields * volume_bytes / n_pieces`` — set by ``n_pieces`` (the stage's
+    "Z pieces"), not by the providers' ``budget_bytes``, which sizes only the
+    alignment blocks feeding the slab. More pieces means a lower peak.
+
+    Returns the same dict as :func:`save_volumes_as_pvti`, and — for the same
+    fields — writes byte-identical pieces.
+    """
+    if not providers:
+        raise ValueError("No volumes to save")
+    if not output_path_pvti.endswith(".pvti"):
+        raise ValueError(f"output_path_pvti must end with .pvti: {output_path_pvti}")
+
+    shapes = {name: tuple(prov.shape) for name, prov in providers.items()}
+    if len(set(shapes.values())) != 1:
+        raise ValueError(f"All volumes must share the same shape, got {shapes}")
+    nz, ny, nx = shapes[next(iter(shapes))]
+
+    # --- pass 1: the two things a piece cannot compute for itself ---
+    sentinel = None
+    nan_fraction_overall = 0.0
+    count_invalid = bool(replace_nan or write_valid_mask)
+    find_range = bool(replace_nan and nan_sentinel is None)
+    if count_invalid or find_range:
+        invalid, global_min, global_max = _survey(
+            providers, count_invalid=count_invalid, find_range=find_range
+        )
+        total = nz * ny * nx
+        if count_invalid:
+            nan_fraction_overall = (invalid / total) if total else 0.0
+        if find_range:
+            sentinel = _sentinel_for(global_min, global_max)
+    if replace_nan and nan_sentinel is not None:
+        sentinel = float(nan_sentinel)
+
+    # --- pass 2: one piece at a time ---
+    reader = _SlabReader(providers)
+
+    def piece_fields(z0: int, z1: int) -> dict:
+        fields = reader.slab(z0, z1 + 1)  # piece extents are inclusive
+        mask = _combined_finite_mask(fields) if write_valid_mask else None
+        # Cleaning is per-field `isfinite`, the mask is the combined one. That
+        # asymmetry is the in-core writer's and is preserved deliberately.
+        cleaned = {
+            name: (np.where(np.isfinite(block), block, sentinel) if replace_nan else block)
+            for name, block in fields.items()
+        }
+        if write_valid_mask:
+            cleaned["valid_mask"] = mask.astype(SAVE_DTYPE)
+        return cleaned
+
+    field_names = list(providers) + (["valid_mask"] if write_valid_mask else [])
+    return _write_partitioned_vti(
+        piece_fields,
+        field_names,
+        (nz, ny, nx),
+        spacing,
+        output_path_pvti,
+        origin=origin,
+        n_pieces=n_pieces,
+        compression=compression,
+        replace_nan=replace_nan,
+        write_valid_mask=write_valid_mask,
+        sentinel=sentinel,
+        nan_fraction_overall=nan_fraction_overall,
+    )
 
 
 def estimate(params: dict) -> CostEstimate:
@@ -594,22 +863,24 @@ def estimate(params: dict) -> CostEstimate:
     add, and the run's peak is the max over the (at most two) files processed.
     ``chunkable=True``.
 
-    The ``file_total`` term in the arithmetic below models the *old*
-    ``_process_mosaicity``, which called ``load_mosa_datasets`` to hold every
-    raw field (native dtype, ``file_total`` bytes) in a dict for the whole
-    alignment pass. That dict is gone: ``mosa_field_names`` +
-    ``load_mosa_field`` read **one** field at a time and ``del`` the raw read as
-    soon as ``apply_samy_shifts_to_volume`` has copied out of it, so only one
-    field's raw bytes are ever resident. ``_process_strain`` was not converted
-    — it loads a single dataset and keeps it in a local for the whole call, so
-    for the strain file ``file_total`` is still an honest one-volume term.
+    **The arithmetic below now models a stage that no longer exists**, and
+    deliberately so. It prices the in-core export: every raw field resident at
+    once, an aligned float64 copy of every field accumulated in ``processed``,
+    and a second ``np.where``-cleaned set plus a boolean mask built whole before
+    the first piece is written. The export streams instead — one alignment block
+    and one piece-slab per field — so this over-predicts, which is the safe
+    direction twice over. It is what ``advice.plan_run`` compares against the
+    machine's headroom, and an over-estimate there only makes it hand over a
+    *smaller* ``budget_bytes``, i.e. block harder; an under-estimate would let a
+    run start in-core that then OOMs. Recalibrating it means measuring the
+    streamed peak on the real dataset, not editing the terms below by
+    inspection — the warning at the end of this docstring applies unchanged.
 
-    Everything after the read is unchanged: the aligned float64 copy of every
-    field (``apply_roi_3d`` -> ``apply_samy_shifts_to_volume`` ->
-    ``interpolate_to_uniform_z``, the last of which upcasts to float64)
-    accumulates in ``processed`` — ``file_elems * 8`` — and
-    ``save_volumes_as_pvti`` then builds a further ``np.where``-cleaned float64
-    copy of every field plus a boolean ``valid_mask`` before downcasting to
+    The terms: the aligned float64 copy of every field (``apply_roi_3d`` ->
+    ``apply_samy_shifts_to_volume`` -> ``interpolate_to_uniform_z``, the last of
+    which upcasts to float64) accumulated for the whole export —
+    ``file_elems * 8`` — and a further ``np.where``-cleaned float64 copy of
+    every field plus a boolean ``valid_mask`` before downcasting to
     ``SAVE_DTYPE`` per piece at write time, bounded as ``file_elems * 8 +
     largest_elems * 8``.
 
@@ -672,21 +943,27 @@ def mosa_field_names(filepath: str) -> list[str]:
     return sorted(names)
 
 
-def load_mosa_field(filepath: str, name: str):
-    """One field from a mosaicity volume file, or None if absent."""
-    with h5py.File(filepath, "r") as f:
-        for group in ("chi", "mu"):
-            if group not in f:
-                continue
-            for ds in f[group].keys():
-                if f"{group}_{ds.replace(' ', '_')}" == name:
-                    return f[group][ds][:]
+def mosa_dataset(f, name: str):
+    """The open HDF5 dataset for *name* in an already-open file, or None.
+
+    The name-matching convention lives here alone: a streaming caller needs the
+    dataset (to slice it block by block) rather than its contents, and
+    :func:`load_mosa_field` is the read-it-all-now wrapper over the same lookup.
+    """
+    for group in ("chi", "mu"):
+        if group not in f:
+            continue
+        for ds in f[group].keys():
+            if f"{group}_{ds.replace(' ', '_')}" == name:
+                return f[group][ds]
     return None
 
 
-def load_strain_volume(filepath: str):
+def load_mosa_field(filepath: str, name: str):
+    """One field from a mosaicity volume file, or None if absent."""
     with h5py.File(filepath, "r") as f:
-        return f["strain"][:] if "strain" in f else None
+        dset = mosa_dataset(f, name)
+        return None if dset is None else dset[:]
 
 
 # -----------------------------------------------------------------------------
@@ -720,63 +997,133 @@ def _pvti_kwargs(p: dict) -> dict:
     )
 
 
+# The Z step (µm) the export falls back to when no raw scan folders were found,
+# so there are no samz positions to derive one from. `extract_motor_positions`
+# fills samy and samz from the same folders, so they are empty together and this
+# case means "no motors at all", not "no Z motor".
+_NO_MOTOR_Z_STEP_UM = 2.0
+
+
+def _whole_volume_stream(data: np.ndarray, center_offset: float = 0.0):
+    """An in-memory array presented as a one-block ``StreamedAlignment``.
+
+    So the writer has exactly one kind of input to consume. Used for the
+    no-motor case below, where there is nothing to stream in the first place.
+    """
+    return A.StreamedAlignment(
+        shape=tuple(int(d) for d in data.shape),
+        dtype=np.dtype(data.dtype),
+        z_uniform_um=np.arange(data.shape[0], dtype=float) * _NO_MOTOR_Z_STEP_UM,
+        scale_z_um=_NO_MOTOR_Z_STEP_UM,
+        pad_left=0,
+        pad_right=0,
+        center_offset=float(center_offset),
+        block_layers=int(data.shape[0]),
+        working_set_bytes=int(data.nbytes),
+        blocks=lambda: iter([(slice(0, int(data.shape[0])), data)]),
+    )
+
+
+def _unaligned_field(dset, *, roi_x, roi_y, take_abs: bool, center_method: str | None):
+    """The no-motor export path, as a provider: no shift, no Z resampling.
+
+    ``_motors`` returns empty ``samy`` **and** ``samz`` together when the
+    raw-folder glob matched nothing, and the stage has always answered that by
+    skipping both motor-driven steps and labelling the layers
+    ``_NO_MOTOR_Z_STEP_UM`` apart. That cannot be expressed through
+    :func:`~dfxm.common.alignment.align_volume_streamed`, which always
+    interpolates: resampling a NaN-bearing volume onto its own Z nodes is not
+    the identity, because scipy's linear interpolant reads the value *below*
+    each node and so spreads every NaN one layer down — measured here as 1299
+    of 9360 voxels changing their ``valid_mask``. So this keeps the old chain
+    (abs -> ROI -> centre) and hands the result over as a single block.
+
+    Nothing is streamed, which costs what it always did: one volume in memory.
+    The saving that still applies is the writer's — the cleaned copy and the
+    mask are built per piece either way. A run with no motor positions exports
+    an unaligned volume, so it is a misconfigured run rather than the large
+    production run this phase is about.
+    """
+    raw = dset[:]
+    data = A.apply_roi_3d(np.abs(raw) if take_abs else raw, roi_x, roi_y)
+    del raw
+    offset = 0.0
+    if center_method:
+        data, offset = A.center_around_zero(data, center_method)
+    return _whole_volume_stream(data, offset)
+
+
 # -----------------------------------------------------------------------------
 # Per-volume processing
 # -----------------------------------------------------------------------------
-def _process_mosaicity(p, out_dir, scale_x, scale_y, samy_dir, roi_x, roi_y) -> ExportInfo | None:
+def _process_mosaicity(
+    p, out_dir, scale_x, scale_y, samy_dir, roi_x, roi_y, *, budget_bytes
+) -> ExportInfo | None:
     names = mosa_field_names(p["mosa_volume_file"])
     if not names:
         return None
     samy, samz = _motors(p["raw_root"], p["mosa_pattern"], p["samy_path"], p["samz_path"])
 
-    processed = {}
-    scale_z = None
-    z_positions = None
-    for name in names:
-        raw = load_mosa_field(p["mosa_volume_file"], name)
-        if raw is None:
-            continue
-        is_com = "Center_of_mass" in name
-        is_fwhm = "FWHM" in name
-        if is_fwhm and bool(p["abs_mosa_fwhm"]):
-            raw = np.abs(raw)
-        data = A.apply_roi_3d(raw, roi_x, roi_y)
-        if len(samy) > 0:
-            data = A.apply_samy_shifts_to_volume(data, samy, scale_x, samy_dir)
-        # apply_roi_3d returns a view, so `raw` stays alive until the samy shift
-        # allocates. With no samy motors `data` is still a view and this is a
-        # harmless no-op.
-        del raw
-        if len(samz) > 0:
-            data, z_pos, sz = A.interpolate_to_uniform_z(data, samz)
-        else:
-            sz = 2.0
-            z_pos = np.arange(data.shape[0], dtype=float) * sz
-        if scale_z is None:
-            scale_z, z_positions = sz, z_pos
-        if is_com and bool(p["center_mosa_com"]):
-            data, _ = A.center_around_zero(data, p["center_method"])
-        processed[name] = data
+    with h5py.File(p["mosa_volume_file"], "r") as f:
+        providers = {}
+        # Every field's stream is live at once — a `.vti` piece carries all of
+        # them, so `save_volumes_streamed` holds one open per field and their
+        # working sets coexist. Hence a share of the budget each. This divides
+        # by the number of CONCURRENT streams, which is a fact about this call
+        # site; it is not a correction to what `budget_bytes` means.
+        per_field = max(1, int(budget_bytes) // max(1, len(names)))
+        for name in names:
+            dset = mosa_dataset(f, name)
+            if dset is None:
+                continue
+            is_com = "Center_of_mass" in name
+            is_fwhm = "FWHM" in name
+            take_abs = is_fwhm and bool(p["abs_mosa_fwhm"])
+            center_method = p["center_method"] if is_com and bool(p["center_mosa_com"]) else None
+            providers[name] = (
+                A.align_volume_streamed(
+                    dset,
+                    samy,
+                    samz,
+                    scale_x=scale_x,
+                    samy_direction=samy_dir,
+                    roi_x=roi_x,
+                    roi_y=roi_y,
+                    take_abs=take_abs,
+                    center_method=center_method,
+                    budget_bytes=per_field,
+                    scratch_dir=out_dir,
+                )
+                if len(samz) > 0
+                else _unaligned_field(
+                    dset,
+                    roi_x=roi_x,
+                    roi_y=roi_y,
+                    take_abs=take_abs,
+                    center_method=center_method,
+                )
+            )
 
-    origin = (
-        A.raw_detector_origin(
-            samy,
-            z_positions,
-            scale_x=scale_x,
-            scale_y=scale_y,
-            roi_x=roi_x,
-            roi_y=roi_y,
-            darfix_origin_xy=_parse_pair(p["mosa_darfix_origin_xy"]) or (0, 0),
-            samy_direction=samy_dir,
+        first = next(iter(providers.values()), None)
+        origin = (
+            A.raw_detector_origin(
+                samy,
+                first.z_uniform_um if first is not None else None,
+                scale_x=scale_x,
+                scale_y=scale_y,
+                roi_x=roi_x,
+                roi_y=roi_y,
+                darfix_origin_xy=_parse_pair(p["mosa_darfix_origin_xy"]) or (0, 0),
+                samy_direction=samy_dir,
+            )
+            if bool(p["anchor_origin_to_reference"])
+            else (0.0, 0.0, 0.0)
         )
-        if bool(p["anchor_origin_to_reference"])
-        else (0.0, 0.0, 0.0)
-    )
-    if len({v.shape for v in processed.values()}) != 1:
-        return None  # shape mismatch — skip merged export (rare)
-    spacing = (scale_x, scale_y, scale_z)
-    out_path = os.path.join(out_dir, "mosaicity_volume.pvti")
-    info = save_volumes_as_pvti(processed, spacing, out_path, origin=origin, **_pvti_kwargs(p))
+        if len({tuple(prov.shape) for prov in providers.values()}) != 1:
+            return None  # shape mismatch — skip merged export (rare)
+        spacing = (scale_x, scale_y, first.scale_z_um)
+        out_path = os.path.join(out_dir, "mosaicity_volume.pvti")
+        info = save_volumes_streamed(providers, spacing, out_path, origin=origin, **_pvti_kwargs(p))
     return ExportInfo(
         "mosaicity",
         out_path,
@@ -788,40 +1135,52 @@ def _process_mosaicity(p, out_dir, scale_x, scale_y, samy_dir, roi_x, roi_y) -> 
     )
 
 
-def _process_strain(p, out_dir, scale_x, scale_y, samy_dir, roi_x, roi_y) -> ExportInfo | None:
-    strain = load_strain_volume(p["strain_volume_file"])
-    if strain is None:
-        return None
+def _process_strain(
+    p, out_dir, scale_x, scale_y, samy_dir, roi_x, roi_y, *, budget_bytes
+) -> ExportInfo | None:
     samy, samz = _motors(p["raw_root"], p["strain_pattern"], p["samy_path"], p["samz_path"])
-    data = A.apply_roi_3d(strain, roi_x, roi_y)
-    if len(samy) > 0:
-        data = A.apply_samy_shifts_to_volume(data, samy, scale_x, samy_dir)
-    if len(samz) > 0:
-        data, z_positions, scale_z = A.interpolate_to_uniform_z(data, samz)
-    else:
-        scale_z = 2.0
-        z_positions = np.arange(data.shape[0], dtype=float) * scale_z
-    if bool(p["center_strain"]):
-        data, _ = A.center_around_zero(data, p["center_method"])
-    origin = (
-        A.raw_detector_origin(
-            samy,
-            z_positions,
-            scale_x=scale_x,
-            scale_y=scale_y,
-            roi_x=roi_x,
-            roi_y=roi_y,
-            darfix_origin_xy=_parse_pair(p["strain_darfix_origin_xy"]) or (0, 0),
-            samy_direction=samy_dir,
+    with h5py.File(p["strain_volume_file"], "r") as f:
+        dset = f["strain"] if "strain" in f else None
+        if dset is None:
+            return None
+        center_method = p["center_method"] if bool(p["center_strain"]) else None
+        provider = (
+            A.align_volume_streamed(
+                dset,
+                samy,
+                samz,
+                scale_x=scale_x,
+                samy_direction=samy_dir,
+                roi_x=roi_x,
+                roi_y=roi_y,
+                center_method=center_method,
+                budget_bytes=int(budget_bytes),
+                scratch_dir=out_dir,
+            )
+            if len(samz) > 0
+            else _unaligned_field(
+                dset, roi_x=roi_x, roi_y=roi_y, take_abs=False, center_method=center_method
+            )
         )
-        if bool(p["anchor_origin_to_reference"])
-        else (0.0, 0.0, 0.0)
-    )
-    spacing = (scale_x, scale_y, scale_z)
-    out_path = os.path.join(out_dir, "strain_volume.pvti")
-    info = save_volumes_as_pvti(
-        {"strain": data}, spacing, out_path, origin=origin, **_pvti_kwargs(p)
-    )
+        origin = (
+            A.raw_detector_origin(
+                samy,
+                provider.z_uniform_um,
+                scale_x=scale_x,
+                scale_y=scale_y,
+                roi_x=roi_x,
+                roi_y=roi_y,
+                darfix_origin_xy=_parse_pair(p["strain_darfix_origin_xy"]) or (0, 0),
+                samy_direction=samy_dir,
+            )
+            if bool(p["anchor_origin_to_reference"])
+            else (0.0, 0.0, 0.0)
+        )
+        spacing = (scale_x, scale_y, provider.scale_z_um)
+        out_path = os.path.join(out_dir, "strain_volume.pvti")
+        info = save_volumes_streamed(
+            {"strain": provider}, spacing, out_path, origin=origin, **_pvti_kwargs(p)
+        )
     return ExportInfo(
         "strain",
         out_path,
@@ -836,6 +1195,28 @@ def _process_strain(p, out_dir, scale_x, scale_y, samy_dir, roi_x, roi_y) -> Exp
 # -----------------------------------------------------------------------------
 # Entry point
 # -----------------------------------------------------------------------------
+def _run_budget_bytes(p: dict, out_dir: str) -> int:
+    """Working-set budget for this run's alignment streams, in bytes.
+
+    Measured from the machine unless the caller injected ``_budget_bytes``. The
+    underscore marks it as not a :class:`StageSpec` parameter: it never appears
+    on the form and is not part of the saved config, exactly like the
+    ``plot_style`` snapshot ``gui/stage_view.py`` injects at run time. Tests use
+    it to pin a blocking that does not depend on the machine they run on.
+
+    The number is in ``tracemalloc``/allocation currency, which is what
+    :func:`~dfxm.common.alignment.align_volume_streamed` prices its working set
+    in — deliberately *not* RSS, which additionally carries the interpreter, VTK
+    and h5py's buffers. It is passed through unscaled.
+    """
+    injected = p.get("_budget_bytes")
+    if injected is not None:
+        return max(1, int(injected))
+    from ..common import advice, machine
+
+    return advice.headroom_bytes(machine.profile(output_dir=out_dir))
+
+
 def run(params: dict, progress: ProgressFn | None = None) -> ParaviewResult:
     progress = progress or _noop
     p = {**STAGE.defaults(), **params}
@@ -849,13 +1230,16 @@ def run(params: dict, progress: ProgressFn | None = None) -> ParaviewResult:
         os.path.dirname(p["mosa_volume_file"] or p["strain_volume_file"] or "."), "paraview_exports"
     )
     os.makedirs(out_dir, exist_ok=True)
+    budget_bytes = _run_budget_bytes(p, out_dir)
     result = ParaviewResult(output_dir=out_dir)
 
     if bool(p["export_mosaicity"]):
         mosa_file = p["mosa_volume_file"]
         if mosa_file and os.path.exists(mosa_file):
             progress(0.1, "exporting mosaicity volume")
-            info = _process_mosaicity(p, out_dir, scale_x, scale_y, samy_dir, roi_x, roi_y)
+            info = _process_mosaicity(
+                p, out_dir, scale_x, scale_y, samy_dir, roi_x, roi_y, budget_bytes=budget_bytes
+            )
             if info:
                 result.exports.append(info)
             else:
@@ -867,7 +1251,9 @@ def run(params: dict, progress: ProgressFn | None = None) -> ParaviewResult:
         strain_file = p["strain_volume_file"]
         if strain_file and os.path.exists(strain_file):
             progress(0.55, "exporting strain volume")
-            info = _process_strain(p, out_dir, scale_x, scale_y, samy_dir, roi_x, roi_y)
+            info = _process_strain(
+                p, out_dir, scale_x, scale_y, samy_dir, roi_x, roi_y, budget_bytes=budget_bytes
+            )
             if info:
                 result.exports.append(info)
             else:

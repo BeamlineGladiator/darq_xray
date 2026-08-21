@@ -726,6 +726,17 @@ def align_volume_streamed(
             raw = dset[in_lo:in_hi]
             v = np.abs(raw) if take_abs else raw
             v = apply_roi_3d(v, roi_x, roi_y)
+            # A generator frame stays alive between `yield`s, so anything still
+            # bound here is retained for as long as the consumer holds the
+            # block. That is invisible with one stream and expensive with
+            # several: paraview keeps one open per field, and four suspended
+            # frames each pinning their own input span cost four whole raw
+            # volumes on top of the four blocks (measured: 144 MB of a 476 MB
+            # peak on a four-field 128x192x192 export). `apply_roi_3d` returns
+            # a VIEW, so this frees nothing until the samy shift or the
+            # interpolation allocates and `v` stops referring to the read —
+            # which is exactly when it should.
+            del raw
             if samy is not None and len(samy) > 0:
                 v = apply_samy_shifts_to_volume(
                     v,
@@ -741,7 +752,10 @@ def align_volume_streamed(
                 ref_samz=float(samz[0]),
                 z_uniform=z_target,
             )
-            yield slice(start, stop), (v - offset if offset else v)
+            block = v - offset if offset else v
+            del v  # same reason: `v` is a second reference only when centring
+            yield slice(start, stop), block
+            del block  # and the block itself, once the consumer has taken it
 
     offset = 0.0
     if center_method:
