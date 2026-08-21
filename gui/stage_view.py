@@ -1076,6 +1076,7 @@ def _summarize_paraview(result) -> str:
             f"pieces={e.n_pieces} fields={e.fields}"
         )
     lines += [f"skipped: {s}" for s in result.skipped]
+    lines += [f"note: {n}" for n in getattr(result, "notes", [])]
     if result.info_path:
         lines.append(f"info: {result.info_path}")
     return "\n".join(lines)

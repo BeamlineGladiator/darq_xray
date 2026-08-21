@@ -29,6 +29,19 @@ TOTAL_FRACTION = 0.5
 # memory it saves.
 MIN_BUDGET_BYTES = 64 * 1024 * 1024
 
+# `headroom_bytes` is RSS. `alignment.align_volume_streamed`'s `budget_bytes` is
+# `tracemalloc` — Python-level allocations, which do not carry the interpreter,
+# the extension modules, h5py's chunk cache, a memmap's resident pages or
+# allocator fragmentation. Handing one straight to the other is a category
+# error, and this is the divisor that converts. The figure is the project's own
+# measurement of real peak RSS against modelled peak on the real dataset.
+#
+# With it, the worst case is a run that fits: the working-set model measures at
+# most 0.77x its budget, so peak RSS lands at most 0.77 x 1.66 / 1.66 = 0.77 of
+# headroom. Without it the same run lands at 1.28x headroom — over the very
+# limit the budget was asked to respect.
+RSS_PER_TRACEMALLOC = 1.66
+
 
 @dataclass(frozen=True)
 class RunPlan:
@@ -65,6 +78,25 @@ def headroom_bytes(profile) -> int:
     if profile.ram_total <= 0:
         return MIN_BUDGET_BYTES  # unmeasurable machine: assume the worst
     return int(min(AVAILABLE_FRACTION * profile.ram_available, TOTAL_FRACTION * profile.ram_total))
+
+
+def working_set_budget_bytes(profile) -> int:
+    """:func:`headroom_bytes` converted into working-set (``tracemalloc``) currency.
+
+    What a stage should hand to :func:`~dfxm.common.alignment.align_volume_streamed`
+    as ``budget_bytes``. Never pass ``headroom_bytes`` there directly: it is an
+    RSS figure and ``budget_bytes`` is priced in Python allocations — see
+    :data:`RSS_PER_TRACEMALLOC`. This is the streaming counterpart of
+    :func:`~dfxm.common.volumeio.display_headroom_bytes`'s
+    :data:`~dfxm.common.volumeio.DISPLAY_COPIES` division: same shape of
+    correction, different reason.
+
+    Deliberately not floored at :data:`MIN_BUDGET_BYTES` — that floor exists to
+    say "do not bother chunking below this", and applying it after the
+    conversion would hand back the unconverted number on exactly the small
+    machine the conversion protects.
+    """
+    return max(1, int(headroom_bytes(profile) / RSS_PER_TRACEMALLOC))
 
 
 def plan_run(profile, estimate, *, allow_downsample: bool = False, scratch_dir=None) -> RunPlan:

@@ -736,15 +736,34 @@ rendering, with a `valid_mask` and NaN sentinels.
 > are filled automatically. Returns no preview when the volume files cannot be
 > read.
 
-> [!info] Large exports stream — same files, more patience
-> This is the heaviest stage in the pipeline, and it no longer needs the whole
-> aligned dataset in memory. It measures the machine's free memory when the run
-> starts and, if the export will not fit, reads and aligns the volumes in
-> Z-blocks and writes one `.vti` piece at a time instead. Nothing about the
-> result changes — the pieces are byte-for-byte what a machine with unlimited
-> memory would write — but a run that has to stream reads each volume more than
-> once and takes correspondingly longer. If a large export is still tight,
-> raising **Z pieces** lowers the peak further (see the table above).
+> [!info] Every export streams — same files, roughly 1.2–1.7× the time
+> This is the heaviest stage in the pipeline, and it no longer holds the whole
+> aligned dataset in memory. **Every** run now reads and aligns the volumes in
+> Z-blocks and writes one `.vti` piece at a time; there is no in-core fast path
+> to fall back to, and no size threshold below which the old behaviour applies.
+> The cost is a fixed one you pay on small exports too: reaching the sentinel
+> and the padded fraction takes a pass over the data before any piece can be
+> written, so each volume is read more than once. Measured on a four-field
+> 36 MB-per-volume export: 3.0 s in-core against 5.0 s streamed on a machine
+> with memory to spare, and 3.6 s when a tighter memory budget makes the blocks
+> small enough to stay in cache. The machine's free memory decides only *how
+> finely* the volumes are blocked, not whether they are.
+>
+> Nothing about the result changes — the pieces are byte-for-byte what the old
+> in-core exporter wrote.
+>
+> Memory, though, is bounded by **Z pieces** and not by the free-memory
+> measurement: one piece of every field is held at a time, so too few pieces can
+> peak higher than the old in-core export did. The run says so when that
+> happens — look for a `Z pieces = N needs about … MB` note in the run log and
+> the Results summary, and raise **Z pieces** to the number it suggests. It is
+> advice, never enforced: your piece count stays exactly what you asked for.
+
+> [!note] Scratch files
+> With **Centre method = median** the export may cache an aligned volume on disk
+> while it computes the statistic, in a `.dfxm_scratch/` folder inside the output
+> directory. It is deleted when the run ends. If the disk is too full for it, the
+> run re-reads instead — slower, same result — and says so in a note.
 
 > [!example] ParaView workflow
 > ```bash

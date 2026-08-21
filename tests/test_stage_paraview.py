@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import os
 import sys
+import warnings
 from pathlib import Path
 
 import h5py
@@ -361,11 +362,14 @@ def test_paraview_peak_stays_under_budget(tmp_path):
     """A budgeted export does not need the whole aligned volume set resident.
 
     One float64 volume here is 36 MiB and the export has four fields; the
-    in-core writer this replaced peaked at 586 MiB on exactly this input (a
-    ~227 MiB floor for the spawned child's interpreter, numpy, h5py and VTK,
-    plus ~10 volumes), so the 400 MiB limit is one the old code could not meet
-    and the streamed one clears with ~130 MiB to spare. Checked against the
-    previous commit, where it fails.
+    in-core writer this replaced peaked at 586-593 MiB on exactly this input (a
+    ~229 MiB floor for the spawned child's interpreter, numpy, h5py and VTK,
+    plus ~10 volumes), while the streamed one measures ~261 MiB. The 480 MiB
+    limit sits between them with ~110 MiB of margin on the failing side and
+    ~220 MiB on the passing side — deliberately not tighter, because the floor
+    is environment-dependent (a heavier VTK build raises it for everyone) and a
+    peak test that flakes on an unrelated upgrade stops being read. Checked
+    against the previous commit, where it fails.
     """
     from tests.peak_rss import assert_peak_under
 
@@ -383,8 +387,116 @@ def test_paraview_peak_stays_under_budget(tmp_path):
         "_budget_bytes": 64 << 20,
     }
     result = assert_peak_under(
-        "dfxm.stages.paraview:run", params, limit_bytes=400 * (1 << 20), timeout=600
+        "dfxm.stages.paraview:run", params, limit_bytes=480 * (1 << 20), timeout=600
     )
     # ... and the bounded run still produced the export, rather than skipping it.
     assert [e.name for e in result.exports] == ["mosaicity"]
     assert result.exports[0].n_pieces == 16
+
+
+def test_streamed_writer_rejects_mismatched_z_grids(tmp_path):
+    """Per-field slabs pair by absolute Z index — a shared Z grid is the invariant."""
+    vol = _synthetic_volume(seed=3)
+    a = _as_streamed(vol, budget_bytes=1 << 30)
+    b = A.align_volume_streamed(
+        vol,
+        _S_SAMY,
+        _S_SAMZ * 1.5,  # same shape, different Z grid
+        budget_bytes=1 << 30,
+        **_S_ALIGN,
+    )
+    # The precondition the check exists for: same shape, different grid. Without
+    # this the test could pass because the shapes differ, which is a different
+    # guard entirely.
+    assert tuple(a.shape) == tuple(b.shape)
+    assert a.scale_z_um != b.scale_z_um
+
+    with pytest.raises(ValueError, match="Z grid"):
+        PV.save_volumes_streamed(
+            {"one": a, "two": b}, (0.1, 0.2, 0.3), str(tmp_path / "v.pvti"), n_pieces=2
+        )
+
+
+def test_advisory_n_pieces_scales_with_budget_and_fields():
+    """The floor is a real function of the inputs, not a constant."""
+    shape = (128, 192, 192)
+    per_piece_layer = 192 * 192 * 4 * PV.PIECE_BYTES_PER_VOXEL_PER_FIELD
+
+    # A budget that fits the whole volume needs one piece; halving it needs two.
+    assert PV.advisory_n_pieces(shape, 4, per_piece_layer * 128) == 1
+    assert PV.advisory_n_pieces(shape, 4, per_piece_layer * 64) == 2
+    # More fields at the same budget means more pieces, in proportion.
+    assert PV.advisory_n_pieces(shape, 8, per_piece_layer * 64) == 4
+    # Never above the layer count, never below one.
+    assert PV.advisory_n_pieces(shape, 4, 1) == 128
+    assert PV.advisory_n_pieces(shape, 4, 1 << 40) == 1
+
+
+def test_run_warns_when_z_pieces_are_too_few_for_the_budget(tmp_path):
+    """A low Z-piece count can peak above an in-core export — say so, do not just do it."""
+    # Sized so the two budgets below straddle ONE piece's residency (~9 MB for
+    # five fields) while both stay above the alignment chain's own floor — so
+    # the difference under test is the piece advice and nothing else. A smaller
+    # fixture cannot separate the two: the centring scaffold puts the alignment
+    # floor above a whole piece.
+    proc, raw = _setup(tmp_path, layers=24, ny=96, nx=96)
+    params = {
+        "mosa_volume_file": str(proc / "stacked_volumes.h5"),
+        "strain_volume_file": "",
+        "raw_root": str(raw),
+        "mosa_pattern": "mosa__*",
+        "export_strain": False,
+        "num_pieces_z": 1,
+    }
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")  # no alignment-floor warning may fire here
+        tight = PV.run({**params, "output_dir": str(tmp_path / "tight"), "_budget_bytes": 8 << 20})
+        roomy = PV.run({**params, "output_dir": str(tmp_path / "roomy"), "_budget_bytes": 32 << 20})
+
+    assert tight.exports, "the run must still produce its export — advice, not a refusal"
+    assert any("Z pieces" in n for n in tight.notes), tight.notes
+    assert "raise Z pieces to" in " ".join(tight.notes)
+    # The note reaches the on-disk record too, not just the in-memory result.
+    assert "Z pieces" in (tmp_path / "tight" / "export_info.txt").read_text()
+
+    # A budget that comfortably holds a whole piece -> silence.
+    assert roomy.exports
+    assert not [n for n in roomy.notes if "Z pieces" in n], roomy.notes
+
+
+def test_scratch_dir_is_a_subdirectory_and_only_for_median(tmp_path, monkeypatch):
+    """Only a multi-pass centring caches, and never beside the user's PVTI."""
+    seen: list = []
+    real = A.align_volume_streamed
+
+    def spy(*args, **kwargs):
+        seen.append(kwargs.get("scratch_dir"))
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(PV.A, "align_volume_streamed", spy)
+
+    proc, raw = _setup(tmp_path)
+    params = {
+        "mosa_volume_file": str(proc / "stacked_volumes.h5"),
+        "strain_volume_file": "",
+        "raw_root": str(raw),
+        "mosa_pattern": "mosa__*",
+        "export_strain": False,
+        "num_pieces_z": 2,
+    }
+
+    PV.run({**params, "output_dir": str(tmp_path / "mean"), "center_method": "mean"})
+    assert seen and set(seen) == {None}, seen
+    assert not (tmp_path / "mean" / PV.SCRATCH_SUBDIR).exists()
+
+    seen.clear()
+    out = tmp_path / "median"
+    PV.run({**params, "output_dir": str(out), "center_method": "median"})
+    # The CoM fields centre (median -> multi-pass); the FWHM fields do not.
+    cached = [d for d in seen if d is not None]
+    assert len(cached) == 2, seen
+    assert all(d == str(out / PV.SCRATCH_SUBDIR) for d in cached), cached
+    # A subdirectory, and nothing left loose beside the products — and the
+    # empty subdirectory itself is cleaned up when the run ends.
+    assert not list(out.glob("dfxm_scratch*"))
+    assert not (out / PV.SCRATCH_SUBDIR).exists()

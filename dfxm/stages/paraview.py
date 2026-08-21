@@ -13,6 +13,7 @@ sentinels so ParaView's GPU volume mapper never sees NaN.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 from collections.abc import Callable
@@ -368,6 +369,11 @@ class ParaviewResult:
     info_path: str | None = None
     exports: list[ExportInfo] = field(default_factory=list)
     skipped: list[str] = field(default_factory=list)
+    # Advisories about HOW the run went, not what it skipped: a Z-piece count
+    # too low for this machine's memory, or a median centring that had to
+    # re-read because the scratch disk was full. Surfaced in the run log, the
+    # Results summary and `export_info.txt`.
+    notes: list[str] = field(default_factory=list)
 
 
 # -----------------------------------------------------------------------------
@@ -657,7 +663,13 @@ class _FieldStream:
         self._it = provider.blocks()
         self._buffer: list = []
         self._exhausted = False
-        self._empty = np.empty((0,) + tuple(provider.shape[1:]), dtype=provider.dtype)
+        self._tail = tuple(int(d) for d in provider.shape[1:])
+        # `StreamedAlignment.dtype` *declares* the block dtype, so it is the
+        # right answer before a block exists — but the empty placeholder must
+        # match the blocks a caller would otherwise get, so once one has been
+        # seen the real dtype replaces the declared one rather than trusting
+        # the two to agree.
+        self._dtype = np.dtype(provider.dtype)
 
     def _prune(self, z0: int) -> None:
         self._buffer = [(sl, b) for sl, b in self._buffer if sl.stop > z0]
@@ -672,6 +684,8 @@ class _FieldStream:
                 break
             self._buffer.append(item)
         self._prune(z0)  # again: the fill may have pulled blocks that end below z0
+        if self._buffer:
+            self._dtype = self._buffer[0][1].dtype
         parts = [
             block[max(sl.start, z0) - sl.start : min(sl.stop, z1) - sl.start]
             for sl, block in self._buffer
@@ -681,7 +695,7 @@ class _FieldStream:
         # in-core writer slices an empty piece there rather than failing, so
         # match it instead of raising.
         if not parts:
-            return self._empty
+            return np.empty((0,) + self._tail, dtype=self._dtype)
         # One part is a *slice of the buffered block*, so returning it directly
         # costs nothing where concatenating would copy. That matters most where
         # the copy is largest: a budget generous enough to leave one block per
@@ -707,6 +721,18 @@ class _SlabReader:
     def __init__(self, providers) -> None:
         self._streams = {name: _FieldStream(prov) for name, prov in providers.items()}
 
+    @property
+    def names(self) -> list:
+        return list(self._streams)
+
+    def field_slab(self, name: str, z0: int, z1: int) -> np.ndarray:
+        """One field over the half-open range ``[z0, z1)``.
+
+        Per field rather than all at once, so a caller that converts each slab
+        and drops it never holds more than one of them.
+        """
+        return self._streams[name].slab(z0, z1)
+
     def slab(self, z0: int, z1: int) -> dict:
         """Every field over the half-open range ``[z0, z1)``."""
         return {name: stream.slab(z0, z1) for name, stream in self._streams.items()}
@@ -719,6 +745,67 @@ def _combined_finite_mask(fields: dict) -> np.ndarray:
         finite = np.isfinite(block)
         mask = finite if mask is None else (mask & finite)
     return mask
+
+
+def _z_grid_key(provider) -> bytes:
+    """A hashable identity for a provider's Z grid, for the equality check."""
+    return np.ascontiguousarray(provider.z_uniform_um, dtype=np.float64).tobytes()
+
+
+# Bytes resident per voxel per field while a piece is written: the SAVE_DTYPE
+# cleaned array, and VTK's deep copy of it inside `write_piece_vti`. Cleaning
+# straight to SAVE_DTYPE (see `_clean_to_save_dtype`) and dropping each field's
+# float64 slab as it converts is what got this down from 24 — a float64 slab, a
+# float64 cleaned copy, a float32 contiguous copy and the VTK copy, all live at
+# once for every field.
+PIECE_BYTES_PER_VOXEL_PER_FIELD = 2 * np.dtype(SAVE_DTYPE).itemsize
+
+
+def advisory_n_pieces(shape, n_fields: int, budget_bytes: int) -> int:
+    """Fewest Z pieces whose per-piece residency fits *budget_bytes*.
+
+    A ``.vti`` piece is written in one call, so ``n_pieces`` — not
+    ``budget_bytes`` — is what bounds the piece pass, and too few pieces can
+    make a *streamed* export cost more than the in-core one it replaced while
+    every alignment block stays obediently inside its budget. Measured on a
+    128x192x192 four-field export at a fixed 64 MB budget, against an in-core
+    peak of 586-593 MB: ``n_pieces`` of 1 / 2 / 16 / 64 peaked at 641 / 476 /
+    271 / 247 MB before the piece pass stopped holding every field's float64
+    slab and float64 cleaned copy at once, and 559 / 408 / 261 / 244 MB after.
+    The shape of the curve is what this function exists for — the residency is
+    ``n_fields`` pieces however cheap each one is made.
+
+    Advisory, never enforced: ``num_pieces_z`` is a user's choice about their
+    pvserver's rank count and changing it silently would change the product.
+    The caller warns instead.
+    """
+    nz, ny, nx = (int(d) for d in shape)
+    per_piece_layer = max(1, ny * nx * max(1, int(n_fields)) * PIECE_BYTES_PER_VOXEL_PER_FIELD)
+    layers_affordable = max(1, int(max(1, int(budget_bytes)) // per_piece_layer))
+    # Ceiling division: enough pieces that a piece's layers fit the budget.
+    return max(1, min(nz, -(-nz // layers_affordable)))
+
+
+def _clean_to_save_dtype(block: np.ndarray, finite, sentinel) -> np.ndarray:
+    """``np.where(finite, block, sentinel)`` in ``SAVE_DTYPE``, without the float64 copy.
+
+    Byte-for-byte what the in-core writer produces: it builds the cleaned array
+    in the block's own (float64) dtype and lets :func:`write_piece_vti` cast it,
+    which rounds each finite value to ``SAVE_DTYPE`` and the sentinel with it.
+    Rounding first and substituting after reaches the same array — and reaches
+    it at half the width, on a piece where every field's copy is resident at
+    once. ``finite=None`` means "no substitution" (``replace_nan=False``), where
+    this is just the cast :func:`write_piece_vti` would have done anyway.
+
+    Casting here rather than there also makes that function's
+    ``np.ascontiguousarray(..., dtype=SAVE_DTYPE)`` a no-op instead of a second
+    full-size allocation.
+    """
+    out = np.empty(block.shape, dtype=SAVE_DTYPE)
+    np.copyto(out, block, casting="unsafe")
+    if finite is not None:
+        np.copyto(out, np.asarray(sentinel, dtype=SAVE_DTYPE), where=~finite)
+    return out
 
 
 def _survey(providers, *, count_invalid: bool, find_range: bool) -> tuple[int, float, float]:
@@ -775,8 +862,10 @@ def save_volumes_streamed(
 
     ``providers`` maps field name to a
     :class:`~dfxm.common.alignment.StreamedAlignment`. Every provider must share
-    one shape — they are co-registered by construction, so a mismatch is a bug
-    rather than a case to handle.
+    one shape **and one Z grid** — they are co-registered by construction, so a
+    mismatch is a bug rather than a case to handle, and both are checked because
+    pairing the fields by absolute output Z index is the invariant that makes a
+    per-field slab reader equivalent to one interleaved walk.
 
     Two passes. The first computes only what a piece cannot know locally: the
     NaN sentinel's global range and the overall invalid fraction. The second
@@ -786,10 +875,13 @@ def save_volumes_streamed(
 
     **What this does and does not bound.** The aligned volume is never
     materialised, but a ``.vti`` piece is written in one call, so a piece's
-    Z-slab *is* resident for every field at once. The peak therefore scales as
+    fields are resident together. The peak therefore scales as
     ``n_fields * volume_bytes / n_pieces`` — set by ``n_pieces`` (the stage's
-    "Z pieces"), not by the providers' ``budget_bytes``, which sizes only the
-    alignment blocks feeding the slab. More pieces means a lower peak.
+    "Z pieces"), **not** by the providers' ``budget_bytes``, which sizes only
+    the alignment blocks feeding the slab. More pieces means a lower peak; too
+    few and the run can peak *above* what an in-core export would have cost,
+    with the budget nominally honoured the whole time. :func:`advisory_n_pieces`
+    is the floor that keeps that from happening silently.
 
     Returns the same dict as :func:`save_volumes_as_pvti`, and — for the same
     fields — writes byte-identical pieces.
@@ -803,6 +895,13 @@ def save_volumes_streamed(
     if len(set(shapes.values())) != 1:
         raise ValueError(f"All volumes must share the same shape, got {shapes}")
     nz, ny, nx = shapes[next(iter(shapes))]
+    grids = {name: (float(prov.scale_z_um), _z_grid_key(prov)) for name, prov in providers.items()}
+    if len(set(grids.values())) != 1:
+        raise ValueError(
+            "All volumes must share one Z grid (scale_z_um and z_uniform_um); "
+            f"got { ({n: g[0] for n, g in grids.items()}) } with "
+            f"{len(set(g[1] for g in grids.values()))} distinct grids"
+        )
 
     # --- pass 1: the two things a piece cannot compute for itself ---
     sentinel = None
@@ -825,14 +924,21 @@ def save_volumes_streamed(
     reader = _SlabReader(providers)
 
     def piece_fields(z0: int, z1: int) -> dict:
-        fields = reader.slab(z0, z1 + 1)  # piece extents are inclusive
-        mask = _combined_finite_mask(fields) if write_valid_mask else None
-        # Cleaning is per-field `isfinite`, the mask is the combined one. That
-        # asymmetry is the in-core writer's and is preserved deliberately.
-        cleaned = {
-            name: (np.where(np.isfinite(block), block, sentinel) if replace_nan else block)
-            for name, block in fields.items()
-        }
+        # One field at a time, converting and dropping each float64 slab before
+        # asking for the next: holding all of them to build the mask, and then a
+        # float64 cleaned copy of each on top, is what made the peak scale with
+        # `n_pieces` badly enough to beat the in-core writer at n_pieces=1.
+        cleaned: dict = {}
+        mask = None
+        for name in reader.names:
+            block = reader.field_slab(name, z0, z1 + 1)  # piece extents are inclusive
+            finite = np.isfinite(block) if (write_valid_mask or replace_nan) else None
+            if write_valid_mask:
+                mask = finite if mask is None else (mask & finite)
+            # Cleaning is per-field `isfinite`, the mask is the combined one.
+            # That asymmetry is the in-core writer's and is preserved.
+            cleaned[name] = _clean_to_save_dtype(block, finite if replace_nan else None, sentinel)
+            del block, finite
         if write_valid_mask:
             cleaned["valid_mask"] = mask.astype(SAVE_DTYPE)
         return cleaned
@@ -997,6 +1103,72 @@ def _pvti_kwargs(p: dict) -> dict:
     )
 
 
+# Where a median centring caches the aligned volume when it cannot hold it in
+# RAM. Its own subdirectory of the output folder, not the output folder itself:
+# the file is multi-GB on a real dataset and would otherwise sit next to the
+# user's PVTI looking like a product. `volumeio.scratch_array` removes it.
+SCRATCH_SUBDIR = ".dfxm_scratch"
+
+
+def _scratch_dir_for(out_dir: str, needed_bytes: int, notes: list) -> str | None:
+    """A scratch directory under *out_dir*, or ``None`` when the disk cannot take it.
+
+    ``None`` is not a failure: :func:`~dfxm.common.alignment.align_volume_streamed`
+    falls back to re-running the alignment for each of the median's passes —
+    slower, never refused, which is this project's governing rule. Only a
+    multi-pass statistic ever caches, so a mean-centred (or uncentred) run never
+    reaches here and never creates the directory.
+    """
+    from ..common import machine
+
+    free = machine.probe_disk(out_dir)
+    if free and needed_bytes and free < needed_bytes:
+        notes.append(
+            f"median centring will re-read instead of caching: {SCRATCH_SUBDIR} would need "
+            f"about {needed_bytes // (1 << 20)} MB but only {free // (1 << 20)} MB is free "
+            f"on {out_dir} — slower, same result"
+        )
+        return None
+    path = os.path.join(out_dir, SCRATCH_SUBDIR)
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def _multipass_scratch(center_method, out_dir: str, dset, notes: list) -> str | None:
+    """Scratch directory for a centring that traverses more than once, else ``None``.
+
+    Only ``median`` caches; ``mean`` is a single pass and ``None`` is both
+    correct and free. One field caches at a time (the cache is released before
+    the next provider is built), so the ask is one aligned float64 volume,
+    floored at the input's own element count — the aligned copy is *larger* (the
+    samy X-pad and the uniform-Z resample both inflate), so this under-states
+    the need and the check is a coarse guard against an obviously full disk
+    rather than a guarantee.
+    """
+    if not center_method or str(center_method).lower() != "median":
+        return None
+    elems = 1
+    for dim in dset.shape:
+        elems *= int(dim)
+    return _scratch_dir_for(out_dir, elems * 8, notes)
+
+
+def _piece_advice(shape, n_fields: int, budget_bytes: int, n_pieces: int, label: str) -> str | None:
+    """The warning for a Z-piece count too low to keep the piece pass bounded."""
+    advised = advisory_n_pieces(shape, n_fields, budget_bytes)
+    if n_pieces >= advised:
+        return None
+    per_piece = (
+        int(shape[1]) * int(shape[2]) * max(1, n_fields) * PIECE_BYTES_PER_VOXEL_PER_FIELD
+    ) * -(-int(shape[0]) // max(1, n_pieces))
+    return (
+        f"{label}: Z pieces = {n_pieces} needs about {per_piece // (1 << 20)} MB for one "
+        f"piece of every field, over this machine's {budget_bytes // (1 << 20)} MB of "
+        f"headroom — raise Z pieces to {advised} or more. Streaming bounds the alignment, "
+        "not the piece: too few pieces can peak higher than an in-core export would have."
+    )
+
+
 # The Z step (µm) the export falls back to when no raw scan folders were found,
 # so there are no samz positions to derive one from. `extract_motor_positions`
 # fills samy and samz from the same folders, so they are empty together and this
@@ -1057,7 +1229,7 @@ def _unaligned_field(dset, *, roi_x, roi_y, take_abs: bool, center_method: str |
 # Per-volume processing
 # -----------------------------------------------------------------------------
 def _process_mosaicity(
-    p, out_dir, scale_x, scale_y, samy_dir, roi_x, roi_y, *, budget_bytes
+    p, out_dir, scale_x, scale_y, samy_dir, roi_x, roi_y, *, budget_bytes, notes
 ) -> ExportInfo | None:
     names = mosa_field_names(p["mosa_volume_file"])
     if not names:
@@ -1092,7 +1264,7 @@ def _process_mosaicity(
                     take_abs=take_abs,
                     center_method=center_method,
                     budget_bytes=per_field,
-                    scratch_dir=out_dir,
+                    scratch_dir=_multipass_scratch(center_method, out_dir, dset, notes),
                 )
                 if len(samz) > 0
                 else _unaligned_field(
@@ -1123,7 +1295,17 @@ def _process_mosaicity(
             return None  # shape mismatch — skip merged export (rare)
         spacing = (scale_x, scale_y, first.scale_z_um)
         out_path = os.path.join(out_dir, "mosaicity_volume.pvti")
-        info = save_volumes_streamed(providers, spacing, out_path, origin=origin, **_pvti_kwargs(p))
+        pvti = _pvti_kwargs(p)
+        advice_note = _piece_advice(
+            first.shape,
+            len(providers) + (1 if pvti["write_valid_mask"] else 0),
+            budget_bytes,
+            pvti["n_pieces"],
+            "mosaicity",
+        )
+        if advice_note:
+            notes.append(advice_note)
+        info = save_volumes_streamed(providers, spacing, out_path, origin=origin, **pvti)
     return ExportInfo(
         "mosaicity",
         out_path,
@@ -1136,7 +1318,7 @@ def _process_mosaicity(
 
 
 def _process_strain(
-    p, out_dir, scale_x, scale_y, samy_dir, roi_x, roi_y, *, budget_bytes
+    p, out_dir, scale_x, scale_y, samy_dir, roi_x, roi_y, *, budget_bytes, notes
 ) -> ExportInfo | None:
     samy, samz = _motors(p["raw_root"], p["strain_pattern"], p["samy_path"], p["samz_path"])
     with h5py.File(p["strain_volume_file"], "r") as f:
@@ -1155,7 +1337,7 @@ def _process_strain(
                 roi_y=roi_y,
                 center_method=center_method,
                 budget_bytes=int(budget_bytes),
-                scratch_dir=out_dir,
+                scratch_dir=_multipass_scratch(center_method, out_dir, dset, notes),
             )
             if len(samz) > 0
             else _unaligned_field(
@@ -1178,9 +1360,17 @@ def _process_strain(
         )
         spacing = (scale_x, scale_y, provider.scale_z_um)
         out_path = os.path.join(out_dir, "strain_volume.pvti")
-        info = save_volumes_streamed(
-            {"strain": provider}, spacing, out_path, origin=origin, **_pvti_kwargs(p)
+        pvti = _pvti_kwargs(p)
+        advice_note = _piece_advice(
+            provider.shape,
+            1 + (1 if pvti["write_valid_mask"] else 0),
+            budget_bytes,
+            pvti["n_pieces"],
+            "strain",
         )
+        if advice_note:
+            notes.append(advice_note)
+        info = save_volumes_streamed({"strain": provider}, spacing, out_path, origin=origin, **pvti)
     return ExportInfo(
         "strain",
         out_path,
@@ -1207,14 +1397,19 @@ def _run_budget_bytes(p: dict, out_dir: str) -> int:
     The number is in ``tracemalloc``/allocation currency, which is what
     :func:`~dfxm.common.alignment.align_volume_streamed` prices its working set
     in — deliberately *not* RSS, which additionally carries the interpreter, VTK
-    and h5py's buffers. It is passed through unscaled.
+    and h5py's buffers. So the machine's headroom, which *is* RSS, goes through
+    :func:`~dfxm.common.advice.working_set_budget_bytes` rather than straight in:
+    handing an RSS number to a ``tracemalloc`` budget is a category error, and it
+    lands the worst case at 1.28x the headroom it was meant to respect. An
+    injected ``_budget_bytes`` is taken as already being in working-set currency,
+    since a caller naming that key is naming the budget itself.
     """
     injected = p.get("_budget_bytes")
     if injected is not None:
         return max(1, int(injected))
     from ..common import advice, machine
 
-    return advice.headroom_bytes(machine.profile(output_dir=out_dir))
+    return advice.working_set_budget_bytes(machine.profile(output_dir=out_dir))
 
 
 def run(params: dict, progress: ProgressFn | None = None) -> ParaviewResult:
@@ -1238,7 +1433,15 @@ def run(params: dict, progress: ProgressFn | None = None) -> ParaviewResult:
         if mosa_file and os.path.exists(mosa_file):
             progress(0.1, "exporting mosaicity volume")
             info = _process_mosaicity(
-                p, out_dir, scale_x, scale_y, samy_dir, roi_x, roi_y, budget_bytes=budget_bytes
+                p,
+                out_dir,
+                scale_x,
+                scale_y,
+                samy_dir,
+                roi_x,
+                roi_y,
+                budget_bytes=budget_bytes,
+                notes=result.notes,
             )
             if info:
                 result.exports.append(info)
@@ -1252,7 +1455,15 @@ def run(params: dict, progress: ProgressFn | None = None) -> ParaviewResult:
         if strain_file and os.path.exists(strain_file):
             progress(0.55, "exporting strain volume")
             info = _process_strain(
-                p, out_dir, scale_x, scale_y, samy_dir, roi_x, roi_y, budget_bytes=budget_bytes
+                p,
+                out_dir,
+                scale_x,
+                scale_y,
+                samy_dir,
+                roi_x,
+                roi_y,
+                budget_bytes=budget_bytes,
+                notes=result.notes,
             )
             if info:
                 result.exports.append(info)
@@ -1276,12 +1487,21 @@ def run(params: dict, progress: ProgressFn | None = None) -> ParaviewResult:
             for e in result.exports
         ],
         "skipped": result.skipped,
+        "notes": result.notes,
         "config": {
             k: p[k] for k in ("center_method", "anchor_origin_to_reference", "num_pieces_z")
         },
     }
     with open(info_path, "w") as fh:
         fh.write(json.dumps(summary, indent=2, default=str) + "\n")
+    # `volumeio.scratch_array` deletes its file; the directory it lived in is
+    # ours. `rmdir` is exactly the semantics wanted — it removes an empty
+    # directory and refuses a non-empty one, so a stray file (a crashed earlier
+    # run, something a user put there) is never deleted.
+    with contextlib.suppress(OSError):
+        os.rmdir(os.path.join(out_dir, SCRATCH_SUBDIR))
+    for note in result.notes:
+        progress(0.98, note)
     result.info_path = info_path
 
     progress(1.0, f"exported {len(result.exports)} volume(s) -> {out_dir}")

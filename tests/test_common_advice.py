@@ -2,7 +2,13 @@
 
 from __future__ import annotations
 
-from dfxm.common.advice import advise_3d, headroom_bytes, plan_run
+from dfxm.common.advice import (
+    RSS_PER_TRACEMALLOC,
+    advise_3d,
+    headroom_bytes,
+    plan_run,
+    working_set_budget_bytes,
+)
 from dfxm.config.models import CostEstimate
 from tests.machine_fixtures import laptop_hw_gl, tiny_ram, windows_no_vtk, workstation_sw_gl
 
@@ -24,6 +30,38 @@ def test_headroom_is_the_tighter_of_the_two_limits():
     assert headroom_bytes(workstation_sw_gl()) == int(0.5 * 502 * GB)
     # tiny_ram: 0.6*1 = 0.6 GB vs 0.5*8 = 4 GB -> available-based wins
     assert headroom_bytes(tiny_ram()) == int(0.6 * 1 * GB)
+
+
+def test_working_set_budget_converts_rss_headroom_into_tracemalloc_currency():
+    """A streaming budget is priced in allocations; headroom is priced in RSS.
+
+    The conversion has to be a real one, so this asserts the divisor is applied
+    AND that it is greater than one — an accidental `RSS_PER_TRACEMALLOC = 1.0`
+    would make every assertion below true while converting nothing.
+    """
+    assert RSS_PER_TRACEMALLOC > 1.0
+    for profile in (workstation_sw_gl(), tiny_ram(), laptop_hw_gl()):
+        rss = headroom_bytes(profile)
+        budget = working_set_budget_bytes(profile)
+        assert budget == int(rss / RSS_PER_TRACEMALLOC)
+        assert budget < rss, "the budget must be strictly below the RSS headroom"
+
+
+def test_working_set_budget_is_not_floored_back_up_to_the_min_budget():
+    """The MIN_BUDGET floor would undo the conversion on the smallest machine.
+
+    `tiny_ram` has 0.6 GB of headroom, well above MIN_BUDGET_BYTES, so a naive
+    `max(MIN_BUDGET_BYTES, ...)` would be invisible here — hence the explicit
+    unmeasurable-machine case, where headroom IS MIN_BUDGET_BYTES and the floor
+    would hand back the unconverted number.
+    """
+    import dataclasses
+
+    from dfxm.common.advice import MIN_BUDGET_BYTES
+
+    unmeasurable = dataclasses.replace(laptop_hw_gl(), ram_total=0, ram_available=0)
+    assert headroom_bytes(unmeasurable) == MIN_BUDGET_BYTES
+    assert working_set_budget_bytes(unmeasurable) < MIN_BUDGET_BYTES
 
 
 def test_small_job_on_a_big_machine_stays_in_core():
