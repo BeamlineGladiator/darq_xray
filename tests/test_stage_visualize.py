@@ -644,6 +644,44 @@ def test_visualize_streamed_matches_in_core(tmp_path, method):
         assert (tmp_path / "str" / rel).read_bytes() == ref_png.read_bytes(), rel
 
 
+def test_visualize_never_hands_the_alignment_a_scratch_dir(tmp_path, monkeypatch):
+    """No `scratch_dir=`, therefore no disk, therefore `scratch_bytes == 0`.
+
+    This is the run-side half of
+    `test_stage_estimates.py::test_visualize_never_prices_a_spill_it_cannot_perform`,
+    and the reason that zero is the truth rather than a dropped term. Without a
+    `scratch_dir` the multi-pass statistic re-reads instead of caching — slower,
+    same result, no disk touched — so an estimator that priced a spill here
+    would let `advice.plan_run` BLOCK a run on a full disk that the run would
+    never have used.
+
+    Checked with `center_method="median"`, which is the only setting that could
+    cache at all, and at a budget small enough to force the blocked rung, where
+    the caching would happen if it happened anywhere. Also asserts nothing is
+    left on disk beside the products.
+    """
+    proc, raw = _setup(tmp_path)
+    seen: list = []
+    real = V.A.align_volume_streamed
+
+    def spy(*a, **kw):
+        seen.append(kw.get("scratch_dir", "NOT PASSED"))
+        return real(*a, **kw)
+
+    monkeypatch.setattr(V.A, "align_volume_streamed", spy)
+    out = tmp_path / "median"
+    V.run(
+        {
+            **_stream_params(proc, raw, out),
+            "center_method": "median",
+            "_budget_bytes": 1 << 16,
+        }
+    )
+    assert seen, "no field went through the streaming alignment"
+    assert set(seen) == {"NOT PASSED"}, seen
+    assert not list(out.rglob("*scratch*")), "the run left a scratch directory behind"
+
+
 def test_run_blocks_the_alignment_at_a_small_budget(tmp_path, monkeypatch):
     """The equivalence test is not vacuous: the small budget really blocks.
 

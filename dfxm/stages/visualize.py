@@ -663,10 +663,9 @@ def estimate(params: dict) -> CostEstimate:
       machine relies on ``plan_run`` chunking it — which this over-estimate
       correctly triggers — rather than on the unconstrained peak being modest.
 
-    ``scratch_bytes`` prices the one thing blocking cannot make smaller: with
-    ``center_method="median"`` the aligned volume is cached to scratch disk and
-    re-read for each of the quantile's passes, so a machine short of *disk*
-    is told before the run rather than halfway through it.
+    ``scratch_bytes`` is **zero, on every path** — see the comment at the
+    ``return`` below. This stage never hands ``align_volume_streamed`` a
+    ``scratch_dir``, so it never caches and never needs disk.
 
     ``run()``
     streams the alignment (see :func:`_align_streamed`) and materialises a whole
@@ -718,11 +717,7 @@ def estimate(params: dict) -> CostEstimate:
     total = 0
     largest_elems = 0
     largest: tuple[int, ...] | None = None
-    largest_aligned_elems = 0
-    for name, pattern_key in (
-        ("mosa_volume_file", "mosa_pattern"),
-        ("strain_volume_file", "strain_pattern"),
-    ):
+    for name in ("mosa_volume_file", "strain_volume_file"):
         path = str(p.get(name) or "")
         if not path:
             continue
@@ -736,22 +731,20 @@ def estimate(params: dict) -> CostEstimate:
                 largest_elems = elems
             if largest is None or len(shape) > len(largest):
                 largest = shape
-            largest_aligned_elems = max(
-                largest_aligned_elems,
-                A.aligned_elems_for_params(p, shape, pattern_key=pattern_key),
-            )
     if not total:
         return CostEstimate(0, 0, None, True, "no readable volume files selected yet")
     peak = total + 3 * largest_elems * 8
-    # `center_method="median"` is several passes over the aligned volume, so a
-    # blocked run caches it to scratch disk rather than re-aligning per pass
-    # (alignment.align_volume_streamed). That cache is the aligned volume in
-    # float64 — sized here so `advice.plan_run` can check it against free disk
-    # before the run instead of failing partway through a long one.
-    scratch = 0
-    if str(p.get("center_method") or "").lower() == "median":
-        scratch = largest_aligned_elems * 8
-    return CostEstimate(peak, total, largest, True, None, None, scratch)
+    # `scratch_bytes` stays at its 0 default, INCLUDING for
+    # `center_method="median"`, and that is not an oversight to fix.
+    # `_align_streamed` never passes `scratch_dir=` to `align_volume_streamed`
+    # (paraview is the only stage that does), and without one the multi-pass
+    # statistic re-reads instead of caching — slower, same result, zero disk.
+    # Pricing a spill this stage cannot perform would let `advice.plan_run`
+    # BLOCK a run that touches no disk at all, which is the one thing this
+    # phase promised never to do. Pinned by
+    # `test_visualize_never_hands_the_alignment_a_scratch_dir`: if that ever
+    # starts passing one, size it here — and not before.
+    return CostEstimate(peak, total, largest, True)
 
 
 # -----------------------------------------------------------------------------

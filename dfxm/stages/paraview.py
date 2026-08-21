@@ -1023,7 +1023,14 @@ def estimate(params: dict) -> CostEstimate:
 
     ``scratch_bytes`` prices the ``center_method="median"`` spill: several passes
     over the aligned volume are served from a scratch-disk cache rather than by
-    re-aligning, so a machine short of disk is told up front.
+    re-aligning, so a machine short of disk is told up front. **This is the only
+    stage that reports one** — it is the only one that passes ``scratch_dir=``
+    to :func:`~dfxm.common.alignment.align_volume_streamed`; ``visualize`` and
+    ``slices`` never cache and must therefore report zero (pricing a spill a
+    stage cannot perform would let ``plan_run`` block a run that touches no
+    disk). The figure is gated **per file**, on that file's own export and
+    centring toggles, and maxed rather than summed because the two files are
+    processed sequentially and each releases its cache before the next.
 
     ``run()`` processes the mosaicity and strain volume files **sequentially**
     via separate helper calls (``_process_mosaicity`` then ``_process_strain``)
@@ -1074,9 +1081,14 @@ def estimate(params: dict) -> CostEstimate:
     peak = 0
     largest: tuple[int, ...] | None = None
     largest_aligned_elems = 0
-    for name, pattern_key in (
-        ("mosa_volume_file", "mosa_pattern"),
-        ("strain_volume_file", "strain_pattern"),
+    # Which toggles govern each file's spill. `_process_mosaicity` runs only
+    # when `export_mosaicity` is set and caches only when `center_mosa_com` is
+    # (and then only for its CoM fields); `_process_strain` pairs
+    # `export_strain` with `center_strain`. Gating both files on the mosaicity
+    # flag reported 0 for a strain-only median run that really does spill.
+    for name, pattern_key, export_key, center_key in (
+        ("mosa_volume_file", "mosa_pattern", "export_mosaicity", "center_mosa_com"),
+        ("strain_volume_file", "strain_pattern", "export_strain", "center_strain"),
     ):
         path = str(p.get(name) or "")
         if not path:
@@ -1092,19 +1104,23 @@ def estimate(params: dict) -> CostEstimate:
                 largest_elems *= dim
             if largest is None or len(shape) > len(largest):
                 largest = shape
-            largest_aligned_elems = max(
-                largest_aligned_elems,
-                A.aligned_elems_for_params(p, shape, pattern_key=pattern_key),
-            )
+            if bool(p.get(export_key)) and bool(p.get(center_key)):
+                largest_aligned_elems = max(
+                    largest_aligned_elems,
+                    A.aligned_elems_for_params(p, shape, pattern_key=pattern_key),
+                )
         file_peak = file_total + 2 * file_elems * 8 + largest_elems * 8
         peak = max(peak, file_peak)
     if not total:
         return CostEstimate(0, 0, None, True, "no readable volume files selected yet")
-    # See visualize.estimate: a blocked `center_method="median"` run caches the
-    # aligned volume to scratch disk rather than re-aligning for each pass, so
-    # `plan_run` must check that against free disk before the run starts.
+    # A `center_method="median"` run caches the aligned volume to scratch disk
+    # (`_multipass_scratch`) rather than re-aligning for each pass, so
+    # `plan_run` must check that against free disk before the run starts. The
+    # two files are processed sequentially and each releases its cache before
+    # the next, so the ask is the LARGEST spilling file, not their sum — hence
+    # the max above, taken only over the files whose centring toggle is on.
     scratch = 0
-    if str(p.get("center_method") or "").lower() == "median" and bool(p.get("center_mosa_com")):
+    if str(p.get("center_method") or "").lower() == "median":
         scratch = largest_aligned_elems * 8
     return CostEstimate(peak, total, largest, True, None, None, scratch)
 

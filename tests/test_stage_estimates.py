@@ -418,10 +418,10 @@ _SCRATCH_SHAPE = (6, 12, 20)
 _SCRATCH_SCALE_X = 0.15
 
 
-def _volume_file(tmp_path, name="stacked_volumes.h5", dataset="strain"):
+def _volume_file(tmp_path, name="stacked_volumes.h5", dataset="strain", shape=_SCRATCH_SHAPE):
     path = tmp_path / name
     with h5py.File(path, "w") as f:
-        f.create_dataset(dataset, data=np.zeros(_SCRATCH_SHAPE, dtype=np.float64))
+        f.create_dataset(dataset, data=np.zeros(shape, dtype=np.float64))
     return str(path)
 
 
@@ -436,11 +436,11 @@ def _patch_motors(monkeypatch):
     )
 
 
-def _expected_scratch_bytes():
+def _expected_scratch_bytes(shape=_SCRATCH_SHAPE):
     from dfxm.common import alignment as A
 
     extent = A.aligned_extent(
-        _SCRATCH_SHAPE,
+        shape,
         _SCRATCH_SAMY,
         _SCRATCH_SAMZ,
         scale_x=_SCRATCH_SCALE_X,
@@ -462,74 +462,211 @@ def test_the_scratch_fixture_actually_inflates():
     assert extent[2] > _SCRATCH_SHAPE[2], "fixture no longer pads along X"
 
 
-@pytest.mark.parametrize("method,spills", [("median", True), ("mean", False), ("midrange", False)])
-def test_visualize_reports_scratch_only_for_the_median_centring(
+# `paraview` is the ONLY stage that passes `scratch_dir=` to
+# `align_volume_streamed`, so it is the only one whose `scratch_bytes` may be
+# non-zero. Everything from here to the visualize/slices block is about it —
+# and until now it had no test at all: mutating its gate to `if False:` left
+# the whole suite green.
+_PV_STRAIN_SHAPE = (6, 12, 40)  # deliberately bigger than the mosaicity file
+
+
+def _pv_params(tmp_path, **over):
+    """Both volume files present, both exports on, motors patched by the caller."""
+    params = {
+        "mosa_volume_file": _volume_file(tmp_path, "mosa.h5", "chi/Center of mass"),
+        "strain_volume_file": _volume_file(tmp_path, "strain.h5", "strain", _PV_STRAIN_SHAPE),
+        "raw_root": str(tmp_path),
+        "mosa_pattern": "*",
+        "strain_pattern": "*",
+        "pixel_size_x_um": _SCRATCH_SCALE_X,
+        "samy_direction": 1,
+        "center_method": "median",
+        "center_mosa_com": True,
+        "center_strain": False,
+    }
+    params.update(over)
+    return params
+
+
+def test_the_paraview_scratch_fixture_distinguishes_the_two_files():
+    """Precondition for the per-file tests below.
+
+    They tell "priced the mosaicity file" from "priced the strain file" by the
+    SIZE of the figure, so the two must not be the same size — otherwise a gate
+    gone back to keying both files off one toggle would still pass.
+    """
+    mosa, _e = _expected_scratch_bytes()
+    strain, _e = _expected_scratch_bytes(_PV_STRAIN_SHAPE)
+    assert strain > mosa > 0
+
+
+@pytest.mark.parametrize("method,spills", [("median", True), ("mean", False)])
+def test_paraview_reports_scratch_only_for_the_median_centring(
     tmp_path, monkeypatch, method, spills
 ):
-    from dfxm.stages.visualize import estimate
+    """`mean` is a single pass — `_multipass_scratch` returns None and nothing caches."""
+    from dfxm.stages.paraview import estimate
 
     _patch_motors(monkeypatch)
     expected, _extent = _expected_scratch_bytes()
-    est = estimate(
-        {
-            "mosa_volume_file": _volume_file(tmp_path),
-            "raw_root": str(tmp_path),
-            "mosa_pattern": "*",
-            "pixel_size_x_um": _SCRATCH_SCALE_X,
-            "samy_direction": 1,
-            "center_method": method,
-        }
-    )
+    est = estimate(_pv_params(tmp_path, center_method=method))
     assert est.scratch_bytes == (expected if spills else 0)
 
 
-@pytest.mark.parametrize("method,spills", [("median", True), ("mean", False), ("midrange", False)])
-def test_slices_reports_scratch_only_for_the_median_centring(tmp_path, monkeypatch, method, spills):
-    from dfxm.stages.slices import estimate
+@pytest.mark.parametrize(
+    "mosa_on,strain_on,which",
+    [
+        (True, False, "mosa"),
+        (False, True, "strain"),
+        (True, True, "both"),
+        (False, False, "neither"),
+    ],
+)
+def test_paraview_prices_the_spill_of_whichever_file_actually_caches(
+    tmp_path, monkeypatch, mosa_on, strain_on, which
+):
+    """The gate is per file, and the two files' caches do not add.
+
+    `_process_mosaicity` caches when `center_mosa_com` is set, `_process_strain`
+    when `center_strain` is — separately. Keying both off `center_mosa_com` (as
+    this estimator did) reported **zero** for a `center_mosa_com=False,
+    center_strain=True, center_method="median"` run that really does spill: the
+    under-report, which is the dangerous direction for a disk check. The two
+    helpers run sequentially and each releases its cache before the next
+    returns, so what is needed is the larger, never the sum.
+    """
+    from dfxm.stages.paraview import estimate
 
     _patch_motors(monkeypatch)
-    expected, _extent = _expected_scratch_bytes()
-    est = estimate(
-        {
-            "mosa_volume_file": _volume_file(tmp_path),
-            "raw_root": str(tmp_path),
-            "mosa_pattern": "*",
-            "pixel_size_x_um": _SCRATCH_SCALE_X,
-            "samy_direction": 1,
-            "center_method": method,
-        }
-    )
-    assert est.scratch_bytes == (expected if spills else 0)
+    mosa_bytes, _e = _expected_scratch_bytes()
+    strain_bytes, _e = _expected_scratch_bytes(_PV_STRAIN_SHAPE)
+    expected = {
+        "mosa": mosa_bytes,
+        "strain": strain_bytes,
+        "both": max(mosa_bytes, strain_bytes),
+        "neither": 0,
+    }[which]
+
+    est = estimate(_pv_params(tmp_path, center_mosa_com=mosa_on, center_strain=strain_on))
+    assert est.scratch_bytes == expected
+    if which == "both":
+        assert est.scratch_bytes < mosa_bytes + strain_bytes, "the two caches must not add"
+
+
+@pytest.mark.parametrize(
+    "key,drop,shape",
+    [
+        ("export_mosaicity", "strain_volume_file", _SCRATCH_SHAPE),
+        ("export_strain", "mosa_volume_file", _PV_STRAIN_SHAPE),
+    ],
+)
+def test_paraview_prices_no_spill_for_a_file_it_will_not_export(
+    tmp_path, monkeypatch, key, drop, shape
+):
+    """A file that is not exported is never opened, so it cannot cache.
+
+    Pricing it would let `plan_run` block a run for disk the run never touches —
+    the same defect shape as `visualize`/`slices` reporting a spill they cannot
+    perform. Only the file under test is present, so the figure is that file's
+    alone and the export toggle is the only thing that can move it.
+    """
+    from dfxm.stages.paraview import estimate
+
+    _patch_motors(monkeypatch)
+    params = _pv_params(tmp_path, center_mosa_com=True, center_strain=True)
+    params[drop] = ""
+    on = estimate({**params, key: True})
+    off = estimate({**params, key: False})
+
+    # Precondition: with the export on, this single file really is priced —
+    # otherwise "0 when off" would prove nothing.
+    assert on.scratch_bytes == _expected_scratch_bytes(shape)[0]
+    assert off.scratch_bytes == 0
 
 
 def test_scratch_bytes_is_zero_without_motors(tmp_path):
     """The no-motor path builds no aligned volume, so it caches nothing."""
-    from dfxm.stages.visualize import estimate
+    from dfxm.stages.paraview import estimate
 
-    est = estimate(
-        {
-            "mosa_volume_file": _volume_file(tmp_path),
-            "raw_root": "",
-            "pixel_size_x_um": _SCRATCH_SCALE_X,
-            "center_method": "median",
-        }
-    )
+    est = estimate(_pv_params(tmp_path, raw_root="", mosa_pattern="", strain_pattern=""))
     assert est.scratch_bytes == 0
 
 
-def test_slices_reports_scratch_on_the_coarse_fallback_return_too(tmp_path, monkeypatch):
-    """`estimate` has more than one return; the spill figure must survive all of them.
+# -----------------------------------------------------------------------------
+# visualize and slices report ZERO scratch — and that is the truth, not a gap
+# -----------------------------------------------------------------------------
+@pytest.mark.parametrize("method", ["median", "mean", "midrange"])
+def test_visualize_never_prices_a_spill_it_cannot_perform(tmp_path, monkeypatch, method):
+    """`visualize` passes no `scratch_dir`, so a median run re-reads and uses no disk.
 
-    The per-dataset sizing can fail to resolve (a file that does not hold the
-    toggled quantities), which takes a different `return`. A scratch figure
-    dropped there would let `plan_run` start a spilling run on a machine with no
-    room for the spill — and the peak would look normal, so nothing else would
-    notice.
+    Pinned because the obvious "fix" is to add the figure back: with
+    `plan_run` consulting `scratch_bytes`, a chunked median run on a disk-tight
+    machine would then come back **blocked** — refusing a run that touches zero
+    disk, which is exactly what "slower, never failed" forbids. The run-side
+    half of this pair is
+    `test_stage_visualize.py::test_visualize_never_hands_the_alignment_a_scratch_dir`.
     """
+    from dfxm.stages.visualize import estimate
+
+    _patch_motors(monkeypatch)
+    est = estimate(
+        {
+            "mosa_volume_file": _volume_file(tmp_path),
+            "raw_root": str(tmp_path),
+            "mosa_pattern": "*",
+            "pixel_size_x_um": _SCRATCH_SCALE_X,
+            "samy_direction": 1,
+            "center_method": method,
+        }
+    )
+    # Precondition: the estimate really priced this file, so "0 scratch" is a
+    # statement about the spill and not about an estimator that bailed early.
+    assert est.peak_bytes > 0 and est.note is None
+    assert est.scratch_bytes == 0
+
+
+@pytest.mark.parametrize("method", ["median", "mean", "midrange"])
+def test_slices_never_prices_a_spill_it_cannot_perform(tmp_path, monkeypatch, method):
+    """Same as above for `slices`, **on the main return**.
+
+    `prepare_volume` calls `align_volume_streamed` with `center_method=None`, so
+    the alignment never computes a multi-pass statistic and never caches; slices
+    centres itself afterwards, in core.
+
+    The precondition matters. The previous version of this test used a fixture
+    whose `mosa_volume_file` held only a `strain` dataset, so `_standard_volumes`
+    resolved nothing and all three cases landed on the coarse **fallback**
+    return that the sibling test below already covers — leaving the main return
+    unchecked, which is how mutating it stayed green. Asserting
+    `peak_bytes != input_bytes` keeps this test in the region it names.
+    """
+    from dfxm.stages.slices import estimate
+
+    _patch_motors(monkeypatch)
+    params = {
+        "mosa_volume_file": _volume_file(tmp_path, "mosa.h5", "chi/Center of mass"),
+        "raw_root": str(tmp_path),
+        "mosa_pattern": "*",
+        "pixel_size_x_um": _SCRATCH_SCALE_X,
+        "samy_direction": 1,
+        "center_method": method,
+        **_SLICES_ALL_TOGGLES_OFF,
+    }
+    params["include_mosa_com_chi"] = True
+    est = estimate(params)
+
+    # Precondition: the MAIN return, where per-dataset sizing resolved. The
+    # fallback returns `input_bytes` for the peak; the main one adds the
+    # float64 copies, so the two differ.
+    assert est.peak_bytes != est.input_bytes, "not on the main return path"
+    assert est.scratch_bytes == 0
+
+
+def test_slices_reports_no_scratch_on_the_coarse_fallback_return_either(tmp_path, monkeypatch):
+    """`estimate` has more than one return; zero must hold on all of them."""
     from dfxm.stages import slices as S
 
     _patch_motors(monkeypatch)
-    expected, _extent = _expected_scratch_bytes()
     params = {
         "mosa_volume_file": _volume_file(tmp_path),
         "raw_root": str(tmp_path),
@@ -544,7 +681,7 @@ def test_slices_reports_scratch_on_the_coarse_fallback_return_too(tmp_path, monk
 
     # Precondition: we really are on the fallback return, not the main one.
     assert est.peak_bytes == est.input_bytes, "not on the coarse fallback path"
-    assert est.scratch_bytes == expected
+    assert est.scratch_bytes == 0
 
 
 def test_alignment_estimators_read_motors_but_never_voxels(tmp_path, monkeypatch):
@@ -557,9 +694,11 @@ def test_alignment_estimators_read_motors_but_never_voxels(tmp_path, monkeypatch
     gigabytes into the GUI process.
 
     `test_estimators_never_read_data` covers only `strain`, which does not align,
-    and would not have caught this widening.
+    and would not have caught this widening. `paraview` is the subject because
+    it is now the only estimator that reads motors at all — `visualize` and
+    `slices` stopped once their (fictitious) spill figures were removed.
     """
-    from dfxm.stages.visualize import estimate
+    from dfxm.stages.paraview import estimate
 
     _patch_motors(monkeypatch)
     real_getitem = h5py.Dataset.__getitem__
@@ -570,16 +709,7 @@ def test_alignment_estimators_read_motors_but_never_voxels(tmp_path, monkeypatch
         return real_getitem(self, key)
 
     monkeypatch.setattr(h5py.Dataset, "__getitem__", guard)
-    est = estimate(
-        {
-            "mosa_volume_file": _volume_file(tmp_path),
-            "raw_root": str(tmp_path),
-            "mosa_pattern": "*",
-            "pixel_size_x_um": _SCRATCH_SCALE_X,
-            "samy_direction": 1,
-            "center_method": "median",
-        }
-    )
+    est = estimate(_pv_params(tmp_path))
     # Precondition: the run actually priced an aligned volume, so the guard had
     # something to catch. Without this the test passes on an estimate that never
     # looked at the file at all.

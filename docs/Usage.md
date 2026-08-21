@@ -769,8 +769,12 @@ Align the stacked mosaicity/strain volumes and render them.
 > **How much this costs, measured.** On the STO2 dataset, capped at what an 8 GB
 > machine can safely offer (3.60 GB), the run still peaked at **4.80 GB** with
 > the 3-D products on — over that machine's budget — while producing output
-> identical to the unconstrained run (395 files compared). With them off the
-> stage stays inside the cap. So on a small machine this is a setting to change,
+> identical to the unconstrained run (395 files compared). By construction the
+> overrun is the whole-volume assembly those two toggles force — it is the one
+> allocation in the stage that ignores the budget — but **that is reasoning from
+> the code, not a second measurement**: the capped canary was only ever run with
+> the 3-D products on, so what a products-off run peaks at is not known.
+> So on a small machine this is a setting to change,
 > not a limit to work around; the run now **says so in a note on each dataset**,
 > naming the volume size and the two toggles, rather than leaving an unexplained
 > peak.
@@ -871,10 +875,18 @@ rendering, with a `valid_mask` and NaN sentinels.
 > directory. It is deleted when the run ends. If the disk is too full for it, the
 > run re-reads instead — slower, same result — and says so in a note.
 >
-> How much disk that needs is now worked out **before** the run starts and shown
-> with the rest of the cost estimate, so a machine without room is told up front
-> rather than partway through a long export. Only **median** needs it; **mean**
-> and **midrange** are a single pass and cache nothing.
+> How much disk that needs is worked out **before** the run starts, from the
+> volume shapes and the motor positions, and checked against the free space on
+> the output disk — so a run that could not finish for lack of scratch is
+> identified up front rather than partway through a long export. That check
+> happens in-process; the figure is **not surfaced in the GUI yet**, so there is
+> nothing to look for in the form. Only **median** needs scratch at all;
+> **mean** is a single pass and caches nothing.
+>
+> This is the only stage that caches. [[#5. Visualize volumes (`visualize`)|Visualize
+> volumes]] and [[#7. Oblique slices (`slices`)|Oblique slices]] re-read instead,
+> on every setting, so they never need scratch disk and are never held up for
+> the want of it.
 
 > [!example] ParaView workflow
 > ```bash

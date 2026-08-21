@@ -1844,46 +1844,6 @@ _SLICES_VOLUME_PARAMS = (
 )
 
 
-def _scratch_bytes(p: dict) -> int:
-    """Scratch disk a blocked ``center_method="median"`` run needs, in bytes.
-
-    The median is several passes over the aligned volume, so a blocked run
-    caches it to scratch rather than re-running the alignment for each pass
-    (:func:`~dfxm.common.alignment.align_volume_streamed`). The cache is that
-    volume in float64.
-
-    Only the **stacked** sources go through the alignment chain; an aligned
-    source is already co-registered and is never cached.
-
-    This is a function rather than inline arithmetic because ``estimate`` has
-    more than one return path, and a scratch figure dropped on one of them
-    would let ``advice.plan_run`` start a spilling run on a machine with no
-    room for the spill.
-    """
-    if str(p.get("center_method") or "").lower() != "median":
-        return 0
-    scratch = 0
-    for name, pattern_key in (
-        ("mosa_volume_file", "mosa_pattern"),
-        ("strain_volume_file", "strain_pattern"),
-    ):
-        path = str(p.get(name) or "")
-        if not path:
-            continue
-        _nbytes, shape, _itemsize = sum_dataset_bytes(path)
-        if shape is None:
-            continue
-        elems = A.aligned_elems_for_params(
-            p,
-            shape,
-            pattern_key=pattern_key,
-            roi_x_key="align_roi_x",
-            roi_y_key="align_roi_y",
-        )
-        scratch = max(scratch, elems * 8)
-    return scratch
-
-
 def estimate(params: dict) -> CostEstimate:
     """Peak memory for a slices run, from HDF5 shapes and motor positions.
 
@@ -1899,19 +1859,26 @@ def estimate(params: dict) -> CostEstimate:
     related *additively*, not by a ratio:
     ``RSS ~ RSS_FLOOR_BYTES + MARGINAL_RSS_PER_TRACED_BYTE * traced`` (see the
     note above ``advice.MARGINAL_RSS_PER_TRACED_BYTE``). Against this stage's own
-    floor that predicts ``0.25 + 1.1 x 6.57 = 7.47 GiB`` for a measured
+    floor that predicts ``0.25 + 1.3 x 6.57 = 8.79 GiB`` for a measured
     7.41 — so the model **covers** the measurement rather than under-predicting
     it, and the bare ``6.57 < 7.41`` reading is the currency error, not a defect.
+    (An earlier revision of this paragraph substituted 1.1 for
+    ``MARGINAL_RSS_PER_TRACED_BYTE`` after naming it; the constant is **1.3**.
+    Do not re-derive the arithmetic here by hand — read the constant.)
 
-    **The margin is nonetheless thin (~1%), and one known term is still
-    missing**: the output side (a :class:`PlaneWriter` chunk-row buffer plus
-    :data:`GATHER_SCRATCH_PLANE_MULTIPLE` planes of coordinate scratch) is
-    **~0.35 GiB unmodelled on the shipped default geometry**. It is not folded in
-    here because sizing it needs a plane's ``(nv, nu)``, which means resolving
-    ``slices_json`` against the data box — work this estimator deliberately does
-    not do — and inventing a bound for an oblique plane would be worse than a
-    residual that is documented and quantified. The arithmetic once ``(nv, nu)``
-    is known is ``(GATHER_SCRATCH_PLANE_MULTIPLE + chunks[0]) * nv * nu * 4``.
+    **The margin is ~19%, i.e. comfortable rather than marginal**, and one known
+    term is nonetheless still missing: the output side (a :class:`PlaneWriter`
+    chunk-row buffer plus :data:`GATHER_SCRATCH_PLANE_MULTIPLE` planes of
+    coordinate scratch) is **~0.35 GiB unmodelled on the shipped default
+    geometry**. That residual is real and worth stating — it grows with a
+    plane's area, so a much larger ``extent``/finer ``du``/``dv`` eats into the
+    margin — but at 19% it is not what stands between this model and an
+    under-prediction. It is not folded in here because sizing it needs a plane's
+    ``(nv, nu)``, which means resolving ``slices_json`` against the data box —
+    work this estimator deliberately does not do — and inventing a bound for an
+    oblique plane would be worse than a residual that is documented and
+    quantified. The arithmetic once ``(nv, nu)`` is known is
+    ``(GATHER_SCRATCH_PLANE_MULTIPLE + chunks[0]) * nv * nu * 4``.
 
 
     ``run()`` calls ``prepare_volume`` one selected dataset at a time. The
@@ -2038,17 +2005,24 @@ def estimate(params: dict) -> CostEstimate:
     if not load_infos:
         # Per-dataset sizing couldn't resolve anything selected (e.g. the
         # named files don't hold the toggled quantities) — fall back to the
-        # coarser file-level figure rather than reporting zero. The scratch
-        # requirement is independent of that resolution and must survive this
-        # early return: a dropped field here would let `plan_run` start a
-        # spilling run on a machine with no room for the spill.
-        return CostEstimate(total_input, total_input, largest, True, None, None, _scratch_bytes(p))
+        # coarser file-level figure rather than reporting zero.
+        return CostEstimate(total_input, total_input, largest, True)
 
     peak = 0
     for i, (_own_f64, load_peak_i) in enumerate(load_infos):
         other = max((f64 for j, (f64, _lp) in enumerate(load_infos) if j != i), default=0)
         peak = max(peak, load_peak_i + other)
-    return CostEstimate(peak, total_input, largest, True, None, None, _scratch_bytes(p))
+    # `scratch_bytes` stays at its 0 default on BOTH returns, including for
+    # `center_method="median"`, and that is deliberate rather than a dropped
+    # term. `prepare_volume` calls `align_volume_streamed` with
+    # `center_method=None` and no `scratch_dir=` — this stage centres itself
+    # afterwards (midrange included, a convention alignment.py does not know),
+    # so nothing here ever caches an aligned volume to disk. Pricing a spill
+    # the stage cannot perform would let `advice.plan_run` BLOCK a run that
+    # touches no disk at all, which is the one thing this phase promised never
+    # to do. Pinned by `test_slices_never_hands_the_alignment_a_scratch_dir`:
+    # if that ever starts passing one, size it on both returns — not before.
+    return CostEstimate(peak, total_input, largest, True)
 
 
 # Relative Y-height spread beyond which volumes are flagged as misregistered.

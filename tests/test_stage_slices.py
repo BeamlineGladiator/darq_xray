@@ -378,6 +378,45 @@ def test_run_matching_grids_no_grid_note(tmp_path):
     assert not any("grid" in n for n in res.notes)
 
 
+def test_slices_never_hands_the_alignment_a_scratch_dir(tmp_path, monkeypatch):
+    """No `scratch_dir=`, therefore no disk, therefore `scratch_bytes == 0`.
+
+    This is the run-side half of
+    `test_stage_estimates.py::test_slices_never_prices_a_spill_it_cannot_perform`,
+    and the reason that zero is the truth rather than a dropped term.
+    `prepare_volume` also passes `center_method=None` — the stage centres itself
+    afterwards, midrange included — so the alignment never computes a multi-pass
+    statistic and would have nothing to cache even if it were handed somewhere
+    to put it. An estimator that priced a spill here would let
+    `advice.plan_run` BLOCK a run on a full disk that the run would never use.
+
+    Run with `center_method="median"` (the only setting that could cache) at a
+    budget small enough to force the blocked rung, where the caching would
+    happen if it happened anywhere.
+    """
+    proc, raw = _setup(tmp_path)
+    seen: list = []
+    real = SL.A.align_volume_streamed
+
+    def spy(*a, **kw):
+        seen.append((kw.get("scratch_dir", "NOT PASSED"), kw.get("center_method", "NOT PASSED")))
+        return real(*a, **kw)
+
+    monkeypatch.setattr(SL.A, "align_volume_streamed", spy)
+    out = tmp_path / "sl_median"
+    SL.run(
+        {
+            **_minimal_params(proc, raw, out),
+            "center_method": "median",
+            "_budget_bytes": 1 << 20,
+        }
+    )
+    assert seen, "no volume went through the streaming alignment"
+    assert {s for s, _c in seen} == {"NOT PASSED"}, seen
+    assert {c for _s, c in seen} == {None}, seen
+    assert not list(out.rglob("*scratch*")), "the run left a scratch directory behind"
+
+
 def _two_volume_slices_params(tmp_path):
     """Synthetic params that select several volumes (both map files + rocking)."""
     proc, raw = _setup(tmp_path)
