@@ -258,6 +258,55 @@ plus `gui/viewers.py:53`, which this design found. The extra line numbers on the
 conversion removes, not additional sites. A later re-audit should check all
 thirteen rows against this table.
 
+### Recorded exemption — the no-motor path in `visualize` and `paraview`
+
+Added during the wave-3 review, so that an inconsistency between three stages is
+a decision with a reason rather than an accident of which reviewer noticed it.
+
+Each of the three alignment stages has a **no-motor** fallback, taken when
+`find_matching_folders` matches nothing and `extract_motor_positions` therefore
+returns `samy` and `samz` empty together. It cannot go through
+`align_volume_streamed`, which always interpolates: resampling a NaN-bearing
+volume onto its own Z nodes is not the identity, because scipy's linear
+interpolant reads the value *below* each node and spreads every NaN one layer
+down (measured in `paraview`: 1299 of 9360 voxels changed their `valid_mask`).
+
+The three do not treat it alike, and deliberately:
+
+| stage | no-motor site | bounded? |
+| --- | --- | --- |
+| `slices` | `_unaligned_blocks` | **yes** — the chain (`abs` → ROI → samy X-shift) as a Z-block factory, pad and reference samy computed once for the whole volume, verified over 12 combinations of pad sign, `samy_direction` and `len(samy)` against `nz` |
+| `visualize` | `_align_streamed`, `len(samz) == 0` | no — `dset[:]`, handed on as one covering block |
+| `paraview` | `_unaligned_field` | no — `dset[:]`, plus the whole-volume `center_around_zero` |
+
+`slices` is bounded because its Z-blocked plane gather needed a block factory on
+*every* path anyway; giving the no-motor chain one cost nothing extra. In
+`visualize` and `paraview` the same conversion would be new machinery built for
+this path alone — and in `paraview` it also needs the centring statistic
+streamed over the unaligned blocks, which is a second reduction with its own
+budget accounting.
+
+**The cost of the exemption, stated plainly.** The trigger is a typo'd
+`mosa_pattern` or `raw_root`, so on the 8 GB target machine a typo becomes an
+OOM kill rather than an unaligned result — a *failure*, which sits against this
+phase's "slower, never failed". Two things make that acceptable rather than
+merely tolerated:
+
+- A run that reaches this path produces an **unaligned** volume, which is not a
+  usable product. The path exists to keep a misconfigured run from crashing, not
+  to serve a legitimate large run; nothing is lost by it that was worth having.
+- The cost is still *predicted*. Both stages' `estimate()` deliberately
+  over-predict by pricing the pre-phase whole-array form, so `advice.plan_run`
+  compares the whole-volume cost against the machine's headroom and reports it
+  before the run starts. The user is warned; they simply are not saved.
+
+**Bounding them is available if wanted**, and `visualize` is the cheap half: its
+no-motor chain is `ROI → samy X-shift`, the same per-layer steps `slices`
+already blocks, so `_unaligned_blocks` is close to liftable as-is. `paraview`
+additionally wants `stream_mean` / `stream_quantile` over the unaligned blocks
+for its centring. Neither was done here because the phase's budget is better
+spent on paths a correct run can reach.
+
 Three families, and they want different things. `strain` and `mosaicity` are not
 alignment stages at all — they *build* volumes from per-layer maps, and their fix
 is structural: preallocate and write incrementally, no blocking machinery

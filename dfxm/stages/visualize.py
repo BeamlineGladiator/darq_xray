@@ -951,19 +951,16 @@ class _LayerSource:
         return self._block[z - self._start]
 
     def whole(self) -> np.ndarray:
-        """The volume as one array, walking the stream once. Cached."""
+        """The volume as one array, walking the stream once. Cached.
+
+        The drain itself — including the adopt-don't-copy of a single covering
+        block, which is the part that is expensive to get wrong — is
+        :func:`~dfxm.common.alignment.materialise_blocks`, not a fourth copy of
+        it. This used to be that fourth copy, so a fix in the shared helper
+        would silently not have reached here.
+        """
         if self._array is None:
-            covering = slice(0, self.shape[0])
-            data = None
-            for sl, block in self._blocks():
-                if data is None:
-                    if sl == covering:
-                        data = block  # already the whole volume; nothing else holds it
-                        break
-                    data = np.empty(self.shape, dtype=self._dtype)
-                data[sl] = block
-            # An empty Z axis yields no block at all.
-            self._array = np.empty(self.shape, dtype=self._dtype) if data is None else data
+            self._array = A.materialise_blocks(self._blocks, self.shape, self._dtype)
             self._iter = self._block = None
         return self._array
 

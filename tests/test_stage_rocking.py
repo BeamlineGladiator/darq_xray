@@ -386,13 +386,58 @@ def _count_clim_blocks(monkeypatch):
 
 
 def _write_clim_volume(path, *, nan_fraction_cut=1.7):
-    """A float32 volume with a realistic scatter of NaNs, written to *path*."""
+    """A float32 volume with NaNs, both infinities and exact ties, written to *path*.
+
+    The non-finite values are load-bearing, not decoration. `_colorbar_range`
+    selects with `np.isfinite` while `volumeio.stream_quantile` drops non-finite
+    values by construction; a fixture carrying **only NaNs** cannot tell those
+    two selections apart, because `~np.isnan` keeps exactly what `isfinite`
+    keeps on it. This fixture was NaN-only, and reverting `_colorbar_range` to
+    `~np.isnan` left every test in this module green — the rung boundary was
+    pinned by nothing. `±inf` is what separates them, and it is a real value
+    here: a pathological darfix fit puts one in a rocking volume, and then the
+    in-core rung returns `vmax = inf` (every finite voxel one colour) where the
+    streaming rung returns a finite limit — the same data rendering differently
+    on two machines.
+
+    Rounding onto a coarse grid puts long runs of **exact ties** around every
+    rank, including the 1st and 99th percentiles the replot asks for, which is
+    where `stream_quantile`'s rank search and `np.percentile` could disagree
+    about which of the equal values they return.
+
+    `_assert_finite_selections_disagree` asserts the first property rather than
+    assuming it, so the fixture cannot quietly lose its subject again.
+    """
     rng = np.random.default_rng(4)
     volume = (rng.normal(size=(20, 16, 16)) * 1000.0).astype(np.float32)
     volume[volume > nan_fraction_cut * 1000.0] = np.nan
+    volume = (np.round(volume / 50.0) * 50.0).astype(np.float32)
+    flat = volume.reshape(-1)
+    finite_idx = np.flatnonzero(np.isfinite(flat))
+    picked = rng.choice(finite_idx, size=320, replace=False)
+    flat[picked[:160]] = np.inf
+    flat[picked[160:]] = -np.inf
     with h5py.File(path, "w") as f:
         f.create_dataset("sum_intensity", data=volume)
     return volume
+
+
+def _assert_finite_selections_disagree(volume, lo, hi):
+    """`isfinite` and `~isnan` must give different limits on *volume*.
+
+    Without this the rung equality below compares two selections that happen to
+    coincide, and reverting `_colorbar_range`'s `np.isfinite` to `~np.isnan`
+    would leave it green — which is exactly how this test spent the wave not
+    testing anything.
+    """
+    finite = np.percentile(volume[np.isfinite(volume)], [lo, hi])
+    with np.errstate(invalid="ignore"):  # `inf - inf` in numpy's interpolation
+        not_nan = np.percentile(volume[~np.isnan(volume)], [lo, hi])
+    assert not np.array_equal(finite, not_nan), (
+        "the fixture no longer separates `np.isfinite` from `~np.isnan` — they give the "
+        f"same limits {tuple(finite)} on it, so reverting `_colorbar_range` to `~np.isnan` "
+        "would leave the rung equality below green. Put ±inf back into the fixture."
+    )
 
 
 def test_rocking_replot_clim_is_exactly_the_in_core_percentile(tmp_path, monkeypatch):
@@ -427,9 +472,19 @@ def test_rocking_replot_clim_is_budget_independent_across_both_rungs(tmp_path, m
     differed between them would be a colour that depended on the machine.
     Asserts **both** rungs are actually taken — without that this compares a run
     against itself, the vacuity Task 10 recorded.
+
+    It also asserts the fixture can *see* the two rungs' finite selections
+    differ. The in-core rung's `data[np.isfinite(data)]` and the streaming
+    rung's implicit non-finite drop agree on a NaN-only volume no matter which
+    one the in-core side is written with, so on the fixture as it first stood
+    this test passed with `_colorbar_range` reverted to `~np.isnan` — the exact
+    defect this wave had already repaired in `visualize`.
     """
     h5p = str(tmp_path / "clim.h5")
-    _write_clim_volume(h5p)
+    volume = _write_clim_volume(h5p)
+    defaults = RK.STAGE.defaults()
+    assert np.isinf(volume).any() and np.isnan(volume).any(), "fixture lost its non-finite values"
+    _assert_finite_selections_disagree(volume, defaults["cbar_pct_lo"], defaults["cbar_pct_hi"])
 
     answers = []
     traversals = []  # [] when the in-core rung ran, [n_blocks, ...] when it streamed

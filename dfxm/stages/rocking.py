@@ -662,8 +662,11 @@ def _fits_in_core(dataset, budget_bytes: int) -> bool:
     values are non-finite), ``np.percentile``'s internal partition copy (at most
     ``itemsize``), and the boolean ``isfinite`` mask (1 B) — so
     ``3 * itemsize + 1`` bounds it. Measured with ``tracemalloc`` above the
-    resident volume: 7.47 B/element for float32 (bound 9), 14.94 for float64
-    (bound 17), 4.00 for uint16 (bound 5); the bound holds in all three.
+    resident volume: 12.04 B/element for float32 (bound 13), 24.03 for float64
+    (bound 25), 6.04 for uint16 (bound 7); the bound holds in all three, with
+    about 8% of margin — not the ~17% an earlier, superseded set of figures
+    from a smaller fixture implied. The test named after this function
+    re-measures them, so they are checked rather than remembered.
 
     That is ~3.5x cheaper per element than a streamed block, which is the whole
     point of asking: streaming costs ~12 traversals against 1, and on this

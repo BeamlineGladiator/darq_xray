@@ -233,6 +233,59 @@ def test_matched_median_block_budget_never_buys_more_than_the_budget(tmp_path):
             )
 
 
+def test_matched_median_working_set_constant_covers_the_measured_cost(tmp_path):
+    """`MEDIAN_WORKING_SET_PER_ELEMENT` must not sit below what the median costs.
+
+    The budget test above recomputes the working set *from* the constant, so it
+    holds for any value of it — 36, 8 or 1 — and cannot see the constant being
+    wrong. The constant is a **divisor** in `_median_block_budget`: too small a
+    value buys a block larger than was counted, and the blocks then quietly
+    exceed the budget the whole conversion exists to respect. `rocking`'s
+    sibling bound is measured; this is the same treatment for this one.
+
+    Measures `load_pco_ff_frame` itself rather than a re-typed copy of its two
+    lines, so the number tracks the shipped code.
+    """
+    import gc
+    import tracemalloc
+
+    rng = np.random.default_rng(11)
+    for dtype, shape in (("uint16", (11, 128, 128)), ("float32", (41, 160, 160))):
+        stack = rng.integers(0, 4000, size=shape).astype(dtype)
+        path = _write_stack(str(tmp_path / f"ws_{dtype}.h5"), stack)
+        itemsize = np.dtype(dtype).itemsize
+        elems = int(np.prod(shape))
+
+        with h5py.File(path, "r") as f:
+            block_bytes = M._median_block_budget(f["1.1/measurement/pco_ff"], 1 << 30)
+        assert block_bytes >= elems * itemsize, (
+            "precondition: this budget must buy the whole stack as ONE block, so the "
+            "measurement below is over a block of exactly `elems` elements"
+        )
+
+        del stack
+        gc.collect()
+        tracemalloc.start()
+        base = tracemalloc.get_traced_memory()[0]
+        frame = M.load_pco_ff_frame(path, "1.1/measurement/pco_ff", 3, budget_bytes=1 << 30)
+        peak = tracemalloc.get_traced_memory()[1]
+        tracemalloc.stop()
+
+        # The constant prices what is held *besides* the block's own stored bytes
+        # and the frame the call returns.
+        measured = (peak - base - elems * itemsize - frame.nbytes) / elems
+        assert measured > 8.0, (
+            f"{dtype}: measured only {measured:.2f} B/element, at or below the bare "
+            "`.astype(np.float64)` upcast — `np.nanmedian`'s own cost is not in this "
+            "number, so the measurement is not seeing the thing it claims to bound"
+        )
+        assert measured <= M.MEDIAN_WORKING_SET_PER_ELEMENT, (
+            f"{dtype}: one block costs {measured:.2f} B/element, over the "
+            f"{M.MEDIAN_WORKING_SET_PER_ELEMENT} B MEDIAN_WORKING_SET_PER_ELEMENT charges "
+            "it — `_median_block_budget` divides by that, so blocks now exceed the budget"
+        )
+
+
 def test_matched_peak_does_not_follow_the_stack_size(tmp_path):
     """The measured peak, not the model of it — a 40 MiB stack in a child process.
 

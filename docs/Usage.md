@@ -765,6 +765,15 @@ Align the stacked mosaicity/strain volumes and render them.
 > this machine, turn **Save 3D top-view** off and the run stays bounded; the
 > per-layer PNGs and the animation are unaffected. The interactive 3-D viewer
 > has the same constraint for the same reason.
+>
+> **A second exception, and it means something is already wrong.** If the raw
+> folder pattern matches no folders there are no motor positions, so the volume
+> cannot be aligned and the run falls back to loading it whole — unbounded, as
+> it always did. Such a run produces an *unaligned* volume, which is not a
+> usable product, so the fix is the pattern rather than the memory: check
+> **Raw root** and the mosaicity/strain pattern. [[#8. Oblique slices
+> (`slices`)|Slices]] does bound this fallback; this stage and the ParaView
+> export deliberately do not.
 
 > [!note]
 > Colourmaps follow the publication-style **Colormaps** dropdowns (misorientation
@@ -840,6 +849,12 @@ rendering, with a `valid_mask` and NaN sentinels.
 > `Z pieces = N needs about … MB` note in the run log and the Results summary,
 > and raise **Z pieces** to the number it suggests. It is advice, never enforced:
 > your piece count stays exactly what you asked for.
+>
+> **Neither does either route bound a run with no motor positions.** If the raw
+> folder pattern matches no folders the volume cannot be aligned, and the export
+> falls back to loading it whole, as it always did. That run exports an
+> *unaligned* volume, so the fix is the pattern rather than the memory: check
+> **Raw root** and the mosaicity/strain pattern.
 
 > [!note] Scratch files
 > With **Centre method = median** the export may cache an aligned volume on disk

@@ -1611,13 +1611,6 @@ def _assert_sweep_samples_the_volume(h5_path, n_planes):
     )
 
 
-# Holding the sweep's stack ONCE must already blow the limit below, or this test
-# would pass on code that holds it. The pre-change peak was about twice this
-# figure again, because `np.stack(planes)` held the list and the stack together.
-_STACK_OVER_LIMIT = 1.5
-_SWEEP_PEAK_LIMIT = 300 << 20
-
-
 def _slice_rec(n_planes, nv, nu):
     return {
         "name": "wide",

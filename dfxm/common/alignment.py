@@ -278,10 +278,11 @@ def materialise_blocks(blocks: Callable[[], Iterator[tuple[slice, np.ndarray]]],
     would be trying to avoid. An empty Z axis yields no block at all and gets the
     empty array its shape describes.
 
-    One implementation, because three callers need this seam and each of them
+    One implementation, because four callers need this seam and each of them
     would get the adoption wrong in the same expensive way:
-    :func:`align_volume` (the in-core façade), ``slices._materialise`` and
-    ``paraview._drained`` (each stage's in-core rung).
+    :func:`align_volume` (the in-core façade), ``slices._materialise``,
+    ``paraview._drained`` (each stage's in-core rung) and
+    ``visualize._LayerSource.whole`` (the 3-D consumer that cannot stream).
     """
     covering = slice(0, int(shape[0]))
     data = None
