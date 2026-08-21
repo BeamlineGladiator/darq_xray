@@ -268,6 +268,32 @@ class AlignedVolume:
     center_offset: float = 0.0
 
 
+def materialise_blocks(blocks: Callable[[], Iterator[tuple[slice, np.ndarray]]], shape, dtype):
+    """Drain a block factory into one ``shape``-sized array.
+
+    **Adopts a single covering block rather than copying it.** A budget generous
+    enough to leave the stream one block hands over an array that already *is*
+    the whole volume and that nothing else holds; copying it into a fresh
+    ``np.empty`` would hold two whole volumes at once, which is the peak this
+    would be trying to avoid. An empty Z axis yields no block at all and gets the
+    empty array its shape describes.
+
+    One implementation, because three callers need this seam and each of them
+    would get the adoption wrong in the same expensive way:
+    :func:`align_volume` (the in-core façade), ``slices._materialise`` and
+    ``paraview._drained`` (each stage's in-core rung).
+    """
+    covering = slice(0, int(shape[0]))
+    data = None
+    for zsl, block in blocks():
+        if data is None:
+            if zsl == covering:
+                return block
+            data = np.empty(tuple(shape), dtype=dtype)
+        data[zsl] = block
+    return np.empty(tuple(shape), dtype=dtype) if data is None else data
+
+
 def align_volume(
     volume: np.ndarray,
     samy: np.ndarray,
@@ -307,22 +333,12 @@ def align_volume(
         # anyway has no business pretending to a budget.
         budget_bytes=None,
     )
-    whole = slice(0, streamed.shape[0])
-    data = None
-    for zsl, block in streamed.blocks():
-        if data is None:
-            if zsl == whole:
-                # The budget above normally yields exactly one block, and that
-                # block already IS the whole aligned volume — a freshly
-                # allocated array that nothing else holds. Adopting it rather
-                # than copying into a second one keeps this path's peak memory
-                # where it was before the façade: one aligned volume, not two.
-                data = block
-                break
-            data = np.empty(streamed.shape, dtype=streamed.dtype)
-        data[zsl] = block
-    if data is None:  # an empty Z axis yields no block at all
-        data = np.empty(streamed.shape, dtype=streamed.dtype)
+    # The budget above normally yields exactly one block, and that block already
+    # IS the whole aligned volume — a freshly allocated array nothing else holds.
+    # `materialise_blocks` adopts it rather than copying into a second one, which
+    # keeps this path's peak memory where it was before the façade: one aligned
+    # volume, not two.
+    data = materialise_blocks(streamed.blocks, streamed.shape, streamed.dtype)
     return AlignedVolume(
         data, streamed.z_uniform_um, streamed.scale_z_um, streamed.pad_left, streamed.center_offset
     )

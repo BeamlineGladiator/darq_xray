@@ -17,7 +17,7 @@ import contextlib
 import json
 import os
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 import h5py
 import numpy as np
@@ -839,6 +839,23 @@ def _survey(providers, *, count_invalid: bool, find_range: bool) -> tuple[int, f
     align each field twice before the piece pass aligns it a third time. This
     is a time saving, not a memory one — the peak is set by how much is
     resident within a walk, not by how many walks there are.
+
+    **Not skipped on the in-core rung**, and the judgement is deliberate. A
+    whole-array path *can* reach both quantities directly — that is exactly what
+    :func:`save_volumes_as_pvti` does — but doing so would give the sentinel and
+    the padded fraction a *second* definition, chosen by how much memory the
+    machine has. Both quantities reach the product (the sentinel is written into
+    every padded voxel), so a divergence between the two definitions would be a
+    machine-dependent difference in an exported file: precisely the failure
+    `visualize` shipped twice (``~isnan`` vs ``isfinite``, ``np.nanmean`` vs
+    ``stream_mean``) and had to repair at the streaming definition. What the
+    in-core rung removes instead is the *re-alignment*: :func:`_drained` has
+    already materialised each field, so this walk is one numpy pass over resident
+    memory rather than a second traversal of the alignment chain. Measured on a
+    128x192x192 four-field export, this pass costs **1.00 s of a 3.61 s streamed
+    run and 0.09 s of a 3.38 s in-core one** — 28% against 2.7%. Skipping it
+    in-core could therefore buy at most 2.7%, in exchange for a second definition
+    of two numbers that reach the file.
     """
     from ..common import volumeio
 
@@ -886,6 +903,13 @@ def save_volumes_streamed(
     mismatch is a bug rather than a case to handle, and both are checked because
     pairing the fields by absolute output Z index is the invariant that makes a
     per-field slab reader equivalent to one interleaved walk.
+
+    **This function is on both rungs of the stage's ladder, and does not know
+    which.** A provider whose blocks come from a resident array (:func:`_drained`,
+    the in-core rung) is the same thing here as one whose blocks come from the
+    alignment chain, so the two rungs cannot write different bytes — there is one
+    writer, not two kept in step by hand. What the rung changes is the cost of
+    *traversing* a provider: aligning a field again, or walking memory.
 
     Two passes. The first computes only what a piece cannot know locally: the
     NaN sentinel's global range and the overall invalid fraction. The second
@@ -989,18 +1013,20 @@ def estimate(params: dict) -> CostEstimate:
     add, and the run's peak is the max over the (at most two) files processed.
     ``chunkable=True``.
 
-    **The arithmetic below now models a stage that no longer exists**, and
-    deliberately so. It prices the in-core export: every raw field resident at
-    once, an aligned float64 copy of every field accumulated in ``processed``,
-    and a second ``np.where``-cleaned set plus a boolean mask built whole before
-    the first piece is written. The export streams instead — one alignment block
-    and one piece-slab per field — so this over-predicts, which is the safe
-    direction twice over. It is what ``advice.plan_run`` compares against the
-    machine's headroom, and an over-estimate there only makes it hand over a
-    *smaller* ``budget_bytes``, i.e. block harder; an under-estimate would let a
-    run start in-core that then OOMs. Recalibrating it means measuring the
-    streamed peak on the real dataset, not editing the terms below by
-    inspection — the warning at the end of this docstring applies unchanged.
+    **The arithmetic below over-predicts both rungs, and deliberately so.** It
+    prices the export as it stood before this phase: every raw field resident at
+    once, an aligned float64 copy of every field accumulated, and a second
+    ``np.where``-cleaned set plus a boolean mask built whole before the first
+    piece is written. Neither rung does the last of those any more — the piece
+    writer builds each `.vti` from its own Z-slab on both — and the streaming
+    rung does not hold the aligned copies either. It is what
+    ``advice.plan_run`` compares against the machine's headroom, and an
+    over-estimate there only makes it hand over a *smaller* ``budget_bytes`` —
+    which is also what decides the rung, so over-predicting biases the stage
+    toward streaming: slower, never an OOM. An under-estimate would let a run
+    take the in-core rung and then OOM. Recalibrating it means measuring both
+    rungs' peaks on the real dataset, not editing the terms below by inspection —
+    the warning at the end of this docstring applies unchanged.
 
     The terms: the aligned float64 copy of every field (``apply_roi_3d`` ->
     ``apply_samy_shifts_to_volume`` -> ``interpolate_to_uniform_z``, the last of
@@ -1173,6 +1199,102 @@ def _multipass_scratch(center_method, out_dir: str, dset, notes: list) -> str | 
     return _scratch_dir_for(out_dir, elems * 8, notes)
 
 
+def _fits_in_core(providers: dict) -> bool:
+    """Whether every field's share of the budget holds its whole aligned volume.
+
+    The same question :func:`~dfxm.common.advice.plan_run` asks, in the budget's
+    own working-set currency: :func:`~dfxm.common.alignment.align_volume_streamed`
+    already solved how many output layers one block may carry, so "does it fit?"
+    is "is that the whole Z axis?". Nothing is read to answer it — the blocking
+    is known before a voxel is touched.
+
+    **All or nothing across the set.** A ``.vti`` piece carries every field, so
+    the writer holds one stream per field and their working sets coexist; the
+    budget is divided by that count at the call site and a single field short of
+    its share sends the whole export streaming. The fields genuinely do not block
+    alike — a centred CoM field carries the centring statistic's working set and
+    a plain FWHM field does not — so this is a case that occurs rather than a
+    defensive nicety.
+
+    No providers is not "it fits": there is nothing to materialise and nothing to
+    write.
+    """
+    return bool(providers) and all(
+        int(prov.block_layers) >= int(prov.shape[0]) for prov in providers.values()
+    )
+
+
+def _drained(provider):
+    """*provider* with its aligned volume materialised, as a one-block provider.
+
+    **The in-core rung, and the only function on it** — which is what lets a test
+    pin which rung ran instead of merely observing that the run finished.
+
+    Streaming is a fallback for insufficient memory, not a product improvement.
+    Every export used to pay for it: the aligned volume was never materialised,
+    so :func:`_survey` and the piece pass each re-ran the whole alignment chain
+    (``blocks`` is a factory) and the export aligned every field **twice**,
+    measured at 1.2-1.7x the wall clock of the in-core exporter this replaced.
+    Draining once collapses that back to one alignment; both passes then walk
+    resident memory. Measured over three sizes of a four-field mosaicity export,
+    unconditional streaming against this rung: 0.117 -> 0.095 s (1 MB/volume),
+    0.961 -> 0.727 s (8 MB), 5.045 -> 3.379 s (36 MB) — 1.23x to 1.49x.
+
+    The writer is unchanged and unaware. It consumes providers, and a provider
+    whose blocks come from an array is the same thing to it as one whose blocks
+    come from the alignment chain — which is why the two rungs cannot produce
+    different bytes. That is the shape `slices` used (one implementation per
+    statistic, the rung decides only where blocks come from) rather than the one
+    `visualize` had to repair twice (in-core and streaming siblings kept in step
+    by hand).
+    """
+    data = A.materialise_blocks(provider.blocks, provider.shape, provider.dtype)
+    whole = slice(0, int(provider.shape[0]))
+    return replace(
+        provider,
+        # The declared dtype is what the blocks were promised to be; the array is
+        # what they turned out to be. `_FieldStream` makes the same correction
+        # for the same reason.
+        dtype=np.dtype(data.dtype),
+        block_layers=int(provider.shape[0]),
+        working_set_bytes=int(data.nbytes),
+        blocks=lambda: iter([(whole, data)]),
+    )
+
+
+def _writable_providers(
+    providers: dict, *, budget_bytes: int, n_pieces: int, write_valid_mask: bool, label: str, notes
+):
+    """Pick the rung and return the providers :func:`save_volumes_streamed` writes from.
+
+    In-core when the budget holds every field's whole aligned volume, streaming
+    when it does not — :func:`~dfxm.common.advice.plan_run`'s own choice, made
+    per export.
+
+    **The Z-piece advisory is raised on both rungs**, because the piece pass is
+    the same on both and is bounded by ``n_pieces`` rather than by the budget on
+    both. It was briefly suppressed in-core on the argument that a piece must be
+    a fraction of a volume set that is resident anyway — which is true and beside
+    the point: the piece's fields are held *on top of* the aligned volumes, so
+    at ``num_pieces_z = 1`` a run whose alignment sat inside its budget can peak
+    at about twice it. Measured on a 128x192x192 four-field export at a 1 GiB
+    budget: 492.8 MiB at 16 pieces against 632.5 MiB at one. (At that budget the
+    advisory correctly stays silent — 632.5 MiB is well inside 1 GiB — which is
+    the check that caught the suppression.)
+    """
+    shape = next(iter(providers.values())).shape if providers else None
+    if shape is not None:
+        # `valid_mask` is written as a field of its own, so it is resident in the
+        # piece alongside the data fields and is counted like one.
+        n_fields = len(providers) + (1 if write_valid_mask else 0)
+        note = _piece_advice(shape, n_fields, budget_bytes, n_pieces, label)
+        if note:
+            notes.append(note)
+    if _fits_in_core(providers):
+        return {name: _drained(prov) for name, prov in providers.items()}
+    return providers
+
+
 def _piece_advice(shape, n_fields: int, budget_bytes: int, n_pieces: int, label: str) -> str | None:
     """The warning for a Z-piece count too low to keep the piece pass bounded."""
     advised = advisory_n_pieces(shape, n_fields, budget_bytes)
@@ -1184,8 +1306,9 @@ def _piece_advice(shape, n_fields: int, budget_bytes: int, n_pieces: int, label:
     return (
         f"{label}: Z pieces = {n_pieces} needs about {per_piece // (1 << 20)} MB for one "
         f"piece of every field, over this machine's {budget_bytes // (1 << 20)} MB of "
-        f"headroom — raise Z pieces to {advised} or more. Streaming bounds the alignment, "
-        "not the piece: too few pieces can peak higher than an in-core export would have."
+        f"headroom — raise Z pieces to {advised} or more. The memory budget bounds the "
+        "alignment, not the piece: one piece of every field is held on top of it, whether "
+        "the volumes were aligned in one go or streamed."
     )
 
 
@@ -1316,15 +1439,14 @@ def _process_mosaicity(
         spacing = (scale_x, scale_y, first.scale_z_um)
         out_path = os.path.join(out_dir, "mosaicity_volume.pvti")
         pvti = _pvti_kwargs(p)
-        advice_note = _piece_advice(
-            first.shape,
-            len(providers) + (1 if pvti["write_valid_mask"] else 0),
-            budget_bytes,
-            pvti["n_pieces"],
-            "mosaicity",
+        providers = _writable_providers(
+            providers,
+            budget_bytes=budget_bytes,
+            n_pieces=pvti["n_pieces"],
+            write_valid_mask=pvti["write_valid_mask"],
+            label="mosaicity",
+            notes=notes,
         )
-        if advice_note:
-            notes.append(advice_note)
         info = save_volumes_streamed(providers, spacing, out_path, origin=origin, **pvti)
     return ExportInfo(
         "mosaicity",
@@ -1381,16 +1503,15 @@ def _process_strain(
         spacing = (scale_x, scale_y, provider.scale_z_um)
         out_path = os.path.join(out_dir, "strain_volume.pvti")
         pvti = _pvti_kwargs(p)
-        advice_note = _piece_advice(
-            provider.shape,
-            1 + (1 if pvti["write_valid_mask"] else 0),
-            budget_bytes,
-            pvti["n_pieces"],
-            "strain",
+        providers = _writable_providers(
+            {"strain": provider},
+            budget_bytes=budget_bytes,
+            n_pieces=pvti["n_pieces"],
+            write_valid_mask=pvti["write_valid_mask"],
+            label="strain",
+            notes=notes,
         )
-        if advice_note:
-            notes.append(advice_note)
-        info = save_volumes_streamed({"strain": provider}, spacing, out_path, origin=origin, **pvti)
+        info = save_volumes_streamed(providers, spacing, out_path, origin=origin, **pvti)
     return ExportInfo(
         "strain",
         out_path,

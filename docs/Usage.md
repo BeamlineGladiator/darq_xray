@@ -726,9 +726,9 @@ Align the stacked mosaicity/strain volumes and render them.
 > read.
 
 > [!info] Volumes too big for this machine are streamed — same images, more patience
-> Unlike the ParaView export, this stage does **not** stream unconditionally.
 > It measures the machine's free memory first and takes whichever of two routes
-> fits:
+> fits — the same ladder the [[#6. ParaView export (`paraview`)|ParaView export]]
+> and [[#8. Oblique slices (`slices`)|slices]] use:
 >
 > - **It fits.** The volume is aligned in one piece and everything runs exactly
 >   as it always has, at the same speed. This is the normal case on a
@@ -796,28 +796,46 @@ rendering, with a `valid_mask` and NaN sentinels.
 > are filled automatically. Returns no preview when the volume files cannot be
 > read.
 
-> [!info] Every export streams — same files, roughly 1.2–1.7× the time
-> This is the heaviest stage in the pipeline, and it no longer holds the whole
-> aligned dataset in memory. **Every** run now reads and aligns the volumes in
-> Z-blocks and writes one `.vti` piece at a time; there is no in-core fast path
-> to fall back to, and no size threshold below which the old behaviour applies.
-> The cost is a fixed one you pay on small exports too: reaching the sentinel
-> and the padded fraction takes a pass over the data before any piece can be
-> written, so each volume is read more than once. Measured on a four-field
-> 36 MB-per-volume export: 3.0 s in-core against 5.0 s streamed on a machine
-> with memory to spare, and 3.6 s when a tighter memory budget makes the blocks
-> small enough to stay in cache. The machine's free memory decides only *how
-> finely* the volumes are blocked, not whether they are.
+> [!info] Volumes too big for this machine are streamed — same files, more patience
+> This is the heaviest stage in the pipeline. Like the visualize and slices
+> stages, it measures the machine's free memory first and takes whichever of two
+> routes fits:
 >
-> Nothing about the result changes — the pieces are byte-for-byte what the old
-> in-core exporter wrote.
+> - **It fits.** The volumes are aligned in one piece and the export runs at full
+>   speed. This is the normal case on a workstation, and it is what you get for
+>   any dataset your machine can hold.
+> - **It does not fit.** The volumes are read and aligned in Z-blocks instead,
+>   and nothing is ever assembled whole. Memory then stays flat however large the
+>   dataset is — measured on a four-field 36 MB-per-volume export, 493 MB of peak
+>   memory when the volumes are aligned whole against 265 MB streamed.
 >
-> Memory, though, is bounded by **Z pieces** and not by the free-memory
-> measurement: one piece of every field is held at a time, so too few pieces can
-> peak higher than the old in-core export did. The run says so when that
-> happens — look for a `Z pieces = N needs about … MB` note in the run log and
-> the Results summary, and raise **Z pieces** to the number it suggests. It is
-> advice, never enforced: your piece count stays exactly what you asked for.
+>   The cost is **time**: the sentinel and the padded fraction need a pass over
+>   the data before any piece can be written, and on this route that pass has to
+>   align every field a second time. Measured on the same export: 3.4 s aligned
+>   in one piece against 3.6 s streamed at a 64 MB budget and 4.8 s at 16 MB.
+>
+> Streaming used to be unconditional here, and every export paid for it: 5.0 s
+> instead of 3.4 s on the export above, on a machine with memory to spare (the
+> worst case was precisely the machine that needed no streaming at all — one
+> huge block per field, aligned twice, nothing staying in cache). That had it
+> backwards: streaming is what lets a run finish on a machine that could not
+> otherwise hold it, not an improvement to charge everyone for.
+>
+> Nothing about the result changes. The pieces are byte-for-byte identical on
+> both routes, and byte-for-byte what the original in-core exporter wrote. That
+> equality is the point of the split: which route runs depends on your machine,
+> so an export that differed between them would be an export that depended on
+> your machine.
+>
+> **One thing neither route bounds is the piece itself.** A `.vti` piece is
+> written in one call, so one piece of every field is held on top of whatever the
+> alignment left resident — set by **Z pieces**, not by the free-memory
+> measurement. Too few pieces can therefore peak far above what the export
+> otherwise costs (measured at a 1 GB budget: 493 MB at 16 pieces, 633 MB at
+> one). The run says so when the count is too low for this machine — look for a
+> `Z pieces = N needs about … MB` note in the run log and the Results summary,
+> and raise **Z pieces** to the number it suggests. It is advice, never enforced:
+> your piece count stays exactly what you asked for.
 
 > [!note] Scratch files
 > With **Centre method = median** the export may cache an aligned volume on disk
@@ -898,9 +916,9 @@ through the aligned volumes — all in one world frame so the slices co-register
 > detector-row window the map volumes use.
 
 > [!info] Volumes too big for this machine are sliced in Z-blocks — same planes, more patience
-> Like the [[#5. Visualize volumes (`visualize`)|visualize]] stage, and unlike the
-> ParaView export, this stage does **not** stream unconditionally. It measures
-> the machine's free memory first and takes whichever of two routes fits:
+> Like the [[#5. Visualize volumes (`visualize`)|visualize]] stage and the
+> ParaView export, this stage measures the machine's free memory first and takes
+> whichever of two routes fits:
 >
 > - **It fits.** Each volume is aligned in one piece and the planes are cut from
 >   it exactly as they always were, at the same speed. This is the normal case on

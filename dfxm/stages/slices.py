@@ -1128,21 +1128,13 @@ class _Float64Dataset:
 
 
 def _materialise(blocks, shape, dtype):
-    """Drain a block factory into one array, adopting a single covering block.
+    """This stage's name for :func:`~dfxm.common.alignment.materialise_blocks`.
 
-    Copying a lone covering block into a fresh ``np.empty`` would hold two whole
-    volumes at once — the mistake
-    :func:`~dfxm.common.alignment.align_volume` documents at the same seam.
+    Every in-core rung in the project drains a block factory the same way, and
+    the adoption of a lone covering block (copying it would hold two whole
+    volumes) is the detail worth having in exactly one place.
     """
-    covering = slice(0, int(shape[0]))
-    data = None
-    for zsl, block in blocks():
-        if data is None:
-            if zsl == covering:
-                return block
-            data = np.empty(tuple(shape), dtype=dtype)
-        data[zsl] = block
-    return np.empty(tuple(shape), dtype=dtype) if data is None else data
+    return A.materialise_blocks(blocks, shape, dtype)
 
 
 def _aligned_block_budget(dset, budget_bytes: int) -> int:
