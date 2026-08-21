@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 import sys
 import tracemalloc
+import warnings
 from pathlib import Path
 
 import h5py
@@ -138,7 +139,7 @@ def _drain(streamed):
 
 
 @pytest.mark.parametrize("center_method", [None, "mean", "median"])
-@pytest.mark.parametrize("divisor", [1, 3, 8, 10_000])
+@pytest.mark.parametrize("divisor", [1, 2, 4, 10_000])
 def test_streamed_alignment_matches_in_core(center_method, divisor):
     vol, samy, samz = _streamed_synthetic()
     kwargs = dict(
@@ -150,15 +151,16 @@ def test_streamed_alignment_matches_in_core(center_method, divisor):
         center_method=center_method,
     )
     reference = A.align_volume(vol, samy, samz, **kwargs)
-    # Budgets are fractions of the ALIGNED volume, not of the input. The
-    # aligned canvas here is ~13x the input (27 interpolated Z layers on a
-    # samy-widened X), so `vol.nbytes // divisor` puts every divisor — 1
-    # included — at one output layer per block, and the parametrisation
-    # measures nothing. Sizing from the output is what makes the four cases
-    # four different blockings.
-    out_bytes = int(np.prod(reference.data.shape)) * reference.data.dtype.itemsize
+    # Budgets are fractions of the WORKING SET of a single-block run — which is
+    # what `budget_bytes` now bounds. Fractions of the input volume put every
+    # divisor at the one-layer floor (the aligned canvas here is ~13x the
+    # input); fractions of the *output* volume, which this test used before the
+    # working-set model, are no longer the same currency as the budget, and
+    # collapsed divisors 3 and 8 onto the same 27-block floor. Only the model's
+    # own units make the four cases four different blockings.
+    whole = A.align_volume_streamed(vol, samy, samz, budget_bytes=None, **kwargs)
     streamed = A.align_volume_streamed(
-        vol, samy, samz, budget_bytes=max(1, out_bytes // divisor), **kwargs
+        vol, samy, samz, budget_bytes=max(1, whole.working_set_bytes // divisor), **kwargs
     )
     assert streamed.shape == reference.data.shape
     assert streamed.pad_left == reference.pad_left
@@ -168,9 +170,13 @@ def test_streamed_alignment_matches_in_core(center_method, divisor):
     rebuilt, n_blocks = _drain(streamed)
     # The measurement must be live: each budget has to produce the blocking it
     # is meant to, or this case is silently comparing one whole-volume pass
-    # against another.
-    expected_blocks = {1: 1, 3: 3, 8: 9, 10_000: reference.data.shape[0]}[divisor]
+    # against another. The four counts are pairwise distinct by construction —
+    # 1, 3, 6 and the 27-layer floor — so no two parametrisations can quietly
+    # become the same test.
+    expected_blocks = {1: 1, 2: 3, 4: 6, 10_000: reference.data.shape[0]}[divisor]
     assert n_blocks == expected_blocks, f"budget/{divisor} gave {n_blocks} blocks"
+    # The advertised block size must be the one the stream actually used.
+    assert n_blocks == -(-reference.data.shape[0] // streamed.block_layers)
     assert np.array_equal(rebuilt, reference.data, equal_nan=True)
 
 
@@ -365,6 +371,118 @@ def _peak_bytes(fn):
         tracemalloc.stop()
 
 
+def _budget_fixture(samz_kind="ascending", nz=40):
+    """A volume big enough that allocation noise is negligible against its blocks."""
+    rng = np.random.default_rng(5)
+    vol = rng.normal(size=(nz, 200, 260)).astype(np.float32)
+    samy = np.cumsum(rng.normal(scale=0.0005, size=nz))
+    samz = np.sort(rng.normal(scale=0.01, size=nz))
+    if samz_kind == "descending":
+        samz = samz[::-1].copy()
+    elif samz_kind == "shuffled":
+        samz = samz[rng.permutation(nz)]
+    return vol, samy, samz
+
+
+@pytest.mark.parametrize(
+    ("samz_kind", "center_method", "divisor", "floored"),
+    [
+        ("ascending", None, 4, False),
+        ("ascending", None, 16, False),
+        ("ascending", "mean", 8, False),
+        ("ascending", "median", 4, False),
+        ("descending", None, 4, False),
+        # A samz that is not already ascending makes `interp1d.__init__` sort,
+        # and its `np.take(y, ind)` holds a THIRD copy of the padded canvas.
+        # Priced at two copies, this case measured 1.20x its budget and 1.13x
+        # its own model. A shuffled samz reads nearly the whole input for any
+        # block, so halving the budget cannot halve the working set: this one
+        # lands on the one-layer floor, which is the point — the model still
+        # has to bound the peak there.
+        ("shuffled", None, 2, True),
+    ],
+)
+def test_streamed_peak_stays_within_the_budget(samz_kind, center_method, divisor, floored):
+    """`budget_bytes` must bound the measured peak, not a fraction of it.
+
+    The defect this pins: blocks used to be sized so the OUTPUT BLOCK fit the
+    budget, while producing one costs the input span, the padded canvas, the
+    interpolator's temporaries and the statistic's leftovers besides — measured
+    at 3.6x to 7.7x the budget, and worse the tighter the budget was. A caller
+    that hands over the machine's advised headroom has to get a run that fits
+    in it.
+    """
+    nz = 24 if samz_kind == "shuffled" else 40
+    vol, samy, samz = _budget_fixture(samz_kind, nz)
+    kwargs = dict(scale_x=0.15, center_method=center_method)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        whole = A.align_volume_streamed(vol, samy, samz, budget_bytes=None, **kwargs)
+        budget = max(1, whole.working_set_bytes // divisor)
+        streamed = A.align_volume_streamed(vol, samy, samz, budget_bytes=budget, **kwargs)
+    # A floored case cannot promise the budget and says so; a non-floored one
+    # must be genuinely blocked, or "within budget" would be asserted of a run
+    # that never streamed.
+    assert (streamed.working_set_bytes > budget) is floored
+    if floored:
+        assert streamed.block_layers == 1
+    else:
+        assert 1 < streamed.block_layers < whole.shape[0], "neither the floor nor one block"
+
+    def consume():
+        # Iterate WITHOUT accumulating. `_drain` allocates the whole output
+        # volume, which is the consumer's own choice and explicitly outside
+        # what `budget_bytes` covers — measuring it here would be measuring the
+        # test's array, not the chain's working set. The loop variable is still
+        # held across each `next()`, which is the part the model does charge.
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            blocks = A.align_volume_streamed(
+                vol, samy, samz, budget_bytes=budget, **kwargs
+            ).blocks()
+        for _zsl, block in blocks:
+            assert block is not None
+
+    peak = _peak_bytes(consume)
+    # Liveness: a real run allocates at least one output block, so a
+    # tracemalloc that has stopped seeing numpy's buffers cannot pass this.
+    one_block = streamed.block_layers * streamed.shape[1] * streamed.shape[2] * 8
+    assert peak > one_block, f"tracemalloc saw only {peak} B; the measurement is dead"
+    # The model has to bound the measurement whether or not the budget could be
+    # met — that is what makes `working_set_bytes` worth reporting, and it is
+    # the assertion the floored case carries.
+    assert peak <= streamed.working_set_bytes, (
+        f"peak {peak} B is {peak / streamed.working_set_bytes:.2f}x the modelled "
+        f"{streamed.working_set_bytes} B working set"
+    )
+    if not floored:
+        assert peak <= budget, (
+            f"peak {peak} B is {peak / budget:.2f}x the {budget} B budget "
+            f"({streamed.block_layers} layers/block)"
+        )
+
+
+def test_streamed_floors_at_one_layer_and_says_so():
+    """Under a budget one layer cannot meet: run anyway, warn, report the truth."""
+    vol, samy, samz = _budget_fixture()
+    with pytest.warns(UserWarning, match="over the .* budget"):
+        streamed = A.align_volume_streamed(vol, samy, samz, scale_x=0.15, budget_bytes=1024)
+    assert streamed.block_layers == 1
+    assert streamed.working_set_bytes > 1024  # the overrun is reported, not hidden
+    reference = A.align_volume(vol, samy, samz, scale_x=0.15)
+    assert np.array_equal(_drain(streamed)[0], reference.data, equal_nan=True)
+
+
+def test_budget_none_is_one_block():
+    """The in-core façade's request: one block, whatever it costs, and no warning."""
+    vol, samy, samz = _streamed_synthetic(nz=13)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        streamed = A.align_volume_streamed(vol, samy, samz, scale_x=0.15, budget_bytes=None)
+    assert streamed.block_layers == streamed.shape[0]
+    assert _drain(streamed)[1] == 1
+
+
 def test_median_cache_does_not_hold_a_second_aligned_volume():
     """The `fits` branch must ADOPT its one block, never copy it into a second array.
 
@@ -383,7 +501,7 @@ def test_median_cache_does_not_hold_a_second_aligned_volume():
     vol = rng.normal(size=(40, 200, 260)).astype(np.float32)
     samy = np.cumsum(rng.normal(scale=0.0005, size=40))
     samz = np.sort(rng.normal(scale=0.01, size=40))
-    probe = A.align_volume_streamed(vol, samy, samz, scale_x=0.15, budget_bytes=1 << 40)
+    probe = A.align_volume_streamed(vol, samy, samz, scale_x=0.15, budget_bytes=None)
     aligned = int(np.prod(probe.shape)) * probe.dtype.itemsize
 
     def peak(center_method, budget):
@@ -398,11 +516,19 @@ def test_median_cache_does_not_hold_a_second_aligned_volume():
             )
         )
 
-    # `budget_bytes` is exactly one aligned volume, so `fits` is true and the
-    # branch under test is the one that runs.
-    assert probe.shape[0] * probe.shape[1] * probe.shape[2] * probe.dtype.itemsize == aligned
-    mean_peak = peak("mean", aligned)
-    median_peak = peak("median", aligned)
+    # The budget is the working set of a single-block run — the smallest budget
+    # that still makes `fits` true, now that `fits` asks about the whole working
+    # set and not just the block's own bytes. One aligned volume (what this test
+    # passed before the working-set model) no longer buys a single block, and
+    # the branch under test would never run.
+    budget = probe.working_set_bytes
+    assert probe.block_layers == probe.shape[0]
+    assert (
+        A.align_volume_streamed(vol, samy, samz, scale_x=0.15, budget_bytes=budget).block_layers
+        == probe.shape[0]
+    ), "the budget must leave exactly one block"
+    mean_peak = peak("mean", budget)
+    median_peak = peak("median", budget)
 
     # Liveness. If a future numpy stops routing its buffers through a traced
     # domain, both figures collapse to a few kB of Python objects and every

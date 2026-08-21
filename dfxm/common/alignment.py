@@ -14,6 +14,7 @@ experiment.
 
 from __future__ import annotations
 
+import warnings
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 
@@ -298,12 +299,13 @@ def align_volume(
         roi_y=roi_y,
         take_abs=take_abs,
         center_method=center_method,
-        # Generous enough that the aligned canvas — wider than the input in X
-        # and denser in Z — still fits one block, so the in-core path stays one
-        # pass over one array. The fast-path guard, expressed in code rather
-        # than hoped for. A pathological pad that overflows it costs extra
-        # passes, never a different answer.
-        budget_bytes=volume.nbytes * 8 + (1 << 20),
+        # `None` is "one block, whatever it costs" — the honest spelling of what
+        # this path needs. It used to ask for `volume.nbytes * 8`, a guess at a
+        # budget big enough to leave one block; the moment `budget_bytes` came
+        # to mean the whole working set rather than the block, that guess was no
+        # longer big enough, and a caller that materialises the entire volume
+        # anyway has no business pretending to a budget.
+        budget_bytes=None,
     )
     whole = slice(0, streamed.shape[0])
     data = None
@@ -335,6 +337,12 @@ class StreamedAlignment:
     its output up front. ``blocks`` is a factory: call it to get a fresh
     iterator. Traversing twice re-runs the alignment chain, which is why
     consumers that need several passes should say so.
+
+    ``block_layers`` and ``working_set_bytes`` report the blocking that
+    :func:`align_volume_streamed` solved for: how many output layers a block
+    carries, and the peak the working-set model says producing one costs. The
+    second is the number ``budget_bytes`` was checked against, so a caller can
+    see what it actually bought — and see it *before* reading a voxel.
     """
 
     shape: tuple[int, int, int]
@@ -344,10 +352,112 @@ class StreamedAlignment:
     pad_left: int
     pad_right: int
     center_offset: float
+    block_layers: int
+    working_set_bytes: int
     blocks: Callable[[], Iterator[tuple[slice, np.ndarray]]]
 
 
-def _input_span(z_um: np.ndarray, z_target: np.ndarray) -> tuple[int, int]:
+@dataclass(frozen=True)
+class _WorkingSet:
+    """Bytes the streamed chain holds **at once** while producing one block.
+
+    Counted from the body of ``_blocks`` and the functions it calls, not fitted
+    to a measurement. Every coefficient is per *layer*, so the model is linear
+    in the blocking and can be solved for it:
+
+    ``read_layer`` (per INPUT layer)
+        ``raw = dset[in_lo:in_hi]``. An h5py dataset materialises the span; a
+        plain ``ndarray`` returns a view, which costs nothing. ``take_abs``
+        adds ``np.abs(raw)`` on top, and ``raw`` stays bound in the generator
+        frame for the whole iteration, so with both the span is held twice.
+
+    ``canvas_layer`` (per INPUT layer) x ``canvas_copies``
+        The X-padded samy canvas (``shifted`` in
+        :func:`apply_samy_shifts_to_volume`), and then ``interp1d(copy=True)``
+        takes its own full copy of it — two. A **third** appears when the
+        block's samz is not already ascending: ``interp1d.__init__`` then sorts,
+        and ``np.take(self.y, ind, axis=0)`` builds a permuted copy while the
+        first is still alive. Charged for a decreasing samz too, which takes the
+        same branch. Uncounted, a shuffled samz measured 1.20x its budget and
+        1.13x this model; counted, 0.95x.
+
+    ``interp_layer`` (per OUTPUT layer)
+        ``scipy``'s ``_call_linear`` holds five block-sized arrays at its peak:
+        ``y_lo`` and ``y_hi`` (fancy-indexed out of the input dtype) plus
+        ``slope``, the ``slope * dx`` product and ``y_new`` (float64, because
+        the Z coordinates are float64). Hence
+        ``ny * nx * (2 * in_itemsize + 3 * out_itemsize)``.
+
+    ``carry_layer`` (per OUTPUT layer)
+        The block the consumer is still holding. ``for _sl, block in
+        streamed.blocks()`` keeps the previous block bound across the ``next()``
+        that computes the following one, so two blocks coexist — every consumer
+        in this repo iterates that way, so it is a real term, not a caller's
+        mistake.
+
+    ``stat_layer`` (per OUTPUT layer)
+        What a centring pass leaves bound across that same ``next()``.
+        ``stream_mean`` keeps ``finite``; ``volumeio._select_rank`` keeps
+        ``finite``, ``window`` and the ``searchsorted`` indices — three
+        float64/int64 arrays of the block's element count, plus the
+        ``isfinite`` mask. So the interpolator's temporaries for block *i+1*
+        and the statistic's leftovers from block *i* are live together, which
+        is precisely where the median path was measured to peak. Zero when
+        there is no centring; this term also covers the ``v - offset``
+        temporary the centred stream yields through.
+
+    ``fixed``
+        Blocking-independent: the per-layer ``padded`` array and
+        :func:`scipy.ndimage.shift`'s output inside the samy loop.
+
+    Deliberately outside the model: about a megabyte of constant scaffolding
+    when centring (``stream_quantile``'s 65537 histogram edges and counts, the
+    Neumaier lane state), and the survivors of one histogram bin, which
+    ``volumeio`` caps rather than scales. All constant, so no blocking can pay
+    them off and solving against them would only drive every block to the
+    one-layer floor; a budget in the megabytes swallows them, a budget under
+    them is already at the floor. Also outside: whatever the *consumer*
+    accumulates — a caller that writes every block into one in-core array
+    (:func:`align_volume`) is allocating the whole output by choice, and that is
+    its own budget to keep.
+    """
+
+    read_layer: int
+    canvas_layer: int
+    canvas_copies: int
+    interp_layer: int
+    carry_layer: int
+    stat_layer: int
+    fixed: int
+
+    def bytes_for(self, n_in: int, n_out: int) -> int:
+        """Peak bytes for a block of *n_out* output layers off *n_in* input layers."""
+        return (
+            n_in * (self.read_layer + self.canvas_copies * self.canvas_layer)
+            + n_out * (self.interp_layer + self.carry_layer + self.stat_layer)
+            + self.fixed
+        )
+
+
+def _sorted_z(z_um: np.ndarray) -> tuple[np.ndarray, np.ndarray] | None:
+    """The mergesort order of *z_um* and the sorted values, or ``None`` if unused.
+
+    Hoisted out of :func:`_input_span` so that solving the blocking — which
+    asks for the span of every candidate block — sorts once instead of once
+    per question.
+    """
+    if len(z_um) <= 2:
+        return None
+    order = np.argsort(z_um, kind="mergesort")
+    return order, np.asarray(z_um)[order]
+
+
+def _input_span(
+    z_um: np.ndarray,
+    z_target: np.ndarray,
+    *,
+    sorted_z: tuple[np.ndarray, np.ndarray] | None = None,
+) -> tuple[int, int]:
     """Input layer indices whose values linear interpolation of *z_target* reads.
 
     Returns a half-open ``(start, stop)`` in the ORIGINAL layer order, because
@@ -367,29 +477,105 @@ def _input_span(z_um: np.ndarray, z_target: np.ndarray) -> tuple[int, int]:
     layers cannot loosen a bracket: the sub-range always contains the pair the
     full array would have used, and no layer lies between that pair.
 
-    **But the span can degenerate to the whole array**, and then
-    ``dset[in_lo:in_hi]`` reads the entire input volume for that block —
-    ``budget_bytes`` bounds the *output* block, so a badly interleaved samz can
-    push the working set past the caller's budget. Only a non-monotonic samz
-    does this (a decreasing one is fine: reversing keeps neighbours adjacent),
-    and raster samz is monotone by construction, so this is a pathological-input
-    caveat rather than a live risk — but it is a memory caveat, not merely a
-    speed one.
+    **The span can degenerate to the whole array**: a badly interleaved samz
+    puts a block's Z neighbours far apart in file order, and then
+    ``dset[in_lo:in_hi]`` reads the entire input volume for one output block.
+    That is not a budget hole — :func:`align_volume_streamed` asks this function
+    for the span of every candidate blocking *before* it reads anything, so the
+    degenerate span is priced into the block size and the budget still holds; it
+    simply buys fewer output layers per block. Only a non-monotonic samz does it
+    (a decreasing one is fine: reversing keeps neighbours adjacent), and raster
+    samz is monotone by construction.
 
     The sort is ``mergesort`` to match ``interp1d``'s own stable sort, so
     duplicated samz values keep the same layer pairing in both paths.
+    *sorted_z* passes in :func:`_sorted_z`'s result, so a caller asking about
+    many candidate blocks does not re-sort per question.
     """
     n = len(z_um)
     if n <= 2:
         return 0, n
-    order = np.argsort(z_um, kind="mergesort")
-    ordered = np.asarray(z_um)[order]
+    order, ordered = _sorted_z(z_um) if sorted_z is None else sorted_z
     lo_idx = (
         int(np.clip(np.searchsorted(ordered, float(np.min(z_target)), side="left"), 1, n - 1)) - 1
     )
     hi_idx = int(np.clip(np.searchsorted(ordered, float(np.max(z_target)), side="left"), 1, n - 1))
     used = order[lo_idx : hi_idx + 1]
     return int(used.min()), int(used.max()) + 1
+
+
+def _max_input_span(
+    z_um: np.ndarray,
+    z_uniform: np.ndarray,
+    step: int,
+    sorted_z: tuple[np.ndarray, np.ndarray] | None,
+) -> int:
+    """The widest input span any block takes when the stream steps by *step*.
+
+    The blocking is fixed (``range(0, nz, step)``), so this is the exact number
+    of input layers the worst block of that blocking will read — not a bound on
+    it. That exactness is what keeps the budget honest on a non-monotonic samz,
+    where the span is nothing like the block.
+    """
+    nz = len(z_uniform)
+    widest = 0
+    for start in range(0, nz, step):
+        lo, hi = _input_span(z_um, z_uniform[start : start + step], sorted_z=sorted_z)
+        widest = max(widest, hi - lo)
+    return widest
+
+
+def _solve_out_step(
+    nz: int,
+    z_um: np.ndarray,
+    z_uniform: np.ndarray,
+    cost: _WorkingSet,
+    budget_bytes: int | None,
+) -> tuple[int, int]:
+    """Largest block (in output layers) whose modelled working set fits the budget.
+
+    Returns ``(out_step, working_set_bytes)``. ``budget_bytes=None`` means "one
+    block, whatever it costs" — the in-core façade's request.
+
+    Bisection, not division: the working set is linear in the block size *and*
+    in the input span the block reads, and the second is a step function of the
+    first that only :func:`_max_input_span` can answer. Every step the search
+    accepts has been priced, so a non-monotonic span can only make the answer
+    conservative, never wrong — a bisection step is adopted solely on a
+    ``fits`` it measured.
+
+    The floor is one output layer. Progress beats precision: a block that
+    overruns the budget still runs, and the overrun is reported (a warning, and
+    ``StreamedAlignment.working_set_bytes``) rather than raised, because the
+    alternative is a stage that cannot run at all on a machine that is merely
+    tight.
+    """
+    sorted_z = _sorted_z(z_um)
+
+    def ws(step: int) -> int:
+        return cost.bytes_for(_max_input_span(z_um, z_uniform, step, sorted_z), step)
+
+    if nz <= 0:
+        return 1, cost.bytes_for(0, 0)
+    if budget_bytes is None:
+        return nz, ws(nz)
+    budget = max(1, int(budget_bytes))
+    whole = ws(nz)
+    if whole <= budget:
+        # The generous case, and the common one — answered with a single span
+        # query instead of the O(nz) one that pricing a one-layer block costs.
+        return nz, whole
+    best, best_bytes = 1, ws(1)
+    lo, hi = 2, nz - 1
+    while lo <= hi:
+        mid = (lo + hi) // 2
+        mid_bytes = ws(mid)
+        if mid_bytes <= budget:
+            best, best_bytes = mid, mid_bytes
+            lo = mid + 1
+        else:
+            hi = mid - 1
+    return best, best_bytes
 
 
 def align_volume_streamed(
@@ -403,7 +589,7 @@ def align_volume_streamed(
     roi_y: tuple | None = None,
     take_abs: bool = False,
     center_method: str | None = None,
-    budget_bytes: int,
+    budget_bytes: int | None,
     scratch_dir: str | None = None,
 ) -> StreamedAlignment:
     """The fixed alignment pipeline, streamed in Z-blocks.
@@ -419,6 +605,23 @@ def align_volume_streamed(
 
     *dset* is anything that slices like ``dset[a:b]`` and has ``shape`` and
     ``dtype`` — an h5py dataset, a memmap or an in-memory array.
+
+    ``budget_bytes`` is a bound on the **working set**: everything the chain
+    holds at once to produce a block, priced by :class:`_WorkingSet` — the input
+    span the block reads, the padded samy canvas and ``interp1d``'s copy of it,
+    the interpolator's five block-sized temporaries, and the block the consumer
+    is still carrying. It is *not* a bound on the block alone; sizing blocks by
+    the block's own bytes (what this function did until the working-set model
+    replaced it) overshot the real peak by 3.6x to 7.7x, worse the tighter the
+    budget, because the span and the fixed temporaries do not shrink with the
+    block. A caller handing over the machine's advised headroom gets a run that
+    fits in it. ``None`` means "one block, whatever it costs" — what the in-core
+    façade wants, since it is materialising the whole volume anyway. See
+    :class:`_WorkingSet` for the constant ~1 MB the model deliberately excludes.
+
+    The floor is one output layer. If even that overruns *budget_bytes* the run
+    proceeds and warns: on this pipeline a slow stage beats a stage that refuses
+    to start.
 
     Centring costs an extra traversal, because the statistic is over the
     *aligned* volume — NaN-padded canvas, interpolated Z grid — and cannot be
@@ -447,7 +650,38 @@ def align_volume_streamed(
     dtype = np.dtype(np.float64) if len(z_um) > 1 else np.dtype(dset.dtype)
 
     per_out_layer = max(1, ny * nx * dtype.itemsize)
-    out_step = max(1, min(nz, int(max(1, budget_bytes) // per_out_layer)))
+    in_item = np.dtype(dset.dtype).itemsize
+    # Basic slicing of a real ndarray is a view, so `dset[in_lo:in_hi]` costs
+    # nothing there; an h5py dataset (and anything else duck-typed) materialises
+    # the span. A memmap is an ndarray subclass but its slice is backed by pages
+    # that do become resident, so it is charged like a read.
+    reads_into_ram = not isinstance(dset, np.ndarray) or isinstance(dset, np.memmap)
+    per_in_layer = y * x * in_item
+    # How many float64/int64 arrays of the block's element count the centring
+    # pass is still holding when the generator computes the next block: none
+    # without centring, `finite` for the mean, `finite` + `window` + the
+    # searchsorted indices for the median's rank search. The +1 is the
+    # `isfinite` boolean mask.
+    # An unknown method is priced at the worst case rather than rejected here:
+    # `_center_offset` is the single place that validates it, and it raises.
+    retained = {None: 0, "mean": 1}.get(center_method.lower() if center_method else None, 3)
+    cost = _WorkingSet(
+        read_layer=per_in_layer * (int(reads_into_ram) + int(bool(take_abs))),
+        canvas_layer=ny * nx * in_item,
+        canvas_copies=2 if bool(np.all(np.diff(z_um) >= 0)) else 3,
+        interp_layer=ny * nx * (2 * in_item + 3 * dtype.itemsize),
+        carry_layer=per_out_layer,
+        stat_layer=ny * nx * (8 * retained + 1) if retained else 0,
+        fixed=2 * ny * nx * in_item,
+    )
+    out_step, working_set = _solve_out_step(nz, z_um, z_uniform, cost, budget_bytes)
+    if budget_bytes is not None and working_set > budget_bytes:
+        warnings.warn(
+            f"align_volume_streamed: one output layer needs about "
+            f"{working_set} B, over the {int(budget_bytes)} B budget; running "
+            "anyway at one layer per block",
+            stacklevel=2,
+        )
 
     def _blocks(offset: float = 0.0):
         for start in range(0, nz, out_step):
@@ -481,11 +715,14 @@ def align_volume_streamed(
         # cost worth spending memory to avoid — the aligned volume goes into a
         # cache once and the quantile's passes read that instead.
         multi_pass = center_method.lower() == "median"
-        fits = nz * per_out_layer <= budget_bytes
+        fits = out_step >= nz
         if multi_pass and fits:
-            # `fits` is exactly the condition `out_step == nz`, so the stream
-            # yields ONE block and that block already IS the whole aligned
-            # volume — a fresh array nothing else holds. Adopt it.
+            # `fits` IS the condition `out_step == nz` — asked of the solved
+            # blocking rather than recomputed from the output bytes, which is
+            # what it used to be and which no longer means the same thing now
+            # that the block is sized against the whole working set. The stream
+            # therefore yields ONE block and that block already IS the whole
+            # aligned volume — a fresh array nothing else holds. Adopt it.
             #
             # Copying it into a `np.empty(shape)` cache instead (the obvious
             # spelling) would hold two full-size volumes at once: measured
@@ -500,8 +737,12 @@ def align_volume_streamed(
             with volumeio.scratch_array(shape, dtype, dirpath=scratch_dir) as cache:
                 for zsl, block in _blocks():
                     cache[zsl] = block
+                # Reading the cache back is a plain slice of a memmap, so the
+                # block IS the budget here — none of the alignment chain's
+                # multipliers apply. `budget_bytes` is never None on this
+                # branch (`None` makes `fits` true, taking the one above).
                 offset = _center_offset(
-                    lambda: volumeio.dataset_blocks(cache, budget_bytes=budget_bytes),
+                    lambda: volumeio.dataset_blocks(cache, budget_bytes=max(1, budget_bytes)),
                     center_method,
                 )
         else:
@@ -524,5 +765,7 @@ def align_volume_streamed(
         pad_left=pad_left,
         pad_right=pad_right,
         center_offset=float(offset),
+        block_layers=out_step,
+        working_set_bytes=working_set,
         blocks=lambda: _blocks(offset),
     )
