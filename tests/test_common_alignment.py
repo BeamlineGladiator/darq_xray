@@ -230,34 +230,96 @@ def test_block_samz_slice_does_not_shift_the_z_grid():
     assert np.array_equal(rebuilt, reference.data, equal_nan=True)
 
 
-@pytest.mark.parametrize("divisor", [1, 5, 10_000])
-def test_streamed_matches_in_core_for_decreasing_samz(divisor):
-    """interp1d sorts internally, so a decreasing samz must stream identically."""
+@pytest.mark.parametrize(("divisor", "expected_blocks"), [(1, 1), (2, 3), (4, 6), (10_000, 23)])
+def test_streamed_matches_in_core_for_decreasing_samz(divisor, expected_blocks):
+    """interp1d sorts internally, so a decreasing samz must stream identically.
+
+    Budgets are fractions of the *blocking-dependent* working set, as in
+    :func:`test_streamed_alignment_matches_in_core`. Sized from ``vol.nbytes``
+    — what this test did before — every divisor landed on the one-layer floor
+    once blocks were sized against the working set, so all three cases became
+    the same one-layer stream and nothing here covered a **multi-layer** block
+    on a decreasing samz. The blocking is asserted below so it cannot collapse
+    that way again without going red.
+    """
     vol, samy, samz = _streamed_synthetic(nz=15)
     samz = samz[::-1].copy()  # strictly decreasing
-    reference = A.align_volume(vol, samy, samz, scale_x=0.15, center_method="mean")
+    kwargs = dict(scale_x=0.15, center_method="mean")
+    reference = A.align_volume(vol, samy, samz, **kwargs)
+    whole = A.align_volume_streamed(vol, samy, samz, budget_bytes=None, **kwargs)
+    scaffold = volumeio.centring_scaffold_bytes("mean", int(np.prod(whole.shape)))[0]
     streamed = A.align_volume_streamed(
         vol,
         samy,
         samz,
-        scale_x=0.15,
-        center_method="mean",
-        budget_bytes=max(1, vol.nbytes // divisor),
+        budget_bytes=scaffold + max(1, (whole.working_set_bytes - scaffold) // divisor),
+        **kwargs,
     )
-    rebuilt, _n = _drain(streamed)
+    rebuilt, n_blocks = _drain(streamed)
+    assert n_blocks == expected_blocks, f"budget/{divisor} gave {n_blocks} blocks"
     assert np.array_equal(rebuilt, reference.data, equal_nan=True)
 
 
-@pytest.mark.parametrize("divisor", [1, 5, 10_000])
-def test_streamed_matches_in_core_for_nonmonotonic_samz(divisor):
-    """A shuffled samz is degenerate but must not produce a *wrong* answer."""
-    vol, samy, samz = _streamed_synthetic(nz=13, seed=11)
-    samz = samz[np.array([0, 4, 2, 6, 1, 8, 3, 10, 5, 12, 7, 9, 11])]
+def _nonmonotonic_synthetic(nz=17):
+    """A samz that is *mostly* ascending but has two distant layers swapped.
+
+    A fully shuffled samz cannot exercise this: `_median_z_step` takes the
+    median ``|dz|`` of the layer order, which a shuffle makes large, so the
+    uniform grid collapses to three or four layers and no blocking can carry
+    more than one. Two swaps leave the median step alone — the grid keeps all
+    `nz` layers — while still making `_input_span` degenerate: at `nz=17` the
+    five-layer blocking reads spans of 14, 6, 12 and 3 input layers.
+    """
+    rng = np.random.default_rng(11)
+    vol = rng.normal(size=(nz, 6, 9))
+    vol[vol > 1.9] = np.nan
+    samy = np.cumsum(rng.normal(scale=0.002, size=nz))
+    samz = np.linspace(0.0, 0.001 * nz, nz)
+    samz[[3, nz - 4]] = samz[[nz - 4, 3]]
+    return vol, samy, samz
+
+
+@pytest.mark.parametrize(
+    ("divisor", "expected_blocks", "multi_layer_multi_block"),
+    [(1, 1, False), (2, 4, True), (10_000, 17, False)],
+)
+def test_streamed_matches_in_core_for_nonmonotonic_samz(
+    divisor, expected_blocks, multi_layer_multi_block
+):
+    """A non-monotonic samz is degenerate but must not produce a *wrong* answer.
+
+    The ``/2`` case is the one that matters and the one that had gone missing:
+    a **multi-layer block in a multi-block stream**, on a samz whose input span
+    is nothing like its output block. `_input_span`'s handling of exactly that
+    was wrong once already in this wave, and after the working-set change every
+    parametrisation of the old shuffled fixture collapsed to one layer per
+    block — so the guarantee was unguarded. The preconditions are asserted, not
+    assumed: the samz really is non-monotonic, the span really is wider than the
+    block, and the blocking really is the one named.
+    """
+    vol, samy, samz = _nonmonotonic_synthetic()
+    assert not np.all(np.diff(samz) >= 0), "fixture is supposed to be non-monotonic"
     reference = A.align_volume(vol, samy, samz, scale_x=0.15)
+    whole = A.align_volume_streamed(vol, samy, samz, scale_x=0.15, budget_bytes=None)
     streamed = A.align_volume_streamed(
-        vol, samy, samz, scale_x=0.15, budget_bytes=max(1, vol.nbytes // divisor)
+        vol, samy, samz, scale_x=0.15, budget_bytes=max(1, whole.working_set_bytes // divisor)
     )
-    rebuilt, _n = _drain(streamed)
+    rebuilt, n_blocks = _drain(streamed)
+    assert n_blocks == expected_blocks, f"budget/{divisor} gave {n_blocks} blocks"
+    if multi_layer_multi_block:
+        # The degenerate read is the point: a block of `block_layers` outputs
+        # that pulls in far more input layers than that — and more than one
+        # such block, so a block boundary is crossed inside the degeneracy.
+        assert streamed.block_layers > 1, "this case must carry a multi-layer block"
+        assert n_blocks > 1, "and more than one of them"
+        z_um, z_uniform, _s = A._z_grid(samz, vol.shape[0], None)
+        spans = [
+            A._input_span(z_um, z_uniform[s : s + streamed.block_layers])
+            for s in range(0, len(z_uniform), streamed.block_layers)
+        ]
+        assert max(hi - lo for lo, hi in spans) > 2 * streamed.block_layers, (
+            "the span never degenerated, so this is not testing the degenerate path"
+        )
     assert np.array_equal(rebuilt, reference.data, equal_nan=True)
 
 

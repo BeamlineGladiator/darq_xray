@@ -1131,3 +1131,68 @@ def test_decimation_note_prints_shape_in_dataset_order():
     assert "(76, 700, 2891)" in note
     assert "2891x700x76" not in note  # reversed reads as a contradiction
     assert "decimated 4x" in note and "stored data is unchanged" in note
+
+
+# -- centring_scaffold_bytes --------------------------------------------------
+def _reduction_scaffold(method, values):
+    """Peak allocation of a reduction, minus the data it was handed."""
+    blocks = [np.asarray(values, dtype=np.float64)]
+    tracemalloc.start()
+    try:
+        if method == "mean":
+            volumeio.stream_mean(iter(blocks))
+        else:
+            volumeio.stream_quantile(lambda: iter(blocks), 50.0)
+        return tracemalloc.get_traced_memory()[1] - blocks[0].nbytes
+    finally:
+        tracemalloc.stop()
+
+
+def test_centring_scaffold_bytes_covers_what_the_reductions_actually_allocate():
+    """The charged figure must bound the measured one — it is a memory promise.
+
+    `align_volume_streamed` adds `during_pass` to every candidate blocking and
+    treats `after_pass` as a floor no budget below it can meet, so a figure that
+    under-states the real cost silently under-prices every block sized against
+    it. Measured on a trivial block, where nothing but the scaffolding is left.
+    """
+    tiny = np.arange(64.0)
+    for method in ("mean", "median"):
+        during, _after = volumeio.centring_scaffold_bytes(method, tiny.size)
+        measured = _reduction_scaffold(method, tiny)
+        # Liveness: these reductions cannot run in a few hundred bytes. Without
+        # this a dead tracemalloc would satisfy the bound below trivially.
+        assert measured > (1 << 16), f"{method}: {measured} B is not a live measurement"
+        assert during >= measured, (
+            f"{method}: charges {during} B but allocates {measured} B beside the block"
+        )
+
+
+def test_centring_scaffold_bytes_splits_during_from_after():
+    """The median's survivors peak after the traversal; the mean has no such phase."""
+    assert volumeio.centring_scaffold_bytes("mean", 1_000_000)[1] == 0
+    during, after = volumeio.centring_scaffold_bytes("median", 1_000_000)
+    # One bin's survivors are accumulated once during the pass and then held
+    # three times over (list, concatenation, sort) once it ends.
+    survivors = 8 * 1_000_000
+    assert after == 3 * survivors
+    assert during > survivors  # the histogram scaffolding rides along with them
+
+
+def test_centring_scaffold_bytes_saturates_at_the_exact_cap():
+    """Both figures are constants in the size of the data, not fractions of it."""
+    capped = volumeio.centring_scaffold_bytes("median", 1 << 40)
+    at_cap = volumeio.centring_scaffold_bytes("median", volumeio._QUANTILE_EXACT_CAP)
+    assert capped == at_cap
+    # A volume too small to fill one bin is charged only what it could produce.
+    small = volumeio.centring_scaffold_bytes("median", 1000)
+    assert small[1] == 3 * 8 * 1000 < capped[1]
+    # The mean does not scale with the data at all.
+    assert volumeio.centring_scaffold_bytes("mean", 1) == volumeio.centring_scaffold_bytes(
+        "mean", 1 << 40
+    )
+
+
+def test_centring_scaffold_bytes_rejects_an_unknown_method():
+    with pytest.raises(ValueError, match="unknown method"):
+        volumeio.centring_scaffold_bytes("bogus", 100)
