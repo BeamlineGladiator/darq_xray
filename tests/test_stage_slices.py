@@ -118,7 +118,16 @@ def _setup(tmp_path):
         f.attrs["specific_frame_idx"] = 2
     raw = tmp_path / "raw"
     raw.mkdir()
-    samy = np.array([0.0, 0.001, 0.0025, 0.004])
+    # samy is SUB-PIXEL on purpose. It used to run 0 → 4 µm against a 0.152 µm
+    # pixel, i.e. 0 → 26 px of X-shift on an 8 px-wide volume, which slid the
+    # data clean past itself: the aligned volume was **6 finite voxels out of
+    # 840** (0.7%). Nothing failed and no assertion was wrong — every colour
+    # limit, centring and equality check in this module was simply a statement
+    # about NaN, and could not have failed on real data either. That is the same
+    # defect Task 10 found in `test_stage_visualize.py::_setup`; found here the
+    # same way, by a precondition that turned out to be unsatisfiable.
+    # `_assert_mostly_finite` below is what stops it coming back.
+    samy = np.array([0.0, 0.00001, 0.000025, 0.00004])
     samz = np.array([0.0, 0.001, 0.0021, 0.0035])
     for base in ("mosa", "strain"):
         for i in range(L):
@@ -127,7 +136,31 @@ def _setup(tmp_path):
             with h5py.File(folder / f"{base}__{i + 1}.h5", "w") as f:
                 f.create_dataset("1.1/instrument/positioners/samy", data=samy[i])
                 f.create_dataset("1.1/instrument/positioners/samz", data=samz[i])
+    _assert_mostly_finite(proc, raw, tmp_path)
     return proc, raw
+
+
+# A NaN rim is expected (the samy canvas grows and the Z grid is resampled); a
+# volume that is *mostly* NaN is a broken fixture, not a hard test case.
+_MIN_FINITE_FRACTION = 0.5
+
+
+def _assert_mostly_finite(proc, raw, tmp_path):
+    """The aligned χ CoM volume this fixture produces must be mostly finite.
+
+    Asserted where the fixture is *defined*, not in one test that happens to
+    care, because every equality and colour-limit assertion in this module is
+    only as strong as the data behind it.
+    """
+    _fits, aligned, _limits = _prepare_at_budget(
+        proc, raw, tmp_path, 1 << 30, "midrange", cfg_kind="mosa_fwhm", abs_fwhm=False
+    )
+    fraction = float(np.isfinite(aligned).mean()) if aligned.size else 0.0
+    assert fraction >= _MIN_FINITE_FRACTION, (
+        f"the aligned fixture volume is only {100 * fraction:.1f}% finite "
+        f"(shape {aligned.shape}) — the samy shifts have slid it past itself, so "
+        "every assertion built on it is a statement about NaN"
+    )
 
 
 def test_run_writes_consolidated_h5_and_pngs(tmp_path):
@@ -1170,12 +1203,15 @@ def test_slices_streaming_rung_never_materialises_a_volume(tmp_path):
     assert all(callable(prep["blocks"]) for prep in seen)
 
 
-def _prepare_at_budget(proc, raw, tmp_path, budget_bytes, center_method, cfg_kind="mosa_com"):
+def _prepare_at_budget(
+    proc, raw, tmp_path, budget_bytes, center_method, cfg_kind="mosa_com", abs_fwhm=True
+):
     """`prepare_volume` for the χ CoM volume at a chosen budget, drained to an array."""
     import contextlib
 
     p = {**SL.STAGE.defaults(), **_minimal_params(proc, raw, tmp_path / "unused")}
     p["center_method"] = center_method
+    p["abs_fwhm"] = abs_fwhm
     cfg = {
         "h5_path": str(proc / "stacked_volumes.h5"),
         "dataset_path": "chi/Center of mass",
@@ -1211,17 +1247,27 @@ def test_slices_both_rungs_agree_on_the_centred_volume_and_its_limits(tmp_path, 
 
     The precondition is asserted rather than hoped for: the fixture's own volume
     must be one on which the two mean reductions genuinely disagree, or a
-    revert to `np.nanmean` would pass this test too.
+    revert to `np.nanmean` would pass this test too. It is asserted on the
+    **aligned** volume — the array `_center_offset` is actually handed — and not
+    on the raw dataset: the two happen to separate the reductions alike today,
+    but the alignment chain sits between them, so checking the raw file would be
+    checking an array this code never sees and could drift into agreement
+    silently.
     """
     proc, raw = _setup(tmp_path)
-    with h5py.File(proc / "stacked_volumes.h5", "r") as f:
-        raw_com = f["chi/Center of mass"][:]
     from dfxm.common import volumeio
 
-    finite = raw_com[np.isfinite(raw_com)]
+    # `mosa_fwhm` with `abs_fwhm=False` runs the same alignment on the same
+    # dataset and skips the centring, so this is the uncentred aligned volume.
+    _fits, aligned, _limits = _prepare_at_budget(
+        proc, raw, tmp_path, 1 << 30, "midrange", cfg_kind="mosa_fwhm", abs_fwhm=False
+    )
+    finite = aligned[np.isfinite(aligned)]
+    assert finite.size, "the aligned volume must hold finite voxels"
     assert float(np.nanmean(finite)) != float(volumeio.stream_mean([finite])), (
-        "the fixture no longer separates the compensated mean from np.nanmean — "
-        "this test would pass whether or not the unification is present"
+        "the fixture no longer separates the compensated mean from np.nanmean on "
+        "the ALIGNED volume — this test would pass whether or not the "
+        "unification is present"
     )
 
     in_core_fits, in_core, in_core_limits = _prepare_at_budget(
@@ -1410,3 +1456,150 @@ def test_aligned_block_budget_never_buys_more_than_the_budget():
     # What that block actually costs, in the currency the budget is priced in.
     elements = block_bytes // 4
     assert elements * (4 + 41 + 8) <= budget
+
+
+def test_probe_slack_covers_the_rounding_it_guards_and_is_load_bearing(tmp_path):
+    """`_PROBE_SLACK_LAYERS` must cover the edge-probe rounding — and be needed.
+
+    `k` is affine in `(u, v)`, so its extremes over the grid sit on the grid's
+    edges and the row/column probes bound the interior exactly — *in exact
+    arithmetic*. They are computed in floating point, and the slack is what
+    stops a sample at a block boundary being pruned away into a NaN.
+
+    Two halves, because either alone would be satisfied by a constant that does
+    nothing. First, measure the discrepancy the slack guards over a randomised
+    family of planes and require it to be negligible against one layer. Second,
+    require that a **negative** slack actually breaks gather/in-core equality —
+    without that, `0.0` and `1.0` and any other value would pass alike and the
+    constant would be pinned by nothing.
+    """
+    volume = _gather_volume(seed=11)
+    prep_in_core = _in_core_prep(volume)
+    rng = np.random.default_rng(4)
+
+    worst = 0.0
+    for _ in range(200):
+        normal = rng.standard_normal(3)
+        if np.linalg.norm(normal) < 1e-6:
+            continue
+        u_hat, v_hat, _n = SL.build_basis(normal)
+        origin = rng.uniform(-2.0, 14.0, 3)
+        u_um, v_um = SL._plane_axes(8.0, 8.0, 0.5, 0.5)
+        interior = SL._plane_coords(prep_in_core, origin, u_hat, v_hat, u_um, v_um)[0]
+        row_k = SL._plane_k(prep_in_core, origin, u_hat, v_hat, u_um[[0, -1]], v_um)
+        col_k = SL._plane_k(prep_in_core, origin, u_hat, v_hat, u_um, v_um[[0, -1]])
+        # How far outside the probes' hull any interior sample lands, in layers.
+        for lo, hi in (
+            (row_k.min(axis=1)[:, None], row_k.max(axis=1)[:, None]),
+            (col_k.min(axis=0)[None, :], col_k.max(axis=0)[None, :]),
+        ):
+            worst = max(worst, float(np.max(lo - interior)), float(np.max(interior - hi)))
+    assert worst < 1e-9, f"edge probes miss interior samples by {worst} layers"
+    assert SL._PROBE_SLACK_LAYERS >= 1.0 > worst
+
+    # …and the slack is load-bearing: a negative one prunes real samples away.
+    budget = volume.nbytes // 6
+    args = _gather_args()
+    reference = SL.sample_plane(prep_in_core, *args)[0]
+    original = SL._PROBE_SLACK_LAYERS
+    try:
+        SL._PROBE_SLACK_LAYERS = -0.5
+        starved = SL.sample_plane_streamed(_streamed_prep(volume, budget), *args)[0]
+    finally:
+        SL._PROBE_SLACK_LAYERS = original
+    assert not np.array_equal(starved, reference, equal_nan=True), (
+        "a negative slack changed nothing — the pruning is not being exercised, "
+        "so this test cannot see a slack that is too small"
+    )
+    assert np.array_equal(
+        SL.sample_plane_streamed(_streamed_prep(volume, budget), *args)[0],
+        reference,
+        equal_nan=True,
+    ), "restoring the slack must restore equality"
+
+
+# -- the no-samz chain --------------------------------------------------------
+def _no_motor_dataset(nz=9, ny=7, nx=11, seed=12):
+    return np.random.default_rng(seed).standard_normal((nz, ny, nx)).astype(np.float32)
+
+
+@pytest.mark.parametrize("with_samy", [False, True])
+@pytest.mark.parametrize("roi", [None, (2, 9)])
+def test_no_samz_chain_blocks_and_matches_the_whole_volume_form(with_samy, roi):
+    """With no samz the remaining chain is per-layer, so it blocks exactly.
+
+    `align_volume_streamed` cannot serve this case (it always interpolates, and
+    would raise on `samz[0]`), and `visualize`/`paraview` answer it with a whole
+    in-core volume. This stage blocks it instead, so the path a run reaches by
+    *misconfiguration* is not the one path with no memory bound. The reference
+    here is the whole-volume chain this replaced, computed inline.
+    """
+    from dfxm.common import alignment as A
+
+    dset = _no_motor_dataset()
+    cfg = {"roi_x": roi, "roi_y": None}
+    samy = np.array([0.0, 0.00001, 0.000025, 0.00004, 0.00006, 0.00007, 0.00009, 0.0001, 0.00012])
+    samy = samy if with_samy else np.array([])
+    kwargs = dict(scale_x=0.152, samy_direction=-1, take_abs=True)
+
+    reference = np.abs(np.asarray(dset, dtype=np.float64))
+    reference = A.apply_roi_3d(reference, roi, None)
+    if with_samy:
+        reference = A.apply_samy_shifts_to_volume(reference, samy, 0.152, -1)
+
+    shape, dtype, scale_z = SL._unaligned_shape(dset, cfg, samy, 0.152, -1)
+    assert shape == reference.shape and dtype == np.float64 and scale_z == 2.0
+
+    counts = []
+    for budget in (1 << 30, dset.nbytes // 4, 1):
+        blocks = list(SL._unaligned_blocks(dset, cfg, samy, budget_bytes=budget, **kwargs)())
+        counts.append(len(blocks))
+        got = np.concatenate([b for _sl, b in blocks], axis=0)
+        assert np.array_equal(got, reference, equal_nan=True), f"budget {budget}"
+    assert counts[0] == 1 and counts[-1] == dset.shape[0], (
+        f"the budgets must actually change the blocking, got {counts}"
+    )
+
+
+def test_no_samz_prepare_volume_is_not_forced_in_core(tmp_path):
+    """The no-samz branch must obey the budget like every other path.
+
+    It used to set `fits = True` unconditionally, which made a misconfigured run
+    the only unbounded one. Both rungs must be reachable, and must agree.
+    """
+    import contextlib
+
+    proc = tmp_path / "proc"
+    proc.mkdir()
+    with h5py.File(proc / "stacked_volumes.h5", "w") as f:
+        f.create_dataset("chi/Center of mass", data=_no_motor_dataset(nz=12, ny=8, nx=10))
+    p = {**SL.STAGE.defaults(), "center_method": "midrange"}
+    cfg = {
+        "h5_path": str(proc / "stacked_volumes.h5"),
+        "dataset_path": "chi/Center of mass",
+        "kind": "mosa_com",
+        "source": "stacked",
+        "raw_root": "",  # no folders -> extract_motor_positions returns empty samy AND samz
+        "raw_pattern": "",
+        "roi_x": None,
+        "roi_y": None,
+    }
+
+    def prepared(budget):
+        with contextlib.ExitStack() as opened:
+            prep = SL.prepare_volume(
+                cfg, p, 0.152, 0.385, -1, style=None, stack=opened, budget_bytes=budget
+            )
+            return (
+                prep["data"] is not None,
+                np.concatenate([b for _sl, b in prep["blocks"]()], axis=0),
+                (prep["vmin_raw"], prep["vmax_raw"]),
+                prep["scale_z"],
+            )
+
+    in_core_fits, in_core, in_core_limits, sz = prepared(1 << 30)
+    streamed_fits, streamed, streamed_limits, sz2 = prepared(2048)
+    assert in_core_fits and not streamed_fits, "both rungs must be reachable here"
+    assert in_core_limits == streamed_limits
+    assert sz == sz2 == SL._NO_MOTOR_Z_STEP_UM
+    assert np.array_equal(in_core, streamed, equal_nan=True)

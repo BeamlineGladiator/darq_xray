@@ -602,9 +602,16 @@ def _center_offset(blocks, method):
     """The centring statistic over the finite voxels of *blocks*.
 
     ``0.0`` when nothing finite is present, which is what the array form
-    returned for an empty selection. NaN (and only NaN) means "no finite voxel";
-    an infinite statistic is a real one and is passed through, exactly as
-    ``np.nanmean`` of an infinity-bearing selection was.
+    returned for an empty selection.
+
+    ``±inf`` **voxels are dropped**, not averaged in: these reductions filter on
+    ``np.isfinite``, exactly as the array form's ``data[np.isfinite(data)]``
+    selection did before them. So the guard keys on ``np.isnan`` and not on
+    ``not np.isfinite``: NaN is this reduction's "no finite voxel anywhere"
+    signal and must become the array form's ``0.0``, whereas an infinity
+    reaching the *result* can only be an overflow of the finite values'
+    own sum — a real statistic, which the array form would also have returned
+    and which is therefore passed through rather than silently zeroed.
     """
     if method == "mean":
         val = V.stream_mean(_arrays(blocks)())
@@ -1028,12 +1035,6 @@ class _Float64Dataset:
         return np.asarray(self._dset[key], dtype=np.float64)
 
 
-def _whole_volume_blocks(data):
-    """An in-memory array presented as a one-block ``(slice, array)`` factory."""
-    covering = slice(0, int(data.shape[0]))
-    return lambda: iter([(covering, data)])
-
-
 def _materialise(blocks, shape, dtype):
     """Drain a block factory into one array, adopting a single covering block.
 
@@ -1070,6 +1071,81 @@ def _aligned_block_budget(dset, budget_bytes: int) -> int:
     itemsize = max(1, int(np.dtype(dset.dtype).itemsize))
     per_element = itemsize + 41 + 8  # stored + reductions' peak + the centred copy
     return max(1, int(budget_bytes) * itemsize // per_element)
+
+
+# The Z step (µm) assumed when there are no samz positions to derive one from.
+# `extract_motor_positions` fills samy and samz from the same folders, so they
+# are empty together; the value is what this stage has always used here.
+_NO_MOTOR_Z_STEP_UM = 2.0
+
+
+def _unaligned_pad(samy, n_layers: int, scale_x: float, samy_direction: int):
+    """The ``(left, right)`` canvas growth the whole-volume samy shift would add.
+
+    Reproduces :func:`~dfxm.common.alignment.apply_samy_shifts_to_volume`'s own
+    ``pad=None`` arithmetic, which is **not** ``compute_pad_left(samy)``: the
+    canvas comes from ``samy[:n_use]`` with ``n_use`` clipped to the volume's
+    layer count. The two agree whenever ``len(samy) == n_layers`` (every real
+    run) and differ otherwise, so deriving the pad the other way would silently
+    change the output width on the one path that has no motors to trust.
+    """
+    if samy is None or len(samy) == 0:
+        return 0, 0
+    n_use = n_layers if len(samy) == n_layers else min(n_layers, len(samy))
+    used = np.asarray(samy[:n_use])
+    return (
+        A.compute_pad_left(used, scale_x, samy_direction),
+        A.compute_pad_right(used, scale_x, samy_direction),
+    )
+
+
+def _unaligned_shape(dset, cfg, samy, scale_x: float, samy_direction: int):
+    """``(shape, dtype, scale_z)`` of the no-samz chain, from shapes alone."""
+    nz, ny0, nx0 = (int(d) for d in dset.shape)
+    rx, ry = cfg.get("roi_x"), cfg.get("roi_y")
+    nx = (rx[1] - rx[0]) if rx else nx0
+    ny = (ry[1] - ry[0]) if ry else ny0
+    pad_left, pad_right = _unaligned_pad(samy, nz, scale_x, samy_direction)
+    return (nz, ny, nx + pad_left + pad_right), np.dtype(np.float64), _NO_MOTOR_Z_STEP_UM
+
+
+def _unaligned_blocks(
+    dset, cfg, samy, *, scale_x: float, samy_direction: int, take_abs: bool, budget_bytes: int
+):
+    """The no-samz chain (``abs`` → ROI → samy X-shift) as a Z-block factory.
+
+    Every step here is per layer, so blocking along Z is exact rather than an
+    approximation: the ``pad`` and the reference samy are computed once for the
+    **whole** volume and passed in explicitly, which is the same trick — and the
+    same reason — as :func:`~dfxm.common.alignment.align_volume_streamed`'s. A
+    block's own samy would imply a narrower canvas and each block would land on
+    a frame of its own.
+    """
+    n_layers = int(dset.shape[0])
+    pad = _unaligned_pad(samy, n_layers, scale_x, samy_direction)
+    n_use = 0 if samy is None or len(samy) == 0 else min(n_layers, len(samy))
+    ref = float(samy[0]) if n_use else 0.0
+    block_budget = _aligned_block_budget(dset, budget_bytes)
+
+    def blocks():
+        for sl, block in V.iter_blocks(dset, budget_bytes=block_budget):
+            v = np.asarray(block, dtype=np.float64)
+            if take_abs:
+                v = np.abs(v)
+            v = A.apply_roi_3d(v, cfg.get("roi_x"), cfg.get("roi_y"))
+            if n_use:
+                # `samy[sl]` and not `samy`: the shift is applied per layer and
+                # each layer must get its own offset. Layers past `n_use` get an
+                # empty slice here and are padded but not shifted, exactly as the
+                # whole-volume call leaves them.
+                v = A.apply_samy_shifts_to_volume(
+                    v, np.asarray(samy)[sl], scale_x, samy_direction, ref_samy=ref, pad=pad
+                )
+            else:
+                v = np.ascontiguousarray(v)
+            yield sl, v
+
+    return blocks
 
 
 def prepare_volume(cfg, p, scale_x, scale_y, samy_dir, style=None, *, stack, budget_bytes):
@@ -1124,20 +1200,31 @@ def prepare_volume(cfg, p, scale_x, scale_y, samy_dir, style=None, *, stack, bud
             scale_z = float(streamed.scale_z_um)
             fits = int(streamed.block_layers) >= int(streamed.shape[0])
         else:
-            # No samz means no Z grid to interpolate onto, and re-interpolating a
-            # NaN-bearing volume onto its own nodes is not the identity. Keep the
-            # original in-core chain, exactly as `visualize._align_streamed` does
-            # for the same case. `extract_motor_positions` empties samy and samz
-            # together, so this is the misconfigured-run path.
-            raw = np.asarray(dset[:], dtype=np.float64)
-            if take_abs:
-                raw = np.abs(raw)
-            whole = A.apply_roi_3d(raw, cfg.get("roi_x"), cfg.get("roi_y"))
-            if len(samy) > 0:
-                whole = A.apply_samy_shifts_to_volume(whole, samy, scale_x, samy_dir)
-                del raw  # apply_roi_3d returns a view; only the shift frees the read
-            raw_blocks = _whole_volume_blocks(whole)
-            shape, dtype, scale_z, fits = whole.shape, whole.dtype, 2.0, True
+            # No samz means no Z grid to interpolate onto, and re-interpolating
+            # a NaN-bearing volume onto its own nodes is not the identity — so
+            # `align_volume_streamed`, which always interpolates, cannot serve
+            # this case (it would also raise on `samz[0]`). `visualize` and
+            # `paraview` answer it by falling back to a whole in-core volume.
+            #
+            # This stage does **not**, because it does not have to: what is left
+            # of the chain once the Z interpolation is gone — `abs`, the ROI
+            # crop and the samy X-shift — is entirely **per layer**, so it
+            # blocks along Z like everything else. Leaving it in core would have
+            # made the one path a run reaches by *misconfiguration* the one path
+            # with no memory bound at all, which is a poor place to keep an
+            # escape hatch: a user whose scan folders did not match is exactly
+            # the user least likely to read a note about it.
+            shape, dtype, scale_z = _unaligned_shape(dset, cfg, samy, scale_x, samy_dir)
+            raw_blocks = _unaligned_blocks(
+                dset,
+                cfg,
+                samy,
+                scale_x=scale_x,
+                samy_direction=samy_dir,
+                take_abs=take_abs,
+                budget_bytes=budget_bytes,
+            )
+            fits = V.volume_bytes(dset) <= _aligned_block_budget(dset, budget_bytes)
         sx, sy = scale_x, scale_y
         x_ref = y_ref = 0.0
         z_ref = float(cfg.get("z_ref_shift_um", 0.0))
