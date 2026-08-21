@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import time
 import tracemalloc
+import warnings
 
 import h5py
 import numpy as np
@@ -99,6 +101,168 @@ def test_neumaier_sum_continues_across_calls():
     part = volumeio.neumaier_sum(values[2:], state=state)
     assert whole == part
     assert whole[0] + whole[1] == 2.0  # the naive result would be 0.0
+    assert whole.value == 2.0
+
+
+# -- the vectorised (fixed-lane) compensated sum ------------------------------
+def _scalar_neumaier(values) -> float:
+    """Neumaier's formula walked one element at a time — the reference order.
+
+    This is what `neumaier_sum` used to be. It is kept here, not in the module,
+    so the vectorised implementation has something independent to be measured
+    and compared against.
+    """
+    total = comp = 0.0
+    for item in np.asarray(values, dtype=np.float64).ravel().tolist():
+        tentative = total + item
+        if abs(total) >= abs(item):
+            comp += (total - tentative) + item
+        else:
+            comp += (item - tentative) + total
+        total = tentative
+    return total + comp
+
+
+def _chunked_state(values, chunk):
+    state = None
+    for start in range(0, len(values), chunk):
+        state = volumeio.neumaier_sum(values[start : start + chunk], state=state)
+    return state
+
+
+@pytest.mark.parametrize(
+    "chunk",
+    [
+        1,
+        7,
+        volumeio.NEUMAIER_LANES - 1,
+        volumeio.NEUMAIER_LANES,
+        volumeio.NEUMAIER_LANES + 1,
+        3 * volumeio.NEUMAIER_LANES + 13,
+        1 << 20,  # one chunk: the whole stream
+    ],
+)
+def test_neumaier_sum_lane_state_does_not_depend_on_how_the_stream_was_chunked(chunk):
+    """The accumulator lanes must be a function of GLOBAL position, nothing else.
+
+    This is the property the whole guarantee rests on. A fixed-lane accumulator
+    that reshaped each *incoming run* onto lane 0 would look budget-invariant —
+    and would silently regroup the data the moment a block boundary stopped
+    falling on a lane boundary, which under `axis=1` blocking it always does.
+    Comparing the lane arrays themselves (not merely the reduced total) is what
+    makes the check structural: identical lanes cannot hide a regrouping that
+    happened to cancel in the sum.
+    """
+    rng = np.random.default_rng(101)
+    n = 5 * volumeio.NEUMAIER_LANES + 37  # deliberately not a whole number of lanes
+    values = rng.standard_normal(n) * 10.0 ** rng.integers(-15, 16, n)
+    reference = volumeio.neumaier_sum(values)
+    got = _chunked_state(values, chunk)
+    assert got == reference, f"chunk={chunk} moved the lane state"
+    assert got.value.hex() == reference.value.hex()
+    assert got.count == n
+
+
+def test_neumaier_sum_lane_state_notices_a_regrouping():
+    """The state comparison above is only worth having if it can fail.
+
+    Feeding the same values in a different ORDER must change the lanes, or the
+    equality assertion is measuring nothing.
+    """
+    rng = np.random.default_rng(102)
+    values = rng.standard_normal(volumeio.NEUMAIER_LANES + 5)
+    rolled = np.roll(values, 1)
+    assert volumeio.neumaier_sum(values) != volumeio.neumaier_sum(rolled)
+
+
+def test_neumaier_sum_is_correctly_rounded_on_catastrophic_cancellation():
+    """A few ulps of drift from the scalar order is fine; a wrong sum is not.
+
+    `math.fsum` is the exactly-rounded sum, so it is the arbiter for both.
+    """
+    import math
+
+    rng = np.random.default_rng(103)
+    n = 3 * volumeio.NEUMAIER_LANES + 11
+    values = rng.standard_normal(n) * 10.0 ** rng.integers(-18, 19, n)
+    exact = math.fsum(values.tolist())
+    assert volumeio.neumaier_sum(values).value == exact
+    assert _scalar_neumaier(values) == exact  # and so was the order it replaced
+
+
+def test_neumaier_sum_beats_the_per_element_loop_by_a_wide_margin():
+    """The regression this exists to close: centring must not cost seconds.
+
+    Routing `center_around_zero` through these reductions made
+    `align_volume(center_method=...)` ~3x slower, because the sum walked every
+    finite voxel in Python at ~155 ns each. The bar is set at 5x rather than
+    the ~20x measured, so a loaded machine cannot make it flap, but a
+    reintroduced per-element loop cannot pass it either.
+    """
+    rng = np.random.default_rng(104)
+    values = rng.standard_normal(1 << 20)
+
+    def timed(fn):
+        start = time.perf_counter()
+        fn(values)
+        return time.perf_counter() - start
+
+    volumeio.neumaier_sum(values[:1024])  # warm the code path, not the clock
+    scalar = min(timed(_scalar_neumaier) for _ in range(2))
+    vector = min(timed(volumeio.neumaier_sum) for _ in range(3))
+    assert scalar > 0.0 and vector > 0.0, "the clock did not move — nothing was measured"
+    assert scalar / vector >= 5.0, (
+        f"{values.size} values: scalar {scalar * 1e3:.1f} ms vs vectorised "
+        f"{vector * 1e3:.1f} ms — only {scalar / vector:.1f}x, this is still looping"
+    )
+
+
+def test_neumaier_sum_does_not_mutate_the_state_it_was_given():
+    """The documented contract, and what makes a state safe to keep as a baseline."""
+    state = volumeio.neumaier_sum(np.arange(10.0))
+    before = state.value
+    extended = volumeio.neumaier_sum(np.arange(10.0), state=state)
+    assert extended is not state
+    assert state.value == before and state.count == 10
+    assert extended.count == 20 and extended.value == before * 2
+
+
+@pytest.mark.parametrize(
+    ("values", "expected"),
+    [
+        ([], 0.0),
+        ([1.0], 1.0),
+        ([1e100, 1.0, -1e100], 1.0),  # the sum a naive accumulator loses entirely
+    ],
+    ids=["empty", "single", "cancelling"],
+)
+def test_neumaier_sum_edge_cases(values, expected):
+    assert volumeio.neumaier_sum(np.array(values, dtype=np.float64)).value == expected
+
+
+def test_neumaier_sum_handles_a_non_contiguous_and_a_2d_input():
+    """`ravel()` is the documented flattening; strided and 2-D input must agree with it."""
+    strided = np.arange(40.0)[::3]
+    assert volumeio.neumaier_sum(strided).value == _scalar_neumaier(strided)
+    grid = np.arange(12.0).reshape(3, 4)
+    assert volumeio.neumaier_sum(grid).value == volumeio.neumaier_sum(grid.ravel()).value
+
+
+def test_neumaier_sum_treats_infinity_exactly_as_the_per_element_loop_did():
+    """A pure speed change must not turn a NaN answer into a warning or a raise.
+
+    `inf` poisons the compensation term to NaN in Neumaier's recurrence — the
+    reason `block_nansum` drops non-finite values before summing. The scalar
+    loop reached that NaN in Python arithmetic, silently; the vector form
+    reaches it in numpy, which reports `inf - inf` as an invalid operation. Left
+    unhandled, a caller running under `-W error` would get an exception where it
+    used to get a number.
+    """
+    values = np.array([1.0, np.inf, 2.0])
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        got = volumeio.neumaier_sum(values).value
+    assert np.isnan(got) and np.isnan(_scalar_neumaier(values))
 
 
 @pytest.mark.parametrize("divisor", [1, 2, 3, 7, 13, 1000])
@@ -142,20 +306,22 @@ def test_two_pass_mean_subtraction_is_bit_identical_across_budgets(wide_volume, 
     """The bucket-2 pattern: a global statistic, then a block-wise application."""
     path, data = wide_volume
     with h5py.File(path, "r") as f:
-
+        # The accumulator carries the whole `NeumaierState`, not a reduced
+        # `(total, compensation)` pair: collapsing the lanes at each block
+        # boundary would put the boundary back into the answer, which is the
+        # bit-identity this test asserts.
         def stat(acc, block):
-            total, comp = volumeio.neumaier_sum(block.ravel(), state=acc[:2])
-            return (total, comp, acc[2] + block.size)
+            return (volumeio.neumaier_sum(block.ravel(), state=acc[0]), acc[1] + block.size)
 
         def apply(stat_value, block):
-            total, comp, count = stat_value
-            return block - ((total + comp) / count)
+            state, count = stat_value
+            return block - (state.value / count)
 
         budgets = (data.nbytes * 10, max(1, data.nbytes // divisor))
         outs = []
         for budget in budgets:
             blocks = list(
-                volumeio.two_pass(f["vol"], stat, apply, budget_bytes=budget, init=(0.0, 0.0, 0))
+                volumeio.two_pass(f["vol"], stat, apply, budget_bytes=budget, init=(None, 0))
             )
             outs.append(np.concatenate([b for _, b in blocks], axis=0))
     assert np.array_equal(outs[0], outs[1])  # bitwise, including NaN placement
@@ -341,6 +507,53 @@ def test_stream_mean_matches_nanmean_closely_and_is_budget_independent():
     ]
     assert len({m.hex() for m in means}) == 1, "mean must not depend on the budget"
     assert means[0] == pytest.approx(float(np.nanmean(data)), rel=1e-12)
+
+
+def _adversarial_volume(seed=41, shape=(24, 7, 7)):
+    """Wide dynamic range with ~10% NaN — the standard this project fuzzes with."""
+    rng = np.random.default_rng(seed)
+    data = 10.0 ** rng.uniform(-12, 12, size=shape)
+    data[rng.random(shape) < 0.5] *= -1.0  # both signs, so cancellation is real
+    data[rng.random(shape) < 0.1] = np.nan
+    return data
+
+
+@pytest.mark.parametrize("axis", [0, 1])
+def test_stream_mean_is_budget_independent_on_adversarial_data(axis):
+    """Eight budgets, both blocking axes, compared as bits.
+
+    `axis=1` is the harder half and the reason this test is parametrised: a
+    block there is a slice of *columns*, so the order the finite values reach
+    the accumulator changes with the budget — the exact thing that sank an
+    earlier per-sub-array grouping proposal. Compensated summation survives it
+    because it lands on the correctly-rounded sum whatever the order; a lane
+    scheme that regrouped per block would not.
+    """
+    data = _adversarial_volume()
+    means = [
+        volumeio.stream_mean(
+            volumeio.dataset_blocks(data, budget_bytes=max(1, data.nbytes // d), axis=axis)
+        )
+        for d in (1, 2, 3, 5, 7, 13, 1000, 10_000)
+    ]
+    assert len({m.hex() for m in means}) == 1, f"axis={axis}: the mean moves with the budget"
+
+
+@pytest.mark.parametrize("axis", [0, 1])
+def test_stream_minmax_is_budget_independent_on_adversarial_data(axis):
+    data = _adversarial_volume(seed=42)
+    bounds = {
+        tuple(
+            v.hex()
+            for v in volumeio.stream_minmax(
+                volumeio.dataset_blocks(data, budget_bytes=max(1, data.nbytes // d), axis=axis)
+            )
+        )
+        for d in (1, 2, 3, 5, 7, 13, 1000, 10_000)
+    }
+    assert len(bounds) == 1, f"axis={axis}: the bounds move with the budget: {bounds}"
+    finite = data[np.isfinite(data)]
+    assert bounds == {(float(finite.min()).hex(), float(finite.max()).hex())}
 
 
 def test_stream_minmax_ignores_non_finite():

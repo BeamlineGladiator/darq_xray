@@ -229,28 +229,194 @@ def load_or_stream(dset, *, budget_bytes: int):
     return BlockReader(dset, budget_bytes)
 
 
-def neumaier_sum(values, *, state: tuple[float, float] | None = None) -> tuple[float, float]:
+# How many independent compensated accumulators :func:`neumaier_sum` keeps.
+# The value at global position *i* of the stream always lands in lane
+# ``i % NEUMAIER_LANES`` — see :class:`NeumaierState` for why that "global", and
+# not "position within this block", is the whole guarantee.
+#
+# 4096 is a measured optimum, not a round number, and the curve has a floor in
+# the middle rather than running one way: fewer lanes means more Python
+# iterations (the cost this replaced), while more lanes push the six length-N
+# temporaries of a fold out of L2 cache. Summing 15 M float64, best of three:
+#
+#   lanes:    256     1024     4096    16384    65536   262144
+#   time:  0.492 s  0.179 s  0.093 s  0.333 s  0.346 s  0.377 s
+#
+# against 2.19 s for the per-element loop this replaced and 0.115 s for
+# `np.nansum` — i.e. the compensated sum is no longer the expensive option. The
+# *answer* was bit-identical at every lane count in that sweep, so the constant
+# is a performance knob and not part of the result.
+NEUMAIER_LANES = 1 << 12
+
+
+def _fold_lanes(total: np.ndarray, comp: np.ndarray, values: np.ndarray, lane: int) -> None:
+    """One Neumaier step for lanes ``[lane, lane + values.size)``, in place.
+
+    Elementwise, this is exactly the scalar recurrence — ``s = t + v``, then
+    ``c += (larger - s) + smaller`` — so a lane's arithmetic does not depend on
+    how many lanes ran beside it. That is what makes the vector form bit-equal
+    to running each lane on its own, which is in turn what lets the lane count
+    be an implementation detail rather than part of the answer.
+
+    The magnitude branch is expressed as a *selection* of operands rather than
+    as two arithmetic arms fed to `np.where`, so there is one arithmetic path
+    to compare against the scalar recurrence instead of two, only one of which
+    survives. (It does not make the function total on infinite input: the
+    surviving path still evaluates ``inf - inf`` there, exactly as the scalar
+    recurrence does — see the `np.errstate` in :func:`neumaier_sum`.)
+    """
+    stop = lane + values.size
+    running = total[lane:stop]
+    tentative = running + values
+    bigger_first = np.abs(running) >= np.abs(values)
+    larger = np.where(bigger_first, running, values)
+    smaller = np.where(bigger_first, values, running)
+    comp[lane:stop] += (larger - tentative) + smaller
+    total[lane:stop] = tentative
+
+
+class NeumaierState:
+    """The continuable state of a compensated sum: one accumulator per lane.
+
+    Not a plain ``(total, compensation)`` pair, because a pair cannot be
+    continued without collapsing the lanes — and collapsing them at a block
+    boundary would make the answer depend on where that boundary fell, which is
+    precisely what this module refuses to allow. Indexing (``state[0]``,
+    ``state[1]``) and unpacking still yield the reduced total and compensation,
+    whose sum is :attr:`value`.
+
+    Two states compare equal when their lanes are equal **bit for bit** and they
+    have consumed the same number of values. That is deliberately stricter than
+    comparing the sums: it is the assertion that catches a lane scheme which
+    regrouped the data and happened to get away with it in the total.
+    """
+
+    __slots__ = ("_comp", "_count", "_total")
+
+    def __init__(self, total=None, comp=None, count: int = 0) -> None:
+        self._total = np.zeros(NEUMAIER_LANES) if total is None else total
+        self._comp = np.zeros(NEUMAIER_LANES) if comp is None else comp
+        self._count = int(count)
+
+    @property
+    def count(self) -> int:
+        """How many values have been folded in — the stream's global position."""
+        return self._count
+
+    def copy(self) -> NeumaierState:
+        return NeumaierState(self._total.copy(), self._comp.copy(), self._count)
+
+    def _reduce(self) -> tuple[float, float]:
+        """Fold the lanes into one ``(total, compensation)`` pair.
+
+        A per-element Neumaier again, but over ``2 * NEUMAIER_LANES`` numbers
+        rather than over the volume — ~1 ms, once, at the end of a reduction
+        instead of ~155 ns per voxel throughout it. Lanes are walked in lane
+        order, so the reduction is as blocking-blind as the accumulation.
+        """
+        total = comp = 0.0
+        for item in np.concatenate([self._total, self._comp]).tolist():
+            tentative = total + item
+            if abs(total) >= abs(item):
+                comp += (total - tentative) + item
+            else:
+                comp += (item - tentative) + total
+            total = tentative
+        return total, comp
+
+    @property
+    def value(self) -> float:
+        """The sum itself."""
+        total, comp = self._reduce()
+        return total + comp
+
+    def __getitem__(self, index: int) -> float:
+        return self._reduce()[index]
+
+    def __iter__(self):
+        return iter(self._reduce())
+
+    def __len__(self) -> int:
+        return 2
+
+    def __eq__(self, other) -> bool:
+        if not isinstance(other, NeumaierState):
+            return NotImplemented
+        return (
+            self._count == other._count
+            # `tobytes`, not `array_equal`: `-0.0 == 0.0` there, and a lane whose
+            # sign flipped with the blocking is exactly the kind of drift this
+            # comparison exists to expose (see `stream_minmax`).
+            and self._total.tobytes() == other._total.tobytes()
+            and self._comp.tobytes() == other._comp.tobytes()
+        )
+
+    def __repr__(self) -> str:
+        return f"NeumaierState(value={self.value!r}, count={self._count})"
+
+
+def neumaier_sum(values, *, state: NeumaierState | None = None) -> NeumaierState:
     """Compensated sum of *values*, continuable across blocks.
 
-    Returns ``(total, compensation)``; the true sum is ``total + compensation``.
-    Pass a previous return value back as *state* to continue an accumulation —
-    that is what makes the result independent of how the data was blocked.
+    Returns a :class:`NeumaierState`; the sum is its ``.value`` (equivalently
+    ``state[0] + state[1]``). Pass a previous return value back as *state* to
+    continue an accumulation — that is what makes the result independent of how
+    the data was blocked. The state is never mutated; a fresh one comes back.
 
     Why not ``np.sum``: numpy reduces pairwise with a 128-element base case, so
     summing an array whole and summing it in blocks give different bits. This
-    walks elements in a fixed order with an explicit compensation term, so the
-    answer depends only on the data — never on the memory budget.
+    keeps :data:`NEUMAIER_LANES` compensated accumulators and sends the value at
+    global position *i* to lane ``i % NEUMAIER_LANES``, whatever block it
+    arrived in — so the answer depends only on the data and its position in the
+    stream, never on the memory budget.
+
+    The lane bookkeeping is the load-bearing part. An incoming run is split
+    into three: the values completing the lane row the previous call stopped
+    part-way through, the whole rows after it, and the ragged remainder. Each
+    piece is folded into the lane range its *global* indices name. Reshaping a
+    run onto lane 0 instead would be simpler, would pass every whole-array test,
+    and would regroup the data the moment a block boundary stopped landing on a
+    lane boundary.
+
+    Accuracy is the same class as the per-element order it replaced: both are
+    the correctly-rounded sum on the fuzz this project tests with, and both may
+    differ from ``np.nansum``'s pairwise order by a few ulps. Switching to lanes
+    can therefore move an existing result by an ulp or so — never by more, and
+    never with the budget.
+
+    Memory cost is the lane state: ``2 * NEUMAIER_LANES`` float64, i.e. 64 kB,
+    constant in the size of the data and copied once per call. Stated because
+    an unstated allocation in the memory-budget module is how budgets stop
+    being trusted; against a block of even one volume layer it is noise.
     """
-    total, comp = state if state is not None else (0.0, 0.0)
-    for value in np.asarray(values, dtype=np.float64).ravel():
-        item = float(value)
-        tentative = total + item
-        if abs(total) >= abs(item):
-            comp += (total - tentative) + item
-        else:
-            comp += (item - tentative) + total
-        total = tentative
-    return total, comp
+    flat = np.asarray(values, dtype=np.float64).ravel()
+    result = NeumaierState() if state is None else state.copy()
+    if flat.size == 0:
+        return result
+    total, comp = result._total, result._comp
+    lane = result._count % NEUMAIER_LANES
+    taken = 0
+    # The only invalid operation reachable in `_fold_lanes` is `inf - inf`, on
+    # an infinite input — which poisons the compensation to NaN in the scalar
+    # recurrence too. Silencing it keeps this a pure speed change: the answer is
+    # the same NaN the per-element loop gave, and the loop gave it without a
+    # warning, so a caller running under `-W error` does not start seeing an
+    # exception where it used to see a number. Every caller in this module
+    # filters non-finite values out first, so the branch is unreachable here.
+    with np.errstate(invalid="ignore"):
+        if lane:  # finish the row the last call left part-way through
+            taken = min(flat.size, NEUMAIER_LANES - lane)
+            _fold_lanes(total, comp, flat[:taken], lane)
+        rows = (flat.size - taken) // NEUMAIER_LANES
+        if rows:
+            matrix = flat[taken : taken + rows * NEUMAIER_LANES].reshape(rows, NEUMAIER_LANES)
+            for row in matrix:
+                _fold_lanes(total, comp, row, 0)
+            taken += rows * NEUMAIER_LANES
+        if taken < flat.size:  # the ragged tail, into the lanes it globally belongs to
+            _fold_lanes(total, comp, flat[taken:], 0)
+    result._count += int(flat.size)
+    return result
 
 
 def dataset_blocks(dset, *, budget_bytes: int, axis: int = 0) -> Iterator[np.ndarray]:
@@ -266,16 +432,16 @@ def stream_mean(blocks) -> float:
     this serves are over *generated* blocks — the aligned volume a stage never
     materialises — not over anything on disk.
     """
-    state = (0.0, 0.0)
-    count = 0
+    state = None
     for block in blocks:
         finite = block[np.isfinite(block)]
         if finite.size:
             state = neumaier_sum(finite, state=state)
-            count += int(finite.size)
-    if not count:
+    if state is None or state.count == 0:
         return float("nan")
-    return (state[0] + state[1]) / count
+    # `.value` once, not `state[0] + state[1]`: each read of the pair folds the
+    # lanes again, and the fold is the one per-element loop left in here.
+    return state.value / state.count
 
 
 def stream_minmax(blocks) -> tuple[float, float]:
@@ -657,8 +823,7 @@ def block_nansum(dset, *, budget_bytes: int) -> float:
         finite = block[np.isfinite(block)]
         return neumaier_sum(finite, state=acc)
 
-    total, comp = block_reduce(dset, fold, budget_bytes=budget_bytes, init=(0.0, 0.0))
-    return total + comp
+    return block_reduce(dset, fold, budget_bytes=budget_bytes, init=None).value
 
 
 def two_pass(dset, stat_fn, apply_fn, *, budget_bytes: int, init):

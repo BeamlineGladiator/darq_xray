@@ -189,15 +189,22 @@ def _center_offset(blocks_factory, method: str) -> float:
     In-core and streamed centring must agree bit-for-bit, so both come through
     here: :func:`volumeio.stream_mean` and :func:`volumeio.stream_quantile`
     rather than ``np.nanmean``/``np.nanmedian``. The compensated mean differs
-    from ``np.nanmean`` by a few ulps (6 on a 15 M-voxel volume) — that is the
-    drift the design accepted, and taking it in both paths is what makes
-    "identical for any budget" exactly true instead of nearly true. The median
-    is bit-equal to ``np.nanmedian``; only the mean moves.
+    from ``np.nanmean`` by a few ulps — that is the drift the design accepted,
+    and taking it in both paths is what makes "identical for any budget"
+    exactly true instead of nearly true. The drift looks larger in ulps the
+    closer the mean sits to zero, which for a volume about to be centred is
+    very close indeed: 41 ulps on a 13.5 M-voxel volume, where the compensated
+    value is the exactly-rounded mean and numpy's pairwise order is the one
+    that is off. The median is bit-equal to ``np.nanmedian``; only the mean
+    moves.
 
-    Cost, measured: both reductions walk elements one at a time (see
-    :func:`volumeio.neumaier_sum`), ~155 ns per finite voxel, so centring a
-    15 M-voxel volume takes ~2.3 s against ~0.15 s for the numpy call. That is
-    the dominant term in centring now, and it scales linearly with the volume.
+    Cost, measured: :func:`volumeio.neumaier_sum` is vectorised over lanes, so
+    the mean of 13.5 M finite voxels costs ~0.09 s — faster than ``np.nansum``,
+    and 23× the ~2.2 s the per-element loop it replaced cost. Centring is
+    therefore dominated by the second pass over the aligned volume that
+    subtracting an offset forces, not by the statistic:
+    ``align_volume(center_method="mean")`` on a 60×300×400 volume measures
+    0.84 s against 0.38 s uncentred (it was 1.28 s before the vectorisation).
 
     *blocks_factory* is a zero-argument callable returning a fresh iterable of
     arrays, because the quantile traverses more than once.
