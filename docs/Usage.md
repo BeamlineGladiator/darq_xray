@@ -706,6 +706,35 @@ Align the stacked mosaicity/strain volumes and render them.
 > are filled automatically. Returns no preview when the volume files cannot be
 > read.
 
+> [!info] Volumes too big for this machine are streamed — same images, more patience
+> Unlike the ParaView export, this stage does **not** stream unconditionally.
+> It measures the machine's free memory first and takes whichever of two routes
+> fits:
+>
+> - **It fits.** The volume is aligned in one piece and everything runs exactly
+>   as it always has, at the same speed. This is the normal case on a
+>   workstation, and it is what you get for any dataset your machine can hold.
+> - **It does not fit.** The volume is aligned and read in Z-blocks instead, the
+>   colour limits come from exact streaming percentiles, and the per-layer PNGs
+>   and the animation are rendered a block at a time. Memory then stays flat
+>   however large the dataset is — measured on a four-field 33.5 MB-per-volume
+>   set, 340 MB of peak memory in one piece against 111 MB streamed.
+>
+>   The cost is **time**: an exact percentile in bounded memory has to read the
+>   volume several times, so a memory-constrained run re-reads each field
+>   roughly eight times over. It is the price of finishing rather than running
+>   out of memory, and nothing about the result changes — the PNGs, the
+>   animation and the colour limits are byte-for-byte what the one-piece route
+>   produces.
+>
+> **One exception, and it is the default.** The 3-D top view and the rotating
+> video hand the whole volume to the graphics card in a single upload, so they
+> cannot be streamed at all: whenever either is switched on, one full volume is
+> assembled in memory regardless of the route. If a dataset is too large for
+> this machine, turn **Save 3D top-view** off and the run stays bounded; the
+> per-layer PNGs and the animation are unaffected. The interactive 3-D viewer
+> has the same constraint for the same reason.
+
 > [!note]
 > Colourmaps follow the publication-style **Colormaps** dropdowns (misorientation
 > defaults to ParaView's `fast`, FWHM to `magma`, strain to diverging `RdBu_r`

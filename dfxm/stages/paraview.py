@@ -37,8 +37,8 @@ SAVE_DTYPE = np.float32  # float32 is plenty for visualisation
 # what :func:`~dfxm.common.advice.working_set_budget_bytes` must take off the
 # machine's headroom before converting the rest into an allocation budget.
 #
-# Measured at 229 MB (`tests/peak_rss.py` on an 8x32x32 export, where the data
-# is negligible), reproducibly to +/-0.1 MB. 300 MB is the figure used: the
+# Measured at 229 MB (`tests/peak_rss.py` on a 4x8x8 four-field export, where
+# the data is negligible), reproducibly to +/-0.1 MB. 300 MB is the figure: the
 # extra is deliberate slack, not rounding. The additive RSS model is not an
 # envelope — at a fixed traced peak, measured RSS varies by ~45 MB with the
 # blocking alone — and this is the term with room to absorb that, since

@@ -71,6 +71,22 @@ MIN_BUDGET_BYTES = 64 * 1024 * 1024
 #   next stage: if a stage measures a marginal above 1.3, this constant stops
 #   being shared and becomes a per-stage argument like the floor.** Shared until
 #   contradicted, not shared on principle.
+#
+#   **First independent test, `visualize` (2026-08-21): not contradicted.** Twelve
+#   runs (three shapes x budgets 4/16/64/512 MB) fitted
+#   `RSS = 108.7 MB + 1.249 x traced`, r^2 = 0.995 — below 1.3, and below
+#   paraview's 1.18-vs-1.3 relationship in the same direction, so the argument
+#   above (paraview's per-piece VTK deep copy is the heaviest slope in the
+#   pipeline) survives its first check. The fitted intercept also landed on that
+#   stage's independently measured bare process image (107.6 MB), which is what
+#   an additive model should do and a ratio cannot.
+#
+#   One trap for whoever measures the third stage: a marginal is only measurable
+#   over a WIDE traced range. A first `visualize` sweep varied only the shape,
+#   with the 3-D render on; the traced peak moved 82.8 -> 86.5 MB while RSS sat
+#   near 586 MB, and the "slope" that fell out was 1.53 at r^2 = 0.64 — fitting
+#   noise, and it would have tripped this trigger for no reason. Vary the
+#   *budget* on a streaming path, which is what actually moves traced bytes.
 # * The **intercept does not travel**, which is why it is a required argument
 #   rather than a constant here: it is set by which extension modules a stage
 #   imports, and differs per stage by hundreds of MB (a VTK-importing stage
@@ -148,6 +164,18 @@ def working_set_budget_bytes(profile, *, rss_floor_bytes: int) -> int:
     see and which is set by what the stage imports. A stage measures its own (a
     child running it on trivial input) and names it. There is no default,
     because a wrong floor here is silent and a missing one is not.
+
+    **The recipe, so this does not have to be reinvented per stage:**
+    :func:`tests.peak_rss.measure_process_floor` takes the measurement and
+    :func:`tests.peak_rss.assert_floor_covers` pins it, in one test the stage
+    copies verbatim (the template is the section comment above that function).
+    Copy the *call*, never another stage's number — the assertion fails in both
+    directions, so a floor pasted from a heavier stage is caught as surely as one
+    set too low. And when measuring, note what
+    :data:`MARGINAL_RSS_PER_TRACED_BYTE` says above it: that constant is shared
+    across stages only until a stage measures its own marginal above 1.3, at
+    which point it becomes a per-stage argument like this one. Measure and report
+    it either way.
 
     Returns at least :data:`MIN_STREAM_BUDGET_BYTES`, including when the floor
     alone exceeds the headroom — that machine cannot host the run inside its
