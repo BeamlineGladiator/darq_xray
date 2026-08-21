@@ -772,12 +772,39 @@ def align_volume_streamed(
             with volumeio.scratch_array(shape, dtype, dirpath=scratch_dir) as cache:
                 for zsl, block in _blocks():
                     cache[zsl] = block
-                # Reading the cache back is a plain slice of a memmap, so the
-                # block IS the budget here — none of the alignment chain's
-                # multipliers apply. `budget_bytes` is never None on this
+                # Reading the cache back is a plain slice of a memmap, so none
+                # of the ALIGNMENT chain's multipliers apply — but the
+                # CONSUMER's do, and `dataset_blocks` sizes a block by the
+                # block's own bytes. The quantile pass reading these blocks
+                # holds exactly what the model charges as `stat_layer`
+                # (`finite`, `window` and the searchsorted/clip indices —
+                # float64/int64 arrays of the block's element count — plus the
+                # `isfinite` mask) alongside the block itself, and the
+                # blocking-independent `scaffold` on top of that. Handing
+                # `budget_bytes` over raw priced none of it: measured 1.68x the
+                # budget at budget/4, 3.36x at /8 and 5.20x at /128 — rising as
+                # the budget shrank, the same signature the working-set model
+                # was introduced to remove, and on the branch a 17 GB volume
+                # actually takes. So convert the budget into the block bytes
+                # that leave room for the rest, taking the scaffolding off the
+                # top the way `_WorkingSet.fixed` does. Flooring at one layer
+                # (via `dataset_blocks`) keeps the project's rule: a budget too
+                # small to meet still runs. `budget_bytes` is never None on this
                 # branch (`None` makes `fits` true, taking the one above).
+                #
+                # Per element of a cache block, at the quantile pass's peak:
+                # `finite` and `window` (float64), the `searchsorted(...) - 1`
+                # indices and `np.clip`'s separate output (int64), plus the
+                # `isfinite` mask. One lane more than `stat_layer`'s `retained`,
+                # because `stat_layer` prices what survives ACROSS the
+                # generator's `next()` and this pass has no generator to hand
+                # back to — `clip`'s input and output are live together here.
+                per_element = dtype.itemsize + 8 * (retained + 1) + 1
+                cache_budget = max(
+                    1, (max(1, int(budget_bytes) - scaffold) * dtype.itemsize) // per_element
+                )
                 offset = _center_offset(
-                    lambda: volumeio.dataset_blocks(cache, budget_bytes=max(1, budget_bytes)),
+                    lambda: volumeio.dataset_blocks(cache, budget_bytes=cache_budget),
                     center_method,
                 )
         else:

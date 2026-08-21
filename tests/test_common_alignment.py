@@ -190,9 +190,23 @@ def test_streamed_alignment_matches_in_core(center_method, divisor):
 
 
 def test_streamed_blocks_factory_can_be_traversed_twice():
+    """A second traversal must reproduce the first, block boundaries included.
+
+    Budgeted in working-set currency, like the parity tests above. Sized from
+    ``vol.nbytes`` — what this did before — the run landed on the one-layer
+    floor and emitted the production overrun warning on every pass, so what it
+    actually re-traversed was 27 single-layer blocks. The blocking is asserted
+    rather than assumed, so it cannot collapse to the floor again without going
+    red.
+    """
     vol, samy, samz = _streamed_synthetic()
-    streamed = A.align_volume_streamed(vol, samy, samz, scale_x=0.15, budget_bytes=vol.nbytes // 4)
-    first = np.concatenate([b for _sl, b in streamed.blocks()], axis=0)
+    whole = A.align_volume_streamed(vol, samy, samz, scale_x=0.15, budget_bytes=None)
+    streamed = A.align_volume_streamed(
+        vol, samy, samz, scale_x=0.15, budget_bytes=whole.working_set_bytes // 3
+    )
+    first_blocks = [b for _sl, b in streamed.blocks()]
+    assert (streamed.block_layers, len(first_blocks)) == (7, 4)
+    first = np.concatenate(first_blocks, axis=0)
     second = np.concatenate([b for _sl, b in streamed.blocks()], axis=0)
     assert np.array_equal(first, second, equal_nan=True)
 
@@ -206,27 +220,45 @@ def test_streamed_shape_known_before_reading():
 
 
 def test_block_samy_slice_does_not_shrink_the_canvas():
-    """The trap: a per-block samy slice implies a narrower pad than the global one."""
+    """The trap: a per-block samy slice implies a narrower pad than the global one.
+
+    A **multi-layer** block is the case that matters — a one-layer block's samy
+    is a single value, which the pad arithmetic cannot get subtly wrong, only
+    completely. Sized from ``vol.nbytes`` this test ran 29 blocks of one layer
+    and asserted only ``n_blocks > 1``, so it held while covering nothing.
+    Working-set currency and an asserted blocking, as elsewhere.
+    """
     vol, samy, samz = _streamed_synthetic(nz=21)
     samy = samy + np.linspace(0, 0.05, len(samy))  # a strong monotone drift
     reference = A.align_volume(vol, samy, samz, scale_x=0.15)
-    streamed = A.align_volume_streamed(vol, samy, samz, scale_x=0.15, budget_bytes=vol.nbytes // 9)
+    whole = A.align_volume_streamed(vol, samy, samz, scale_x=0.15, budget_bytes=None)
+    streamed = A.align_volume_streamed(
+        vol, samy, samz, scale_x=0.15, budget_bytes=whole.working_set_bytes // 4
+    )
     assert streamed.shape[2] == reference.data.shape[2]
     rebuilt, n_blocks = _drain(streamed)
-    assert n_blocks > 1
+    assert (streamed.block_layers, n_blocks) == (6, 5)
     assert np.array_equal(rebuilt, reference.data, equal_nan=True)
 
 
 def test_block_samz_slice_does_not_shift_the_z_grid():
-    """The Z-grid twin of the pad trap: a block's samz implies a different grid."""
+    """The Z-grid twin of the pad trap: a block's samz implies a different grid.
+
+    Same correction as the pad trap above: a one-layer block cannot exercise a
+    per-block grid (its samz is one value), and ``vol.nbytes // 7`` floored this
+    to 26 such blocks. Working-set currency, with the blocking asserted.
+    """
     vol, samy, samz = _streamed_synthetic(nz=19)
     samz = np.sort(samz) * 3.0  # widen the Z span so a block's own grid differs loudly
     reference = A.align_volume(vol, samy, samz, scale_x=0.15)
-    streamed = A.align_volume_streamed(vol, samy, samz, scale_x=0.15, budget_bytes=vol.nbytes // 7)
+    whole = A.align_volume_streamed(vol, samy, samz, scale_x=0.15, budget_bytes=None)
+    streamed = A.align_volume_streamed(
+        vol, samy, samz, scale_x=0.15, budget_bytes=whole.working_set_bytes // 4
+    )
     assert streamed.shape[0] == reference.data.shape[0]
     assert np.array_equal(streamed.z_uniform_um, reference.z_uniform_um)
     rebuilt, n_blocks = _drain(streamed)
-    assert n_blocks > 1
+    assert (streamed.block_layers, n_blocks) == (5, 6)
     assert np.array_equal(rebuilt, reference.data, equal_nan=True)
 
 
@@ -338,49 +370,62 @@ def test_streamed_single_layer_volume_matches_in_core():
 
 @pytest.mark.parametrize("take_abs", [False, True])
 def test_streamed_matches_in_core_float32(take_abs):
-    """Stage volumes are float32 on disk; the chain upcasts and both paths must agree."""
+    """Stage volumes are float32 on disk; the chain upcasts and both paths must agree.
+
+    The upcast happens *inside* the interpolator, so what this has to cover is a
+    block wide enough for the interpolator to run over — one layer takes
+    :func:`interpolate_to_uniform_z`'s early return instead, which hands the
+    layer back in its own dtype and never exercises the upcast at all.
+    ``vol.nbytes // 6`` floored to nine one-layer blocks and so tested exactly
+    that early return nine times. Budgeted in working-set currency (the median's
+    2.1 MB of blocking-independent scaffolding dwarfs this fixture's data, hence
+    the ``scaffold +`` term), with the blocking asserted.
+    """
     vol, samy, samz = _streamed_synthetic(nz=11)
     vol = vol.astype(np.float32)
-    reference = A.align_volume(
-        vol, samy, samz, scale_x=0.15, take_abs=take_abs, center_method="median"
-    )
+    kwargs = dict(scale_x=0.15, take_abs=take_abs, center_method="median")
+    reference = A.align_volume(vol, samy, samz, **kwargs)
+    whole = A.align_volume_streamed(vol, samy, samz, budget_bytes=None, **kwargs)
+    scaffold = volumeio.centring_scaffold_bytes("median", int(np.prod(whole.shape)))[0]
     streamed = A.align_volume_streamed(
         vol,
         samy,
         samz,
-        scale_x=0.15,
-        take_abs=take_abs,
-        center_method="median",
-        budget_bytes=max(1, vol.nbytes // 6),
+        budget_bytes=scaffold + max(1, (whole.working_set_bytes - scaffold) // 2),
+        **kwargs,
     )
     assert streamed.dtype == reference.data.dtype
     rebuilt, n_blocks = _drain(streamed)
-    assert n_blocks > 1
+    assert (streamed.block_layers, n_blocks) == (3, 3)
     assert np.array_equal(rebuilt, reference.data, equal_nan=True)
 
 
 def test_streamed_median_uses_scratch_when_the_volume_will_not_fit(tmp_path):
-    """The cached-median branch must give the same answer as the re-run branch."""
+    """The cached-median branch must give the same answer as the re-run branch.
+
+    "Will not fit" is exactly ``block_layers < shape[0]`` — the solved blocking,
+    not a comparison of output bytes against the budget, which stopped meaning
+    the same thing when blocks began to be sized against the whole working set.
+    The old ``vol.nbytes // 9`` budget floored this to 27 one-layer blocks, so
+    the cache it filled and read back was 27 single layers; the blocking is
+    asserted below in working-set currency so a multi-layer cache block is
+    covered and cannot silently disappear again.
+    """
     vol, samy, samz = _streamed_synthetic(nz=17)
-    budget = max(1, vol.nbytes // 9)
-    plain = A.align_volume_streamed(
-        vol, samy, samz, scale_x=0.15, center_method="median", budget_bytes=budget
-    )
+    kwargs = dict(scale_x=0.15, center_method="median")
+    whole = A.align_volume_streamed(vol, samy, samz, budget_bytes=None, **kwargs)
+    scaffold = volumeio.centring_scaffold_bytes("median", int(np.prod(whole.shape)))[0]
+    budget = scaffold + max(1, (whole.working_set_bytes - scaffold) // 4)
+    plain = A.align_volume_streamed(vol, samy, samz, budget_bytes=budget, **kwargs)
     cached = A.align_volume_streamed(
-        vol,
-        samy,
-        samz,
-        scale_x=0.15,
-        center_method="median",
-        budget_bytes=budget,
-        scratch_dir=str(tmp_path),
+        vol, samy, samz, budget_bytes=budget, scratch_dir=str(tmp_path), **kwargs
     )
     assert cached.center_offset == plain.center_offset
     assert np.array_equal(_drain(cached)[0], _drain(plain)[0], equal_nan=True)
-    # The branch under test only runs when the aligned volume exceeds the
-    # budget; assert that, so the test cannot go vacuous.
-    per_layer = plain.shape[1] * plain.shape[2] * plain.dtype.itemsize
-    assert plain.shape[0] * per_layer > budget
+    # The branch under test runs only when the stream cannot yield the whole
+    # aligned volume in one block; assert that, so the test cannot go vacuous.
+    assert (cached.block_layers, -(-cached.shape[0] // cached.block_layers)) == (5, 6)
+    assert cached.block_layers < cached.shape[0]
     assert not list(tmp_path.iterdir())  # scratch file cleaned up
 
 
@@ -481,13 +526,13 @@ def _budget_fixture(samz_kind="ascending", nz=40):
 
 
 @pytest.mark.parametrize(
-    ("samz_kind", "center_method", "divisor", "floored"),
+    ("samz_kind", "center_method", "divisor", "floored", "scratch"),
     [
-        ("ascending", None, 4, False),
-        ("ascending", None, 16, False),
-        ("ascending", "mean", 8, False),
-        ("ascending", "median", 4, False),
-        ("descending", None, 4, False),
+        ("ascending", None, 4, False, False),
+        ("ascending", None, 16, False, False),
+        ("ascending", "mean", 8, False, False),
+        ("ascending", "median", 4, False, False),
+        ("descending", None, 4, False, False),
         # A samz that is not already ascending makes `interp1d.__init__` sort,
         # and its `np.take(y, ind)` holds a THIRD copy of the padded canvas.
         # Priced at two copies, this case measured 1.20x its budget and 1.13x
@@ -495,10 +540,22 @@ def _budget_fixture(samz_kind="ascending", nz=40):
         # block, so halving the budget cannot halve the working set: this one
         # lands on the one-layer floor, which is the point — the model still
         # has to bound the peak there.
-        ("shuffled", None, 2, True),
+        ("shuffled", None, 2, True, False),
+        # The scratch-backed median: a distinct branch with a SECOND traversal
+        # the budget has to cover — the quantile pass reading the cache back —
+        # and it sat outside this matrix while it handed `budget_bytes` to
+        # `dataset_blocks` raw. It measured 1.68x its budget at /4, 3.36x at /8
+        # and 3.70x at /16 (1.78x, 3.56x and 2.69x its own reported working set),
+        # rising as the budget shrank, which is precisely the signature the
+        # working-set model exists to remove. Both a blocked case and a floored
+        # one, because the floored one is where a 17 GB paraview volume lands.
+        ("ascending", "median", 4, False, True),
+        ("ascending", "median", 16, True, True),
     ],
 )
-def test_streamed_peak_stays_within_the_budget(samz_kind, center_method, divisor, floored):
+def test_streamed_peak_stays_within_the_budget(
+    samz_kind, center_method, divisor, floored, scratch, tmp_path
+):
     """`budget_bytes` must bound the measured peak, not a fraction of it.
 
     The defect this pins: blocks used to be sized so the OUTPUT BLOCK fit the
@@ -511,6 +568,8 @@ def test_streamed_peak_stays_within_the_budget(samz_kind, center_method, divisor
     nz = 24 if samz_kind == "shuffled" else 40
     vol, samy, samz = _budget_fixture(samz_kind, nz)
     kwargs = dict(scale_x=0.15, center_method=center_method)
+    if scratch:
+        kwargs["scratch_dir"] = str(tmp_path)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         whole = A.align_volume_streamed(vol, samy, samz, budget_bytes=None, **kwargs)
@@ -524,6 +583,12 @@ def test_streamed_peak_stays_within_the_budget(samz_kind, center_method, divisor
         assert streamed.block_layers == 1
     else:
         assert 1 < streamed.block_layers < whole.shape[0], "neither the floor nor one block"
+    if scratch:
+        # `fits` is exactly `block_layers >= shape[0]`, so this is the assertion
+        # that the run took the scratch branch rather than the adopt-one-block
+        # one — without it a generous blocking would silently move the case off
+        # the branch the row was added to cover.
+        assert streamed.block_layers < streamed.shape[0], "this row must use the scratch cache"
 
     def consume():
         # Iterate WITHOUT accumulating. `_drain` allocates the whole output

@@ -175,10 +175,19 @@ def test_neumaier_sum_lane_state_notices_a_regrouping():
     assert volumeio.neumaier_sum(values) != volumeio.neumaier_sum(rolled)
 
 
-def test_neumaier_sum_is_correctly_rounded_on_catastrophic_cancellation():
+def test_neumaier_sum_matches_the_scalar_order_and_fsum_on_wide_exponents():
     """A few ulps of drift from the scalar order is fine; a wrong sum is not.
 
-    `math.fsum` is the exactly-rounded sum, so it is the arbiter for both.
+    Deliberately NOT named for catastrophic cancellation, and it does not claim
+    correct rounding in general. `neumaier_sum`'s own docstring disclaims exactly
+    that: constructed cancellation (`a`, `-a`, small, at `a ~ 1e16`) separates the
+    lane order from the per-element one, and there *neither* equals `math.fsum`,
+    because a single compensation term is not exact in that regime. What this
+    input — random mantissas over exponents 1e-18 to 1e18, which is a realistic
+    hard case rather than an adversarial one — does establish is that on such
+    data the vectorised lane order gives the exactly-rounded sum and so did the
+    per-element order it replaced. In a module whose subject is bit-exactness a
+    name asserting more than the test shows is a trap, not a shorthand.
     """
     import math
 
@@ -278,7 +287,7 @@ def test_neumaier_sum_does_not_raise_on_an_overflowing_partial_sum():
     order gives one lane 1e308 five thousand times over (the period divides
     NEUMAIER_LANES) and reaches inf, then NaN. That is a function of the data,
     not of the budget, so the module's guarantee is untouched — asserted below
-    at four blockings, since a budget-dependent NaN would be a real defect where
+    at five blockings, since a budget-dependent NaN would be a real defect where
     a data-dependent one is a documented limit no DFXM quantity comes near.
     """
     values = np.array([1e308, 1.0, -1e308, 1.0] * 5000)
@@ -678,7 +687,16 @@ def test_stream_minmax_zero_sign_costs_no_extra_copy():
         finally:
             tracemalloc.stop()
 
-    marginal = peak_bytes(zero_heavy) - peak_bytes(no_zeros)
+    zero_peak, plain_peak = peak_bytes(zero_heavy), peak_bytes(no_zeros)
+    # Liveness first: a marginal peak is a DIFFERENCE, so it also goes to ~0
+    # where tracemalloc is not seeing numpy's buffers at all, and the assertion
+    # below would pass having measured nothing. One finite pass has to allocate
+    # at least the float64 widening of the block's finite values.
+    assert plain_peak > no_zeros.nbytes, (
+        f"tracemalloc saw only {plain_peak} B for a {no_zeros.nbytes} B block; "
+        "the measurement is dead"
+    )
+    marginal = zero_peak - plain_peak
     limit = zero_heavy.nbytes // 2
     assert marginal <= limit, (
         f"the zero-sign branch adds {marginal / 1e6:.1f} MB on a "
@@ -728,6 +746,20 @@ def test_stream_quantile_single_finite_value():
     data[1, 1, 1] = 2.5
     got = volumeio.stream_quantile(lambda: volumeio.dataset_blocks(data, budget_bytes=16), 90.0)
     assert got == 2.5
+
+
+def test_stream_quantile_diagnoses_a_factory_that_returns_an_exhausted_stream():
+    """The signature footgun: siblings take an iterable, this takes a factory.
+
+    `lambda: some_generator` type-checks, satisfies pass 1 and then hands the
+    same exhausted generator to pass 2. Untreated that surfaced as a bare
+    `ValueError: need at least one array to concatenate` out of `_select_rank`,
+    several traversals downstream of the mistake and naming nothing about it.
+    """
+    data = np.arange(64.0).reshape(16, 2, 2)
+    once = volumeio.dataset_blocks(data, budget_bytes=data.nbytes // 4)
+    with pytest.raises(ValueError, match="exhausted stream"):
+        volumeio.stream_quantile(lambda: once, 50.0)
 
 
 @pytest.mark.parametrize("q", [-1.0, 101.0, float("nan")])

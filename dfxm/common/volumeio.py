@@ -10,6 +10,16 @@ for any ``budget_bytes`` they produce bit-identical results. That is what makes 
 laptop and a workstation emit the same publishable data product. See
 :func:`neumaier_sum` for why ordinary summation would break it.
 
+One qualification on how that guarantee is *held*, since only one of the two
+blocking axes holds it by construction. Under ``axis=0`` a value's position in
+the flattened stream does not depend on the block width, so :func:`neumaier_sum`
+provably sends it to the same lane at every budget. Under ``axis=1`` — column
+blocking, which in this pipeline only ``matched`` uses — the ravel position of a
+value *does* move with the block width, so the lane assignment is not structurally
+fixed and invariance rests on measurement instead: unbroken across ~120 sweeps,
+but by evidence rather than by construction. Treat a cross-budget check as
+required when adding an ``axis=1`` consumer, not as belt-and-braces.
+
 The **display** helpers (:func:`display_headroom_bytes`,
 :func:`display_decimation`, :func:`decimation_note`) are deliberately outside
 that guarantee: they coarsen a volume that a render path cannot stream, so a
@@ -166,6 +176,16 @@ def iter_with_context(blocks, *, trailing: int = 1, axis: int = 0):
     alternative — handing back a window one row short — corrupts exactly one
     block edge and hides from the budget-independence tests, since every
     budget corrupts it identically.
+
+    With the default ``trailing=1`` that raise is unreachable (a block always
+    has at least one row). With ``trailing > 1`` it is **budget-dependent**: the
+    final short block is a remainder of the block width, so a workstation budget
+    can succeed on data where a laptop's raises. That is a deliberate exception
+    to this module's budget-independence guarantee, which covers *values* and
+    not whether a run starts — but an unstated budget-dependent failure in a
+    memory-budget module is how budgets stop being trusted, so: a caller passing
+    ``trailing > 1`` must either size blocks to exceed the context width or be
+    prepared to handle the raise.
 
     Memory cost is *trailing* rows above the block itself, so a budget is
     exceeded by that much; with the default of one row against any realistic
@@ -369,6 +389,15 @@ def neumaier_sum(values, *, state: NeumaierState | None = None) -> NeumaierState
     global position *i* to lane ``i % NEUMAIER_LANES``, whatever block it
     arrived in — so the answer depends only on the data and its position in the
     stream, never on the memory budget.
+
+    "Global position" means the position in the **flattened stream this function
+    is fed**, which is what makes the guarantee structural for ``axis=0``
+    blocking and empirical for ``axis=1``: an axis-0 block is a contiguous run of
+    the volume's ravel order, so widening it moves no value's index, whereas an
+    axis-1 block ravels each row segment separately and the index of a value does
+    move with the block width. Axis-1 invariance has held across every sweep
+    tried (see the module docstring), but it is not a property of this
+    bookkeeping and must be checked, not assumed.
 
     The lane bookkeeping is the load-bearing part. An incoming run is split
     into three: the values completing the lane row the previous call stopped
@@ -649,8 +678,13 @@ def stream_quantile(make_blocks, q: float) -> float:
     repeated, at two traversals a round (see :func:`_observed_bounds`); with
     65536 bins that is uncommon, and a handful of rounds when it happens.
 
-    *make_blocks* is a zero-argument callable returning a fresh iterable of
-    arrays, because the algorithm traverses more than once.
+    *make_blocks* is a zero-argument callable returning a **fresh** iterable of
+    arrays, because the algorithm traverses more than once. This is the one place
+    the signature differs from :func:`stream_mean` and :func:`stream_minmax`,
+    which take the iterable itself, so ``lambda: some_generator`` — a factory
+    that hands the *same* exhausted generator back on pass 2 — is the easy
+    mistake; it is diagnosed below rather than surfacing as a bare
+    ``ValueError`` from ``np.concatenate`` several passes later.
 
     Working set is a few tens of MB above the caller's block, whatever the
     volume's size: the histogram's 65537 edges and counts, the survivors of
@@ -685,6 +719,19 @@ def stream_quantile(make_blocks, q: float) -> float:
         array = np.asarray(block)
         dtype = array.dtype if dtype is None else np.promote_types(dtype, array.dtype)
         count += int(np.count_nonzero(np.isfinite(array)))
+    if count == 0:
+        # Pass 1 found a finite `lo`, so pass 2 must see finite values too. It
+        # did not, which means the two passes did not see the same data — all
+        # but always a *factory* that is not one (`lambda: some_generator`
+        # returns the same, now-exhausted, generator). Left alone this surfaces
+        # as `ValueError: need at least one array to concatenate` from
+        # `_select_rank`, several traversals downstream of the mistake.
+        raise ValueError(
+            "stream_quantile: the second pass saw no finite values where the first "
+            "saw a finite range. make_blocks must return a FRESH iterable on every "
+            "call (it is a factory, unlike stream_mean/stream_minmax, which take the "
+            "iterable itself); the factory returned an exhausted stream."
+        )
     # numpy's rank convention for the "linear" method. The expression is
     # numpy's own `get_virtual_index` — `(n - 1) * (q / 100)`, evaluated in
     # that grouping. The algebraically equal `n*qq + (1 - qq) - 1` (numpy's
