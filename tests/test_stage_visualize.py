@@ -743,13 +743,41 @@ def test_layer_source_rejects_a_negative_index(tmp_path):
 
 
 def _infinity_volume():
-    """A volume carrying NaN padding *and* both infinities."""
-    rng = np.random.default_rng(11)
+    """A volume carrying NaN padding, both infinities, AND a discriminating mean.
+
+    The seed is load-bearing, not decorative. The rung equality below has two
+    halves — the finite selection (`isfinite` vs `~isnan`) and the mean
+    (`volumeio.stream_mean` vs `np.nanmean`) — and only the first is exercised by
+    just putting infinities in. The compensated and the pairwise sum agree on
+    many small samples: on the seed this fixture originally used they agreed
+    exactly, so the whole test passed unchanged with `np.nanmean` restored and
+    the mean half of the invariant was pinned by nothing.
+
+    `_assert_mean_reductions_disagree` is what keeps that from happening again,
+    and it is asserted rather than assumed for the twelfth time in this project:
+    a fixture that stops discriminating is a test that stops testing.
+    """
+    rng = np.random.default_rng(0)
     data = rng.standard_normal((6, 8, 10))
     data[0, 0, :3] = np.nan
     data[1, 2, 4] = np.inf
     data[3, 5, 6] = -np.inf
     return data
+
+
+def _assert_mean_reductions_disagree(data):
+    """The two mean reductions must actually differ on *data*, or nothing is pinned."""
+    from dfxm.common import volumeio
+
+    finite = data[np.isfinite(data)]
+    compensated = np.float64(volumeio.stream_mean([finite])).tobytes()
+    pairwise = np.float64(np.nanmean(finite)).tobytes()
+    assert compensated != pairwise, (
+        "the fixture no longer separates `volumeio.stream_mean` from `np.nanmean` — "
+        "they agree bit-for-bit on it, so the mean half of the rung equality below is "
+        "asserted by nothing and reverting `_center_com_and_range` to `np.nanmean` "
+        "would leave this test green. Change the seed or the shape until they differ."
+    )
 
 
 @pytest.mark.parametrize("method", ["midrange", "mean", "median"])
@@ -763,12 +791,22 @@ def test_both_rungs_agree_on_clims_with_infinities(method):
     filter on `np.isfinite`, and `np.nanmean` is not `volumeio.stream_mean`;
     both are fixed in the in-core helpers, and this is what holds them fixed.
 
+    Note what the `mean` case needs that the others do not. The product-level
+    check (rendered PNGs identical across the rungs) **cannot** see the mean
+    divergence: a 1-ulp shift in the centring offset moves no percentile of
+    `|value|`, so the colour limits come out bit-identical, and 8-bit PNG bytes
+    could not move even if they did not. Only a value-level assertion on a
+    fixture where the two reductions genuinely differ pins it — hence
+    `_assert_mean_reductions_disagree`.
+
     Deliberately at the helper level rather than through `run()`: `run()` cannot
     be made to take both rungs on the same input without also changing the
     machine, and the equality is a property of the helpers.
     """
     data = _infinity_volume()
+    # Both halves of the equality need a fixture that can see them fail.
     assert np.isinf(data).any() and np.isnan(data).any(), "fixture lost its non-finite values"
+    _assert_mean_reductions_disagree(data)
 
     def blocks():
         return ((slice(z, z + 1), data[z : z + 1]) for z in range(data.shape[0]))
