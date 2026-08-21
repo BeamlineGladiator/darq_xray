@@ -725,7 +725,16 @@ Align the stacked mosaicity/strain volumes and render them.
 >   roughly eight times over. It is the price of finishing rather than running
 >   out of memory, and nothing about the result changes — the PNGs, the
 >   animation and the colour limits are byte-for-byte what the one-piece route
->   produces.
+>   produces. That equality is the point of the split and is enforced as such:
+>   which route runs depends on your machine, so a figure that differed between
+>   them would be a figure that depended on your machine.
+>
+>   One deliberate change of behaviour came out of holding that equality, and it
+>   only shows on a volume containing an **infinite** value (a pathological
+>   darfix fit, not the usual NaN padding): infinities are now excluded from the
+>   automatic colour limits of the peak-broadening maps, as they always were for
+>   every other map. Before, a single infinity collapsed that map's colour scale
+>   so every real voxel rendered as one colour.
 >
 > **One exception, and it is the default.** The 3-D top view and the rotating
 > video hand the whole volume to the graphics card in a single upload, so they

@@ -72,21 +72,31 @@ MIN_BUDGET_BYTES = 64 * 1024 * 1024
 #   being shared and becomes a per-stage argument like the floor.** Shared until
 #   contradicted, not shared on principle.
 #
-#   **First independent test, `visualize` (2026-08-21): not contradicted.** Twelve
-#   runs (three shapes x budgets 4/16/64/512 MB) fitted
-#   `RSS = 108.7 MB + 1.249 x traced`, r^2 = 0.995 — below 1.3, and below
-#   paraview's 1.18-vs-1.3 relationship in the same direction, so the argument
-#   above (paraview's per-piece VTK deep copy is the heaviest slope in the
-#   pipeline) survives its first check. The fitted intercept also landed on that
-#   stage's independently measured bare process image (107.6 MB), which is what
-#   an additive model should do and a ratio cannot.
+#   **First independent test, `visualize` (2026-08-21): not contradicted, but
+#   AT the trigger rather than comfortably below it.** Four sweeps of twelve
+#   runs each (three shapes x budgets 4/16/64/512 MB) fitted slopes of **1.249,
+#   1.270, 1.295 and 1.216** — every one under 1.3, none by much, with local
+#   slopes between consecutive points spanning 1.10 to 1.59. So the constant
+#   survives on evidence and should be read as "measured 1.2-1.3", not as a
+#   margin anyone may spend. The fitted intercepts landed on that stage's
+#   independently measured bare process image (107.6 MB), which is what an
+#   additive model should do and a ratio cannot.
 #
-#   One trap for whoever measures the third stage: a marginal is only measurable
-#   over a WIDE traced range. A first `visualize` sweep varied only the shape,
-#   with the 3-D render on; the traced peak moved 82.8 -> 86.5 MB while RSS sat
-#   near 586 MB, and the "slope" that fell out was 1.53 at r^2 = 0.64 — fitting
-#   noise, and it would have tripped this trigger for no reason. Vary the
-#   *budget* on a streaming path, which is what actually moves traced bytes.
+#   **How to measure this properly — the point estimate is not enough.** A
+#   sweep must give at least FIVE distinct traced levels spanning at least 5x,
+#   and the slope must be checked LOCALLY (between consecutive levels) as well
+#   as by least squares. Two ways the naive version misleads, both met here:
+#
+#   * Vary only the shape and the traced peak barely moves. A first `visualize`
+#     sweep did that with the 3-D render on: traced went 82.8 -> 86.5 MB while
+#     RSS sat near 586 MB, and the "slope" was 1.53 at r^2 = 0.64 — fitting
+#     noise, and it would have tripped this trigger for nothing. Vary the
+#     *budget* on a streaming path; that is what moves traced bytes.
+#   * Vary the budget carelessly and the points pile into two clusters (runs
+#     pinned at the alignment's one-layer floor, plus a few in-core ones). A
+#     two-cluster fit reports a high r^2 while conditioning the slope on almost
+#     nothing — the 0.995 in the first `visualize` sweep was largely that.
+#     Spread the levels; report the local slopes.
 # * The **intercept does not travel**, which is why it is a required argument
 #   rather than a constant here: it is set by which extension modules a stage
 #   imports, and differs per stage by hundreds of MB (a VTK-importing stage
@@ -175,7 +185,8 @@ def working_set_budget_bytes(profile, *, rss_floor_bytes: int) -> int:
     :data:`MARGINAL_RSS_PER_TRACED_BYTE` says above it: that constant is shared
     across stages only until a stage measures its own marginal above 1.3, at
     which point it becomes a per-stage argument like this one. Measure and report
-    it either way.
+    it either way — over at least five traced levels spanning at least 5x, with
+    the local slopes reported alongside the fit, for the reasons recorded there.
 
     Returns at least :data:`MIN_STREAM_BUDGET_BYTES`, including when the floor
     alone exceeds the headroom — that machine cannot host the run inside its

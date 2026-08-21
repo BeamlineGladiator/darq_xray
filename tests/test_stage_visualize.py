@@ -59,7 +59,38 @@ def _setup(tmp_path, layers=L, ny=NY, nx=NX):
     samz = np.arange(layers) * 0.001 + np.linspace(0.0, 0.0004, layers)
     _write_raw(str(raw), "mosa", samy, samz)
     _write_raw(str(raw), "strain", samy, samz)
+    _assert_mostly_finite(proc, raw)
     return proc, raw
+
+
+# What the old fixture's motors destroyed, guarded at the source. A 99.3%-NaN
+# aligned volume is not a failing fixture — every assertion in this module still
+# passed on it, because none of them was capable of failing on NaN. So the guard
+# has to be here, where the volume is defined, rather than inside whichever test
+# happens to care.
+_MIN_FINITE_FRACTION = 0.5
+
+
+def _assert_mostly_finite(proc, raw):
+    aligned, _z, _sz = V._align(
+        V.load_mosa_field(str(proc / "stacked_volumes.h5"), "chi_FWHM"),
+        *V._read_motors(
+            str(raw),
+            "mosa__*",
+            "1.1/instrument/positioners/samy",
+            "1.1/instrument/positioners/samz",
+        ),
+        scale_x=0.152,
+        samy_direction=-1,
+        roi_x=None,
+        roi_y=None,
+    )
+    finite = float(np.isfinite(aligned).mean())
+    assert finite > _MIN_FINITE_FRACTION, (
+        f"the fixture's aligned volume is only {finite:.1%} finite — the samy steps have "
+        "shifted the layers past each other again, and every colour-limit and centring "
+        "assertion in this module becomes a statement about NaN"
+    )
 
 
 # -- lazy per-field loading ---------------------------------------------------
@@ -217,10 +248,19 @@ def test_alignment_shape_matches_primitives(tmp_path):
             "save_topview": False,
         }
     )
-    # ROI in Y -> 4 rows; X expanded by samy padding -> >= NX
+    # ROI in Y -> 4 rows; X expanded by exactly the samy padding the motors imply.
+    # `>= NX` alone was the bound that let the old fixture's 1-4 um samy steps
+    # hide: it passed at 35 (layers shifted clean past each other) just as
+    # happily as at the correct 9.
+    samy, _samz = V._read_motors(
+        str(raw), "mosa__*", "1.1/instrument/positioners/samy", "1.1/instrument/positioners/samz"
+    )
+    expected_nx = (
+        NX + V.A.compute_pad_left(samy, 0.152, -1) + V.A.compute_pad_right(samy, 0.152, -1)
+    )
     for d in res.datasets:
         assert d.shape[1] == 4
-        assert d.shape[2] >= NX
+        assert d.shape[2] == expected_nx
 
 
 def test_missing_inputs_recorded(tmp_path):
@@ -548,8 +588,7 @@ def test_align_streamed_matches_the_hand_rolled_chain(tmp_path):
         )
         assert streamed.block_layers < streamed.shape[0], "budget did not block the stream"
         got = V._LayerSource(streamed.blocks, streamed.shape, streamed.dtype).whole()
-    # Not a comparison of two NaN rims: most of the aligned volume is finite.
-    assert np.isfinite(ref).mean() > 0.5, "fixture degenerated to NaN padding"
+    # (`_setup` guarantees `ref` is mostly finite, so this is not two NaN rims.)
     np.testing.assert_array_equal(got, ref)
     np.testing.assert_array_equal(z_pos, z_ref)
     assert scale_z == sz_ref
@@ -605,7 +644,7 @@ def test_visualize_streamed_matches_in_core(tmp_path, method):
         assert (tmp_path / "str" / rel).read_bytes() == ref_png.read_bytes(), rel
 
 
-def test_run_blocks_the_alignment_at_a_small_budget(tmp_path):
+def test_run_blocks_the_alignment_at_a_small_budget(tmp_path, monkeypatch):
     """The equivalence test is not vacuous: the small budget really blocks.
 
     Both halves are asserted, because both can rot: the injected budget must
@@ -622,16 +661,184 @@ def test_run_blocks_the_alignment_at_a_small_budget(tmp_path):
         seen[key].append((streamed.block_layers, streamed.shape[0]))
         return streamed
 
-    V.A.align_volume_streamed = spy
-    try:
-        V.run({**_stream_params(proc, raw, tmp_path / "s"), "_budget_bytes": 1 << 16})
-        key = "machine"
-        V.run(_stream_params(proc, raw, tmp_path / "m"))
-    finally:
-        V.A.align_volume_streamed = real
+    monkeypatch.setattr(V.A, "align_volume_streamed", spy)
+    V.run({**_stream_params(proc, raw, tmp_path / "s"), "_budget_bytes": 1 << 16})
+    key = "machine"
+    V.run(_stream_params(proc, raw, tmp_path / "m"))
     assert seen["small"], "no field streamed"
     assert all(layers < nz for layers, nz in seen["small"]), seen["small"]
     assert all(layers >= nz for layers, nz in seen["machine"]), seen["machine"]
+
+
+class _StrictVolume:
+    """A `(Z, Y, X)` volume exposing ONLY the duck-type `_LayerSource` promises.
+
+    `_LayerSource` stands in for an ndarray in `render.save_layer_pngs` and
+    `render.save_layer_animation` on the contract that those two use `.shape`
+    and `vol[z]` and nothing else. Nothing enforced that contract, so a future
+    `volume.ravel()` or `volume[a:b]` in either renderer would break the
+    streaming rung at run time rather than at review. This raises on any other
+    attribute, and the test below drives both renderers through it.
+    """
+
+    _ALLOWED = {"shape", "__getitem__", "__class__"}
+
+    def __init__(self, array):
+        object.__setattr__(self, "_array", array)
+        object.__setattr__(self, "shape", tuple(int(d) for d in array.shape))
+
+    def __getitem__(self, z):
+        if not isinstance(z, (int, np.integer)):
+            raise AssertionError(
+                f"the renderers may only index a volume by a single layer index, got {z!r}"
+            )
+        return object.__getattribute__(self, "_array")[int(z)]
+
+    def __getattr__(self, name):
+        raise AssertionError(
+            f"render.py reached for volume.{name}, which is outside the duck-type "
+            f"`_LayerSource` implements ({sorted(_StrictVolume._ALLOWED)}). Either add it "
+            "to `_LayerSource` or stop using it in the renderers."
+        )
+
+
+def test_renderers_use_only_the_duck_type_layersource_implements(tmp_path):
+    """`render.py` must not reach past `.shape` and `vol[z]`.
+
+    The contract `_LayerSource` rests on, enforced instead of asserted in a
+    comment. `_LayerSource` itself satisfies `_StrictVolume`'s interface by
+    construction; what is at risk is the *renderers* growing a use it cannot
+    serve, so they are what this drives.
+    """
+    from dfxm.common import render as Rnd
+
+    vol = _StrictVolume(np.random.default_rng(0).standard_normal((3, 5, 7)))
+    z_um = np.array([0.0, 1.0, 2.0])
+    layers_dir = Rnd.save_layer_pngs(
+        vol, z_um, str(tmp_path), "chi", -1.0, 1.0, "viridis", "t", "cb", 0.15, 0.38
+    )
+    assert len(os.listdir(layers_dir)) == 3
+    assert Rnd.save_layer_animation(
+        vol, z_um, str(tmp_path / "anim"), "chi", -1.0, 1.0, "viridis", "t", "cb", "gif", 0.15, 0.38
+    )
+
+
+def test_layer_source_rejects_a_negative_index(tmp_path):
+    """A negative index is out of range for a forward-only stream, and says so.
+
+    It used to surface as `TypeError: 'NoneType' object is not subscriptable`
+    from the rewind's empty state, which names neither the cause nor the caller.
+    """
+    data = np.arange(24.0).reshape(2, 3, 4)
+
+    def blocks():
+        return iter([(slice(0, 2), data)])
+
+    source = V._LayerSource(blocks, data.shape, data.dtype)
+    np.testing.assert_array_equal(source[1], data[1])
+    with pytest.raises(IndexError):
+        source[-1]
+    with pytest.raises(IndexError):
+        source[2]
+
+
+def _infinity_volume():
+    """A volume carrying NaN padding *and* both infinities."""
+    rng = np.random.default_rng(11)
+    data = rng.standard_normal((6, 8, 10))
+    data[0, 0, :3] = np.nan
+    data[1, 2, 4] = np.inf
+    data[3, 5, 6] = -np.inf
+    return data
+
+
+@pytest.mark.parametrize("method", ["midrange", "mean", "median"])
+def test_both_rungs_agree_on_clims_with_infinities(method):
+    """The rung boundary is an EQUALITY — and infinities are where it broke.
+
+    `_source_and_clim` picks between the in-core helpers and the streaming ones
+    by asking how much memory the machine has, so a value that differs between
+    them is a value that depends on the machine. `_colorbar_range` used to
+    select with `~np.isnan` (keeping `±inf`) while the streaming reductions
+    filter on `np.isfinite`, and `np.nanmean` is not `volumeio.stream_mean`;
+    both are fixed in the in-core helpers, and this is what holds them fixed.
+
+    Deliberately at the helper level rather than through `run()`: `run()` cannot
+    be made to take both rungs on the same input without also changing the
+    machine, and the equality is a property of the helpers.
+    """
+    data = _infinity_volume()
+    assert np.isinf(data).any() and np.isnan(data).any(), "fixture lost its non-finite values"
+
+    def blocks():
+        return ((slice(z, z + 1), data[z : z + 1]) for z in range(data.shape[0]))
+
+    # The convention every non-CoM mosaicity field takes — the one that diverged.
+    assert V._colorbar_range_streamed(blocks) == V._colorbar_range(data)
+    # And strain's.
+    assert V._symmetric_range_streamed(blocks) == V._symmetric_range(data)
+    # And the CoM centring, values as well as limits.
+    ref_data, ref_lo, ref_hi = V._center_com_and_range(data, method, 99.5)
+    got_blocks, lo, hi = V._center_com_and_range_streamed(blocks, method, 99.5)
+    assert (lo, hi) == (ref_lo, ref_hi)
+    np.testing.assert_array_equal(
+        V._LayerSource(got_blocks, data.shape, data.dtype).whole(), ref_data
+    )
+
+
+def test_streamed_run_stays_within_its_working_set_budget(tmp_path):
+    """The run's real allocation peak stays under the budget it was handed.
+
+    This is what pins `REDUCTION_WORKING_SET_MULTIPLE`. That constant is a
+    *divisor*, so getting it too small silently permits more than was counted —
+    the under-predicting direction, and the one that ends in an OOM rather than
+    in a slow run. Nothing but a measurement can catch it: every other test here
+    passes at any value of it.
+
+    `tracemalloc` rather than RSS on purpose. `budget_bytes` is priced in Python
+    allocations (see `advice.working_set_budget_bytes`); comparing it against
+    RSS would be the currency error this phase exists to avoid.
+
+    The precondition is asserted, not assumed: at a budget this size the stream
+    must actually block, or the in-core rung would run and the peak below would
+    be measuring nothing.
+    """
+    import tracemalloc
+
+    proc, raw = _setup(tmp_path, layers=32, ny=192, nx=192)
+    seen = []
+    real = V.A.align_volume_streamed
+
+    def spy(*a, **kw):
+        streamed = real(*a, **kw)
+        seen.append((streamed.block_layers, streamed.shape[0]))
+        return streamed
+
+    for budget in (128 << 20, 256 << 20):
+        params = {
+            **_stream_params(proc, raw, tmp_path / f"viz{budget}"),
+            "strain_volume_file": "",
+            "save_layers": False,
+            "save_animation": False,
+            "_budget_bytes": budget,
+        }
+        seen.clear()
+        V.A.align_volume_streamed = spy
+        tracemalloc.start()
+        try:
+            V.run(params)
+            _current, peak = tracemalloc.get_traced_memory()
+        finally:
+            tracemalloc.stop()
+            V.A.align_volume_streamed = real
+        assert seen and all(layers < nz for layers, nz in seen), (
+            f"budget {budget >> 20} MiB left the alignment in one block ({seen}) — the "
+            "in-core rung ran and this measured nothing"
+        )
+        assert peak <= budget, (
+            f"traced peak {peak / (1 << 20):.1f} MiB exceeded the "
+            f"{budget >> 20} MiB budget it was handed"
+        )
 
 
 def test_visualize_peak_stays_under_budget(tmp_path):

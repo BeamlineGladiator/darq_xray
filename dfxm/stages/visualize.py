@@ -466,8 +466,15 @@ def _center_com_and_range(data, method, range_pct):
         center, (vmin, vmax) = _midrange_clim(data, range_pct)
         return data - center, vmin, vmax
     valid = data[np.isfinite(data)]
+    # `volumeio.stream_mean`, not `np.nanmean`, and over the whole array as a
+    # single block. The two are not bit-equal — a compensated sum against a
+    # pairwise one, differing in ~70% of random samples — and this helper and
+    # `_center_com_and_range_streamed` must agree EXACTLY (see the rung-boundary
+    # note below `_colorbar_range`). Cost is nil: `valid` is the same full-size
+    # finite selection `np.nanmean` was handed, so nothing new is allocated.
+    # NaN on an empty selection, exactly as `np.nanmean` of one is.
     sub = (
-        float(np.nanmean(valid))
+        float(volumeio.stream_mean([valid]))
         if method == "mean"
         else float(np.nanmedian(valid))
         if valid.size
@@ -479,7 +486,13 @@ def _center_com_and_range(data, method, range_pct):
 
 
 def _colorbar_range(data):
-    valid = data[~np.isnan(data)]
+    # `isfinite`, not `~isnan`. This used to keep +/-inf, which no other helper
+    # here does and which `_colorbar_range_streamed` cannot reproduce — see the
+    # rung-boundary note below. Keeping them was also not a behaviour worth
+    # preserving: `np.percentile` over a set containing `inf` returns `inf` for
+    # the upper limit, i.e. a colour scale on which every finite voxel renders
+    # as one colour.
+    valid = data[np.isfinite(data)]
     if valid.size == 0:
         return (0.0, 1.0)
     return (float(np.percentile(valid, 1)), float(np.percentile(valid, 99)))
@@ -494,20 +507,35 @@ def _colorbar_range(data):
 # in-core forms stay: `figures()` and the replot paths hold a whole volume by
 # design and have no stream to walk.
 #
-# `volumeio.stream_quantile` returns bit-for-bit what `np.percentile` returns,
-# so every percentile below is the same number the in-core helper computed, not
-# an approximation. Two divergences are real and deliberate:
+# -- THE RUNG BOUNDARY IS AN EQUALITY, AND ANY DIVERGENCE ACROSS IT IS A DEFECT -
 #
-# * `_colorbar_range` selects with ``~np.isnan`` and therefore keeps ``±inf``,
-#   where the streaming reductions filter on ``np.isfinite``. On data holding an
-#   infinity the two differ — and `np.percentile` over a set containing ``inf``
-#   returns ``inf`` for the upper limit, i.e. an unusable colour scale, so the
-#   streaming answer is the better one. Aligned DFXM volumes carry NaN padding,
-#   not infinities; the other three helpers already used ``isfinite``.
-# * `volumeio.stream_mean` is a compensated (Neumaier) sum where `np.nanmean`
-#   reduces pairwise, so ``center_method="mean"`` can move the subtracted offset
-#   by an ulp. The default `midrange` and the `median` are percentile-based and
-#   move by nothing.
+# `_source_and_clim` picks between these helpers and their in-core originals by
+# asking how much memory the machine has. So a value that differs between the
+# two is a value that depends on the machine — the laptop-versus-workstation
+# divergence this whole phase exists to remove, reintroduced at the one seam the
+# phase itself created. It is not a tolerable approximation, not even at an ulp,
+# and not even on input the fixtures do not contain.
+#
+# The equality is held by three facts, each of which a future edit can break:
+#
+# 1. `volumeio.stream_quantile` returns bit-for-bit what `np.percentile`
+#    returns (its own contract, pinned in `tests/test_common_volumeio.py`;
+#    re-checked here over 240 random cases). Every percentile on both sides is
+#    therefore the same number, and `np.nanmedian` and the vector form
+#    `np.percentile(v, [a, b])` were checked to agree with the scalar form too.
+# 2. The finite selection is `np.isfinite` on BOTH sides. `_colorbar_range` used
+#    to select with `~np.isnan`, keeping `±inf` where these reductions drop it;
+#    that was the divergence, and it is fixed in the in-core helper rather than
+#    papered over here.
+# 3. The mean is `volumeio.stream_mean` on BOTH sides. It is a compensated
+#    (Neumaier) sum and `np.nanmean` reduces pairwise; they disagreed in 42 of
+#    60 random samples, so `_center_com_and_range` calls the streaming reduction
+#    over a single block rather than `np.nanmean`.
+#
+# Pinned by `test_both_rungs_agree_on_clims_with_infinities`, which puts `±inf`
+# and NaN in the volume and requires the two rungs to return identical limits
+# and identical centred data. Adding a colour convention means extending that
+# test, not just the pair of helpers.
 def _arrays(blocks):
     """A factory over the bare arrays of a ``(slice, array)`` block factory."""
     return lambda: (block for _sl, block in blocks())
@@ -571,8 +599,8 @@ def _center_com_and_range_streamed(blocks, method, range_pct):
         return _shifted(blocks, center), vmin, vmax
     arrays = _arrays(blocks)
     if method == "mean":
-        # NaN on an all-non-finite volume, exactly as `np.nanmean` of an empty
-        # selection is — the in-core helper does not guard it either, and the
+        # NaN on an all-non-finite volume, exactly as the in-core helper's own
+        # `stream_mean` of an empty selection is — neither guards it, and the
         # resulting all-NaN volume then takes `_symmetric_range`'s empty branch.
         sub = volumeio.stream_mean(arrays())
     else:
@@ -801,10 +829,21 @@ def _whole_volume_stream(data):
 # centring pass adds the shifted copy on top. So the alignment gets a *share* of
 # the budget and the reductions get the rest.
 #
+# The count is 41/8 + 1 = 6.125, and this is **rounded UP, to 7**. Rounding is
+# not cosmetic here: the constant is a divisor, so a smaller one makes
+# `budget // multiple` LARGER and permits more than was counted. 6 would have
+# been the under-predicting direction — on a machine whose budget equals its
+# headroom the reductions overrun by about 2% — which is the direction that
+# ends in an OOM rather than in a slower run.
+#
 # This divides by the cost of THIS call site's consumers, exactly as
 # `paraview._process_mosaicity` divides by the number of concurrent field
-# streams. It is not a correction to what `budget_bytes` means.
-REDUCTION_WORKING_SET_MULTIPLE = 6
+# streams. It is not a correction to what `budget_bytes` means. Pinned by
+# `test_streamed_run_stays_within_its_working_set_budget`, which measures the
+# run's real `tracemalloc` peak against the budget it was handed — an unpinned
+# constant in the permissive direction is the defect that cost Task 9 a fix
+# round.
+REDUCTION_WORKING_SET_MULTIPLE = 7
 
 
 def _align_streamed(dset, samy, samz, *, scale_x, samy_direction, roi_x, roi_y, budget_bytes):
@@ -892,6 +931,15 @@ class _LayerSource:
         if self._array is not None:
             return self._array[z]
         z = int(z)
+        if z < 0:
+            # A forward-only stream has no end to count back from, and left
+            # alone this surfaced as `TypeError: 'NoneType' object is not
+            # subscriptable` out of the rewind's empty state — which names
+            # neither the cause nor the caller. Raise what indexing raises.
+            raise IndexError(
+                f"layer {z}: a streamed volume cannot be indexed from the end "
+                f"(it has {self.shape[0]} layers, readable in ascending order)"
+            )
         if self._iter is None or z < self._start:
             self._rewind()
         while z >= self._stop:
@@ -945,12 +993,16 @@ def _source_and_clim(streamed, *, kind, center_method="", range_pct=99.5):
     **The project's own escalation ladder, one rung of it.** When the budget
     leaves the alignment a single block, the whole aligned volume exists anyway
     and there is nothing to gain by walking it as a stream: the in-core helpers
-    run, which is both what the stage always did (byte for byte, ``np.nanmean``
-    bits and ``_colorbar_range``'s ``~isnan`` selection included) and one
-    traversal instead of the eight a pair of exact streaming percentiles costs.
-    Only when the volume does *not* fit does the streaming path take over, where
-    re-reading is the price of running at all. ``advice.plan_run`` makes the same
-    in-core-then-chunked choice for the same reason.
+    run — one traversal, instead of the eight a pair of exact streaming
+    percentiles costs. Only when the volume does *not* fit does the streaming
+    path take over, where re-reading is the price of running at all.
+    ``advice.plan_run`` makes the same in-core-then-chunked choice for the same
+    reason.
+
+    **Which rung runs depends on the machine, so the two must return identical
+    values** — see the rung-boundary note above the streaming siblings. That is
+    an invariant, not an aspiration: a divergence here is the
+    laptop-versus-workstation difference this phase exists to remove.
     """
 
     def make_source(blocks):
