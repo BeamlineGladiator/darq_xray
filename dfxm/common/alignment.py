@@ -371,15 +371,19 @@ class _WorkingSet:
         adds ``np.abs(raw)`` on top, and ``raw`` stays bound in the generator
         frame for the whole iteration, so with both the span is held twice.
 
-    ``canvas_layer`` (per INPUT layer) x ``canvas_copies``
+    ``canvas_layer`` (per INPUT layer) x **3**
         The X-padded samy canvas (``shifted`` in
-        :func:`apply_samy_shifts_to_volume`), and then ``interp1d(copy=True)``
-        takes its own full copy of it — two. A **third** appears when the
-        block's samz is not already ascending: ``interp1d.__init__`` then sorts,
-        and ``np.take(self.y, ind, axis=0)`` builds a permuted copy while the
-        first is still alive. Charged for a decreasing samz too, which takes the
-        same branch. Uncounted, a shuffled samz measured 1.20x its budget and
-        1.13x this model; counted, 0.95x.
+        :func:`apply_samy_shifts_to_volume`), then ``interp1d(copy=True)``'s own
+        copy of it, then the permuted copy ``np.take(y, ind, axis=axis)`` builds
+        while that copy is still alive. Three, **always**: scipy 1.11.4's
+        ``interp1d.__init__`` runs ``ind = argsort(x); y = np.take(y, ind, axis)``
+        unconditionally — :func:`interpolate_to_uniform_z` never passes
+        ``assume_sorted``, so an ascending samz takes the sort branch exactly
+        like a shuffled one. This was briefly conditioned on the samz being
+        unsorted, which contradicted the code it cited and survived only because
+        the per-output-layer terms usually dominate the per-input-layer ones; on
+        an ascending samz with bimodal Z spacing they do not, and the model then
+        under-priced the peak.
 
     ``interp_layer`` (per OUTPUT layer)
         ``scipy``'s ``_call_linear`` holds five block-sized arrays at its peak:
@@ -407,19 +411,34 @@ class _WorkingSet:
         temporary the centred stream yields through.
 
     ``fixed``
-        Blocking-independent: the per-layer ``padded`` array and
-        :func:`scipy.ndimage.shift`'s output inside the samy loop.
+        Blocking-independent, and paid on **every** candidate blocking: the
+        per-layer ``padded`` array and :func:`scipy.ndimage.shift`'s output
+        inside the samy loop, plus — when centring —
+        :func:`volumeio.centring_scaffold_bytes`'s "during pass" figure (the
+        Neumaier lanes for the mean; the histogram edges, counts and the
+        accumulating survivors for the median).
 
-    Deliberately outside the model: about a megabyte of constant scaffolding
-    when centring (``stream_quantile``'s 65537 histogram edges and counts, the
-    Neumaier lane state), and the survivors of one histogram bin, which
-    ``volumeio`` caps rather than scales. All constant, so no blocking can pay
-    them off and solving against them would only drive every block to the
-    one-layer floor; a budget in the megabytes swallows them, a budget under
-    them is already at the floor. Also outside: whatever the *consumer*
-    accumulates — a caller that writes every block into one in-core array
-    (:func:`align_volume`) is allocating the whole output by choice, and that is
-    its own budget to keep.
+    ``floor``
+        A peak **no blocking can reduce**, taken as a maximum against everything
+        above rather than added to it: the quantile's survivors held three times
+        over while they are concatenated and sorted, which happens after the
+        traversal, when the chain's own temporaries are gone. A budget below
+        this cannot be met at any block size, which is what makes it a floor and
+        not a term.
+
+    These two were once dismissed in this docstring as "about a megabyte… a
+    budget in the megabytes swallows them". That was wrong, and measured wrong:
+    a 40x64x80 median at a 1.66 MB budget peaked at **1.90x** it, and at 0.61 MB
+    at **3.63x**, because the histogram scaffolding alone is 1.6 MB. Constants
+    that no blocking can pay off still have to be *in* the budget or the budget
+    is not one.
+
+    Still outside the model: whatever the *consumer* accumulates — a caller that
+    writes every block into one in-core array (:func:`align_volume`) is
+    allocating the whole output by choice, and that is its own budget to keep.
+    Also outside: memory that never passes through the Python allocator, since
+    every figure here is a ``tracemalloc`` one — h5py's chunk cache, a memmap's
+    resident pages and allocator fragmentation are RSS this does not see.
     """
 
     read_layer: int
@@ -429,13 +448,15 @@ class _WorkingSet:
     carry_layer: int
     stat_layer: int
     fixed: int
+    floor: int
 
     def bytes_for(self, n_in: int, n_out: int) -> int:
         """Peak bytes for a block of *n_out* output layers off *n_in* input layers."""
-        return (
+        return max(
             n_in * (self.read_layer + self.canvas_copies * self.canvas_layer)
             + n_out * (self.interp_layer + self.carry_layer + self.stat_layer)
-            + self.fixed
+            + self.fixed,
+            self.floor,
         )
 
 
@@ -531,6 +552,7 @@ def _solve_out_step(
     z_uniform: np.ndarray,
     cost: _WorkingSet,
     budget_bytes: int | None,
+    sorted_z: tuple[np.ndarray, np.ndarray] | None,
 ) -> tuple[int, int]:
     """Largest block (in output layers) whose modelled working set fits the budget.
 
@@ -550,7 +572,6 @@ def _solve_out_step(
     alternative is a stage that cannot run at all on a machine that is merely
     tight.
     """
-    sorted_z = _sorted_z(z_um)
 
     def ws(step: int) -> int:
         return cost.bytes_for(_max_input_span(z_um, z_uniform, step, sorted_z), step)
@@ -665,21 +686,35 @@ def align_volume_streamed(
     # An unknown method is priced at the worst case rather than rejected here:
     # `_center_offset` is the single place that validates it, and it raises.
     retained = {None: 0, "mean": 1}.get(center_method.lower() if center_method else None, 3)
+    # The reductions' own blocking-independent cost, priced by the module that
+    # allocates it. `median` is the fallback for an unvalidated method, matching
+    # `retained` above — it is the more expensive of the two, and
+    # `_center_offset` still raises on anything that is neither.
+    scaffold, floor = (
+        volumeio.centring_scaffold_bytes("mean" if retained == 1 else "median", nz * ny * nx)
+        if center_method
+        else (0, 0)
+    )
     cost = _WorkingSet(
         read_layer=per_in_layer * (int(reads_into_ram) + int(bool(take_abs))),
         canvas_layer=ny * nx * in_item,
-        canvas_copies=2 if bool(np.all(np.diff(z_um) >= 0)) else 3,
+        canvas_copies=3,
         interp_layer=ny * nx * (2 * in_item + 3 * dtype.itemsize),
         carry_layer=per_out_layer,
         stat_layer=ny * nx * (8 * retained + 1) if retained else 0,
-        fixed=2 * ny * nx * in_item,
+        fixed=2 * ny * nx * in_item + scaffold,
+        floor=floor,
     )
-    out_step, working_set = _solve_out_step(nz, z_um, z_uniform, cost, budget_bytes)
+    # One mergesort for the whole call: the solver asks for the span of every
+    # candidate blocking, and `_blocks` asks again for every block it yields.
+    sorted_z = _sorted_z(z_um)
+    out_step, working_set = _solve_out_step(nz, z_um, z_uniform, cost, budget_bytes, sorted_z)
     if budget_bytes is not None and working_set > budget_bytes:
         warnings.warn(
-            f"align_volume_streamed: one output layer needs about "
-            f"{working_set} B, over the {int(budget_bytes)} B budget; running "
-            "anyway at one layer per block",
+            f"align_volume_streamed: the smallest working set this run can have "
+            f"is about {working_set} B, over the {int(budget_bytes)} B budget "
+            "(one output layer plus the blocking-independent scaffolding); "
+            "running anyway at one layer per block",
             stacklevel=2,
         )
 
@@ -687,7 +722,7 @@ def align_volume_streamed(
         for start in range(0, nz, out_step):
             stop = min(start + out_step, nz)
             z_target = z_uniform[start:stop]
-            in_lo, in_hi = _input_span(z_um, z_target)
+            in_lo, in_hi = _input_span(z_um, z_target, sorted_z=sorted_z)
             raw = dset[in_lo:in_hi]
             v = np.abs(raw) if take_abs else raw
             v = apply_roi_3d(v, roi_x, roi_y)

@@ -19,6 +19,7 @@ import pytest
 
 from dfxm.common import alignment as A
 from dfxm.common import raster as R
+from dfxm.common import volumeio
 
 
 def _legacy_export():
@@ -139,7 +140,7 @@ def _drain(streamed):
 
 
 @pytest.mark.parametrize("center_method", [None, "mean", "median"])
-@pytest.mark.parametrize("divisor", [1, 2, 4, 10_000])
+@pytest.mark.parametrize("divisor", [1, 2, 6, 10_000])
 def test_streamed_alignment_matches_in_core(center_method, divisor):
     vol, samy, samz = _streamed_synthetic()
     kwargs = dict(
@@ -151,17 +152,24 @@ def test_streamed_alignment_matches_in_core(center_method, divisor):
         center_method=center_method,
     )
     reference = A.align_volume(vol, samy, samz, **kwargs)
-    # Budgets are fractions of the WORKING SET of a single-block run — which is
-    # what `budget_bytes` now bounds. Fractions of the input volume put every
-    # divisor at the one-layer floor (the aligned canvas here is ~13x the
-    # input); fractions of the *output* volume, which this test used before the
-    # working-set model, are no longer the same currency as the budget, and
-    # collapsed divisors 3 and 8 onto the same 27-block floor. Only the model's
-    # own units make the four cases four different blockings.
+    # The divisor has to scale the part of the working set that BLOCKING can
+    # change, so the budget is the centring pass's blocking-independent
+    # scaffolding plus a fraction of the rest. Fractions of the whole thing put
+    # the three centring modes on three different blockings for the same divisor
+    # (the median's histogram alone is 2.1 MB against this fixture's 0.85 MB of
+    # data), which would make the expected counts below mode-dependent for a
+    # reason that has nothing to do with what the test measures. Earlier
+    # versions used fractions of the input volume (every divisor floored) and
+    # then of the output volume (divisors 3 and 8 collapsed together) — neither
+    # is the same currency as the budget.
     whole = A.align_volume_streamed(vol, samy, samz, budget_bytes=None, **kwargs)
-    streamed = A.align_volume_streamed(
-        vol, samy, samz, budget_bytes=max(1, whole.working_set_bytes // divisor), **kwargs
+    scaffold = (
+        volumeio.centring_scaffold_bytes(center_method, int(np.prod(whole.shape)))[0]
+        if center_method
+        else 0
     )
+    budget = scaffold + max(1, (whole.working_set_bytes - scaffold) // divisor)
+    streamed = A.align_volume_streamed(vol, samy, samz, budget_bytes=budget, **kwargs)
     assert streamed.shape == reference.data.shape
     assert streamed.pad_left == reference.pad_left
     assert np.array_equal(streamed.z_uniform_um, reference.z_uniform_um)
@@ -171,9 +179,10 @@ def test_streamed_alignment_matches_in_core(center_method, divisor):
     # The measurement must be live: each budget has to produce the blocking it
     # is meant to, or this case is silently comparing one whole-volume pass
     # against another. The four counts are pairwise distinct by construction —
-    # 1, 3, 6 and the 27-layer floor — so no two parametrisations can quietly
-    # become the same test.
-    expected_blocks = {1: 1, 2: 3, 4: 6, 10_000: reference.data.shape[0]}[divisor]
+    # 1, 3, 14 and the 27-layer floor — so no two parametrisations can quietly
+    # become the same test, and they are the same for all three centring modes,
+    # so a mode cannot quietly stop streaming either.
+    expected_blocks = {1: 1, 2: 3, 6: 14, 10_000: reference.data.shape[0]}[divisor]
     assert n_blocks == expected_blocks, f"budget/{divisor} gave {n_blocks} blocks"
     # The advertised block size must be the one the stream actually used.
     assert n_blocks == -(-reference.data.shape[0] // streamed.block_layers)
@@ -371,6 +380,31 @@ def _peak_bytes(fn):
         tracemalloc.stop()
 
 
+def test_working_set_model_is_pinned_to_the_scipy_it_was_derived_from():
+    """An `interp1d` upgrade must fail loudly, not under-price the budget quietly.
+
+    `_WorkingSet.canvas_layer` and `.interp_layer` are counted from scipy's
+    source: `interp1d.__init__` making a copy of `y` and then a permuted second
+    one via `np.take`, and `_call_linear` holding five block-sized arrays. The
+    fragility is asymmetric. If scipy *removes* `interp1d` (it is legacy
+    upstream) the import fails loudly; if it allocates *fewer* temporaries the
+    model merely leaves budget unspent. But one **extra** temporary silently
+    under-prices every block, and the measurement tests carry ~20% headroom, so
+    a small regression would slip through them. Hence a version assertion: an
+    upgrade is a failing test and a re-derivation, not a quiet overrun.
+    """
+    import scipy
+
+    assert scipy.__version__ == "1.11.4", (
+        f"the working-set model was derived from scipy 1.11.4, found "
+        f"{scipy.__version__}. Re-read `interp1d.__init__` (does it still copy "
+        "`y` and then `np.take` a permuted second copy, unconditionally?) and "
+        "`_call_linear` (still five block-sized arrays at its peak?), then "
+        "re-measure `test_streamed_peak_stays_within_the_budget` before "
+        "bumping this."
+    )
+
+
 def _budget_fixture(samz_kind="ascending", nz=40):
     """A volume big enough that allocation noise is negligible against its blocks."""
     rng = np.random.default_rng(5)
@@ -501,34 +535,35 @@ def test_median_cache_does_not_hold_a_second_aligned_volume():
     vol = rng.normal(size=(40, 200, 260)).astype(np.float32)
     samy = np.cumsum(rng.normal(scale=0.0005, size=40))
     samz = np.sort(rng.normal(scale=0.01, size=40))
-    probe = A.align_volume_streamed(vol, samy, samz, scale_x=0.15, budget_bytes=None)
-    aligned = int(np.prod(probe.shape)) * probe.dtype.itemsize
 
-    def peak(center_method, budget):
-        return _peak_bytes(
-            lambda: A.align_volume_streamed(
-                vol,
-                samy,
-                samz,
-                scale_x=0.15,
-                center_method=center_method,
-                budget_bytes=budget,
-            )
+    def streamed(center_method, budget):
+        return A.align_volume_streamed(
+            vol, samy, samz, scale_x=0.15, center_method=center_method, budget_bytes=budget
         )
 
-    # The budget is the working set of a single-block run — the smallest budget
-    # that still makes `fits` true, now that `fits` asks about the whole working
-    # set and not just the block's own bytes. One aligned volume (what this test
-    # passed before the working-set model) no longer buys a single block, and
-    # the branch under test would never run.
-    budget = probe.working_set_bytes
-    assert probe.block_layers == probe.shape[0]
-    assert (
-        A.align_volume_streamed(vol, samy, samz, scale_x=0.15, budget_bytes=budget).block_layers
-        == probe.shape[0]
-    ), "the budget must leave exactly one block"
-    mean_peak = peak("mean", budget)
-    median_peak = peak("median", budget)
+    def peak(center_method, budget):
+        return _peak_bytes(lambda: streamed(center_method, budget))
+
+    # Each budget is the working set of a single-block run **of that same
+    # centring mode**. Probing without `center_method` under-prices the median's
+    # own pass (its statistic holds three block-sized arrays the uncentred path
+    # never allocates), so the median call gets 43 of 70 layers, `fits` is
+    # False, and the adopt branch never executes — the test then passes whether
+    # the branch adopts or copies. It went vacuous exactly that way once, when
+    # the block-sizing change moved `fits` underneath it; hence the assertion
+    # below is made of the *median* call, not of a proxy.
+    mean_budget = streamed("mean", None).working_set_bytes
+    median_budget = streamed("median", None).working_set_bytes
+    base = streamed(None, None)
+    nz = base.shape[0]
+    aligned = int(np.prod(base.shape)) * base.dtype.itemsize
+    assert streamed("median", median_budget).block_layers == nz, (
+        "the median call must be a single block, or the adopt branch under test "
+        "never runs and this test measures nothing"
+    )
+    assert streamed("mean", mean_budget).block_layers == nz
+    mean_peak = peak("mean", mean_budget)
+    median_peak = peak("median", median_budget)
 
     # Liveness. If a future numpy stops routing its buffers through a traced
     # domain, both figures collapse to a few kB of Python objects and every

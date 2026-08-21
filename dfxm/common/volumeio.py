@@ -521,6 +521,49 @@ _QUANTILE_BINS = 1 << 16
 _QUANTILE_EXACT_CAP = 1 << 20
 
 
+def centring_scaffold_bytes(method: str, n_values: int) -> tuple[int, int]:
+    """What :func:`stream_mean` / :func:`stream_quantile` cost *besides* the block.
+
+    Returns ``(during_pass, after_pass)`` in bytes — the blocking-independent
+    allocations these reductions hold while traversing, and the larger peak the
+    quantile reaches once the traversal is over. Both are constants in the size
+    of the data (the second saturates), so **no block size pays them off**: a
+    caller sizing blocks against a memory budget has to add the first to every
+    candidate and take the second as a floor no budget below it can meet. That
+    is exactly what :func:`dfxm.common.alignment.align_volume_streamed` does,
+    and it is why this lives here, next to the code it prices, rather than as a
+    number copied into the caller.
+
+    *n_values* is an upper bound on how many values one pass will see (for a
+    volume, its voxel count); it caps the survivor term for data too small to
+    reach ``_QUANTILE_EXACT_CAP``.
+
+    ``mean``: `NeumaierState` is ``2 * NEUMAIER_LANES`` float64 and is copied
+    rather than mutated, and a fold allocates about six further lane-sized
+    arrays — sixteen lane-widths covers it with room to spare (measured 0.40 MB
+    against the 0.52 MB charged).
+
+    ``median``: the histogram's ``_QUANTILE_BINS + 1`` edges, the weights and
+    temporaries :func:`_bin_edges` builds them from, the counts and their
+    cumulative sum — four bin-widths (measured 1.58 MB against 2.10 MB
+    charged). Plus the survivors of one bin: at most ``_QUANTILE_EXACT_CAP``
+    float64, which the loop accumulates once and then holds **three** times over
+    (the list, the concatenation, the sort) after the traversal ends — hence the
+    two figures. The bound is a genuine worst case, reached only when one bin of
+    65536 holds a million values; ordinary data collects a handful. Sizing
+    against the worst case is the deliberate choice: a budget the data can
+    exceed is not a budget.
+    """
+    m = method.lower()
+    if m == "mean":
+        return 16 * 8 * NEUMAIER_LANES, 0
+    if m == "median":
+        histogram = 4 * 8 * (_QUANTILE_BINS + 1)
+        survivors = 8 * min(_QUANTILE_EXACT_CAP, max(0, int(n_values)))
+        return histogram + survivors, 3 * survivors
+    raise ValueError(f"centring_scaffold_bytes: unknown method {method!r} (expected mean/median)")
+
+
 def _finite64(block) -> np.ndarray:
     """The finite values of *block*, as float64.
 
