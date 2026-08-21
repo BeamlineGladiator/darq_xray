@@ -265,6 +265,34 @@ def test_neumaier_sum_treats_infinity_exactly_as_the_per_element_loop_did():
     assert np.isnan(got) and np.isnan(_scalar_neumaier(values))
 
 
+def test_neumaier_sum_does_not_raise_on_an_overflowing_partial_sum():
+    """`invalid` is not the only IEEE condition this recurrence reaches.
+
+    A partial sum leaving float64 range overflows in `t + v`. Python's float
+    arithmetic goes to inf silently, numpy reports it, and under `-W error` that
+    report becomes an exception where the per-element loop returned a number —
+    a behaviour regression that a suppression covering only `invalid` misses.
+
+    The VALUE also diverges here, and deliberately so: the scalar order cancels
+    each `1e308, -1e308` pair as it meets it and returns 10000.0, while the lane
+    order gives one lane 1e308 five thousand times over (the period divides
+    NEUMAIER_LANES) and reaches inf, then NaN. That is a function of the data,
+    not of the budget, so the module's guarantee is untouched — asserted below
+    at four blockings, since a budget-dependent NaN would be a real defect where
+    a data-dependent one is a documented limit no DFXM quantity comes near.
+    """
+    values = np.array([1e308, 1.0, -1e308, 1.0] * 5000)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        got = volumeio.neumaier_sum(values).value
+    assert np.isnan(got)
+    assert _scalar_neumaier(values) == 10000.0, "the scalar order cancels pairwise and survives"
+    chunked = {
+        _chunked_state(values, chunk).value.hex() for chunk in (1, 4095, 4096, 4097, values.size)
+    }
+    assert chunked == {got.hex()}, "the divergence must be data-dependent, not budget-dependent"
+
+
 @pytest.mark.parametrize("divisor", [1, 2, 3, 7, 13, 1000])
 def test_block_nansum_is_bit_identical_across_budgets(wide_volume, divisor):
     """The core guarantee: the memory budget must not change the answer."""
@@ -273,6 +301,22 @@ def test_block_nansum_is_bit_identical_across_budgets(wide_volume, divisor):
         reference = volumeio.block_nansum(f["vol"], budget_bytes=data.nbytes * 10)
         result = volumeio.block_nansum(f["vol"], budget_bytes=max(1, data.nbytes // divisor))
     assert result == reference  # exact equality, not approx
+
+
+def test_block_nansum_of_a_dataset_with_no_blocks_is_zero(tmp_path):
+    """A zero-length axis yields no blocks, so the accumulator is never folded.
+
+    Not exotic: it is what a fully-masked selection or a mis-specified ROI
+    produces. The sum of nothing is 0.0, as it was when the accumulator was a
+    `(0.0, 0.0)` pair — and it must not be an `AttributeError` from reaching
+    through a `None` accumulator, which is what an `init=None` would give.
+    """
+    path = tmp_path / "empty.h5"
+    with h5py.File(path, "w") as f:
+        f.create_dataset("vol", data=np.zeros((0, 4, 4)))
+    with h5py.File(path, "r") as f:
+        assert list(volumeio.iter_blocks(f["vol"], budget_bytes=1024)) == [], "no blocks to fold"
+        assert volumeio.block_nansum(f["vol"], budget_bytes=1024) == 0.0
 
 
 def test_block_nansum_ignores_nan(tmp_path):

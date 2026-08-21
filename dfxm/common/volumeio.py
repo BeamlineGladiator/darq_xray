@@ -378,16 +378,22 @@ def neumaier_sum(values, *, state: NeumaierState | None = None) -> NeumaierState
     and would regroup the data the moment a block boundary stopped landing on a
     lane boundary.
 
-    Accuracy is the same class as the per-element order it replaced: both are
-    the correctly-rounded sum on the fuzz this project tests with, and both may
-    differ from ``np.nansum``'s pairwise order by a few ulps. Switching to lanes
-    can therefore move an existing result by an ulp or so — never by more, and
-    never with the budget.
+    Accuracy is the same class as the per-element order it replaced, and on
+    realistic data the same *bits*: over hundreds of random samples and every
+    DFXM-shaped volume tried, the lane order and the per-element order agree
+    exactly, and both may differ from ``np.nansum``'s pairwise order by a few
+    ulps. They are not identical in general — constructed catastrophic
+    cancellation (`a`, `-a`, small, at `a ~ 1e16`) separates them, and there
+    neither one is the correctly-rounded sum, because Neumaier's single
+    compensation term is not exact in that regime. What holds unconditionally is
+    that the answer never moves with the budget.
 
-    Memory cost is the lane state: ``2 * NEUMAIER_LANES`` float64, i.e. 64 kB,
-    constant in the size of the data and copied once per call. Stated because
-    an unstated allocation in the memory-budget module is how budgets stop
-    being trusted; against a block of even one volume layer it is noise.
+    Memory cost, all of it constant in the size of the data: the lane state is
+    ``2 * NEUMAIER_LANES`` float64 (64 kB), copied once per call, and a fold
+    allocates about six further arrays of at most ``NEUMAIER_LANES`` float64
+    (~200 kB, transient). Roughly a quarter of a megabyte in total. Stated
+    because an unstated allocation in the memory-budget module is how budgets
+    stop being trusted; against a block of even one volume layer it is noise.
     """
     flat = np.asarray(values, dtype=np.float64).ravel()
     result = NeumaierState() if state is None else state.copy()
@@ -396,14 +402,29 @@ def neumaier_sum(values, *, state: NeumaierState | None = None) -> NeumaierState
     total, comp = result._total, result._comp
     lane = result._count % NEUMAIER_LANES
     taken = 0
-    # The only invalid operation reachable in `_fold_lanes` is `inf - inf`, on
-    # an infinite input — which poisons the compensation to NaN in the scalar
-    # recurrence too. Silencing it keeps this a pure speed change: the answer is
-    # the same NaN the per-element loop gave, and the loop gave it without a
-    # warning, so a caller running under `-W error` does not start seeing an
-    # exception where it used to see a number. Every caller in this module
-    # filters non-finite values out first, so the branch is unreachable here.
-    with np.errstate(invalid="ignore"):
+    # Python float arithmetic reports neither of the two IEEE conditions this
+    # recurrence can reach; numpy reports both, and under `-W error` a report
+    # becomes an exception where the per-element loop returned a number. Keeping
+    # this a pure speed change therefore means silencing exactly those two:
+    #
+    #   invalid — `inf - inf`, on an infinite input, which poisons the
+    #     compensation to NaN in the scalar recurrence too;
+    #   over    — `t + v` leaving float64 range, which the scalar recurrence
+    #     also does, silently, on its way to ±inf.
+    #
+    # Neither is reachable from this module's own callers, which filter
+    # non-finite values out first, and `over` needs finite values whose partial
+    # sums exceed ~1.8e308.
+    #
+    # On overflowing input the vector and scalar orders can disagree in VALUE,
+    # not merely in reporting: on `[1e308, 1, -1e308, 1] * 5000` the scalar order
+    # cancels each pair immediately and returns 10000.0, while here the period 4
+    # divides NEUMAIER_LANES, so one lane meets 1e308 over and over, overflows to
+    # inf and yields NaN. That divergence is a function of the data, not of the
+    # budget — every budget gives the same NaN — so budget-independence holds. It
+    # is documented rather than engineered away: no DFXM quantity comes near
+    # 1e308, and defending against it would cost the whole speedup.
+    with np.errstate(invalid="ignore", over="ignore"):
         if lane:  # finish the row the last call left part-way through
             taken = min(flat.size, NEUMAIER_LANES - lane)
             _fold_lanes(total, comp, flat[:taken], lane)
@@ -817,13 +838,19 @@ def block_nansum(dset, *, budget_bytes: int) -> float:
     it differs from ``np.nansum`` by up to ~1 ulp — deliberately: budget-
     independence is the property worth having; matching numpy's pairwise
     ordering is not.
+
+    A dataset with no blocks at all — a zero-length axis, which is what a
+    fully-masked or mis-selected input produces — sums to ``0.0`` rather than
+    raising. The fold never runs there, so the accumulator is still the ``init``
+    it started as.
     """
 
     def fold(acc, block):
         finite = block[np.isfinite(block)]
         return neumaier_sum(finite, state=acc)
 
-    return block_reduce(dset, fold, budget_bytes=budget_bytes, init=None).value
+    state = block_reduce(dset, fold, budget_bytes=budget_bytes, init=NeumaierState())
+    return state.value
 
 
 def two_pass(dset, stat_fn, apply_fn, *, budget_bytes: int, init):
