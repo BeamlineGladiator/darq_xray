@@ -818,3 +818,121 @@ def test_nearest_index():
     assert R.nearest_index(samy, samz, 0.0, 0.0) == 0
     with pytest.raises(ValueError):
         R.nearest_index(np.array([]), np.array([]), 0, 0)
+
+
+# -----------------------------------------------------------------------------
+# aligned_extent / roi_shape — the estimator-facing shape prediction
+# -----------------------------------------------------------------------------
+# (n_layers, ny, nx, samy, samz, scale_x, samy_direction, roi_x, roi_y)
+_EXTENT_CASES = [
+    (
+        "regular",
+        12,
+        20,
+        30,
+        np.linspace(0, 0.05, 12),
+        np.linspace(0, 0.11, 12),
+        0.15,
+        1,
+        None,
+        None,
+    ),
+    (
+        "roi",
+        12,
+        20,
+        30,
+        np.linspace(0, -0.05, 12),
+        np.linspace(0, 0.11, 12),
+        0.15,
+        1,
+        (3, 25),
+        (2, 18),
+    ),
+    (
+        "irregular_samz",
+        12,
+        20,
+        30,
+        np.linspace(0, 0.05, 12),
+        np.array([0, 0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08, 0.09, 0.30, 0.31]),
+        0.15,
+        -1,
+        (3, 25),
+        None,
+    ),
+    ("no_samy", 8, 16, 24, np.zeros(8), np.linspace(0, 0.07, 8), 0.2, 1, None, (1, 15)),
+    ("no_samz", 8, 16, 24, np.linspace(0, 0.09, 8), np.array([]), 0.2, 1, None, None),
+    ("no_motors", 8, 16, 24, np.array([]), np.array([]), 0.2, 1, (4, 20), (3, 12)),
+]
+
+
+def _run_real_chain(vol, samy, samz, scale_x, direction, roi_x, roi_y):
+    data = A.apply_roi_3d(vol, roi_x, roi_y)
+    if len(samy) > 0:
+        data = A.apply_samy_shifts_to_volume(data, samy, scale_x, direction)
+    if len(samz) > 0:
+        data, _z, _s = A.interpolate_to_uniform_z(data, samz)
+    return data
+
+
+@pytest.mark.parametrize("case", _EXTENT_CASES, ids=[c[0] for c in _EXTENT_CASES])
+def test_aligned_extent_predicts_the_real_chain_exactly(case):
+    """The prediction must equal what the chain allocates, not approximate it.
+
+    An estimator that is merely close re-introduces the under-prediction this
+    replaced: `advice.plan_run` would greenlight an in-core run that then OOMs.
+    """
+    _name, nz, ny, nx, samy, samz, scale_x, direction, roi_x, roi_y = case
+    vol = np.zeros((nz, ny, nx), dtype=np.float64)
+
+    real = _run_real_chain(vol, samy, samz, scale_x, direction, roi_x, roi_y)
+    cropped = A.roi_shape(vol.shape, roi_x, roi_y)
+    assert cropped == A.apply_roi_3d(vol, roi_x, roi_y).shape
+
+    predicted = A.aligned_extent(cropped, samy, samz, scale_x=scale_x, samy_direction=direction)
+    assert tuple(real.shape) == tuple(predicted)
+
+
+def test_the_extent_cases_actually_exercise_both_inflations():
+    """Precondition: the suite above must contain real X-padding AND real Z-growth.
+
+    Without this the parametrisation could drift to cases where nothing inflates
+    and every assertion would still pass while testing nothing — the failure mode
+    this project has hit nineteen times. Both inflations are asserted separately
+    because they are separate terms that multiply.
+    """
+    padded = grown = False
+    for _name, nz, ny, nx, samy, samz, scale_x, direction, roi_x, roi_y in _EXTENT_CASES:
+        cropped = A.roi_shape((nz, ny, nx), roi_x, roi_y)
+        n_out, _ny, nx_new = A.aligned_extent(
+            cropped, samy, samz, scale_x=scale_x, samy_direction=direction
+        )
+        if nx_new > cropped[2]:
+            padded = True
+        if n_out > cropped[0]:
+            grown = True
+    assert padded, "no case pads along X — the samy inflation is untested"
+    assert grown, "no case grows along Z — the irregular-samz inflation is untested"
+
+
+def test_aligned_extent_returns_the_unpadded_shape_without_motors():
+    """The no-motor path skips both steps, so the unpadded shape is CORRECT there."""
+    shape = (5, 7, 9)
+    assert A.aligned_extent(shape, np.array([]), np.array([]), scale_x=0.2) == shape
+
+
+def test_roi_shape_clamps_like_slicing_rather_than_going_negative():
+    assert A.roi_shape((4, 10, 20), (5, 500), (2, 4)) == (4, 2, 15)
+    assert A.roi_shape((4, 10, 20), (15, 5), None) == (4, 10, 0)
+
+
+def test_aligned_elems_for_params_never_raises_on_junk():
+    """An estimate reruns on every keystroke, so half-typed input must not throw."""
+    for junk in (
+        {},
+        {"pixel_size_x_um": "abc"},
+        {"pixel_size_x_um": 0.15, "roi_x": "10,"},
+        {"pixel_size_x_um": 0.15, "raw_root": "/definitely/not/here", "mosa_pattern": "*"},
+    ):
+        assert A.aligned_elems_for_params(junk, (4, 5, 6), pattern_key="mosa_pattern") == 0

@@ -1007,7 +1007,23 @@ def save_volumes_streamed(
 
 
 def estimate(params: dict) -> CostEstimate:
-    """Peak memory for this run, from HDF5 shapes only.
+    """Peak memory for this run, from HDF5 shapes and motor positions.
+
+    **MEASURED against the real STO2 dataset at master a424b1f** (same inputs as
+    ``visualize``):
+
+        estimate 17.07 GiB   measured peak RSS 10.49 GiB   ratio 0.61x
+
+    i.e. it **over-predicts by ~1.6x** — the safe direction, and the loosest of
+    the three alignment-chain models. That looseness is deliberate but is not
+    free: ``plan_run`` compares this figure against the machine's headroom, so
+    an over-estimate biases the stage toward streaming. Slower, never an OOM.
+    Anyone tightening it should re-measure rather than delete terms — the same
+    warning at the end of this docstring, now with a number attached.
+
+    ``scratch_bytes`` prices the ``center_method="median"`` spill: several passes
+    over the aligned volume are served from a scratch-disk cache rather than by
+    re-aligning, so a machine short of disk is told up front.
 
     ``run()`` processes the mosaicity and strain volume files **sequentially**
     via separate helper calls (``_process_mosaicity`` then ``_process_strain``)
@@ -1057,7 +1073,11 @@ def estimate(params: dict) -> CostEstimate:
     total = 0
     peak = 0
     largest: tuple[int, ...] | None = None
-    for name in ("mosa_volume_file", "strain_volume_file"):
+    largest_aligned_elems = 0
+    for name, pattern_key in (
+        ("mosa_volume_file", "mosa_pattern"),
+        ("strain_volume_file", "strain_pattern"),
+    ):
         path = str(p.get(name) or "")
         if not path:
             continue
@@ -1072,11 +1092,21 @@ def estimate(params: dict) -> CostEstimate:
                 largest_elems *= dim
             if largest is None or len(shape) > len(largest):
                 largest = shape
+            largest_aligned_elems = max(
+                largest_aligned_elems,
+                A.aligned_elems_for_params(p, shape, pattern_key=pattern_key),
+            )
         file_peak = file_total + 2 * file_elems * 8 + largest_elems * 8
         peak = max(peak, file_peak)
     if not total:
         return CostEstimate(0, 0, None, True, "no readable volume files selected yet")
-    return CostEstimate(peak, total, largest, True, None)
+    # See visualize.estimate: a blocked `center_method="median"` run caches the
+    # aligned volume to scratch disk rather than re-aligning for each pass, so
+    # `plan_run` must check that against free disk before the run starts.
+    scratch = 0
+    if str(p.get("center_method") or "").lower() == "median" and bool(p.get("center_mosa_com")):
+        scratch = largest_aligned_elems * 8
+    return CostEstimate(peak, total, largest, True, None, None, scratch)
 
 
 # -----------------------------------------------------------------------------

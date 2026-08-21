@@ -861,6 +861,11 @@ rendering, with a `valid_mask` and NaN sentinels.
 > while it computes the statistic, in a `.dfxm_scratch/` folder inside the output
 > directory. It is deleted when the run ends. If the disk is too full for it, the
 > run re-reads instead — slower, same result — and says so in a note.
+>
+> How much disk that needs is now worked out **before** the run starts and shown
+> with the rest of the cost estimate, so a machine without room is told up front
+> rather than partway through a long export. Only **median** needs it; **mean**
+> and **midrange** are a single pass and cache nothing.
 
 > [!example] ParaView workflow
 > ```bash

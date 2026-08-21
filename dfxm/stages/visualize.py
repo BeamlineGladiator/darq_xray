@@ -640,9 +640,35 @@ def _display_info(dataset_name, is_strain=False):
 
 
 def estimate(params: dict) -> CostEstimate:
-    """Peak memory for this run, from HDF5 shapes only.
+    """Peak memory for this run, from HDF5 shapes and motor positions.
 
-    **This models a stage that no longer exists**, and deliberately so. ``run()``
+    **MEASURED against the real STO2 dataset at master a424b1f** (76x1266x1832,
+    both files, ROI 0,1832 / 400,1100, **every 3-D product on** — ``save_topview``
+    and ``save_rotation`` both true, which is the shipped default and the
+    heaviest configuration):
+
+        estimate 10.51 GiB   measured peak RSS 8.83 GiB   ratio 0.84x
+
+    i.e. it **over-predicts by ~1.2x**, which is the safe direction and is what
+    the prose below argues for. Two things that number settles, because both had
+    been asserted without measurement:
+
+    * The over-prediction survives the phase-5 rewrite. The earlier worry that
+      streaming had turned this into an under-estimate was based on pre-phase
+      figures (a 16.36 GiB peak against a 9.79 GiB model); the code got cheaper
+      and the model did not, so the sign flipped back.
+    * **8.83 GiB does not fit an 8 GB machine.** The stage is bounded, not
+      small: with 3-D products on it materialises a whole aligned volume
+      (see the ``save_topview``/``save_rotation`` path), so a run on that
+      machine relies on ``plan_run`` chunking it — which this over-estimate
+      correctly triggers — rather than on the unconstrained peak being modest.
+
+    ``scratch_bytes`` prices the one thing blocking cannot make smaller: with
+    ``center_method="median"`` the aligned volume is cached to scratch disk and
+    re-read for each of the quantile's passes, so a machine short of *disk*
+    is told before the run rather than halfway through it.
+
+    ``run()``
     streams the alignment (see :func:`_align_streamed`) and materialises a whole
     volume only when a 3-D product is requested, so the arithmetic below
     over-predicts — which is the safe direction: this is what
@@ -692,7 +718,11 @@ def estimate(params: dict) -> CostEstimate:
     total = 0
     largest_elems = 0
     largest: tuple[int, ...] | None = None
-    for name in ("mosa_volume_file", "strain_volume_file"):
+    largest_aligned_elems = 0
+    for name, pattern_key in (
+        ("mosa_volume_file", "mosa_pattern"),
+        ("strain_volume_file", "strain_pattern"),
+    ):
         path = str(p.get(name) or "")
         if not path:
             continue
@@ -706,10 +736,22 @@ def estimate(params: dict) -> CostEstimate:
                 largest_elems = elems
             if largest is None or len(shape) > len(largest):
                 largest = shape
+            largest_aligned_elems = max(
+                largest_aligned_elems,
+                A.aligned_elems_for_params(p, shape, pattern_key=pattern_key),
+            )
     if not total:
         return CostEstimate(0, 0, None, True, "no readable volume files selected yet")
     peak = total + 3 * largest_elems * 8
-    return CostEstimate(peak, total, largest, True, None)
+    # `center_method="median"` is several passes over the aligned volume, so a
+    # blocked run caches it to scratch disk rather than re-aligning per pass
+    # (alignment.align_volume_streamed). That cache is the aligned volume in
+    # float64 — sized here so `advice.plan_run` can check it against free disk
+    # before the run instead of failing partway through a long one.
+    scratch = 0
+    if str(p.get("center_method") or "").lower() == "median":
+        scratch = largest_aligned_elems * 8
+    return CostEstimate(peak, total, largest, True, None, None, scratch)
 
 
 # -----------------------------------------------------------------------------

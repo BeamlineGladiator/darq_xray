@@ -22,7 +22,7 @@ import numpy as np
 from scipy.interpolate import interp1d
 from scipy.ndimage import shift as ndi_shift
 
-from dfxm.common import volumeio
+from dfxm.common import raster, volumeio
 
 
 def apply_roi_3d(data: np.ndarray, roi_x: tuple | None, roi_y: tuple | None) -> np.ndarray:
@@ -31,6 +31,26 @@ def apply_roi_3d(data: np.ndarray, roi_x: tuple | None, roi_y: tuple | None) -> 
     xs, xe = (roi_x[0], roi_x[1]) if roi_x else (0, x)
     ys, ye = (roi_y[0], roi_y[1]) if roi_y else (0, y)
     return data[:, ys:ye, xs:xe]
+
+
+def roi_shape(
+    shape: tuple[int, ...], roi_x: tuple | None, roi_y: tuple | None
+) -> tuple[int, int, int]:
+    """The shape :func:`apply_roi_3d` would produce, without touching a voxel.
+
+    Estimators need the post-crop extent — the ROI is the first step of the
+    alignment chain, so pricing the chain on the uncropped shape over-states it.
+    Clamped the way slicing is, so an out-of-range ROI yields the same extent
+    numpy would give rather than a negative one.
+    """
+    nz = int(shape[0]) if len(shape) > 0 else 0
+    ny = int(shape[1]) if len(shape) > 1 else 0
+    nx = int(shape[2]) if len(shape) > 2 else 0
+    xs, xe = (int(roi_x[0]), int(roi_x[1])) if roi_x else (0, nx)
+    ys, ye = (int(roi_y[0]), int(roi_y[1])) if roi_y else (0, ny)
+    xs, xe = max(0, min(xs, nx)), max(0, min(xe, nx))
+    ys, ye = max(0, min(ys, ny)), max(0, min(ye, ny))
+    return nz, max(0, ye - ys), max(0, xe - xs)
 
 
 def _samy_ref(samy: np.ndarray, ref_samy: float | None) -> float:
@@ -143,6 +163,128 @@ def _z_grid(
     z_uniform = np.linspace(z_min, z_max, n_uniform)
     scale_z = float(z_uniform[1] - z_uniform[0]) if n_uniform > 1 else median_step
     return z_um, z_uniform, scale_z
+
+
+def aligned_extent(
+    shape: tuple[int, ...],
+    samy: np.ndarray | None,
+    samz: np.ndarray | None,
+    *,
+    scale_x: float,
+    samy_direction: int = 1,
+    ref_samy: float | None = None,
+    ref_samz: float | None = None,
+) -> tuple[int, int, int]:
+    """The shape an aligned volume will have, from motor positions alone.
+
+    *shape* is the volume as it enters the alignment chain — i.e. **after**
+    :func:`apply_roi_3d`, since the ROI crop happens first. Returns
+    ``(n_out, ny, nx_new)``.
+
+    This exists because every estimator that prices the alignment chain was
+    counting *unpadded* elements and therefore **under**-predicting, which is
+    the dangerous direction: it tells ``advice.plan_run`` a run fits in memory
+    when it does not. Measured on the real STO2 dataset before this correction,
+    ``visualize`` under-predicted by 1.67x, ``slices`` by 1.66x and ``paraview``
+    by 1.10x.
+
+    Two inflations **multiply**, which is why counting either alone still
+    under-predicts:
+
+    * :func:`apply_samy_shifts_to_volume` widens the canvas along image-X so no
+      layer is clipped, giving ``nx_new = nx + pad_left + pad_right``.
+    * :func:`interpolate_to_uniform_z` resamples onto a uniform grid that
+      *exceeds* the layer count whenever samz is irregular — one large gap drags
+      the median step down and stretches the grid — and it inherits the
+      X-padding, so its output is ``(n_uniform, ny, nx_new)``.
+
+    The extents are exact, not a safety factor: they are computed by the very
+    functions the run uses (:func:`compute_pad_left`, :func:`compute_pad_right`,
+    :func:`_z_grid`), so an estimate cannot drift from the code it prices. No
+    voxel is read — only the motor arrays, which is the same property that lets
+    a streaming caller size its output before reading anything.
+
+    A stage with no motors skips both steps (both call sites guard on
+    ``len(...) > 0``), so the unpadded shape is returned unchanged. That is the
+    correct model for that path, not a fallback.
+    """
+    n_layers = int(shape[0]) if len(shape) > 0 else 0
+    ny = int(shape[1]) if len(shape) > 1 else 0
+    nx = int(shape[2]) if len(shape) > 2 else 0
+
+    nx_new = nx
+    if samy is not None and len(samy) > 0 and scale_x:
+        pad_left = compute_pad_left(samy, scale_x, samy_direction, ref_samy)
+        pad_right = compute_pad_right(samy, scale_x, samy_direction, ref_samy)
+        nx_new = nx + pad_left + pad_right
+
+    n_out = n_layers
+    if samz is not None and len(samz) > 0 and n_layers > 0:
+        _z_um, z_uniform, _scale_z = _z_grid(np.asarray(samz), n_layers, ref_samz)
+        n_out = int(len(z_uniform))
+
+    return n_out, ny, nx_new
+
+
+def aligned_elems_for_params(
+    p: dict,
+    shape: tuple[int, ...],
+    *,
+    pattern_key: str,
+    roi_x_key: str = "roi_x",
+    roi_y_key: str = "roi_y",
+) -> int:
+    """Element count of the aligned volume for *shape*, from a stage's params.
+
+    The estimator-facing wrapper around :func:`roi_shape` + :func:`aligned_extent`:
+    it resolves the ROI and the motor positions out of a stage's parameter dict
+    and returns ``nz * ny * nx`` of the post-alignment array.
+
+    One implementation, three callers (``visualize``, ``paraview``, ``slices``),
+    because a per-stage copy is how the seven peak models drifted apart in the
+    first place. The stages differ only in which parameter names hold the ROI
+    and the folder pattern, so those are arguments.
+
+    **Never raises, and returns 0 rather than guessing.** An estimate is
+    advisory and reruns on every GUI form change, so a half-typed ROI, an absent
+    ``raw_root`` or a pixel size still being entered must yield "unknown", not an
+    exception and not a fabricated number. Zero also correctly describes the
+    no-motor path, where the run skips both the samy shift and the
+    Z-interpolation and no aligned array is ever built.
+    """
+    try:
+        scale_x = float(p.get("pixel_size_x_um") or 0.0)
+        if scale_x <= 0:
+            return 0
+        samy, samz = raster.motor_positions_for_estimate(
+            p.get("raw_root"), p.get(pattern_key), p.get("samy_path"), p.get("samz_path")
+        )
+        if len(samy) == 0 and len(samz) == 0:
+            return 0
+        roi_x = _parse_roi(p.get(roi_x_key))
+        roi_y = _parse_roi(p.get(roi_y_key))
+        cropped = roi_shape(shape, roi_x, roi_y)
+        nz, ny, nx = aligned_extent(
+            cropped,
+            samy,
+            samz,
+            scale_x=scale_x,
+            samy_direction=int(p.get("samy_direction") or 1),
+        )
+        return int(nz) * int(ny) * int(nx)
+    except Exception:  # noqa: BLE001 - an estimate is advisory, never fatal
+        return 0
+
+
+def _parse_roi(text) -> tuple[int, int] | None:
+    """``"a,b"`` -> ``(a, b)``; anything unusable -> ``None``."""
+    if text is None or str(text).strip() == "":
+        return None
+    try:
+        parts = [int(v) for v in str(text).replace(" ", "").split(",")]
+    except (TypeError, ValueError):
+        return None
+    return (parts[0], parts[1]) if len(parts) == 2 else None
 
 
 def interpolate_to_uniform_z(

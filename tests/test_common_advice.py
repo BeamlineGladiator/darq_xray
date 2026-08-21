@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import dataclasses
+
 from dfxm.common.advice import (
     MARGINAL_RSS_PER_TRACED_BYTE,
     MIN_STREAM_BUDGET_BYTES,
@@ -211,3 +213,62 @@ def test_advise_3d_survives_an_empty_shape():
     advice = advise_3d(workstation_sw_gl(), (), "volume")
     assert advice.downsample == 1
     assert advice.render_mode is None
+
+
+# -----------------------------------------------------------------------------
+# CostEstimate.scratch_bytes — the chunked path's disk check
+# -----------------------------------------------------------------------------
+def _chunked_estimate(peak_gb: float, scratch_gb: float = 0.0):
+    """An estimate large enough that plan_run must chunk it on the given profile."""
+    GB = 1024**3
+    return CostEstimate(
+        peak_bytes=int(peak_gb * GB),
+        input_bytes=int(peak_gb * GB),
+        shape=(100, 500, 500),
+        chunkable=True,
+        scratch_bytes=int(scratch_gb * GB),
+    )
+
+
+def test_a_chunked_run_that_spills_is_blocked_when_the_disk_is_too_small():
+    """The median centring statistic caches the aligned volume to scratch.
+
+    Before this, `plan_run`'s chunked return had NO disk check at all, so a
+    machine short of disk discovered the problem halfway through a long run —
+    the failure this phase exists to prevent.
+    """
+    GB = 1024**3
+    profile = dataclasses.replace(laptop_hw_gl(), disk_free=2 * GB)
+
+    plan = plan_run(profile, _chunked_estimate(peak_gb=40, scratch_gb=20))
+    assert plan.strategy == "chunked"  # precondition: we are on the path under test
+    assert plan.blocked, "a 20 GB spill onto 2 GB of free disk must be blocked"
+    assert "scratch disk" in plan.blocked
+
+
+def test_a_chunked_run_that_spills_is_allowed_when_the_disk_is_big_enough():
+    GB = 1024**3
+    profile = dataclasses.replace(laptop_hw_gl(), disk_free=200 * GB)
+
+    plan = plan_run(profile, _chunked_estimate(peak_gb=40, scratch_gb=20), scratch_dir="/tmp/x")
+    assert plan.strategy == "chunked"
+    assert plan.blocked is None
+    assert plan.scratch_dir == "/tmp/x"
+    assert any("scratch disk" in r for r in plan.reasons)
+
+
+def test_a_chunked_run_that_does_not_spill_is_never_disk_blocked():
+    """scratch_bytes defaults to 0, so mean/midrange runs must be unaffected.
+
+    Mutation guard: if the disk check ever stops consulting scratch_bytes and
+    starts using peak_bytes, this fails — a 40 GB peak on 2 GB of disk would
+    block a run that never touches the disk at all.
+    """
+    GB = 1024**3
+    profile = dataclasses.replace(laptop_hw_gl(), disk_free=2 * GB)
+
+    plan = plan_run(profile, _chunked_estimate(peak_gb=40, scratch_gb=0))
+    assert plan.strategy == "chunked"
+    assert plan.blocked is None
+    assert plan.scratch_dir is None
+    assert not any("scratch disk" in r for r in plan.reasons)

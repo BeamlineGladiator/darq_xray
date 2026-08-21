@@ -259,7 +259,27 @@ def plan_run(profile, estimate, *, allow_downsample: bool = False, scratch_dir=N
         reasons.append(
             f"chunking into groups of {chunk_layers} of {n_layers} {unit} — slower, same result"
         )
-        return RunPlan("chunked", budget, chunk_layers, downsample, None, tuple(reasons), None)
+        # A chunked run that spills to scratch (the median centring statistic is
+        # the one irreducibly whole-array step) must be checked against free disk
+        # here, not discovered mid-run. `scratch_dir` is where it would land.
+        scratch_needed = int(getattr(estimate, "scratch_bytes", 0) or 0)
+        chunk_blocked = None
+        if scratch_needed and profile.disk_free and scratch_needed > profile.disk_free:
+            chunk_blocked = (
+                f"needs {_human(scratch_needed)} of scratch disk but only "
+                f"{_human(profile.disk_free)} is free"
+            )
+        elif scratch_needed:
+            reasons.append(f"caching aligned blocks to {_human(scratch_needed)} of scratch disk")
+        return RunPlan(
+            "chunked",
+            budget,
+            chunk_layers,
+            downsample,
+            scratch_dir if scratch_needed else None,
+            tuple(reasons),
+            chunk_blocked,
+        )
 
     needed = int(effective_peak)
     reasons.append("this step needs the whole array addressable — running disk-backed")

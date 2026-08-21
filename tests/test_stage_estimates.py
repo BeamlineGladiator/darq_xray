@@ -407,3 +407,181 @@ def test_visualize_peak_sums_inputs_because_datasets_dict_outlives_the_loop(tmp_
     assert est.chunkable is True
     assert est.input_bytes == total
     assert est.peak_bytes == total + 3 * field_elems * 8
+
+
+# -----------------------------------------------------------------------------
+# scratch_bytes — the disk a chunked median run needs
+# -----------------------------------------------------------------------------
+_SCRATCH_SAMY = np.linspace(0.0, 0.05, 6)
+_SCRATCH_SAMZ = np.linspace(0.0, 0.05, 6)
+_SCRATCH_SHAPE = (6, 12, 20)
+_SCRATCH_SCALE_X = 0.15
+
+
+def _volume_file(tmp_path, name="stacked_volumes.h5", dataset="strain"):
+    path = tmp_path / name
+    with h5py.File(path, "w") as f:
+        f.create_dataset(dataset, data=np.zeros(_SCRATCH_SHAPE, dtype=np.float64))
+    return str(path)
+
+
+def _patch_motors(monkeypatch):
+    """Give every estimator the same known motors, so the expected size is exact."""
+    from dfxm.common import alignment as A
+
+    monkeypatch.setattr(
+        A.raster,
+        "motor_positions_for_estimate",
+        lambda *a, **k: (_SCRATCH_SAMY, _SCRATCH_SAMZ),
+    )
+
+
+def _expected_scratch_bytes():
+    from dfxm.common import alignment as A
+
+    extent = A.aligned_extent(
+        _SCRATCH_SHAPE,
+        _SCRATCH_SAMY,
+        _SCRATCH_SAMZ,
+        scale_x=_SCRATCH_SCALE_X,
+        samy_direction=1,
+    )
+    elems = extent[0] * extent[1] * extent[2]
+    return elems * 8, extent
+
+
+def test_the_scratch_fixture_actually_inflates():
+    """Precondition for the tests below.
+
+    If the fixture's motors ever stop padding, `scratch_bytes` would equal the
+    unpadded size and every assertion below would pass while proving nothing
+    about the aligned extent — the defect shape this project has hit nineteen
+    times.
+    """
+    _expected, extent = _expected_scratch_bytes()
+    assert extent[2] > _SCRATCH_SHAPE[2], "fixture no longer pads along X"
+
+
+@pytest.mark.parametrize("method,spills", [("median", True), ("mean", False), ("midrange", False)])
+def test_visualize_reports_scratch_only_for_the_median_centring(
+    tmp_path, monkeypatch, method, spills
+):
+    from dfxm.stages.visualize import estimate
+
+    _patch_motors(monkeypatch)
+    expected, _extent = _expected_scratch_bytes()
+    est = estimate(
+        {
+            "mosa_volume_file": _volume_file(tmp_path),
+            "raw_root": str(tmp_path),
+            "mosa_pattern": "*",
+            "pixel_size_x_um": _SCRATCH_SCALE_X,
+            "samy_direction": 1,
+            "center_method": method,
+        }
+    )
+    assert est.scratch_bytes == (expected if spills else 0)
+
+
+@pytest.mark.parametrize("method,spills", [("median", True), ("mean", False), ("midrange", False)])
+def test_slices_reports_scratch_only_for_the_median_centring(tmp_path, monkeypatch, method, spills):
+    from dfxm.stages.slices import estimate
+
+    _patch_motors(monkeypatch)
+    expected, _extent = _expected_scratch_bytes()
+    est = estimate(
+        {
+            "mosa_volume_file": _volume_file(tmp_path),
+            "raw_root": str(tmp_path),
+            "mosa_pattern": "*",
+            "pixel_size_x_um": _SCRATCH_SCALE_X,
+            "samy_direction": 1,
+            "center_method": method,
+        }
+    )
+    assert est.scratch_bytes == (expected if spills else 0)
+
+
+def test_scratch_bytes_is_zero_without_motors(tmp_path):
+    """The no-motor path builds no aligned volume, so it caches nothing."""
+    from dfxm.stages.visualize import estimate
+
+    est = estimate(
+        {
+            "mosa_volume_file": _volume_file(tmp_path),
+            "raw_root": "",
+            "pixel_size_x_um": _SCRATCH_SCALE_X,
+            "center_method": "median",
+        }
+    )
+    assert est.scratch_bytes == 0
+
+
+def test_slices_reports_scratch_on_the_coarse_fallback_return_too(tmp_path, monkeypatch):
+    """`estimate` has more than one return; the spill figure must survive all of them.
+
+    The per-dataset sizing can fail to resolve (a file that does not hold the
+    toggled quantities), which takes a different `return`. A scratch figure
+    dropped there would let `plan_run` start a spilling run on a machine with no
+    room for the spill — and the peak would look normal, so nothing else would
+    notice.
+    """
+    from dfxm.stages import slices as S
+
+    _patch_motors(monkeypatch)
+    expected, _extent = _expected_scratch_bytes()
+    params = {
+        "mosa_volume_file": _volume_file(tmp_path),
+        "raw_root": str(tmp_path),
+        "mosa_pattern": "*",
+        "pixel_size_x_um": _SCRATCH_SCALE_X,
+        "samy_direction": 1,
+        "center_method": "median",
+    }
+    # Force the coarse fallback: nothing resolves per-dataset.
+    monkeypatch.setattr(S, "_standard_volumes", lambda *a, **k: [])
+    est = S.estimate(params)
+
+    # Precondition: we really are on the fallback return, not the main one.
+    assert est.peak_bytes == est.input_bytes, "not on the coarse fallback path"
+    assert est.scratch_bytes == expected
+
+
+def test_alignment_estimators_read_motors_but_never_voxels(tmp_path, monkeypatch):
+    """The cheapness contract, as widened by the aligned-extent correction.
+
+    Pricing the alignment chain needs the motor VALUES (one scalar per raw scan
+    folder), so "shapes only, never data" is no longer literally true. What must
+    still hold is the part that makes `estimate` cheap enough to run on every
+    keystroke: it never reads a **voxel**. Reading one 3-D dataset would pull
+    gigabytes into the GUI process.
+
+    `test_estimators_never_read_data` covers only `strain`, which does not align,
+    and would not have caught this widening.
+    """
+    from dfxm.stages.visualize import estimate
+
+    _patch_motors(monkeypatch)
+    real_getitem = h5py.Dataset.__getitem__
+
+    def guard(self, key):
+        if self.ndim >= 3:
+            raise AssertionError(f"estimator read voxels from a {self.ndim}-D dataset")
+        return real_getitem(self, key)
+
+    monkeypatch.setattr(h5py.Dataset, "__getitem__", guard)
+    est = estimate(
+        {
+            "mosa_volume_file": _volume_file(tmp_path),
+            "raw_root": str(tmp_path),
+            "mosa_pattern": "*",
+            "pixel_size_x_um": _SCRATCH_SCALE_X,
+            "samy_direction": 1,
+            "center_method": "median",
+        }
+    )
+    # Precondition: the run actually priced an aligned volume, so the guard had
+    # something to catch. Without this the test passes on an estimate that never
+    # looked at the file at all.
+    expected, _extent = _expected_scratch_bytes()
+    assert est.scratch_bytes == expected

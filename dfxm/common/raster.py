@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import glob
 import os
+from functools import lru_cache
 
 import h5py
 import numpy as np
@@ -58,6 +59,61 @@ def extract_motor_positions(
         samz_vals.append(samz)
         names.append(os.path.basename(folder))
     return np.array(samy_vals), np.array(samz_vals), names
+
+
+@lru_cache(maxsize=32)
+def _motor_positions_cached(
+    raw_root: str, pattern: str, samy_path: str, samz_path: str
+) -> tuple[tuple[float, ...], tuple[float, ...]]:
+    """Memoised motor read, keyed on the four parameters that select the scans.
+
+    Resolves folders through :func:`~dfxm.common.sort.find_matching_folders`,
+    the same call the runs use. That is not tidiness: it natural-sorts, so the
+    layers come back in acquisition order, and ``samy[0]`` is the reference the
+    padding is measured from — a plain ``sorted()`` would order layers
+    differently and silently shift every offset.
+    """
+    from dfxm.common.sort import find_matching_folders
+
+    folders = find_matching_folders(raw_root, pattern)
+    if not folders:
+        return (), ()
+    samy, samz, _names = extract_motor_positions(folders, samy_path, samz_path)
+    return tuple(float(v) for v in samy), tuple(float(v) for v in samz)
+
+
+def motor_positions_for_estimate(
+    raw_root: str | None,
+    pattern: str | None,
+    samy_path: str = DEFAULT_SAMY_PATH,
+    samz_path: str = DEFAULT_SAMZ_PATH,
+) -> tuple[np.ndarray, np.ndarray]:
+    """samy/samz for a stage's ``estimate()``, cached and guaranteed not to raise.
+
+    A stage's ``estimate`` reruns on **every GUI form change**, so it must stay
+    cheap; reading one scalar from each of ~76 raw folders per keystroke is not.
+    The read is therefore memoised on the four parameters that select the scans.
+
+    The cache lives for the process and is deliberately not invalidated by file
+    mtimes: motor positions are a property of an already-completed acquisition,
+    and this feeds an *advisory* memory estimate. **Stage runs never use this** —
+    they read the motors fresh — so a stale entry can only mis-size an advisory
+    number, never the alignment itself.
+
+    Returns empty arrays when the motors are unavailable for any reason. That is
+    not merely a safe fallback: a run whose motors are missing skips both the
+    samy shift and the Z-interpolation, so the unpadded shape is the correct
+    model for that path.
+    """
+    if not raw_root or not pattern:
+        return np.array([]), np.array([])
+    try:
+        samy, samz = _motor_positions_cached(
+            str(raw_root), str(pattern), str(samy_path), str(samz_path)
+        )
+    except (OSError, ValueError, TypeError):
+        return np.array([]), np.array([])
+    return np.array(samy), np.array(samz)
 
 
 def nearest_index(

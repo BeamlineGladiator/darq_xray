@@ -98,9 +98,20 @@ class Param:
 class CostEstimate:
     """What a stage run will cost, computed from HDF5 shapes alone.
 
-    Produced by a stage's ``estimate(params)`` function, which opens the input
-    and reads ``.shape``/``.dtype`` **only** — never data — so it is cheap
-    enough to recompute on every form change.
+    Produced by a stage's ``estimate(params)`` function, which is cheap enough
+    to recompute on every form change: from the volume files it reads
+    ``.shape``/``.dtype`` only, and **never a voxel**.
+
+    The stages that price the alignment chain additionally read the **motor
+    positions** — one scalar per raw scan folder — because the aligned array's
+    extent depends on them and not on any shape in the volume file:
+    ``apply_samy_shifts_to_volume`` widens image-X by the samy offsets and
+    ``interpolate_to_uniform_z`` resamples Z onto a grid that exceeds the layer
+    count when samz is irregular, and the two inflations multiply. Counting
+    unpadded elements instead is what made those models under-predict, which is
+    the dangerous direction. The read is memoised
+    (:func:`~dfxm.common.raster.motor_positions_for_estimate`); a run never uses
+    that cache.
 
     ``peak_bytes`` is the in-core high-water mark of the whole-volume strategy,
     including transient copies: a ``[:].astype(np.float64)`` on a float32 source
@@ -116,6 +127,16 @@ class CostEstimate:
     thing it chunks is one scan's detector rows. Display only — nothing acts on
     the number — but a wrong unit in an advisory message is how advice stops
     being read.
+
+    ``scratch_bytes`` is the **disk** a chunked run needs, as opposed to the
+    memory ``peak_bytes`` prices. It is non-zero only where blocking the work
+    forces a re-read cache: with ``center_method="median"`` the centring
+    statistic is the one irreducibly whole-array step in the pipeline, so a
+    chunked run spills its aligned blocks to scratch and reads them back.
+    ``advice.plan_run`` checks it against ``profile.disk_free`` *before* the run
+    starts — without it a machine short of disk discovers the problem halfway
+    through a long run, which is precisely the failure this phase exists to
+    prevent. Zero by default, so estimators that never spill are unaffected.
     """
 
     peak_bytes: int
@@ -124,6 +145,7 @@ class CostEstimate:
     chunkable: bool
     note: str | None = None
     chunk_span: tuple[int, str] | None = None
+    scratch_bytes: int = 0
 
 
 @dataclass(frozen=True)
