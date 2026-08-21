@@ -121,8 +121,14 @@ def measure_peak_rss(
     """Run *target* in a child and return ``(result, peak_rss_bytes)``.
 
     *interval* is the sampling period in seconds (see the module docstring: the
-    peak is a lower bound, bounded by this). *timeout* is a wall-clock ceiling
-    on the whole run.
+    peak is a lower bound, bounded by this).
+
+    *timeout* bounds the **run**, not the call. It is the ceiling on how long
+    the child is allowed to be working; on top of it this function may spend up
+    to `_DRAIN_GRACE` (5 s) waiting for the terminal message and a further 5 s
+    in `join()`, so the worst-case wall clock is roughly ``timeout + 10 s``.
+    A caller sizing a CI budget must budget for that: ``timeout=600`` can take
+    610 s to return.
 
     Raises :class:`RuntimeError` if the stage fails, times out, exits without a
     result, or — the case that matters most — if the measurement itself was
@@ -161,6 +167,11 @@ def measure_peak_rss(
     if runner.failure is not None:
         raise RuntimeError(f"{target} failed: {runner.failure.error}\n{runner.failure.traceback}")
     if not runner.finished:
+        # Sound only because the loop above never breaks out on a live child:
+        # `StageRunner.cancel()` sets `finished` itself, so the `finally`'s
+        # cancel would make this guard vacuous for any exit path that leaves
+        # the child running. Anyone adding such a path must check
+        # `runner.failure is None and runner.result is None` instead.
         raise RuntimeError(f"{target} exited without producing a result")
     if samples == 0:
         raise RuntimeError(
@@ -170,8 +181,11 @@ def measure_peak_rss(
     if peak < MIN_PLAUSIBLE_RSS:
         raise RuntimeError(
             f"{target}: peak RSS {peak} B over {samples} samples is below the "
-            f"{MIN_PLAUSIBLE_RSS} B floor no CPython child can be under — the "
-            "sampler is not reading the child"
+            f"{MIN_PLAUSIBLE_RSS} B floor no CPython child settles under. Either "
+            "the sampler is not reading the child, or the child finished so fast "
+            f"that every sample caught spawn's pre-import RSS (interval={interval}s, "
+            f"{samples} sample(s)) — in which case lower `interval`. Refusing to "
+            "report the figure either way: it is not this stage's peak."
         )
     return runner.result, peak
 

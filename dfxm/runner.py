@@ -166,7 +166,13 @@ class StageRunner:
         return self._proc is not None and self._proc.is_alive()
 
     def cancel(self, timeout: float = 2.0) -> None:
-        """Terminate the child; escalate to kill if it ignores SIGTERM."""
+        """Terminate the child; escalate to kill if it ignores SIGTERM.
+
+        Sets ``finished`` even though no Done/Failed arrived, so ``finished``
+        means "this run is over", not "this run produced something". A caller
+        that cancels and then asks whether the stage delivered must look at
+        ``result``/``failure``, not at ``finished``.
+        """
         if self._proc and self._proc.is_alive():
             self._proc.terminate()
             self._proc.join(timeout)
