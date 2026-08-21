@@ -651,6 +651,25 @@ four pixel boxes) to open a visual picker showing the middle Z-layer of each
 product; drag a rectangle and click **OK** to fill the boxes automatically. The
 preview is oriented exactly like the exported maps.
 
+> [!info] Blank colour limits: large volumes no longer have to fit in memory
+> When both vmin/vmax boxes for a product are blank, its default limits are the
+> run's own 1st/99th percentiles. A volume small enough for this machine is read
+> in one piece and costs exactly what it always did; only one too large for that
+> is read in blocks, so a replot of a large `aligned_raw_rocking_volumes.h5` no
+> longer needs room for the whole thing.
+>
+> **The colours are unchanged either way** — the blocked percentile returns
+> exactly what the whole-volume one returns, not an approximation, so a replot
+> made now sits beside one made before this change with no visible difference,
+> and the two routes agree with each other. The cost of the blocked route is
+> **time**: an exact percentile in bounded memory reads the volume about a dozen
+> times over. Measured on this machine: 0.07 s for a 9 MB volume (one piece),
+> 5.7 s at 79 MB and 14.2 s at 202 MB (blocked).
+>
+> **Typing vmin and vmax in by hand skips the computation entirely** — the same
+> 202 MB replot takes 0.44 s instead of 15.4 s. Leave one box blank and the
+> percentile still runs, because the blank side needs a default.
+
 ### 5. Visualize volumes (`visualize`)
 
 Align the stacked mosaicity/strain volumes and render them.
@@ -706,6 +725,56 @@ Align the stacked mosaicity/strain volumes and render them.
 > are filled automatically. Returns no preview when the volume files cannot be
 > read.
 
+> [!info] Volumes too big for this machine are streamed — same images, more patience
+> It measures the machine's free memory first and takes whichever of two routes
+> fits — the same ladder the [[#6. ParaView export (`paraview`)|ParaView export]]
+> and [[#8. Oblique slices (`slices`)|slices]] use:
+>
+> - **It fits.** The volume is aligned in one piece and everything runs exactly
+>   as it always has, at the same speed. This is the normal case on a
+>   workstation, and it is what you get for any dataset your machine can hold.
+> - **It does not fit.** The volume is aligned and read in Z-blocks instead, the
+>   colour limits come from exact streaming percentiles, and the per-layer PNGs
+>   and the animation are rendered a block at a time. Memory then stays flat
+>   however large the dataset is — measured on a four-field 33.5 MB-per-volume
+>   set, 340 MB of peak memory in one piece against 111 MB streamed.
+>
+>   The cost is **time**: an exact percentile in bounded memory has to read the
+>   volume several times, so a memory-constrained run re-reads each field
+>   roughly eight times over. It is the price of finishing rather than running
+>   out of memory, and nothing about the result changes — the PNGs, the
+>   animation and the colour limits are byte-for-byte what the one-piece route
+>   produces. That equality is the point of the split and is enforced as such:
+>   which route runs depends on your machine, so a figure that differed between
+>   them would be a figure that depended on your machine.
+>
+>   One deliberate change of behaviour came out of holding that equality, and it
+>   only shows on a volume containing an **infinite** value (a pathological
+>   darfix fit, not the usual NaN padding): infinities are now excluded from the
+>   automatic colour limits of the peak-broadening (FWHM) maps, as they always
+>   were for every other map. Before, a single infinity collapsed that map's
+>   colour scale so every real voxel rendered as one colour. This affects both
+>   readers of those limits — the rendered PNGs and animation from a run, **and
+>   the interactive [[#3-D volume viewer|3-D view]]**, which derives its colour
+>   range the same way, so the two continue to agree.
+>
+> **One exception, and it is the default.** The 3-D top view and the rotating
+> video hand the whole volume to the graphics card in a single upload, so they
+> cannot be streamed at all: whenever either is switched on, one full volume is
+> assembled in memory regardless of the route. If a dataset is too large for
+> this machine, turn **Save 3D top-view** off and the run stays bounded; the
+> per-layer PNGs and the animation are unaffected. The interactive 3-D viewer
+> has the same constraint for the same reason.
+>
+> **A second exception, and it means something is already wrong.** If the raw
+> folder pattern matches no folders there are no motor positions, so the volume
+> cannot be aligned and the run falls back to loading it whole — unbounded, as
+> it always did. Such a run produces an *unaligned* volume, which is not a
+> usable product, so the fix is the pattern rather than the memory: check
+> **Raw root** and the mosaicity/strain pattern. [[#8. Oblique slices
+> (`slices`)|Slices]] does bound this fallback; this stage and the ParaView
+> export deliberately do not.
+
 > [!note]
 > Colourmaps follow the publication-style **Colormaps** dropdowns (misorientation
 > defaults to ParaView's `fast`, FWHM to `magma`, strain to diverging `RdBu_r`
@@ -725,7 +794,7 @@ rendering, with a `valid_mask` and NaN sentinels.
 | Param | Meaning |
 |---|---|
 | `roi_x` / `roi_y` | map-frame crop in map pixels (`c0,c1` / `r0,r1`), relative to the darfix window, NOT absolute detector pixels; pre-filled from the experiment's analysis window |
-| `num_pieces_z` | Z pieces — match your `pvserver` MPI rank count |
+| `num_pieces_z` | Z pieces — match your `pvserver` MPI rank count. It also sets how much memory the export needs: one piece of every field is held at a time, so **more pieces means a lower peak** |
 | `anchor_origin_to_reference` | place the world origin in the raw-detector frame so all volumes co-register |
 | `mosa_darfix_origin_xy` / `strain_darfix_origin_xy` | the darfix crop origin for the mosaicity / strain maps, in absolute detector pixels `x,y` — copy verbatim from darfix's ROI widget. Only used when `anchor_origin_to_reference` is on; NOT pre-filled from the experiment, so update them by hand for a non-STO2 dataset |
 
@@ -735,6 +804,63 @@ rendering, with a `valid_mask` and NaN sentinels.
 > volumes. Drag a rectangle and click **OK** — the `roi_x` and `roi_y` fields
 > are filled automatically. Returns no preview when the volume files cannot be
 > read.
+
+> [!info] Volumes too big for this machine are streamed — same files, more patience
+> This is the heaviest stage in the pipeline. Like the visualize and slices
+> stages, it measures the machine's free memory first and takes whichever of two
+> routes fits:
+>
+> - **It fits.** The volumes are aligned in one piece and the export runs at full
+>   speed. This is the normal case on a workstation, and it is what you get for
+>   any dataset your machine can hold.
+> - **It does not fit.** The volumes are read and aligned in Z-blocks instead,
+>   and nothing is ever assembled whole. Memory then stays flat however large the
+>   dataset is — measured on a four-field 36 MB-per-volume export, 264 MB of peak
+>   memory against 409-421 MB when the volumes are aligned whole.
+>
+>   The cost is **time**: the sentinel and the padded fraction need a pass over
+>   the data before any piece can be written, and on this route that pass has to
+>   align every field a second time. Measured on the same export: 3.4 s aligned
+>   in one piece against 3.6 s streamed at a 64 MB budget and 4.8 s at 16 MB.
+>
+> Streaming used to be unconditional here, and the export that paid most for it
+> was the one on the machine with the most memory: 5.0 s instead of 3.4 s on the
+> export above, because a generous memory budget meant one huge block per field,
+> aligned twice, with nothing staying in cache. A memory-constrained machine was
+> already close to the aligned-whole time. That had it backwards — streaming is
+> what lets a run finish on a machine that could not otherwise hold it, not an
+> improvement to charge everyone for — so if you have been reading a "1.2-1.7x
+> on every export" note here, the honest version is that the penalty fell
+> hardest on exactly the runs that never needed streaming.
+>
+> Nothing about the result changes. The pieces are byte-for-byte identical on
+> both routes, and byte-for-byte what the original in-core exporter wrote. That
+> equality is the point of the split: which route runs depends on your machine,
+> so an export that differed between them would be an export that depended on
+> your machine.
+>
+> **One thing neither route bounds is the piece itself.** A `.vti` piece is
+> written in one call, so one piece of every field is held on top of whatever the
+> alignment left resident — set by **Z pieces**, not by the free-memory
+> measurement. Too few pieces can therefore peak far above what the export
+> otherwise costs (measured on the export above: 409-421 MB at 16 pieces against
+> 566 MB at one when the volumes are aligned whole, and 493 MB against 633 MB
+> when they are streamed — about 145 MB added either way). The run says so when the count is too low for this machine — look for a
+> `Z pieces = N needs about … MB` note in the run log and the Results summary,
+> and raise **Z pieces** to the number it suggests. It is advice, never enforced:
+> your piece count stays exactly what you asked for.
+>
+> **Neither does either route bound a run with no motor positions.** If the raw
+> folder pattern matches no folders the volume cannot be aligned, and the export
+> falls back to loading it whole, as it always did. That run exports an
+> *unaligned* volume, so the fix is the pattern rather than the memory: check
+> **Raw root** and the mosaicity/strain pattern.
+
+> [!note] Scratch files
+> With **Centre method = median** the export may cache an aligned volume on disk
+> while it computes the statistic, in a `.dfxm_scratch/` folder inside the output
+> directory. It is deleted when the run ends. If the disk is too full for it, the
+> run re-reads instead — slower, same result — and says so in a note.
 
 > [!example] ParaView workflow
 > ```bash
@@ -807,6 +933,61 @@ through the aligned volumes — all in one world frame so the slices co-register
 > **start,end** detector rows — entering origin/size as start/end shifts and
 > stretches the raw volume. Rebuild the flagged volume with the same
 > detector-row window the map volumes use.
+
+> [!info] Volumes too big for this machine are sliced in Z-blocks — same planes, more patience
+> Like the [[#5. Visualize volumes (`visualize`)|visualize]] stage and the
+> ParaView export, this stage measures the machine's free memory first and takes
+> whichever of two routes fits:
+>
+> - **It fits.** Each volume is aligned in one piece and the planes are cut from
+>   it exactly as they always were, at the same speed. This is the normal case on
+>   a workstation.
+> - **It does not fit.** The volume is aligned and read in Z-blocks, the colour
+>   limits come from exact streaming percentiles, and each plane is gathered from
+>   the blocks its samples fall in. Memory then stays roughly flat however large
+>   the dataset is — measured on a seven-volume, 32 MB-per-volume set, 315 MB of
+>   peak memory in one piece against 120 MB in blocks.
+>
+>   The cost is **time**: an exact percentile in bounded memory has to read a
+>   volume several times, so a memory-constrained run re-reads each volume
+>   roughly eight times over. It is the price of finishing rather than running
+>   out of memory, and **nothing about the result changes** — every stored plane
+>   and every PNG is byte-for-byte what the one-piece route produces. That
+>   equality is the point of the split: which route runs depends on your machine,
+>   so a plane that differed between them would be a plane that depended on your
+>   machine.
+>
+>   A sweep is gathered in as few passes over the volume as memory allows — one
+>   pass for as many planes as fit at a time, not one pass per plane. With the
+>   default slices on a 2891×700×76 dataset and 8 GB of RAM that is two or three
+>   passes for the whole 172-plane oblique sweep.
+>
+> **The sweep itself is bounded too.** A sweep's planes used to be held in
+> memory together until the volume's group was written, which on the shipped
+> default slices was the largest thing the stage touched — about 2.9 GB of
+> planes cut from a 1.1 GB volume, briefly doubled while they were stacked. The
+> HDF5 dataset is now created at full size before any sampling and each plane is
+> written as it is cut. Measured on a 201-plane, 801×801 sweep: **1118 MB of
+> peak memory before, 205 MB after** (in one piece; 1106 → 239 MB in blocks).
+>
+> What that changes is which knob costs what. **Adding planes** — a finer
+> `sweep_step_um`, a wider sweep window — now costs time and disk only; the
+> memory is flat in the number of planes. **Making each plane bigger** — a larger
+> `extent: "auto"`, a smaller `du`/`dv` — still costs memory, because what is
+> held is a handful of whole planes: a write buffer of a few planes plus about
+> fifteen planes' worth of sampling scratch, roughly 0.35 GB together on the
+> shipped default. That is a plane-area cost, not a sweep-length one, so coarsen
+> `du`/`dv` or shrink the extent if a sweep is what makes a run too large —
+> never the step.
+
+> [!warning] A run killed mid-sweep leaves the planes it never reached as NaN
+> Because the dataset is sized before sampling, a slices run that is interrupted
+> — killed, or out of memory — leaves an `oblique_slices.h5` whose finished
+> planes are real and whose unreached planes are **all-NaN**. They are readable,
+> so `profiles` and the viewers will open the file; the unfinished planes simply
+> show as empty rather than as a flat value. Re-run the stage to fill them in.
+> Before this change an interrupted run left the volume's whole group missing
+> instead, which was more obvious but no more recoverable.
 
 > [!note] Plot orientation
 > Slice plots follow the same convention as the per-layer renders: the vertical
@@ -1223,6 +1404,29 @@ pixel-aligned with the strain/mosaicity layer images.
 |---|---|
 | `frame_index` | which detector frame to show |
 | `match_threshold_mm` | max `(samy,samz)` distance to accept a match |
+
+> [!info] Long detector stacks no longer decide how much memory this needs
+> The background this stage subtracts is the per-pixel median **down the frame
+> axis**, so each pixel's background depends only on that pixel's own values.
+> The stack is therefore read a horizontal band at a time instead of whole, and
+> the memory a run needs stops following the frame count. Measured on a single
+> matched layer, 512×512 detector, uint16:
+>
+> | frames | stack on disk | peak memory before | peak memory now |
+> |---|---|---|---|
+> | 40 | 20 MB | 472 MB | 250 MB |
+> | 80 | 40 MB | 832 MB | 250 MB |
+> | 160 | 80 MB | 1526 MB | 250 MB |
+>
+> **The saved PNGs are identical** — a band of rows gets exactly the median the
+> whole stack gave it, so this is a change in how much is held at once and in
+> nothing else. There is no setting to choose; it always works this way.
+>
+> The band height is sized against a *measured* cost per element, and that cost
+> is highest for **short** scans (a handful of frames costs ~50 bytes per element
+> against ~35 for tens of frames). The stage charges the worst case, so a short
+> rocking scan reads in narrower bands — a little slower, still inside the
+> memory it promised, and the frames it writes do not change.
 
 ---
 
@@ -1906,6 +2110,28 @@ the volume is wider than this machine's GL 3-D texture limit (so `volume` mode
 can only draw a blank canvas), says so and names the limit. Raise **Downsample**
 until it fits, or switch **Render mode** to `surface`/`isosurface`, which upload
 geometry instead of a 3-D texture.
+
+> [!warning] A volume too big for this machine is decimated for display
+> The 3-D view needs the whole volume in memory at once, so a **rocking**
+> volume that would not fit inside this machine's memory headroom is read with
+> a stride — every 2nd, 4th, 8th … voxel along each axis — instead of failing
+> to open. When that happens the status line under the view says so, naming the
+> factor and the full stored shape — in the same `(z, y, x)` order the line's own
+> `shape (…)` uses — e.g. *"decimated 4x for display (full shape (76, 700, 2891)
+> exceeds this machine's memory headroom) — the stored data is unchanged"*. The
+> same rule applies to **Save rotation video…**: that export reloads the volume
+> in a child process and decimates it by the same policy, so the video is
+> coarsened by the same rule as the view — though not necessarily by the same
+> factor, since the child measures this machine's free memory for itself and may
+> meet different memory pressure than the window did. It always tells you which
+> factor it used, both in the progress dialog while it renders and in the status
+> line when it finishes. The physical size of the render is
+> unaffected: the voxel spacing
+> is scaled by the same factor, so distances, the bounds axes and any exported
+> scale bar stay correct — the picture is just coarser. Nothing is written: the
+> `.h5` on disk keeps its full resolution, and every other stage (profiles,
+> slices, the exported figures) still reads it at full resolution. On a machine
+> with room, no decimation happens and the note does not appear.
 
 #### Exports
 

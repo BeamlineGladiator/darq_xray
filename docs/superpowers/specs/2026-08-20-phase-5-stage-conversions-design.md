@@ -3,12 +3,14 @@
 **Date:** 2026-08-20
 **Status:** approved for implementation planning.
 **Scope:** phase 5 of [[2026-08-20-machine-aware-robustness-design]] — converting
-the twelve whole-volume load sites to bounded-memory execution. Phases 6–8 (GUI
+the thirteen whole-volume load sites (the twelve named in the parent spec plus
+`gui/viewers.py:53`, found here) to bounded-memory execution. Phases 6–8 (GUI
 surfaces, 3-D advisory wiring, Windows verification) remain out of scope.
 
 ## Goal
 
-The twelve `[:]` sites named in the parent spec stop being the out-of-memory
+The twelve `[:]` sites named in the parent spec — and the thirteenth,
+`gui/viewers.py:53`, found here — stop being the out-of-memory
 kills on a small machine. After this phase every volume stage completes the real
 STO2 dataset with an enforced memory ceiling, producing output bit-identical to
 an unconstrained run.
@@ -244,7 +246,66 @@ it today (`slices.py:764`), not promoted into `alignment.py`.
 | `slices.py:737`, `:753` | previous `prep` held live | free before rebinding, then Z-blocked gather |
 | `matched.py:270`, `:274` | median over frames | in-plane blocking, `chunkable=True` |
 | `rocking.py:1039` | global percentile | `stream_quantile` |
-| `gui/viewers.py:53` | render load | decimate on read; drop the two redundant full-size copies |
+| `dfxm/viewer_jobs.py:20` | render load (video export child) | decimate on read, by the same policy as the viewer |
+| `gui/viewers.py:53` | render load (on screen) | decimate on read; drop the two redundant full-size copies |
+
+**Thirteen sites in all:** the twelve `[:]` reads named in the parent spec —
+`viewer_jobs.py:20`, `visualize.py:457`/`:463`, `slices.py:735`/`:751`,
+`paraview.py:595`/`:601`, `strain.py:368`, `mosaicity.py:398`,
+`rocking.py:985`, `matched.py:268`/`:272`, at their current line numbers above —
+plus `gui/viewers.py:53`, which this design found. The extra line numbers on the
+`strain` and `mosaicity` rows (`:792`, `:521`) are the `np.stack` that the same
+conversion removes, not additional sites. A later re-audit should check all
+thirteen rows against this table.
+
+### Recorded exemption — the no-motor path in `visualize` and `paraview`
+
+Added during the wave-3 review, so that an inconsistency between three stages is
+a decision with a reason rather than an accident of which reviewer noticed it.
+
+Each of the three alignment stages has a **no-motor** fallback, taken when
+`find_matching_folders` matches nothing and `extract_motor_positions` therefore
+returns `samy` and `samz` empty together. It cannot go through
+`align_volume_streamed`, which always interpolates: resampling a NaN-bearing
+volume onto its own Z nodes is not the identity, because scipy's linear
+interpolant reads the value *below* each node and spreads every NaN one layer
+down (measured in `paraview`: 1299 of 9360 voxels changed their `valid_mask`).
+
+The three do not treat it alike, and deliberately:
+
+| stage | no-motor site | bounded? |
+| --- | --- | --- |
+| `slices` | `_unaligned_blocks` | **yes** — the chain (`abs` → ROI → samy X-shift) as a Z-block factory, pad and reference samy computed once for the whole volume, verified over 12 combinations of pad sign, `samy_direction` and `len(samy)` against `nz` |
+| `visualize` | `_align_streamed`, `len(samz) == 0` | no — `dset[:]`, handed on as one covering block |
+| `paraview` | `_unaligned_field` | no — `dset[:]`, plus the whole-volume `center_around_zero` |
+
+`slices` is bounded because its Z-blocked plane gather needed a block factory on
+*every* path anyway; giving the no-motor chain one cost nothing extra. In
+`visualize` and `paraview` the same conversion would be new machinery built for
+this path alone — and in `paraview` it also needs the centring statistic
+streamed over the unaligned blocks, which is a second reduction with its own
+budget accounting.
+
+**The cost of the exemption, stated plainly.** The trigger is a typo'd
+`mosa_pattern` or `raw_root`, so on the 8 GB target machine a typo becomes an
+OOM kill rather than an unaligned result — a *failure*, which sits against this
+phase's "slower, never failed". Two things make that acceptable rather than
+merely tolerated:
+
+- A run that reaches this path produces an **unaligned** volume, which is not a
+  usable product. The path exists to keep a misconfigured run from crashing, not
+  to serve a legitimate large run; nothing is lost by it that was worth having.
+- The cost is still *predicted*. Both stages' `estimate()` deliberately
+  over-predict by pricing the pre-phase whole-array form, so `advice.plan_run`
+  compares the whole-volume cost against the machine's headroom and reports it
+  before the run starts. The user is warned; they simply are not saved.
+
+**Bounding them is available if wanted**, and `visualize` is the cheap half: its
+no-motor chain is `ROI → samy X-shift`, the same per-layer steps `slices`
+already blocks, so `_unaligned_blocks` is close to liftable as-is. `paraview`
+additionally wants `stream_mean` / `stream_quantile` over the unaligned blocks
+for its centring. Neither was done here because the phase's budget is better
+spent on paths a correct run can reach.
 
 Three families, and they want different things. `strain` and `mosaicity` are not
 alignment stages at all — they *build* volumes from per-layer maps, and their fix
@@ -257,8 +318,13 @@ The consumers cooperate with Z-blocking rather than fighting it: paraview's
 `compute_piece_extents_z` already splits its `.vti` output along Z, and
 visualize renders per-layer figures.
 
-`gui/viewers.py:53` is the one site outside the stage machinery — it runs in the
-GUI process and never sees `StageSpec.estimate` or `plan_run`. It reads the
+`gui/viewers.py:53` and `dfxm/viewer_jobs.py:20` are the two sites outside the
+stage machinery — the viewer load runs in the GUI process and the rotation-video
+export runs in a child job, and neither sees `StageSpec.estimate` or `plan_run`.
+They are one conversion, not two: the stride policy lives in `dfxm/common/` so
+both call it (`dfxm/` may not import `gui/`), and the video is coarsened by the
+same rule as the view — though each measures headroom in its own process, so the
+factor can differ. `gui/viewers.py:53` reads the
 volume, upcasts with `.astype(float)`, then builds `vol[np.isfinite(vol)]` for
 the percentile clim, a second full-size copy. It reads with a stride when the
 volume exceeds headroom, using the larger of the RAM-derived factor and the

@@ -24,6 +24,7 @@ vertical) — see :func:`build_basis`.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 from collections.abc import Callable
@@ -37,6 +38,7 @@ from scipy.ndimage import map_coordinates
 
 from ..common import alignment as A
 from ..common import render as Rnd
+from ..common import volumeio as V
 from ..common.errors import StageUserError
 from ..common.figures import FigureSpec, crop_roi_2d, register, resolve_clim
 from ..common.h5io import iter_dataset_sizes, sum_dataset_bytes
@@ -69,6 +71,62 @@ def _noop(_frac: float, _msg: str) -> None:
 # Root-level group holding starred plane offsets (/marks/<slice_name>); every
 # enumerator of oblique_slices.h5 root groups must skip it.
 MARKS_GROUP = "marks"
+
+# What a child running this stage costs resident before it touches a voxel:
+# interpreter, numpy, scipy, h5py and matplotlib. `tracemalloc` cannot see any
+# of it, so it is what
+# :func:`~dfxm.common.advice.working_set_budget_bytes` must take off the
+# machine's headroom before converting the rest into an allocation budget.
+#
+# Measured with `tests/peak_rss.py::measure_process_floor`, three samples, on a
+# 4x6x8 seven-volume run — 9 kB of data — and pinned by
+# `test_rss_floor_covers_the_measured_process_image`, which brackets the constant
+# from both sides so it can be neither too low nor inflated to silence the check:
+#
+#     save_png = False (no matplotlib figure ever built)   103.9 MiB
+#     save_png = True  (the default)                       193.5 MiB
+#
+# The **PNGs-on** figure is the right one: it is the default, and the first
+# figure a run builds imports the whole of matplotlib's rendering stack, which
+# every volume after it then streams with resident.
+#
+# **Not visualize's 768 MB and not paraview's 300 MB.** Those two import
+# pyvista/VTK; this stage never does, so it sits below both, and pasting either
+# number fails the assertion rather than silently mis-sizing the budget.
+#
+# The declared value carries ~1.3x slack over the measurement, the same ratio the
+# other two carry, because the additive RSS model is not an envelope (see
+# `advice.MARGINAL_RSS_PER_TRACED_BYTE`) and the floor is the term with room to
+# absorb that: over-stating it only shrinks the budget, under-stating it invites
+# an OOM.
+RSS_FLOOR_BYTES = 256 * 1024 * 1024
+
+# The whole run's working-set budget divided among the things that hold a block
+# at once. `align_volume_streamed`'s model prices the alignment chain and
+# **nothing downstream**, while the colour-limit reductions layered on its blocks
+# hold, per float64 element at their peak, `_finite64`, the rank search's window,
+# the `searchsorted`/`clip` index arrays and the `isfinite` mask — the
+# `dtype.itemsize + 8 * (retained + 1) + 1` = 41 B/element that
+# `align_volume_streamed` computes for its own cached median, i.e. 5.125 blocks —
+# plus one more for the centred `b - center` the stream yields through. 6.125,
+# rounded **up**: the constant is a *divisor*, so a larger number means a smaller
+# budget, and rounding down would permit more than was counted. (`visualize`
+# shipped 6 for the same count and had to be corrected to 7 for exactly this
+# reason.) Dividing by a call site's concurrent consumers is what
+# `paraview._process_mosaicity` does for its concurrent field streams; it is not
+# a correction to what `budget_bytes` means.
+REDUCTION_WORKING_SET_MULTIPLE = 7
+
+# What the Z-blocked gather holds *per plane it is filling*, in units of that
+# plane's own float32 bytes. Per element of the coordinate rectangle it builds:
+# `coords` is 3 x float64 (6 float32-plane-equivalents), the `local` gather it
+# stacks out of them is another 3 x float64 (6) when the whole rectangle is
+# selected, `map_coordinates`' float64 result is one more (2) and the boolean
+# `sel` mask is 1 byte (0.25) — 14.25, rounded **up**. It multiplies the plane
+# size and is then *subtracted* from the budget, so rounding down would leave a
+# plane batch larger than what was counted; the in-core sampler holds the same
+# rectangle (minus `local`) for the one plane it is on.
+GATHER_SCRATCH_PLANE_MULTIPLE = 15
 
 _DEFAULT_SLICES = json.dumps(
     [
@@ -510,40 +568,109 @@ class ReplotEntry:
 # -----------------------------------------------------------------------------
 # Centering / colour-range helpers (faithful port)
 # -----------------------------------------------------------------------------
-def _center_offset(data, method):
-    valid = data[np.isfinite(data)]
-    if valid.size == 0:
-        return data, 0.0
-    val = float(np.nanmean(valid)) if method == "mean" else float(np.nanmedian(valid))
-    return data - val, val
+# -- ONE DEFINITION PER STATISTIC, FED BY WHICHEVER RUNG IS RUNNING ------------
+#
+# `prepare_volume` picks between two rungs by asking how much memory the machine
+# has: it either materialises the aligned volume or walks it as a stream of
+# Z-blocks. A statistic that differed between the two would be a statistic that
+# depended on the machine — the laptop-versus-workstation divergence this phase
+# exists to remove, reintroduced at the seam the phase created.
+#
+# `visualize` holds that equality by keeping two implementations in step and
+# pinning them with a fixture. Here there is nothing to keep in step: each of the
+# four helpers below takes a **blocks factory** and there is exactly one
+# implementation, so the rung decides only where the blocks come from — slices of
+# a resident array on the in-core rung, the alignment stream on the other. The
+# equality is then `volumeio`'s own budget-independence guarantee, which is
+# asserted in that module rather than restated here.
+#
+# What that unification cost, stated because it is a real (if tiny) change of
+# product: `_center_offset("mean")` was `np.nanmean` and is now
+# `volumeio.stream_mean`, a compensated (Neumaier) sum. The two disagree by about
+# an ulp on realistic data — the drift `alignment._center_offset` already took
+# project-wide for the same reason, and on the more accurate side. `median` and
+# every percentile here are bit-equal to their numpy originals, and
+# `center_method` defaults to `midrange`, which uses no mean at all.
+def _arrays(blocks):
+    """A factory over the bare arrays of a ``(slice, array)`` block factory."""
+    return lambda: (block for _sl, block in blocks())
 
 
-def _symmetric_range(data, pct=99):
-    valid = data[np.isfinite(data)]
-    if valid.size == 0:
-        return (-1.0, 1.0)
-    am = float(np.percentile(np.abs(valid), pct))
-    return (-am, am)
+def _shifted(blocks, offset):
+    """*blocks* with a constant subtracted — the streaming ``data - center``.
+
+    The ``if not offset`` short-circuit is
+    :func:`~dfxm.common.alignment.align_volume_streamed`'s own, for the same
+    reason: subtracting a zero allocates a second array per block and changes no
+    value.
+    """
+    if not offset:
+        return blocks
+    return lambda: ((sl, block - offset) for sl, block in blocks())
 
 
-def _midrange_clim(data, pct=99.5):
-    valid = data[np.isfinite(data)]
-    if valid.size == 0:
-        return 0.0, (-1.0, 1.0)
-    if pct >= 100.0:
-        lo, hi = float(np.min(valid)), float(np.max(valid))
+def _center_offset(blocks, method):
+    """The centring statistic over the finite voxels of *blocks*.
+
+    ``0.0`` when nothing finite is present, which is what the array form
+    returned for an empty selection.
+
+    ``±inf`` **voxels are dropped**, not averaged in: these reductions filter on
+    ``np.isfinite``, exactly as the array form's ``data[np.isfinite(data)]``
+    selection did before them. So the guard keys on ``np.isnan`` and not on
+    ``not np.isfinite``: NaN is this reduction's "no finite voxel anywhere"
+    signal and must become the array form's ``0.0``, whereas an infinity
+    reaching the *result* can only be an overflow of the finite values'
+    own sum — a real statistic, which the array form would also have returned
+    and which is therefore passed through rather than silently zeroed.
+    """
+    if method == "mean":
+        val = V.stream_mean(_arrays(blocks)())
     else:
-        lo, hi = (float(v) for v in np.percentile(valid, [100.0 - pct, pct]))
+        val = V.stream_quantile(_arrays(blocks), 50.0)
+    return 0.0 if np.isnan(val) else float(val)
+
+
+def _symmetric_range(blocks, pct=99):
+    """Symmetric limits at the *pct*-th percentile of ``|value|``.
+
+    ``np.abs`` runs before the finite filter rather than after it, which selects
+    the same values — ``abs`` maps NaN to NaN and ``±inf`` to ``inf``, both
+    dropped either way — while keeping the whole computation inside one
+    traversal-driven reduction.
+    """
+    am = V.stream_quantile(lambda: (np.abs(b) for b in _arrays(blocks)()), float(pct))
+    if np.isnan(am):
+        return (-1.0, 1.0)
+    return (-float(am), float(am))
+
+
+def _midrange_clim(blocks, pct=99.5):
+    """``(center, (vmin, vmax))`` from the robust ``[100 - pct, pct]`` pair.
+
+    Slices is the only stage offering ``midrange``, so the convention stays
+    here rather than moving into shared alignment code.
+    """
+    arrays = _arrays(blocks)
+    if pct >= 100.0:
+        lo, hi = V.stream_minmax(arrays())
+    else:
+        lo = V.stream_quantile(arrays, 100.0 - pct)
+        hi = V.stream_quantile(arrays, pct)
+    if np.isnan(lo):
+        return 0.0, (-1.0, 1.0)
     center = 0.5 * (lo + hi)
     half = 0.5 * (hi - lo) or 1.0
     return center, (-half, half)
 
 
-def _percentile_range(data, lo=1, hi=99):
-    valid = data[np.isfinite(data)]
-    if valid.size == 0:
+def _percentile_range(blocks, lo=1, hi=99):
+    """The *lo*-th and *hi*-th percentiles of the finite voxels of *blocks*."""
+    arrays = _arrays(blocks)
+    v_lo = V.stream_quantile(arrays, float(lo))
+    if np.isnan(v_lo):
         return (0.0, 1.0)
-    return (float(np.percentile(valid, lo)), float(np.percentile(valid, hi)))
+    return (float(v_lo), float(V.stream_quantile(arrays, float(hi))))
 
 
 def _parse_pair(text):
@@ -603,12 +730,26 @@ def slice_plane_offsets(sl):
     return start + np.arange(n) * step
 
 
-def sample_plane(prep, plane_origin, u_hat, v_hat, half_u, half_v, du, dv):
-    """Sample one plane centred at plane_origin (X,Y,Z µm). Returns (slice, u_um, v_um)."""
+def _plane_axes(half_u, half_v, du, dv):
+    """The plane's ``(u_um, v_um)`` sample axes — its grid, and nothing else."""
     nu = max(1, int(np.round(2.0 * half_u / du)) + 1)
     nv = max(1, int(np.round(2.0 * half_v / dv)) + 1)
-    u_um = np.linspace(-half_u, half_u, nu)
-    v_um = np.linspace(-half_v, half_v, nv)
+    return np.linspace(-half_u, half_u, nu), np.linspace(-half_v, half_v, nv)
+
+
+def _plane_coords(prep, plane_origin, u_hat, v_hat, u_um, v_um):
+    """Voxel coordinates ``(3, len(v_um), len(u_um))`` — ``(k, j, i)`` — for one plane.
+
+    Factored out of :func:`sample_plane` so the in-core sampler and the
+    Z-blocked gather share it **verbatim**: the coordinates are not what changes
+    between the two, and computing them twice in two places is how the two would
+    drift apart.
+
+    Every operation is elementwise over ``u_um``/``v_um``, so evaluating this on
+    a sub-rectangle of the grid gives bit-identical numbers for that
+    sub-rectangle — which is what lets the gather price only the rows and
+    columns a Z-block can reach.
+    """
     uu, vv = np.meshgrid(u_um, v_um)
     pts = (
         np.asarray(plane_origin, np.float64)[None, None, :]
@@ -618,9 +759,246 @@ def sample_plane(prep, plane_origin, u_hat, v_hat, half_u, half_v, du, dv):
     i = pts[..., 0] / prep["scale_x"] + prep["x_ref_shift_px"]
     j = pts[..., 1] / prep["scale_y"] + prep["y_ref_shift_px"]
     k = (pts[..., 2] - prep.get("z_ref_shift_um", 0.0)) / prep["scale_z"]
-    coords = np.stack([k, j, i], axis=0)
+    return np.stack([k, j, i], axis=0)
+
+
+def sample_plane(prep, plane_origin, u_hat, v_hat, half_u, half_v, du, dv):
+    """Sample one plane centred at plane_origin (X,Y,Z µm). Returns (slice, u_um, v_um).
+
+    The in-core sampler: it reads ``prep["data"]``, so it needs the whole
+    aligned volume resident. :func:`sample_planes_streamed` is the bounded-memory
+    counterpart, and :func:`iter_sample_planes` picks between them.
+    """
+    u_um, v_um = _plane_axes(half_u, half_v, du, dv)
+    coords = _plane_coords(prep, plane_origin, u_hat, v_hat, u_um, v_um)
     s = map_coordinates(prep["data"], coords, order=1, mode="constant", cval=np.nan)
     return s.astype(np.float32), u_um, v_um
+
+
+def _plane_k(prep, plane_origin, u_hat, v_hat, u_um, v_um):
+    """Just the ``k`` (Z voxel) coordinate of :func:`_plane_coords`, for probing."""
+    uu, vv = np.meshgrid(np.asarray(u_um, np.float64), np.asarray(v_um, np.float64))
+    origin = np.asarray(plane_origin, np.float64)
+    z = origin[2] + uu * float(u_hat[2]) + vv * float(v_hat[2])
+    return (z - prep.get("z_ref_shift_um", 0.0)) / prep["scale_z"]
+
+
+# How far outside a block's own Z range a probe may look before the plane is
+# skipped for that block. `k` is affine in (u, v), so its extremes over the grid
+# sit on the grid's edges — but they are computed in floating point, so an
+# interior sample can exceed an edge probe by an ulp. One whole voxel of slack
+# is many orders of magnitude more than that, and costs at most one extra
+# (already cheap) rectangle per block.
+_PROBE_SLACK_LAYERS = 1.0
+
+
+def _span_in_block(low, high, z0: int, z1: int) -> tuple[int, int] | None:
+    """The index range of *low*/*high* whose ``k`` interval can meet ``[z0, z1)``.
+
+    *low* and *high* are per-index bounds on ``k`` along one grid axis. Returns
+    ``None`` when no index qualifies. NaN bounds compare false and are excluded,
+    which is right: a sample with a NaN coordinate belongs to no block and keeps
+    the NaN the output starts as, exactly as ``cval=np.nan`` gives it in-core.
+    """
+    hits = (high >= z0 - _PROBE_SLACK_LAYERS) & (low < z1 + _PROBE_SLACK_LAYERS)
+    if not hits.any():
+        return None
+    idx = np.flatnonzero(hits)
+    # `[first, last + 1]` rather than the mask itself: the qualifying set is an
+    # interval for an affine `k`, and taking its hull keeps the answer a basic
+    # slice (a view) even if rounding were to punch a hole in the mask.
+    return int(idx[0]), int(idx[-1]) + 1
+
+
+def _gather_batch(prep, origins, u_hat, v_hat, u_um, v_um):
+    """One walk of ``prep["blocks"]``, filling every plane in *origins*.
+
+    The batch is the memory knob: the walk is shared by however many planes are
+    handed to it, so a whole sweep costs one traversal and holds every plane,
+    while a sweep split into *b* batches costs *b* traversals and holds only a
+    batch. :func:`iter_planes_streamed` chooses *b*; the arithmetic below does
+    not depend on it — a plane's samples come from the blocks its ``k`` lands
+    in, and which other planes travelled with it is not an input.
+    """
+    outs = [np.full((len(v_um), len(u_um)), np.nan, dtype=np.float32) for _ in origins]
+    # Per plane, `k` along the grid's own edges: rows probed at the two extreme
+    # columns and columns probed at the two extreme rows. Two 1-D bounds per
+    # plane, so the probes cost O(rows + columns) and are held for the whole
+    # traversal without ever approaching the size of an image.
+    probes = []
+    for origin in origins:
+        row_k = _plane_k(prep, origin, u_hat, v_hat, u_um[[0, -1]], v_um)
+        col_k = _plane_k(prep, origin, u_hat, v_hat, u_um, v_um[[0, -1]])
+        probes.append((row_k.min(axis=1), row_k.max(axis=1), col_k.min(axis=0), col_k.max(axis=0)))
+
+    for interior, window, _within in V.iter_with_context(prep["blocks"](), trailing=1):
+        z0, z1 = int(interior.start), int(interior.stop)
+        for out, origin, (row_lo, row_hi, col_lo, col_hi) in zip(outs, origins, probes):
+            rows = _span_in_block(row_lo, row_hi, z0, z1)
+            if rows is None:
+                continue
+            cols = _span_in_block(col_lo, col_hi, z0, z1)
+            if cols is None:
+                continue
+            r0, r1 = rows
+            c0, c1 = cols
+            coords = _plane_coords(prep, origin, u_hat, v_hat, u_um[c0:c1], v_um[r0:r1])
+            k, j, i = coords[0], coords[1], coords[2]
+            sel = (k >= z0) & (k < z1)
+            if not sel.any():
+                continue
+            local = np.stack([k[sel] - z0, j[sel], i[sel]], axis=0)
+            out[r0:r1, c0:c1][sel] = map_coordinates(
+                window, local, order=1, mode="constant", cval=np.nan
+            )
+    return outs
+
+
+def sweep_batch_size(n_planes: int, plane_bytes: int, max_resident_bytes: int | None) -> int:
+    """How many planes of a sweep may be gathered in one walk of the Z-blocks.
+
+    ``None`` means "no bound" — the whole sweep in one walk, which is what
+    :func:`sample_planes_streamed` and every caller that already holds the
+    planes anyway wants. Otherwise it is the number of whole planes that fit in
+    *max_resident_bytes*, and never less than one: a single plane is the
+    irreducible unit of the gather, so a budget too small for one is reported by
+    the measured peak rather than honoured by returning nothing.
+    """
+    if max_resident_bytes is None:
+        return max(1, int(n_planes))
+    fit = int(max_resident_bytes) // max(1, int(plane_bytes))
+    return max(1, min(int(n_planes), fit))
+
+
+def iter_planes_streamed(
+    prep, plane_origins, u_hat, v_hat, half_u, half_v, du, dv, *, max_resident_bytes=None
+):
+    """Yield each plane of one sweep, gathered from Z-blocks, in the order given.
+
+    ``max_resident_bytes`` caps the **finished planes** held at once; the sweep
+    is split into batches of :func:`sweep_batch_size` planes and each batch costs
+    one walk of ``prep["blocks"]``. That is the trade this knob makes and the
+    only thing it changes: *b* batches re-read the volume *b* times, and the
+    values are identical either way (see :func:`_gather_batch`).
+
+    ``None`` (the default) is one batch — one walk, every plane resident, which
+    is what :func:`sample_planes_streamed` returns.
+    """
+    u_um, v_um = _plane_axes(half_u, half_v, du, dv)
+    origins = [np.asarray(o, np.float64) for o in plane_origins]
+    plane_bytes = len(u_um) * len(v_um) * 4
+    step = sweep_batch_size(len(origins), plane_bytes, max_resident_bytes)
+    for start in range(0, len(origins), step):
+        outs = _gather_batch(prep, origins[start : start + step], u_hat, v_hat, u_um, v_um)
+        for idx in range(len(outs)):
+            plane, outs[idx] = outs[idx], None  # drop the batch's own reference
+            yield plane
+
+
+def sample_planes_streamed(prep, plane_origins, u_hat, v_hat, half_u, half_v, du, dv):
+    """Every plane of one sweep, gathered from Z-blocks instead of a whole volume.
+
+    Returns ``(planes, u_um, v_um)`` — one ``float32`` image per origin, in the
+    order given — and walks ``prep["blocks"]`` **once** for the whole sweep. The
+    output of a plane is a small 2-D image whatever the volume's size, so one
+    pass over Z can serve every requested plane at the same time; sampling them
+    one at a time would re-run the alignment chain once per plane.
+
+    This is the unbounded face of :func:`iter_planes_streamed`: it holds the
+    whole sweep. ``run`` uses the iterator instead, because on the shipped
+    default geometry the sweep is the largest array the stage touches.
+
+    Why this is bit-identical to :func:`sample_plane` rather than merely close.
+    ``map_coordinates`` with ``order=1`` reads layers ``floor(k)`` and
+    ``floor(k) + 1`` and weights them by the fraction, so a sample belongs to the
+    block whose interior contains ``floor(k)``, and that block needs exactly one
+    row of its successor to be self-sufficient — which is what
+    :func:`~dfxm.common.volumeio.iter_with_context` supplies. A sample assigned to
+    block ``[z0, z1)`` therefore reads the same two rows with the same weights as
+    the in-core call, and non-final blocks never touch a boundary condition at
+    all. The final block has no successor, so its window ends exactly where the
+    volume ends and scipy applies there the identical out-of-bounds rule it
+    applies in-core. A sample whose ``floor(k)`` lands in no block is outside the
+    volume in Z and keeps the NaN the output starts as, which is what in-core
+    ``cval`` gives it.
+
+    ``floor(k) in [z0, z1)`` is spelled ``z0 <= k < z1``: for integer bounds the
+    two are the same set, NaN included (both comparisons are false). It is
+    **not** an integer cast — ``int(-0.5)`` truncates toward zero and would
+    assign a sample above the volume's floor to block 0.
+
+    ``out[…] = <float64>`` writes into a ``float32`` image, which rounds each
+    sample exactly once — the same single rounding :func:`sample_plane`'s
+    trailing ``.astype(np.float32)`` applies, since each sample is written by
+    exactly one block.
+
+    Cost, stated because it is the streaming rung's real price: a plane is
+    priced against a block by probing ``k`` along the grid's edges (O(rows +
+    columns)) and then computing coordinates only for the bounding rectangle of
+    the rows and columns that block can reach. For the two plane families this
+    stage ships — a Z-normal sweep (``k`` constant over the plane) and a sweep
+    tilted in X–Z with ``up`` = world Y (``k`` varying only along ``u``) — that
+    rectangle is tight, and each plane's coordinates are effectively computed
+    once across the whole traversal. A plane tilted in *both* in-plane
+    directions has a diagonal band whose bounding rectangle is not tight, and
+    then coordinates are recomputed per block. That is work, not memory: the
+    peak is one block, one window and one rectangle of coordinates however many
+    planes the sweep holds.
+    """
+    u_um, v_um = _plane_axes(half_u, half_v, du, dv)
+    planes = list(iter_planes_streamed(prep, plane_origins, u_hat, v_hat, half_u, half_v, du, dv))
+    return planes, u_um, v_um
+
+
+def sample_plane_streamed(prep, plane_origin, u_hat, v_hat, half_u, half_v, du, dv):
+    """One plane, gathered from Z-blocks. The single-plane face of
+    :func:`sample_planes_streamed`; a sweep should call that directly so the
+    stream is walked once rather than once per plane."""
+    planes, u_um, v_um = sample_planes_streamed(
+        prep, [plane_origin], u_hat, v_hat, half_u, half_v, du, dv
+    )
+    return planes[0], u_um, v_um
+
+
+def iter_sample_planes(
+    prep, plane_origins, u_hat, v_hat, half_u, half_v, du, dv, *, max_resident_bytes=None
+):
+    """Yield each plane of one sweep, by whichever rung *prep* was prepared on.
+
+    ``prep["data"]`` is the resident aligned volume on the in-core rung and
+    ``None`` on the streaming one; see :func:`prepare_volume` for how the rung
+    is chosen. The two yield identical images — pinned by
+    ``test_slices_streamed_gather_matches_in_core``.
+
+    A **generator**, not a list, because a sweep's planes are the largest array
+    this stage handles: on the shipped default geometry ``oblique_full`` is
+    ~172 planes of 2528x1789 float32, i.e. 2.90 GiB, against a 1.15 GiB volume.
+    ``run`` writes each plane into its HDF5 dataset as it arrives, so only the
+    plane in flight is ever held.
+
+    The in-core rung needs no batching — :func:`sample_plane` produces one plane
+    per call from a volume that is already resident — so ``max_resident_bytes``
+    applies to the streaming rung only, where planes come out of a shared walk
+    of the Z-blocks; see :func:`iter_planes_streamed`.
+
+    ``u_um``/``v_um`` are not returned: they are :func:`_plane_axes` of the same
+    four arguments, which any caller can compute for itself without sampling.
+    """
+    if prep.get("data") is not None:
+        for origin in plane_origins:
+            yield sample_plane(prep, origin, u_hat, v_hat, half_u, half_v, du, dv)[0]
+        return
+    yield from iter_planes_streamed(
+        prep,
+        plane_origins,
+        u_hat,
+        v_hat,
+        half_u,
+        half_v,
+        du,
+        dv,
+        max_resident_bytes=max_resident_bytes,
+    )
 
 
 def _world_box(shape, sx, sy, sz, xshift, yshift, zshift):
@@ -728,30 +1106,222 @@ def _motors(cfg, p):
 _CENTERED_KINDS: frozenset[str] = frozenset({"mosa_com"})
 
 
-def prepare_volume(cfg, p, scale_x, scale_y, samy_dir, style=None):
-    """Load and (if stacked) align one volume, resolving render style per kind."""
+class _Float64Dataset:
+    """*dset* read as float64 — this stage's historical ``[:].astype(np.float64)``.
+
+    :func:`~dfxm.common.alignment.align_volume_streamed` runs ``abs`` and the
+    samy sub-pixel shift in the input's own dtype and upcasts only at the Z
+    interpolation. This stage upcast **first**, so on a float32 stacked volume
+    ``scipy.ndimage.shift`` ran in float64 and produced different bits from the
+    float32 shift the alignment would otherwise do. Presenting the dataset as
+    float64 keeps the arithmetic exactly where it was, whatever the file stores,
+    at no extra cost: the cast happens on a block instead of on the volume.
+    """
+
+    def __init__(self, dset) -> None:
+        self._dset = dset
+        self.shape = tuple(int(d) for d in dset.shape)
+        self.dtype = np.dtype(np.float64)
+
+    def __getitem__(self, key):
+        return np.asarray(self._dset[key], dtype=np.float64)
+
+
+def _materialise(blocks, shape, dtype):
+    """This stage's name for :func:`~dfxm.common.alignment.materialise_blocks`.
+
+    Every in-core rung in the project drains a block factory the same way, and
+    the adoption of a lone covering block (copying it would hold two whole
+    volumes) is the detail worth having in exactly one place.
+    """
+    return A.materialise_blocks(blocks, shape, dtype)
+
+
+def _aligned_block_budget(dset, budget_bytes: int) -> int:
+    """``budget_bytes`` converted into the block bytes :func:`iter_blocks` counts.
+
+    ``iter_blocks`` sizes a block by its bytes **in the stored dtype**, but this
+    stage holds far more than that per block: the float64 upcast, the centred
+    copy, and — at their peak — the streaming reductions' own per-element
+    temporaries (``_finite64``, the window, the ``searchsorted``/``clip``
+    indices and the ``isfinite`` mask), which
+    :func:`~dfxm.common.alignment.align_volume_streamed` prices at
+    ``dtype.itemsize + 8 * (retained + 1) + 1`` = 41 B per float64 element.
+    Handing the budget over raw would buy a block several times too large.
+
+    Integer division rounds the budget **down**, which is the safe direction:
+    a smaller budget can only make blocks smaller than counted.
+    """
+    itemsize = max(1, int(np.dtype(dset.dtype).itemsize))
+    per_element = itemsize + 41 + 8  # stored + reductions' peak + the centred copy
+    return max(1, int(budget_bytes) * itemsize // per_element)
+
+
+# The Z step (µm) assumed when there are no samz positions to derive one from.
+# `extract_motor_positions` fills samy and samz from the same folders, so they
+# are empty together; the value is what this stage has always used here.
+_NO_MOTOR_Z_STEP_UM = 2.0
+
+
+def _unaligned_pad(samy, n_layers: int, scale_x: float, samy_direction: int):
+    """The ``(left, right)`` canvas growth the whole-volume samy shift would add.
+
+    Reproduces :func:`~dfxm.common.alignment.apply_samy_shifts_to_volume`'s own
+    ``pad=None`` arithmetic, which is **not** ``compute_pad_left(samy)``: the
+    canvas comes from ``samy[:n_use]`` with ``n_use`` clipped to the volume's
+    layer count. The two agree whenever ``len(samy) == n_layers`` (every real
+    run) and differ otherwise, so deriving the pad the other way would silently
+    change the output width on the one path that has no motors to trust.
+    """
+    if samy is None or len(samy) == 0:
+        return 0, 0
+    n_use = n_layers if len(samy) == n_layers else min(n_layers, len(samy))
+    used = np.asarray(samy[:n_use])
+    return (
+        A.compute_pad_left(used, scale_x, samy_direction),
+        A.compute_pad_right(used, scale_x, samy_direction),
+    )
+
+
+def _unaligned_shape(dset, cfg, samy, scale_x: float, samy_direction: int):
+    """``(shape, dtype, scale_z)`` of the no-samz chain, from shapes alone."""
+    nz, ny0, nx0 = (int(d) for d in dset.shape)
+    rx, ry = cfg.get("roi_x"), cfg.get("roi_y")
+    nx = (rx[1] - rx[0]) if rx else nx0
+    ny = (ry[1] - ry[0]) if ry else ny0
+    pad_left, pad_right = _unaligned_pad(samy, nz, scale_x, samy_direction)
+    return (nz, ny, nx + pad_left + pad_right), np.dtype(np.float64), _NO_MOTOR_Z_STEP_UM
+
+
+def _unaligned_blocks(
+    dset, cfg, samy, *, scale_x: float, samy_direction: int, take_abs: bool, budget_bytes: int
+):
+    """The no-samz chain (``abs`` → ROI → samy X-shift) as a Z-block factory.
+
+    Every step here is per layer, so blocking along Z is exact rather than an
+    approximation: the ``pad`` and the reference samy are computed once for the
+    **whole** volume and passed in explicitly, which is the same trick — and the
+    same reason — as :func:`~dfxm.common.alignment.align_volume_streamed`'s. A
+    block's own samy would imply a narrower canvas and each block would land on
+    a frame of its own.
+    """
+    n_layers = int(dset.shape[0])
+    pad = _unaligned_pad(samy, n_layers, scale_x, samy_direction)
+    n_use = 0 if samy is None or len(samy) == 0 else min(n_layers, len(samy))
+    ref = float(samy[0]) if n_use else 0.0
+    block_budget = _aligned_block_budget(dset, budget_bytes)
+
+    def blocks():
+        for sl, block in V.iter_blocks(dset, budget_bytes=block_budget):
+            v = np.asarray(block, dtype=np.float64)
+            if take_abs:
+                v = np.abs(v)
+            v = A.apply_roi_3d(v, cfg.get("roi_x"), cfg.get("roi_y"))
+            if n_use:
+                # `samy[sl]` and not `samy`: the shift is applied per layer and
+                # each layer must get its own offset. Layers past `n_use` get an
+                # empty slice here and are padded but not shifted, exactly as the
+                # whole-volume call leaves them.
+                v = A.apply_samy_shifts_to_volume(
+                    v, np.asarray(samy)[sl], scale_x, samy_direction, ref_samy=ref, pad=pad
+                )
+            else:
+                v = np.ascontiguousarray(v)
+            yield sl, v
+
+    return blocks
+
+
+def prepare_volume(cfg, p, scale_x, scale_y, samy_dir, style=None, *, stack, budget_bytes):
+    """Load and (if stacked) align one volume, resolving render style per kind.
+
+    Returns a dict whose ``blocks`` key is a zero-argument factory yielding
+    ``(z_slice, array)`` over the prepared (centred) volume, and whose ``data``
+    key is that volume as one array **when the machine can hold it** and ``None``
+    otherwise.
+
+    **Two rungs, the project's own escalation.** When ``budget_bytes`` leaves the
+    alignment a single block, the whole aligned volume exists anyway: it is
+    adopted, and the plane sampling reads it directly — one traversal, and no
+    coordinate work beyond what the stage always did. Only when it does *not*
+    fit does the plane sampling gather from the Z-block stream, where re-reading
+    is the price of running at all. ``advice.plan_run`` makes the same
+    in-core-then-chunked choice for the same reason, and `visualize` measured
+    that streaming *unconditionally* made its peak worse.
+
+    The colour limits and the centring statistic are computed from ``blocks`` on
+    **both** rungs — see the note above :func:`_center_offset` — so which rung
+    ran cannot change a number.
+
+    *stack* is an ``ExitStack`` owned by the caller: the HDF5 file must stay
+    open for as long as the blocks are walked, and must close when the caller is
+    finished with this volume.
+    """
     kind, source = cfg["kind"], cfg["source"]
     extra = {}
+    f = stack.enter_context(h5py.File(cfg["h5_path"], "r"))
+    dset = f[cfg["dataset_path"]]
     if source == "stacked":
-        with h5py.File(cfg["h5_path"], "r") as f:
-            raw = f[cfg["dataset_path"]][:].astype(np.float64)
-        if kind == "mosa_fwhm" and bool(p["abs_fwhm"]):
-            raw = np.abs(raw)
         samy, samz, _ = _motors(cfg, p)
-        data = A.apply_roi_3d(raw, cfg.get("roi_x"), cfg.get("roi_y"))
-        if len(samy) > 0:
-            data = A.apply_samy_shifts_to_volume(data, samy, scale_x, samy_dir)
+        take_abs = kind == "mosa_fwhm" and bool(p["abs_fwhm"])
         if len(samz) > 0:
-            data, _z, scale_z = A.interpolate_to_uniform_z(data, samz)
+            streamed = A.align_volume_streamed(
+                _Float64Dataset(dset),
+                samy,
+                samz,
+                scale_x=scale_x,
+                samy_direction=samy_dir,
+                roi_x=cfg.get("roi_x"),
+                roi_y=cfg.get("roi_y"),
+                take_abs=take_abs,
+                # None: slices centres itself below, midrange included, and that
+                # convention is not one alignment.py knows.
+                center_method=None,
+                budget_bytes=max(1, int(budget_bytes) // REDUCTION_WORKING_SET_MULTIPLE),
+            )
+            raw_blocks = streamed.blocks
+            shape, dtype = streamed.shape, streamed.dtype
+            scale_z = float(streamed.scale_z_um)
+            fits = int(streamed.block_layers) >= int(streamed.shape[0])
         else:
-            scale_z = 2.0
+            # No samz means no Z grid to interpolate onto, and re-interpolating
+            # a NaN-bearing volume onto its own nodes is not the identity — so
+            # `align_volume_streamed`, which always interpolates, cannot serve
+            # this case (it would also raise on `samz[0]`). `visualize` and
+            # `paraview` answer it by falling back to a whole in-core volume.
+            #
+            # This stage does **not**, because it does not have to: what is left
+            # of the chain once the Z interpolation is gone — `abs`, the ROI
+            # crop and the samy X-shift — is entirely **per layer**, so it
+            # blocks along Z like everything else. Leaving it in core would have
+            # made the one path a run reaches by *misconfiguration* the one path
+            # with no memory bound at all, which is a poor place to keep an
+            # escape hatch: a user whose scan folders did not match is exactly
+            # the user least likely to read a note about it.
+            shape, dtype, scale_z = _unaligned_shape(dset, cfg, samy, scale_x, samy_dir)
+            raw_blocks = _unaligned_blocks(
+                dset,
+                cfg,
+                samy,
+                scale_x=scale_x,
+                samy_direction=samy_dir,
+                take_abs=take_abs,
+                budget_bytes=budget_bytes,
+            )
+            fits = V.volume_bytes(dset) <= _aligned_block_budget(dset, budget_bytes)
         sx, sy = scale_x, scale_y
         x_ref = y_ref = 0.0
         z_ref = float(cfg.get("z_ref_shift_um", 0.0))
-    else:  # aligned
-        with h5py.File(cfg["h5_path"], "r") as f:
-            data = f[cfg["dataset_path"]][:].astype(np.float64)
-            extra = dict(f.attrs)
+    else:  # aligned — already co-registered, no alignment step
+        extra = dict(f.attrs)
+        block_budget = _aligned_block_budget(dset, budget_bytes)
+        raw_blocks = lambda: (  # noqa: E731 - a factory, deliberately re-callable
+            (sl, np.asarray(block, dtype=np.float64))
+            for sl, block in V.iter_blocks(dset, budget_bytes=block_budget)
+        )
+        shape = tuple(int(d) for d in dset.shape)
+        dtype = np.dtype(np.float64)
+        fits = V.volume_bytes(dset) <= block_budget
         sx = float(extra.get("scale_x_um_per_px", scale_x))
         sy = float(extra.get("scale_y_um_per_px", scale_y))
         scale_z = float(extra.get("scale_z_um_per_px", 1.0))
@@ -759,16 +1329,38 @@ def prepare_volume(cfg, p, scale_x, scale_y, samy_dir, style=None):
         y_ref = float(cfg.get("y_ref_shift_px", 0))
         z_ref = float(cfg.get("z_ref_shift_um", 0.0))
 
+    data = None
+    if fits:
+        # The volume the machine can hold: build it once, and read the statistics
+        # off *slices of it* rather than off the whole array. Basic slicing of an
+        # ndarray is a view, so the reductions cost block-sized temporaries here
+        # too — where handing them the volume as one block would allocate several
+        # full-size ones, which is how `visualize`'s first attempt made its peak
+        # worse than the code it replaced.
+        data = np.ascontiguousarray(_materialise(raw_blocks, shape, dtype), dtype=np.float64)
+        raw_blocks = lambda: V.iter_blocks(  # noqa: E731
+            data, budget_bytes=_aligned_block_budget(data, budget_bytes)
+        )
+
     center_method = p["center_method"].lower()
+    center = 0.0
     if kind in ("mosa_com", "strain"):
         if center_method == "midrange":
-            center, (auto_vmin, auto_vmax) = _midrange_clim(data, float(p["range_pct"]))
-            data = data - center
+            center, (auto_vmin, auto_vmax) = _midrange_clim(raw_blocks, float(p["range_pct"]))
         else:
-            data, _ = _center_offset(data, center_method)
-            auto_vmin, auto_vmax = _symmetric_range(data)
+            center = _center_offset(raw_blocks, center_method)
+            auto_vmin, auto_vmax = _symmetric_range(_shifted(raw_blocks, center))
     else:  # mosa_fwhm / raw_*
-        auto_vmin, auto_vmax = _percentile_range(data, 1, 99)
+        auto_vmin, auto_vmax = _percentile_range(raw_blocks, 1, 99)
+
+    if data is not None:
+        if center:
+            # In place: `data - center` would hold two whole volumes, and the
+            # rounding is the same either way.
+            np.subtract(data, center, out=data)
+        blocks = raw_blocks  # the factory slices `data`, which is now centred
+    else:
+        blocks = _shifted(raw_blocks, center)
 
     sym, suffix = _axis_suffix(cfg["dataset_path"])
     titles = {
@@ -791,7 +1383,11 @@ def prepare_volume(cfg, p, scale_x, scale_y, samy_dir, style=None):
     title, cbar_label, suffix = titles[kind]
     vmin_f, vmax_f, clim_note = apply_round_clim(float(auto_vmin), float(auto_vmax), style)
     return {
-        "data": np.ascontiguousarray(data, dtype=np.float64),
+        # The resident aligned volume on the in-core rung, None on the streaming
+        # one; `blocks` is the factory both rungs stream from.
+        "data": data,
+        "blocks": blocks,
+        "shape": tuple(int(d) for d in shape),
         "scale_x": float(sx),
         "scale_y": float(sy),
         "scale_z": float(scale_z),
@@ -933,7 +1529,15 @@ def save_slice_png(prep, sl, slice2d, u_um, v_um, out_png, *, offset_um, dpi=150
     )
 
 
-def write_volume_group(fh, prep, slice_records):
+def open_volume_group(fh, prep):
+    """Create one volume's group and write its attrs; the slice subgroups follow.
+
+    Split from the slice writing (it used to be one ``write_volume_group`` call
+    taking finished stacks) so a sweep can be written **plane by plane** as it is
+    sampled: see :func:`open_slice_dataset` and :class:`PlaneWriter`. Nothing
+    here depends on a sampled value, so the whole group is created before the
+    first plane exists.
+    """
     vg = fh.create_group(prep["volume_id"])
     vg.attrs["kind"] = prep["kind"]
     vg.attrs["dataset_path"] = prep["dataset_path"]
@@ -949,19 +1553,112 @@ def write_volume_group(fh, prep, slice_records):
     vg.attrs["scale_x_um_per_px"] = prep["scale_x"]
     vg.attrs["scale_y_um_per_px"] = prep["scale_y"]
     vg.attrs["scale_z_um_per_px"] = prep["scale_z"]
-    for rec in slice_records:
-        sg = vg.create_group(rec["name"])
-        sg.create_dataset(
-            "slices", data=rec["stack"].astype(np.float32), compression="gzip", compression_opts=4
-        )
-        sg.create_dataset("u_um", data=rec["u_um"].astype(np.float64))
-        sg.create_dataset("v_um", data=rec["v_um"].astype(np.float64))
-        sg.create_dataset("offsets_um", data=rec["offsets"].astype(np.float64))
-        for key in ("normal", "origin", "up", "u_hat", "v_hat", "n_hat"):
-            sg.attrs[key] = np.asarray(rec[key], np.float64)
-        for key in ("half_u", "half_v", "du", "dv", "sweep_step_um"):
-            sg.attrs[key] = float(rec[key])
-        sg.attrs["n_planes"] = int(rec["stack"].shape[0])
+    return vg
+
+
+def open_slice_dataset(vg, rec):
+    """Create one slice subgroup — sized, typed and fully attributed — up front.
+
+    Returns the empty ``slices`` dataset for :class:`PlaneWriter` to fill. Every
+    number written here is geometry: ``resolve_auto_extent`` has already fixed
+    the extent, :func:`_plane_axes` the ``(nv, nu)`` grid and
+    :func:`slice_plane_offsets` the plane count, so the dataset can be sized
+    without a single sample being taken.
+
+    Same datasets, same paths, same dtypes, same attrs and the same creation
+    order as the old whole-stack write — including the ``gzip``/level-4 filter,
+    which is what makes h5py chunk the dataset, and it guesses the same chunk
+    shape from ``(shape, dtype)`` whether the data is supplied at creation or
+    written afterwards.
+
+    ``fillvalue=nan``, and it is load-bearing. Sizing the dataset up front means
+    a run that dies mid-sweep — a `MemoryError`, a kill — leaves a group whose
+    unwritten planes are readable, where the old whole-stack write left no group
+    at all; :meth:`PlaneWriter.close`'s count check cannot fire on that path,
+    because nothing calls it. HDF5's default fill is **zero**, and a plane of
+    zeros reads as data: `profiles` will happily average it into a CSV with no
+    skip and no note. NaN is what every reader in this pipeline already treats as
+    "no sample" (`map_coordinates`' own ``cval``, the colour-limit reductions,
+    `profiles`' finite masks), so an interrupted sweep degrades to a plane that
+    is visibly absent rather than one that is quietly flat.
+    """
+    sg = vg.create_group(rec["name"])
+    dset = sg.create_dataset(
+        "slices",
+        shape=(len(rec["offsets"]), len(rec["v_um"]), len(rec["u_um"])),
+        dtype=np.float32,
+        compression="gzip",
+        compression_opts=4,
+        fillvalue=np.float32(np.nan),
+    )
+    sg.create_dataset("u_um", data=rec["u_um"].astype(np.float64))
+    sg.create_dataset("v_um", data=rec["v_um"].astype(np.float64))
+    sg.create_dataset("offsets_um", data=rec["offsets"].astype(np.float64))
+    for key in ("normal", "origin", "up", "u_hat", "v_hat", "n_hat"):
+        sg.attrs[key] = np.asarray(rec[key], np.float64)
+    for key in ("half_u", "half_v", "du", "dv", "sweep_step_um"):
+        sg.attrs[key] = float(rec[key])
+    sg.attrs["n_planes"] = int(len(rec["offsets"]))
+    return dset
+
+
+class PlaneWriter:
+    """Fills a sized ``slices`` dataset one plane at a time.
+
+    The point of the class is that it buffers **one chunk row** — ``chunks[0]``
+    planes — and no more. Writing a single plane into a gzip-compressed dataset
+    whose chunks span several planes would make HDF5 read, decompress,
+    re-compress and re-write every chunk it touches once per plane in the row;
+    buffering to the chunk boundary makes every chunk written exactly once, which
+    is the same compression work the old whole-stack write did.
+
+    The buffer is small and its size is not a free parameter. h5py aims each
+    chunk at ~1 MiB and shrinks the dimensions roughly evenly to get there, so
+    ``chunks[0] * plane_bytes`` grows like ``stack_bytes**(2/3)``: the shipped
+    default ``oblique_full`` (172 x 1789 x 2528 float32, 2.90 GiB) chunks at
+    ``(6, 56, 158)``, i.e. a 104 MiB buffer for a 2.90 GiB stack, and a stack
+    would have to reach ~140 GB before the buffer reached 256 MiB.
+
+    :attr:`depth` is that plane count, exposed so the caller can charge it to the
+    same budget it charges the sampler's own batch.
+    """
+
+    def __init__(self, dset):
+        self._dset = dset
+        self._n_planes = int(dset.shape[0])
+        self.depth = int(dset.chunks[0]) if dset.chunks else self._n_planes
+        self._slab = None
+        self._held = 0
+        self._written = 0
+
+    def append(self, plane) -> None:
+        """Buffer one plane; flush when the buffer reaches a chunk boundary."""
+        if self._slab is None:
+            # One allocation reused for the whole sweep — `np.stack` per flush
+            # would hold the buffer and its copy at once, which is the doubling
+            # this class exists to remove.
+            self._slab = np.empty((self.depth,) + tuple(plane.shape), dtype=np.float32)
+        self._slab[self._held] = plane
+        self._held += 1
+        if self._held == self.depth:
+            self.flush()
+
+    def flush(self) -> None:
+        if not self._held:
+            return
+        self._dset[self._written : self._written + self._held] = self._slab[: self._held]
+        self._written += self._held
+        self._held = 0
+
+    def close(self) -> None:
+        """Flush the tail and release the buffer. Every plane must have arrived."""
+        self.flush()
+        self._slab = None
+        if self._written != self._n_planes:
+            raise RuntimeError(
+                f"slice dataset {self._dset.name!r} was sized for {self._n_planes} "
+                f"planes but {self._written} were written"
+            )
 
 
 # -----------------------------------------------------------------------------
@@ -1150,28 +1847,84 @@ _SLICES_VOLUME_PARAMS = (
 def estimate(params: dict) -> CostEstimate:
     """Peak memory for a slices run, from HDF5 shapes only.
 
-    ``run()`` calls ``prepare_volume`` one selected dataset at a time, and
-    ``prep`` is a plain local that gets *rebound* each iteration — the
-    previous volume's prepared array stays fully alive while the next one is
-    being built, so the peak pairs the current volume's own load peak with the
-    largest OTHER selected volume's footprint (not the sum of all of them).
+    ``run()`` calls ``prepare_volume`` one selected dataset at a time. The
+    model below is the *old* loop, in which ``prep`` was a plain local merely
+    *rebound* each iteration, so the previous volume's prepared array stayed
+    fully alive while the next one was built — hence a peak pairing the
+    current volume's own load peak with the largest OTHER selected volume's
+    footprint. ``run()`` now releases the previous ``prep`` before calling
+    ``prepare_volume`` again, so that cross-volume term no longer applies.
 
     Within one ``prepare_volume`` call, ``elems_v * itemsize_v`` is the native
     read (source dtype, coexisting briefly with its ``.astype(np.float64)``
     copy). For a **stacked** source (``mosa_volume_file`` /
-    ``strain_volume_file``) three float64-sized copies of that field are then
-    alive at once: the raw float64 read (kept in its own variable), the
-    samy-shifted canvas, and ``interpolate_to_uniform_z``'s float64 output —
-    ``load_peak_v = elems_v * itemsize_v + 3 * elems_v * 8``. An **aligned**
-    source (``aligned_rocking_file`` / ``aligned_mosa_file``) is already
-    co-registered — no shift/interpolate step — so only the one float64 read
-    persists: ``load_peak_v = elems_v * itemsize_v + 1 * elems_v * 8``.
+    ``strain_volume_file``) the model counts three float64-sized copies of
+    that field alive at once: the raw float64 read (kept in its own variable),
+    the samy-shifted canvas, and ``interpolate_to_uniform_z``'s float64 output
+    — ``load_peak_v = elems_v * itemsize_v + 3 * elems_v * 8``. The raw read
+    is now dropped as soon as the samy shift has copied out of it, so only two
+    are really coexistent. An **aligned** source (``aligned_rocking_file`` /
+    ``aligned_mosa_file``) is already co-registered — no shift/interpolate
+    step — so only the one float64 read persists:
+    ``load_peak_v = elems_v * itemsize_v + 1 * elems_v * 8``.
+
+    **Recalibration warning — do not simply change the 3 to a 2.** The two
+    surviving stacked copies are each *larger* than ``elems_v``, so counting
+    them in bare ``elems_v * 8`` units **under**-predicts, and under-prediction
+    is the dangerous direction (it greenlights a run that then OOMs). Both
+    survivors are inflated, and on the second the inflations compound:
+
+    * ``apply_samy_shifts_to_volume`` expands the canvas along image-X so
+      nothing is clipped — ``nx_new = nx_orig + pad_left + pad_right``, the
+      pads being the extreme samy offsets in pixels
+      (``alignment.py:81-86``). Its output is ``(n_layers, ny, nx_new)``.
+    * ``interpolate_to_uniform_z`` resamples onto
+      ``n_uniform = max(2, round((z_max - z_min) / median|Δz|) + 1)``
+      (``alignment.py:122``), which **exceeds** ``n_use`` whenever samz is
+      irregular: one large gap drags the median step down and stretches the
+      uniform grid. Its output is ``(n_uniform, ny, nx_new)`` — it inherits
+      the X-padding, so both inflations multiply.
+
+    A correct model therefore needs the padded/resampled extents, not
+    ``elems_v``; neither is derivable from HDF5 shapes alone (both depend on
+    the samy/samz motor values), so recalibration must either read the motors
+    or carry an explicit, documented safety factor. The arithmetic is
+    deliberately left unchanged here. Net of everything above the current
+    figure still **over**-estimates on regular-samz data — the dropped third
+    copy was in effect accidental headroom masking the inflation — but that
+    margin is not guaranteed on a large sweep or an irregular samz.
 
     ``total_input`` is unchanged from the file-level ``sum_dataset_bytes``
     total across the four volume-file params (every dataset in each selected
     file, not filtered by the ``include_*`` toggles) — a deliberately
     conservative input figure kept for continuity with the other estimators.
-    Not chunkable: alignment is a whole-volume operation.
+
+    ``chunkable=True``. It read ``False`` — "alignment is a whole-volume
+    operation" — and that was wrong: the alignment runs *along* Z, so blocking it
+    along Z is exactly what :func:`~dfxm.common.alignment.align_volume_streamed`
+    does, and the sampling that consumes it reads only the eight voxels
+    bracketing each sample, two of them in Z. ``run`` now takes the whole stage
+    in Z-blocks whenever the machine's budget requires it.
+
+    **The peak model above still describes the old whole-volume loop** and has
+    not been recalibrated for the streamed one — the same caveat Task 9 left on
+    paraview's and Task 10 on visualize's.
+
+    **The model has never counted the OUTPUT side, and the term it is missing is
+    now small but not zero.** A sweep's planes used to be held whole, and on the
+    shipped default geometry that was the largest array the stage touched by a
+    factor of three (2.90 GiB of ``oblique_full`` against a 1.15 GiB volume,
+    transiently doubled by ``np.stack``). ``run`` now sizes the HDF5 dataset up
+    front and writes plane by plane, so what survives is a :class:`PlaneWriter`
+    chunk-row buffer (~``stack_bytes ** (2/3)``, 104 MiB for that 2.90 GiB
+    sweep) plus :data:`GATHER_SCRATCH_PLANE_MULTIPLE` planes of coordinate
+    scratch (259 MiB) — both functions of one **plane's** size rather than of
+    the sweep's length, but together still about **0.35 GiB unmodelled on the
+    shipped default, ~9% of an 8 GB machine's headroom**. That is a residual to
+    fold into the next recalibration, not something to ignore. Deriving it from
+    ``params`` means resolving ``slices_json`` against the data box here, which
+    this estimator does not do; the arithmetic once a plane's ``(nv, nu)`` is
+    known is `(GATHER_SCRATCH_PLANE_MULTIPLE + chunks[0]) * nv * nu * 4`.
     """
     p = {**STAGE.defaults(), **params}
     total_input = 0
@@ -1187,7 +1940,7 @@ def estimate(params: dict) -> CostEstimate:
         if shape is not None and (largest is None or len(shape) > len(largest)):
             largest = shape
     if not total_input:
-        return CostEstimate(0, 0, None, False, "no readable volume files selected yet")
+        return CostEstimate(0, 0, None, True, "no readable volume files selected yet")
 
     try:
         # A mid-typed ROI string ("10,", "abc") must not break the estimate —
@@ -1219,13 +1972,13 @@ def estimate(params: dict) -> CostEstimate:
         # Per-dataset sizing couldn't resolve anything selected (e.g. the
         # named files don't hold the toggled quantities) — fall back to the
         # coarser file-level figure rather than reporting zero.
-        return CostEstimate(total_input, total_input, largest, False, None)
+        return CostEstimate(total_input, total_input, largest, True, None)
 
     peak = 0
     for i, (_own_f64, load_peak_i) in enumerate(load_infos):
         other = max((f64 for j, (f64, _lp) in enumerate(load_infos) if j != i), default=0)
         peak = max(peak, load_peak_i + other)
-    return CostEstimate(peak, total_input, largest, False, None)
+    return CostEstimate(peak, total_input, largest, True, None)
 
 
 # Relative Y-height spread beyond which volumes are flagged as misregistered.
@@ -1277,6 +2030,60 @@ def _y_height_notes(volumes, roi_y, scale_y):
         "volumes use (rocking-stage roi_y is 'start,end' in raw-detector pixels; "
         "note darfix displays its ROI as origin+size, not start,end)."
     ]
+
+
+def _sweep_resident_bytes(budget_bytes: int, plane_bytes: int, reserved_planes: int) -> int:
+    """What is left of the budget for a batch of finished planes.
+
+    Everything else alive while a sweep is sampled, subtracted explicitly rather
+    than covered by a round fraction:
+
+    * the Z-block stream, which is ``budget_bytes //
+      REDUCTION_WORKING_SET_MULTIPLE`` by construction — that is the figure
+      :func:`prepare_volume` hands ``align_volume_streamed``, and the chain
+      keeps itself inside it;
+    * :data:`GATHER_SCRATCH_PLANE_MULTIPLE` planes of coordinate scratch for the
+      plane being filled;
+    * *reserved_planes* for :class:`PlaneWriter`'s chunk-row buffer.
+
+    Never less than one plane: a plane is the irreducible unit of the sweep, so a
+    budget too small for one is reported by the measured peak, not honoured by
+    refusing to sample. On the in-core rung the number is unused — that rung
+    produces one plane per call.
+    """
+    plane_bytes = max(1, int(plane_bytes))
+    room = (
+        int(budget_bytes)
+        - int(budget_bytes) // REDUCTION_WORKING_SET_MULTIPLE
+        - (GATHER_SCRATCH_PLANE_MULTIPLE + int(reserved_planes)) * plane_bytes
+    )
+    return max(plane_bytes, room)
+
+
+def _run_budget_bytes(p: dict, out_dir: str | None = None) -> int:
+    """The working-set budget one ``run`` may allocate, in ``tracemalloc`` bytes.
+
+    Measured from the machine unless the caller injected ``_budget_bytes``. The
+    injection is the phase-1-4 convention — an underscore-prefixed key placed in
+    ``params`` rather than a :class:`StageSpec` parameter, the same way
+    ``plot_style`` reaches a stage — and it exists so tests can pin the blocking
+    instead of inheriting whatever RAM the runner happens to have.
+
+    The machine's headroom is an **RSS** figure and ``budget_bytes`` is priced in
+    Python allocations, so it goes through
+    :func:`~dfxm.common.advice.working_set_budget_bytes` with this stage's own
+    :data:`RSS_FLOOR_BYTES` rather than straight in. An injected
+    ``_budget_bytes`` is taken as already being in working-set currency, since a
+    caller naming it is naming the thing the model consumes.
+    """
+    injected = p.get("_budget_bytes")
+    if injected is not None:
+        return max(1, int(injected))
+    from ..common import advice, machine
+
+    return advice.working_set_budget_bytes(
+        machine.profile(output_dir=out_dir), rss_floor_bytes=RSS_FLOOR_BYTES
+    )
 
 
 def run(params: dict, progress: ProgressFn | None = None) -> SlicesResult:
@@ -1368,6 +2175,7 @@ def run(params: dict, progress: ProgressFn | None = None) -> SlicesResult:
             "so the sweep file profiles reads is not overwritten"
         )
     out_h5 = os.path.join(out_dir, h5_name)
+    budget_bytes = _run_budget_bytes(p, out_dir)
     save_png = bool(p["save_png"])
     grids_by_slice: dict[str, list[tuple[str, tuple[int, int]]]] = {}
     fh = h5py.File(out_h5, "w")
@@ -1375,85 +2183,121 @@ def run(params: dict, progress: ProgressFn | None = None) -> SlicesResult:
     fh.attrs["center_method"] = p["center_method"]
     fh.attrs["range_pct"] = float(p["range_pct"])
     fh.attrs["frame"] = "origin-0 PVTI frame: world(X,Y,Z) = (i*scale_x, j*scale_y, k*scale_z)"
+    prep = None
     try:
         for vi, cfg in enumerate(volumes):
             progress(0.1 + 0.85 * vi / len(volumes), f"slicing {cfg['kind']} {cfg['dataset_path']}")
-            try:
-                prep = prepare_volume(cfg, p, scale_x, scale_y, samy_dir, style=style)
-            except (KeyError, OSError, ValueError) as exc:
-                result.skipped.append(f"{cfg['dataset_path']}: {exc}")
-                continue
-            if prep["clim_note"]:
-                msg = f"{prep['volume_id']}: {prep['clim_note']}"
-                progress(0.1 + 0.85 * vi / len(volumes), msg)
-                result.notes.append(msg)
-            records = []
-            for sl in slices:
-                du = float(sl.get("du", prep["scale_x"]))
-                dv = float(sl.get("dv", prep["scale_x"]))
-                u_hat, v_hat, n_hat = build_basis(sl["normal"], sl.get("up"))
-                origin = np.asarray(sl["origin"], dtype=np.float64)
-                offsets = slice_plane_offsets(sl)
-                planes, u_um, v_um = [], None, None
-                for pi, off in enumerate(offsets):
-                    s2d, u_um, v_um = sample_plane(
+            # Before the ExitStack, not inside it: `prep` is a function-local that
+            # the next iteration only rebinds *after* `prepare_volume` returns, so
+            # without this the previous volume is alive while the next is built.
+            # Closing the file does not release it — the array is not the handle.
+            prep = None
+            with contextlib.ExitStack() as open_files:
+                try:
+                    prep = prepare_volume(
+                        cfg,
+                        p,
+                        scale_x,
+                        scale_y,
+                        samy_dir,
+                        style=style,
+                        stack=open_files,
+                        budget_bytes=budget_bytes,
+                    )
+                except (KeyError, OSError, ValueError) as exc:
+                    result.skipped.append(f"{cfg['dataset_path']}: {exc}")
+                    continue
+                if prep["clim_note"]:
+                    msg = f"{prep['volume_id']}: {prep['clim_note']}"
+                    progress(0.1 + 0.85 * vi / len(volumes), msg)
+                    result.notes.append(msg)
+                vg = open_volume_group(fh, prep)
+                for sl in slices:
+                    du = float(sl.get("du", prep["scale_x"]))
+                    dv = float(sl.get("dv", prep["scale_x"]))
+                    half_u, half_v = float(sl["half_u"]), float(sl["half_v"])
+                    u_hat, v_hat, n_hat = build_basis(sl["normal"], sl.get("up"))
+                    origin = np.asarray(sl["origin"], dtype=np.float64)
+                    offsets = slice_plane_offsets(sl)
+                    # The whole sweep's geometry is known before a single sample
+                    # is taken, so the dataset is sized and written into
+                    # plane-by-plane: on the shipped default geometry the stack
+                    # is 2.90 GiB against a 1.15 GiB volume, and holding it
+                    # (never mind `np.stack`'s transient copy of it) was the
+                    # largest term in this stage by a factor of three.
+                    u_um, v_um = _plane_axes(half_u, half_v, du, dv)
+                    up_used = sl.get("up", None)
+                    writer = PlaneWriter(
+                        open_slice_dataset(
+                            vg,
+                            {
+                                "name": sl["name"],
+                                "u_um": u_um,
+                                "v_um": v_um,
+                                "offsets": offsets,
+                                "normal": sl["normal"],
+                                "origin": sl["origin"],
+                                "up": up_used if up_used is not None else v_hat,
+                                "u_hat": u_hat,
+                                "v_hat": v_hat,
+                                "n_hat": n_hat,
+                                "half_u": half_u,
+                                "half_v": half_v,
+                                "du": du,
+                                "dv": dv,
+                                "sweep_step_um": float(sl.get("sweep_step_um") or 0.0),
+                            },
+                        )
+                    )
+                    planes = iter_sample_planes(
                         prep,
-                        origin + off * n_hat,
+                        [origin + off * n_hat for off in offsets],
                         u_hat,
                         v_hat,
-                        float(sl["half_u"]),
-                        float(sl["half_v"]),
+                        half_u,
+                        half_v,
                         du,
                         dv,
+                        max_resident_bytes=_sweep_resident_bytes(
+                            budget_bytes, len(u_um) * len(v_um) * 4, writer.depth
+                        ),
                     )
-                    planes.append(s2d)
+                    slice_dir = os.path.join(out_dir, sl["name"])
                     if save_png:
-                        slice_dir = os.path.join(out_dir, sl["name"])
                         os.makedirs(slice_dir, exist_ok=True)
-                        if len(offsets) == 1:
-                            png = os.path.join(slice_dir, f"{prep['volume_id']}.png")
-                            save_slice_png(
-                                prep, sl, s2d, u_um, v_um, png, offset_um=None, style=style
-                            )
-                        else:
-                            png = os.path.join(
-                                slice_dir,
-                                f"{prep['volume_id']}__p{pi:03d}_{off:+08.2f}um.png",
-                            )
-                            save_slice_png(
-                                prep, sl, s2d, u_um, v_um, png, offset_um=off, style=style
-                            )
-                        result.pngs.append(png)
-                stack = np.stack(planes, axis=0)
-                result.n_planes_total += stack.shape[0]
-                grids_by_slice.setdefault(sl["name"], []).append(
-                    (prep["volume_id"], (len(v_um), len(u_um)))
-                )
-                up_used = sl.get("up", None)
-                records.append(
-                    {
-                        "name": sl["name"],
-                        "stack": stack,
-                        "u_um": u_um,
-                        "v_um": v_um,
-                        "offsets": offsets,
-                        "normal": sl["normal"],
-                        "origin": sl["origin"],
-                        "up": up_used if up_used is not None else v_hat,
-                        "u_hat": u_hat,
-                        "v_hat": v_hat,
-                        "n_hat": n_hat,
-                        "half_u": float(sl["half_u"]),
-                        "half_v": float(sl["half_v"]),
-                        "du": du,
-                        "dv": dv,
-                        "sweep_step_um": float(sl.get("sweep_step_um") or 0.0),
-                    }
-                )
-                if sl["name"] not in result.slice_names:
-                    result.slice_names.append(sl["name"])
-            write_volume_group(fh, prep, records)
-            result.volume_ids.append(prep["volume_id"])
+                    # Driven by the sampler, not by `zip(offsets, planes)`: zip
+                    # stops on its *first* argument, which would leave the
+                    # generator suspended on its last yield with `prep` — the
+                    # whole aligned volume on the in-core rung — alive in its
+                    # frame past the end of the loop.
+                    for pi, s2d in enumerate(planes):
+                        off = float(offsets[pi])
+                        if save_png:
+                            if len(offsets) == 1:
+                                png = os.path.join(slice_dir, f"{prep['volume_id']}.png")
+                                save_slice_png(
+                                    prep, sl, s2d, u_um, v_um, png, offset_um=None, style=style
+                                )
+                            else:
+                                png = os.path.join(
+                                    slice_dir,
+                                    f"{prep['volume_id']}__p{pi:03d}_{off:+08.2f}um.png",
+                                )
+                                save_slice_png(
+                                    prep, sl, s2d, u_um, v_um, png, offset_um=off, style=style
+                                )
+                            result.pngs.append(png)
+                        writer.append(s2d)
+                        s2d = None  # the writer copied it; do not hold it into the next
+                    writer.close()
+                    writer = planes = None
+                    result.n_planes_total += len(offsets)
+                    grids_by_slice.setdefault(sl["name"], []).append(
+                        (prep["volume_id"], (len(v_um), len(u_um)))
+                    )
+                    if sl["name"] not in result.slice_names:
+                        result.slice_names.append(sl["name"])
+                result.volume_ids.append(prep["volume_id"])
     finally:
         fh.close()
 

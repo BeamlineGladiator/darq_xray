@@ -421,11 +421,22 @@ class Viewer3DWindow(QWidget):
             R3.apply_camera(self._canvas.plotter, cam)
             self._set_camera_fields(cam)
 
+    def _with_notes(self, text: str) -> str:
+        """Append the loaded volume's display notes (e.g. decimation) to *text*.
+
+        Same ``text — note`` shape the oversize-texture note already uses, so
+        every advisory the status label carries reads the same way.
+        """
+        notes = getattr(self.loaded, "notes", ()) or ()
+        return " — ".join([text, *notes])
+
     def rebuild(self) -> None:
         """Clear and re-populate the plotter from the current scene."""
         if self.scene is None or not self._canvas.ensure():
             if not self._canvas.available:
-                self._status.setText("3-D unavailable (no OpenGL context) — controls disabled")
+                self._status.setText(
+                    self._with_notes("3-D unavailable (no OpenGL context) — controls disabled")
+                )
             self._sync_export_enabled()
             return
         pl = self._canvas.plotter
@@ -440,7 +451,7 @@ class Viewer3DWindow(QWidget):
         oversize = R3.oversize_note(self.scene, R3.volume_texture_limit(pl)) if ok else None
         if oversize:
             status += f" — {oversize}"
-        self._status.setText(status)
+        self._status.setText(self._with_notes(status))
         # pl.clear() above also drops the bounds axes actor — re-apply it here
         # so toggling structural controls doesn't silently hide the bounds.
         if self._bounds_check.isChecked():
@@ -679,11 +690,13 @@ class Viewer3DWindow(QWidget):
     def _finish_video_ok(self, result) -> None:
         self._stop_video_timer()
         path = result.get("video") if isinstance(result, dict) else result
+        job_notes = tuple(result.get("notes") or ()) if isinstance(result, dict) else ()
         # None = the job ran fine but had nothing to render (empty scene) —
         # "saved to None" would read as a success with a broken path.
-        self._status.setText(
-            f"rotation video saved to {path}" if path else "nothing to export (empty scene)"
-        )
+        text = f"rotation video saved to {path}" if path else "nothing to export (empty scene)"
+        # The child re-reads the volume itself, so it decides its own decimation:
+        # report the job's notes, not this window's.
+        self._status.setText(" — ".join([text, *job_notes]))
         self._video_btn.setEnabled(self._canvas.available)
         self._video_runner = None
 

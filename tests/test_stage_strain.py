@@ -123,6 +123,85 @@ def test_run_batch_over_multiple_layers(tmp_path):
     assert res.n_layers == 2 and res.volume_shape == (2, 40, 60)
 
 
+def test_strain_volume_matches_layerwise_stack(tmp_path):
+    """The incremental writer's volume equals np.stack of the per-layer maps."""
+    root = tmp_path / "root"
+    for i, name in enumerate(["layer__1", "layer__2", "layer__10"]):
+        _write_maps(str(root / name), _synthetic_ccmth(seed=i + 1))
+    params = {
+        "mode": "batch",
+        "root_folder": str(root),
+        "folder_pattern": "layer__*",
+        "ccmth_ref_deg": 7.144,
+        "save_plots": False,
+    }
+    res = S.run(params)
+    assert res.n_layers == 3
+
+    defaults = {**S.STAGE.defaults(), **params}
+    expected = np.stack(
+        [
+            S.process_maps_file(
+                lr.maps_path,
+                lr.name,
+                ccmth_com_path=defaults["ccmth_com_path"],
+                ccmth_ref_deg=float(defaults["ccmth_ref_deg"]),
+                pixel_size_x_um=float(defaults["pixel_size_x_um"]),
+                pixel_size_y_um=float(defaults["pixel_size_y_um"]),
+                roi=None,
+                vlim=(None, None),
+                out_dir=None,
+                save_plots=False,
+            )[0]
+            for lr in res.layers
+        ],
+        axis=0,
+    )
+    with h5py.File(res.stacked_path, "r") as f:
+        volume = f["strain"][:]
+        assert f.attrs["num_layers"] == len(res.layers)
+        assert f.attrs["source_folders"].split("\n") == [lr.name for lr in res.layers]
+        assert f.attrs["scale_x_um"] == float(defaults["pixel_size_x_um"])
+    assert volume.dtype == expected.dtype
+    assert np.array_equal(volume, expected, equal_nan=True)
+
+
+def test_strain_no_layers_leaves_no_stacked_file(tmp_path):
+    """Every folder skipped -> abort inside the with-block; no file, no .part."""
+    root = tmp_path / "root"
+    os.makedirs(root / "layer__1")  # matches the pattern but has no maps.h5
+    res = S.run(
+        {
+            "mode": "batch",
+            "root_folder": str(root),
+            "folder_pattern": "layer__*",
+            "ccmth_ref_deg": 7.144,
+            "save_plots": False,
+        }
+    )
+    assert res.n_layers == 0 and res.stacked_path is None
+    assert list(root.glob("*.h5")) == []
+    assert list(root.glob("*.part")) == []
+
+
+def test_single_mode_missing_folder_skips_rather_than_raising(tmp_path):
+    """A stale 'Input folder' (free-text, persisted across sessions) must come
+    back as a skip banner, not a raw h5py FileNotFoundError from the writer
+    eagerly creating its part file in a directory that does not exist."""
+    missing = tmp_path / "nope"
+    res = S.run(
+        {
+            "mode": "single",
+            "input_folder": str(missing),
+            "ccmth_ref_deg": 7.144,
+            "save_plots": False,
+        }
+    )
+    assert res.n_layers == 0 and res.stacked_path is None
+    assert res.skipped == ["nope: maps.h5 not found"]
+    assert not missing.exists()
+
+
 def test_batch_missing_maps_file_records_reason(tmp_path):
     root = tmp_path / "root"
     _write_maps(str(root / "layer__1"), _synthetic_ccmth())

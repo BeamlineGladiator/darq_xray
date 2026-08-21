@@ -351,3 +351,277 @@ def test_rocking_replot_title_is_source_aware(tmp_path):
     assert len(captured) == 1
     expected_title = RK._sum_title("mosaicity")
     assert captured[0] == expected_title, f"got {captured[0]!r}, want {expected_title!r}"
+
+
+# -- the replot clim is streamed, and the colours must not move ---------------
+
+
+def _count_clim_blocks(monkeypatch):
+    """Record how many blocks each `dataset_blocks` traversal yielded.
+
+    Returned list stays empty if `_replot_default_clim` never streams at all,
+    which is what a reverted `dataset[:]` looks like — so the precondition
+    assertion below cannot pass vacuously.
+    """
+    from dfxm.common import volumeio
+
+    # Undo any earlier patch first: a test that calls this once per budget would
+    # otherwise wrap the previous wrapper, leaving every earlier `seen` list
+    # still recording and making `min(seen)` the smallest count of the WHOLE
+    # sweep instead of that budget's. (Observed: two different budgets both
+    # reporting 10 blocks.)
+    monkeypatch.undo()
+    real = volumeio.dataset_blocks
+    seen: list[int] = []
+
+    def counting(dset, **kwargs):
+        n = 0
+        for block in real(dset, **kwargs):
+            n += 1
+            yield block
+        seen.append(n)
+
+    monkeypatch.setattr(volumeio, "dataset_blocks", counting)
+    return seen
+
+
+def _write_clim_volume(path, *, nan_fraction_cut=1.7):
+    """A float32 volume with NaNs, both infinities and exact ties, written to *path*.
+
+    The non-finite values are load-bearing, not decoration. `_colorbar_range`
+    selects with `np.isfinite` while `volumeio.stream_quantile` drops non-finite
+    values by construction; a fixture carrying **only NaNs** cannot tell those
+    two selections apart, because `~np.isnan` keeps exactly what `isfinite`
+    keeps on it. This fixture was NaN-only, and reverting `_colorbar_range` to
+    `~np.isnan` left every test in this module green — the rung boundary was
+    pinned by nothing. `±inf` is what separates them, and it is a real value
+    here: a pathological darfix fit puts one in a rocking volume, and then the
+    in-core rung returns `vmax = inf` (every finite voxel one colour) where the
+    streaming rung returns a finite limit — the same data rendering differently
+    on two machines.
+
+    Rounding onto a coarse grid puts long runs of **exact ties** around every
+    rank, including the 1st and 99th percentiles the replot asks for, which is
+    where `stream_quantile`'s rank search and `np.percentile` could disagree
+    about which of the equal values they return.
+
+    `_assert_finite_selections_disagree` asserts the first property rather than
+    assuming it, so the fixture cannot quietly lose its subject again.
+    """
+    rng = np.random.default_rng(4)
+    volume = (rng.normal(size=(20, 16, 16)) * 1000.0).astype(np.float32)
+    volume[volume > nan_fraction_cut * 1000.0] = np.nan
+    volume = (np.round(volume / 50.0) * 50.0).astype(np.float32)
+    flat = volume.reshape(-1)
+    finite_idx = np.flatnonzero(np.isfinite(flat))
+    picked = rng.choice(finite_idx, size=320, replace=False)
+    flat[picked[:160]] = np.inf
+    flat[picked[160:]] = -np.inf
+    with h5py.File(path, "w") as f:
+        f.create_dataset("sum_intensity", data=volume)
+    return volume
+
+
+def _assert_finite_selections_disagree(volume, lo, hi):
+    """`isfinite` and `~isnan` must give different limits on *volume*.
+
+    Without this the rung equality below compares two selections that happen to
+    coincide, and reverting `_colorbar_range`'s `np.isfinite` to `~np.isnan`
+    would leave it green — which is exactly how this test spent the wave not
+    testing anything.
+    """
+    finite = np.percentile(volume[np.isfinite(volume)], [lo, hi])
+    with np.errstate(invalid="ignore"):  # `inf - inf` in numpy's interpolation
+        not_nan = np.percentile(volume[~np.isnan(volume)], [lo, hi])
+    assert not np.array_equal(finite, not_nan), (
+        "the fixture no longer separates `np.isfinite` from `~np.isnan` — they give the "
+        f"same limits {tuple(finite)} on it, so reverting `_colorbar_range` to `~np.isnan` "
+        "would leave the rung equality below green. Put ±inf back into the fixture."
+    )
+
+
+def test_rocking_replot_clim_is_exactly_the_in_core_percentile(tmp_path, monkeypatch):
+    """The streamed percentile must equal the whole-volume one BIT for bit.
+
+    `_colorbar_range` is the in-core form the replot used before it streamed, so
+    comparing against it here is comparing against the colours every existing
+    PNG was rendered with. `approx` would hide exactly the drift this must not
+    have.
+    """
+    h5p = str(tmp_path / "clim.h5")
+    volume = _write_clim_volume(h5p)
+    finite = float(np.isfinite(volume).mean())
+    assert 0.5 < finite < 1.0, f"fixture must be mostly-finite WITH NaNs present, got {finite:.3f}"
+
+    defaults = RK.STAGE.defaults()
+    expected = RK._colorbar_range(volume, defaults["cbar_pct_lo"], defaults["cbar_pct_hi"])
+
+    seen = _count_clim_blocks(monkeypatch)
+    with h5py.File(h5p, "r") as f:
+        got = RK._replot_default_clim(f["sum_intensity"], {}, None, budget_bytes=16 * 1024)
+
+    assert seen, "_replot_default_clim must stream the volume, not load it"
+    assert min(seen) >= 5, f"the budget must have split the volume, got block counts {seen}"
+    assert got == expected, f"replot colours moved: {got!r} != in-core {expected!r}"
+
+
+def test_rocking_replot_clim_is_budget_independent_across_both_rungs(tmp_path, monkeypatch):
+    """Same volume, four budgets, both rungs, one answer.
+
+    Which rung runs depends on how much memory the machine has, so a colour that
+    differed between them would be a colour that depended on the machine.
+    Asserts **both** rungs are actually taken — without that this compares a run
+    against itself, the vacuity Task 10 recorded.
+
+    It also asserts the fixture can *see* the two rungs' finite selections
+    differ. The in-core rung's `data[np.isfinite(data)]` and the streaming
+    rung's implicit non-finite drop agree on a NaN-only volume no matter which
+    one the in-core side is written with, so on the fixture as it first stood
+    this test passed with `_colorbar_range` reverted to `~np.isnan` — the exact
+    defect this wave had already repaired in `visualize`.
+    """
+    h5p = str(tmp_path / "clim.h5")
+    volume = _write_clim_volume(h5p)
+    defaults = RK.STAGE.defaults()
+    assert np.isinf(volume).any() and np.isnan(volume).any(), "fixture lost its non-finite values"
+    _assert_finite_selections_disagree(volume, defaults["cbar_pct_lo"], defaults["cbar_pct_hi"])
+
+    answers = []
+    traversals = []  # [] when the in-core rung ran, [n_blocks, ...] when it streamed
+    for budget in (4 * 1024, 24 * 1024, 1 << 20, 64 << 20):
+        seen = _count_clim_blocks(monkeypatch)
+        with h5py.File(h5p, "r") as f:
+            answers.append(
+                RK._replot_default_clim(f["sum_intensity"], {}, None, budget_bytes=budget)
+            )
+        traversals.append(seen)
+
+    streamed = [min(s) for s in traversals if s]
+    assert streamed, "no budget took the streaming rung"
+    assert any(not s for s in traversals), "no budget took the in-core rung"
+    assert len(set(streamed)) > 1, (
+        f"the streaming budgets must have changed the blocking, got {streamed}"
+    )
+    assert len(set(answers)) == 1, f"colour limits moved with the budget/rung: {answers}"
+
+
+def test_rocking_replot_clim_takes_the_in_core_rung_when_it_fits(tmp_path, monkeypatch):
+    """A volume that fits the budget must NOT stream.
+
+    Streaming costs ~12 traversals against one, and `compose/adapters.py` calls
+    this per panel on an interactive figure-builder preview — so taking the slow
+    rung on a volume that fits is the defect, not a missed optimisation.
+    """
+    h5p = str(tmp_path / "clim.h5")
+    _write_clim_volume(h5p)
+    with h5py.File(h5p, "r") as f:
+        dset = f["sum_intensity"]
+        assert RK._fits_in_core(dset, RK.REPLOT_CLIM_WORKING_SET_BYTES), (
+            "precondition: this fixture must fit the shipped budget"
+        )
+        seen = _count_clim_blocks(monkeypatch)
+        RK._replot_default_clim(dset, {}, None)  # the shipped default budget
+        assert seen == [], f"a fitting volume streamed anyway ({seen} blocks)"
+
+
+def test_rocking_fits_in_core_bounds_the_measured_working_set():
+    """`3 * itemsize + 1` must not sit below what the in-core percentile costs."""
+    import gc
+    import tracemalloc
+
+    rng = np.random.default_rng(2)
+    for dtype, bound_per_elem in (("float32", 13), ("float64", 25), ("uint16", 7)):
+        vol = (rng.normal(size=(20, 96, 96)) * 100.0).astype(dtype)
+        gc.collect()
+        tracemalloc.start()
+        base = tracemalloc.get_traced_memory()[0]
+        RK._colorbar_range(vol, 1.0, 99.0)
+        peak = tracemalloc.get_traced_memory()[1]
+        tracemalloc.stop()
+        itemsize = np.dtype(dtype).itemsize
+        # `vol` is untraced (allocated before start), so add its own bytes back.
+        measured = (peak - base) / vol.size + itemsize
+        assert measured <= bound_per_elem, (
+            f"{dtype}: the in-core percentile costs {measured:.2f} B/element, over the "
+            f"3*itemsize+1 = {bound_per_elem} B that _fits_in_core charges it"
+        )
+
+
+@pytest.mark.parametrize("budget,rung", [(None, "in-core"), (256, "streaming")])
+def test_rocking_replot_clim_falls_back_for_an_all_nan_volume(tmp_path, budget, rung):
+    """No finite voxel anywhere -> (0.0, 1.0) on BOTH rungs.
+
+    The two signal it differently — `_colorbar_range` returns `(0.0, 1.0)`,
+    `stream_quantile` returns NaN — so the conversion between them is a place
+    the rungs could silently diverge.
+    """
+    h5p = str(tmp_path / "nan.h5")
+    with h5py.File(h5p, "w") as f:
+        f.create_dataset("sum_intensity", data=np.full((8, 16, 16), np.nan, dtype=np.float32))
+    with h5py.File(h5p, "r") as f:
+        dset = f["sum_intensity"]
+        assert RK._fits_in_core(
+            dset, RK.REPLOT_CLIM_WORKING_SET_BYTES if budget is None else budget
+        ) is (rung == "in-core"), f"precondition: this budget must take the {rung} rung"
+        assert RK._replot_default_clim(dset, {}, None, budget_bytes=budget) == (0.0, 1.0)
+
+
+def test_rocking_render_replot_skips_the_percentile_when_both_limits_are_given(tmp_path):
+    """A typed vmin/vmax must not pay for a colour range that is then discarded.
+
+    `_replot_default_clim` used to run before `resolve_clim`, so an explicit
+    limit cost a full percentile pass anyway — 12 traversals and 3.55 s on a
+    23 MB volume, for a number `_apply_clim` immediately threw away.
+    """
+    from unittest.mock import patch
+
+    h5 = str(tmp_path / "aligned.h5")
+    _write_aligned(h5)
+    out = str(tmp_path / "replots_skip")
+
+    with patch.object(RK, "_replot_default_clim", wraps=RK._replot_default_clim) as spy:
+        RK.render_replot(h5, [("sum_intensity", [0])], None, {"sum_intensity": (0.0, 2.0)}, out)
+        assert spy.call_count == 0, "both limits supplied — the percentile must not run"
+
+        # One blank side still needs it: `_apply_clim` keeps the default there.
+        RK.render_replot(h5, [("sum_intensity", [0])], None, {"sum_intensity": (0.0, None)}, out)
+        assert spy.call_count == 1, (
+            "a half-open override still needs the default for its blank side"
+        )
+
+        RK.render_replot(h5, [("sum_intensity", [0])], None, None, out)
+        assert spy.call_count == 2, "no override at all must still compute the default"
+
+
+def test_rocking_render_replot_honours_a_supplied_clim_unchanged(tmp_path):
+    """Skipping the percentile must not change which limits reach the renderer."""
+    from unittest.mock import patch
+
+    h5 = str(tmp_path / "aligned.h5")
+    _write_aligned(h5)
+    seen: list[tuple] = []
+
+    def _capture(*args, vmin, vmax, clim, **kwargs):
+        seen.append((vmin, vmax, clim))
+        return None
+
+    with patch("dfxm.stages.rocking.render_volume_layer", side_effect=_capture):
+        RK.render_replot(
+            h5, [("sum_intensity", [0])], None, {"sum_intensity": (-3.0, 7.0)}, str(tmp_path / "o")
+        )
+    assert seen == [(-3.0, 7.0, (-3.0, 7.0))]
+
+
+def test_rocking_clim_block_budget_never_buys_more_than_the_budget(tmp_path):
+    """The conversion rounds DOWN: a block must never cost more working set than asked."""
+    h5p = str(tmp_path / "clim.h5")
+    _write_clim_volume(h5p)
+    with h5py.File(h5p, "r") as f:
+        dset = f["sum_intensity"]
+        itemsize = dset.dtype.itemsize
+        for budget in (1 << 12, 1 << 16, 1 << 24):
+            block_bytes = RK._clim_block_budget(dset, budget)
+            working_set = block_bytes / itemsize * (itemsize + RK.QUANTILE_WORKING_SET_PER_ELEMENT)
+            assert working_set <= budget, (
+                f"budget {budget} bought a {working_set:.0f} B working set"
+            )

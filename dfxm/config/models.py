@@ -107,6 +107,15 @@ class CostEstimate:
     holds both arrays at once and costs 3x the on-disk size, not 1x.
     ``chunkable`` is False for work that is irreducibly whole-array and must run
     disk-backed instead.
+
+    ``chunk_span`` is ``(count, unit)`` naming what the chunking actually
+    divides, for stages where that is **not** ``shape[0]`` layers.
+    ``advice.plan_run`` otherwise reports "groups of N of ``shape[0]`` layers",
+    which is right for the six stages that chunk their volume along Z and wrong
+    for ``matched``, whose ``shape[0]`` is a count of scan folders while the
+    thing it chunks is one scan's detector rows. Display only — nothing acts on
+    the number — but a wrong unit in an advisory message is how advice stops
+    being read.
     """
 
     peak_bytes: int
@@ -114,6 +123,7 @@ class CostEstimate:
     shape: tuple[int, ...] | None
     chunkable: bool
     note: str | None = None
+    chunk_span: tuple[int, str] | None = None
 
 
 @dataclass(frozen=True)

@@ -32,6 +32,7 @@ from ..common.figures import (
     resolve_clim,
     volume_layer_specs,
 )
+from ..common.h5io import StackedVolumeFile
 from ..common.plotting import build_histogram
 from ..common.sort import find_matching_folders, resolve_layer_work
 from ..config.models import CostEstimate, Param, ParamType, StageSpec
@@ -402,11 +403,33 @@ def _read_dataset(h5f: h5py.File, path: str) -> np.ndarray | None:
 def estimate(params: dict) -> CostEstimate:
     """Peak memory for a mosaicity run, from HDF5 shapes only.
 
-    ``run()`` holds every layer of all present datasets (chi/mu x com/fwhm) in
-    ``collected`` at once, then ``np.stack`` builds one more contiguous volume
-    per dataset. Peak is therefore ``(n_present + 1)`` volumes, which makes this
-    one of the heaviest stages — not the layer-streaming one the comment at
-    ``_streamed_clim`` might suggest.
+    The arithmetic below, ``(n_present + 1)`` whole volumes, models the *old*
+    ``run()``: it held every layer of all present datasets (chi/mu x com/fwhm)
+    in a ``collected`` dict at once and then ``np.stack``ed one more contiguous
+    volume per dataset on top, which made this one of the heaviest stages. The
+    ``collected`` dict and the ``np.stack`` are gone. ``run()`` now ``append``s
+    each layer to a ``StackedVolumeFile`` as it is read and drops it, so the
+    resident set no longer scales with ``n_layers``: the real peak is one
+    layer of each present dataset (the per-folder ``data`` dict) plus the
+    writer's per-dataset compression buffers.
+
+    **Recalibration warning — the fix is not simply dropping ``n_layers``.**
+    The current figure over-predicts, which is the safe direction, and is
+    deliberately left unchanged here. What a per-layer model must still count:
+
+    * ``StackedVolumeFile`` chunks every volume one layer per chunk and (at the
+      default ``compression="gzip"``) holds a compression buffer per dataset, so
+      the writer's own footprint scales with ``n_present``, not with 1.
+    * ``figures()``/``replot`` paths reach the same file through
+      ``_streamed_clim`` and ``render_volume_layer``, which are layer-at-a-time
+      by construction and are *not* part of ``run()``'s peak — do not fold them
+      in.
+
+    A model in bare layer units would sit close enough to the noise floor that
+    under-prediction becomes easy, and under-prediction is the dangerous
+    direction (it greenlights a run that then OOMs). ``total_input`` and the
+    reported ``shape`` still legitimately scale with ``n_layers``; only
+    ``peak_bytes`` is the stale part.
     """
     p = {**STAGE.defaults(), **params}
     try:
@@ -488,51 +511,44 @@ def run(params: dict, progress: ProgressFn | None = None) -> MosaicityResult:
         work = [(os.path.basename(f), os.path.join(f, maps_filename)) for f in folders]
         default_out_root = root
 
-    collected: dict[str, list[np.ndarray]] = {key: [] for key in config}
-    result = MosaicityResult()
-
-    for i, (name, maps_path) in enumerate(work):
-        progress(i / len(work), f"mosaicity: {name}")
-        if not os.path.exists(maps_path):
-            result.skipped.append(f"{name}: {maps_filename} not found")
-            continue
-        try:
-            with h5py.File(maps_path, "r") as f:
-                data = {key: _read_dataset(f, path) for key, path in config.items()}
-        except OSError as exc:
-            result.skipped.append(f"{name}: {exc}")
-            continue
-        if all(v is None for v in data.values()):
-            result.skipped.append(f"{name}: no datasets")
-            continue
-        for key, arr in data.items():
-            if arr is not None:
-                collected[key].append(arr)
-        result.layers.append(name)
-
-    if not result.layers:
-        progress(1.0, "no mosaicity layers produced")
-        return result
-
     compression = None if p["compression"] == "none" else p["compression"]
     stacked_path = os.path.join(default_out_root, p["stacked_filename"])
-    with h5py.File(stacked_path, "w") as f:
-        groups = {g: f.require_group(g) for _k, _d, g, _n in _DATASETS}
-        for key, slices in collected.items():
-            if not slices:
+    result = MosaicityResult()
+
+    with StackedVolumeFile(stacked_path, compression=compression) as out:
+        for i, (name, maps_path) in enumerate(work):
+            progress(i / len(work), f"mosaicity: {name}")
+            if not os.path.exists(maps_path):
+                result.skipped.append(f"{name}: {maps_filename} not found")
                 continue
-            volume = np.stack(slices, axis=0)
-            group_name, ds_name = routing[key]
-            kw = {}
-            if compression:
-                kw["compression"] = compression
-                if compression == "gzip":
-                    kw["compression_opts"] = 4
-            groups[group_name].create_dataset(ds_name, data=volume, **kw)
-            result.datasets[f"/{group_name}/{ds_name}"] = tuple(volume.shape)
-        f.attrs["num_layers"] = len(result.layers)
-        f.attrs["source_folders"] = "\n".join(result.layers)
-        f.attrs["description"] = "Stacked 3D volumes from 2D darfix maps"
+            try:
+                with h5py.File(maps_path, "r") as f:
+                    data = {key: _read_dataset(f, path) for key, path in config.items()}
+            except OSError as exc:
+                result.skipped.append(f"{name}: {exc}")
+                continue
+            if all(v is None for v in data.values()):
+                result.skipped.append(f"{name}: no datasets")
+                continue
+            for key, arr in data.items():
+                if arr is not None:
+                    group_name, ds_name = routing[key]
+                    out.append(f"{group_name}/{ds_name}", arr)
+            del data
+            result.layers.append(name)
+
+        if not result.layers:
+            out.abort()
+            progress(1.0, "no mosaicity layers produced")
+            return result
+
+        for ds_path in out.datasets():
+            result.datasets[f"/{ds_path}"] = out.shape(ds_path)
+        out.set_attrs(
+            num_layers=len(result.layers),
+            source_folders="\n".join(result.layers),
+            description="Stacked 3D volumes from 2D darfix maps",
+        )
 
     result.stacked_path = stacked_path
     progress(1.0, f"stacked {len(result.layers)} layers -> {os.path.basename(stacked_path)}")

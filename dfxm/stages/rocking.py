@@ -604,10 +604,79 @@ def _parse_opt_int(text) -> int | None:
 
 
 def _colorbar_range(data: np.ndarray, lo: float, hi: float) -> tuple[float, float]:
+    """Percentile colour limits for an array the caller already holds.
+
+    Kept in its in-core form on purpose: every caller but the cold replot
+    reaches it with the array in hand (`_render` has just built the volume), so
+    streaming there would re-read a volume that is already resident. The replot
+    path, which held a whole volume purely to take these two numbers, goes
+    through :func:`_replot_default_clim` instead — and the two must agree
+    exactly, which is what `stream_quantile`'s numpy parity buys.
+    """
     valid = data[np.isfinite(data)]
     if valid.size == 0:
         return (0.0, 1.0)
     return (float(np.percentile(valid, lo)), float(np.percentile(valid, hi)))
+
+
+# What one block of the volume may cost, per element of it, while
+# `volumeio.stream_quantile` runs: the block itself in its stored dtype, plus
+# the reductions' own per-element temporaries — `_finite64`'s `isfinite` mask
+# (1 B) and float64 copy (8 B), the rank search's `window` (8 B) and its
+# `searchsorted` / `- 1` / `clip` index arrays (3 x 8 B). That is the same
+# `dtype.itemsize + 8 * (retained + 1) + 1` = 41 B/element accounting
+# `alignment.align_volume_streamed` prices its own cached median at, and that
+# `slices._aligned_block_budget` uses; it is shared rather than re-invented.
+QUANTILE_WORKING_SET_PER_ELEMENT = 41
+
+# The working set `_replot_default_clim` may hold for one block. A fixed
+# constant rather than `advice.working_set_budget_bytes`, deliberately: the
+# quantile is exact at every budget, so a larger machine would buy nothing but a
+# larger block, and a fixed number is one less thing that can differ between two
+# machines rendering the same replot. It is not a floor either — the reduction's
+# blocking-independent scaffold (`volumeio.centring_scaffold_bytes("median",
+# ...)`, ~26 MB at its worst case) sits on top of it and no block size pays it
+# off.
+REPLOT_CLIM_WORKING_SET_BYTES = 64 * 1024 * 1024
+
+
+def _clim_block_budget(dataset, budget_bytes: int) -> int:
+    """*budget_bytes* of working set, in the block bytes ``iter_blocks`` counts.
+
+    ``iter_blocks`` sizes a block by its bytes **in the stored dtype**, while
+    the streamed percentile holds :data:`QUANTILE_WORKING_SET_PER_ELEMENT` more
+    per element on top of it. Handing the budget over raw would buy a block
+    ~11x too large for a float32 volume. Integer division rounds the budget
+    **down**, which is the safe direction: a smaller block can only cost less
+    than counted.
+    """
+    itemsize = max(1, int(np.dtype(dataset.dtype).itemsize))
+    return max(1, int(budget_bytes) * itemsize // (itemsize + QUANTILE_WORKING_SET_PER_ELEMENT))
+
+
+def _fits_in_core(dataset, budget_bytes: int) -> bool:
+    """Whether the whole-volume percentile fits the same working-set budget.
+
+    The in-core form costs, per element: the resident volume (``itemsize``), the
+    ``data[np.isfinite(data)]`` selection (at most ``itemsize``, less when
+    values are non-finite), ``np.percentile``'s internal partition copy (at most
+    ``itemsize``), and the boolean ``isfinite`` mask (1 B) — so
+    ``3 * itemsize + 1`` bounds it. Measured with ``tracemalloc`` above the
+    resident volume: 12.04 B/element for float32 (bound 13), 24.03 for float64
+    (bound 25), 6.04 for uint16 (bound 7); the bound holds in all three, with
+    about 8% of margin — not the ~17% an earlier, superseded set of figures
+    from a smaller fixture implied. The test named after this function
+    re-measures them, so they are checked rather than remembered.
+
+    That is ~3.5x cheaper per element than a streamed block, which is the whole
+    point of asking: streaming costs ~12 traversals against 1, and on this
+    stage's replot path a traversal is a raw HDF5 read.
+    """
+    itemsize = max(1, int(np.dtype(dataset.dtype).itemsize))
+    elements = 1
+    for dim in dataset.shape:
+        elements *= int(dim)
+    return elements * (3 * itemsize + 1) <= int(budget_bytes)
 
 
 def _motors(raw_root: str, pattern: str, samy_path: str, samz_path: str):
@@ -1025,19 +1094,67 @@ _DATASET_DISPLAY: dict[str, tuple[str, str]] = {
 }
 
 
-def _replot_default_clim(dataset, params: dict, style) -> tuple[float, float]:
+def _replot_default_clim(
+    dataset, params: dict, style, *, budget_bytes: int | None = None
+) -> tuple[float, float]:
     """Compute the default clim for a cold replot the same way the run does.
 
-    Reads the whole 3-D volume once (needed for the global percentile), then
-    applies ``_colorbar_range`` + ``apply_round_clim`` — mirroring the
-    ``_render`` path so blank-clim replots are faithful to the original PNGs.
-    Falls back to ``(0.0, 1.0)`` for an all-NaN volume.
+    **Two rungs, one answer.** When the whole volume fits the working-set budget
+    (:func:`_fits_in_core`) the percentiles are taken in one pass by
+    :func:`_colorbar_range`, byte for byte what this function always did. Only a
+    volume too large for that streams them through
+    :func:`~dfxm.common.volumeio.stream_quantile`, which returns what
+    ``np.percentile`` returns — not an estimate and not budget-dependent — so
+    the colours are identical on either rung and on any machine. That equality
+    is the only reason a rung boundary is allowed here at all: which rung runs
+    depends on the machine, so a colour that differed between them would be a
+    colour that depended on the machine.
+
+    The rung exists because streaming is not free in **time**: an exact
+    percentile in bounded memory traverses the volume ~12 times against one, and
+    on this path a traversal is a raw HDF5 read with no alignment behind it.
+    Measured old-versus-new on the streaming rung: 0.06 s -> 1.25 s on a 9.4 MB
+    volume, 1.24 s -> 24.2 s on a 195 MB one. ``compose/adapters.py`` calls this
+    per panel while a user waits on a figure-builder preview, which is what
+    makes ~20x unacceptable below the boundary and irrelevant above it (there
+    the in-core rung is not slower, it is an OOM).
+
+    Then ``apply_round_clim``, as before. An all-NaN volume falls back to
+    ``(0.0, 1.0)`` on both rungs — :func:`_colorbar_range`'s empty-input answer
+    — and that fallback goes **through** the rounding, which is what the
+    original whole-volume form did; short-circuiting the return would both skip
+    the rounding and hijack a legitimate percentile pair that happened to be
+    exactly ``(0.0, 1.0)``.
+
+    ``budget_bytes`` is the working set this may hold, defaulting to
+    :data:`REPLOT_CLIM_WORKING_SET_BYTES`; it is a parameter so tests can force
+    either rung on a small volume. ``0`` means zero, not "use the default".
     """
     defaults = STAGE.defaults()
     pct_lo = float(params.get("cbar_pct_lo", defaults["cbar_pct_lo"]))
     pct_hi = float(params.get("cbar_pct_hi", defaults["cbar_pct_hi"]))
-    vol = dataset[:]
-    vmin, vmax = _colorbar_range(vol, pct_lo, pct_hi)
+    budget = REPLOT_CLIM_WORKING_SET_BYTES if budget_bytes is None else int(budget_bytes)
+
+    if _fits_in_core(dataset, budget):
+        vmin, vmax = _colorbar_range(dataset[:], pct_lo, pct_hi)
+    else:
+        from ..common.volumeio import dataset_blocks, stream_quantile
+
+        block_bytes = _clim_block_budget(dataset, budget)
+
+        def blocks():
+            # A factory, not a generator: `stream_quantile` traverses several
+            # times and diagnoses a stale one, unlike its stream_mean/minmax
+            # siblings.
+            return dataset_blocks(dataset, budget_bytes=block_bytes)
+
+        vmin = stream_quantile(blocks, pct_lo)
+        vmax = stream_quantile(blocks, pct_hi)
+        if not np.isfinite(vmin) or not np.isfinite(vmax):
+            # `stream_quantile` signals "no finite value anywhere" with NaN;
+            # `_colorbar_range` signals it with (0.0, 1.0). Convert, then take
+            # the same rounding the other rung takes.
+            vmin, vmax = 0.0, 1.0
     vmin, vmax, _ = apply_round_clim(vmin, vmax, style)
     return vmin, vmax
 
@@ -1107,8 +1224,16 @@ def render_replot(h5_path, selections, style, clim, out_dir, roi=None, params=No
                 _generic_title, _generic_cbar = _DATASET_DISPLAY.get(key, (key, "Intensity (a.u.)"))
                 title, cbar_label = _generic_title, _generic_cbar
             # Default clim: percentile-based (mirrors the run), not raw min/max
-            vmin, vmax = _replot_default_clim(obj, params, style)
+            # — and computed ONLY when a side of it is actually going to be
+            # used. `_apply_clim` lets a half-open override keep the default on
+            # its blank side, so the test is "both sides supplied", not
+            # "an override exists". It used to run unconditionally, spending a
+            # dozen traversals on a number `_apply_clim` then discarded.
             clim_k = resolve_clim(clim, key)
+            if clim_k is not None and clim_k[0] is not None and clim_k[1] is not None:
+                vmin, vmax = clim_k
+            else:
+                vmin, vmax = _replot_default_clim(obj, params, style)
             n_z = obj.shape[0]
             layer_list = list(range(n_z)) if idxs is None else list(idxs)
             sub_dir = os.path.join(out_dir, key)

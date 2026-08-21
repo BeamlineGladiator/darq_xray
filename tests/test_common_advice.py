@@ -2,7 +2,14 @@
 
 from __future__ import annotations
 
-from dfxm.common.advice import advise_3d, headroom_bytes, plan_run
+from dfxm.common.advice import (
+    MARGINAL_RSS_PER_TRACED_BYTE,
+    MIN_STREAM_BUDGET_BYTES,
+    advise_3d,
+    headroom_bytes,
+    plan_run,
+    working_set_budget_bytes,
+)
 from dfxm.config.models import CostEstimate
 from tests.machine_fixtures import laptop_hw_gl, tiny_ram, windows_no_vtk, workstation_sw_gl
 
@@ -26,6 +33,80 @@ def test_headroom_is_the_tighter_of_the_two_limits():
     assert headroom_bytes(tiny_ram()) == int(0.6 * 1 * GB)
 
 
+FLOOR = 250 * 1024 * 1024  # a VTK-importing stage's process image
+
+
+def test_working_set_budget_solves_the_additive_rss_model():
+    """RSS = floor + marginal x traced, solved for traced against the headroom.
+
+    Both constants have to be doing work, so both are asserted non-degenerate: a
+    marginal of 1.0 or a floor that never reaches the arithmetic would leave the
+    equalities below true while converting nothing.
+    """
+    assert MARGINAL_RSS_PER_TRACED_BYTE > 1.0
+    for profile in (workstation_sw_gl(), laptop_hw_gl()):
+        rss = headroom_bytes(profile)
+        assert rss > FLOOR, "fixture must be big enough that the floor is not the binding term"
+        budget = working_set_budget_bytes(profile, rss_floor_bytes=FLOOR)
+        assert budget == int((rss - FLOOR) / MARGINAL_RSS_PER_TRACED_BYTE)
+        # Feeding the answer back through the model must land inside headroom —
+        # the property the number exists to have.
+        assert FLOOR + MARGINAL_RSS_PER_TRACED_BYTE * budget <= rss
+
+
+def test_working_set_budget_is_per_stage_through_the_floor():
+    """The floor is the per-stage term, so it must change the answer.
+
+    A stage that imports VTK and one that does not differ by hundreds of MB of
+    process image, and the whole reason `rss_floor_bytes` is a required argument
+    rather than a module constant is that the difference has to reach the
+    budget. A shared constant would make these two equal.
+    """
+    profile = workstation_sw_gl()
+    light_floor = 32 * 1024 * 1024
+    light = working_set_budget_bytes(profile, rss_floor_bytes=light_floor)
+    heavy = working_set_budget_bytes(profile, rss_floor_bytes=FLOOR)
+    assert light > heavy
+    expected = (FLOOR - light_floor) / MARGINAL_RSS_PER_TRACED_BYTE
+    assert abs((light - heavy) - expected) <= 1  # int() truncation only
+
+
+def test_working_set_budget_survives_a_machine_smaller_than_the_process_image():
+    """Headroom under the floor means the run cannot fit — it still has to run.
+
+    The subtraction goes negative there, and the answer must be the finest
+    blocking available: not a negative budget, not a refusal. `tiny_ram` is not
+    small enough for this (0.6 GB of headroom, above a VTK stage's floor), which
+    is why the fixture is built explicitly — and why the precondition is
+    asserted rather than assumed.
+    """
+    import dataclasses
+
+    cramped = dataclasses.replace(
+        tiny_ram(), ram_total=512 * 1024 * 1024, ram_available=256 * 1024 * 1024
+    )
+    assert 0 < headroom_bytes(cramped) < FLOOR
+    assert working_set_budget_bytes(cramped, rss_floor_bytes=FLOOR) == MIN_STREAM_BUDGET_BYTES
+
+
+def test_working_set_budget_is_not_floored_back_up_to_the_min_budget():
+    """MIN_BUDGET_BYTES ("do not bother chunking") must not leak in here.
+
+    `tiny_ram` has 0.6 GB of headroom, well above MIN_BUDGET_BYTES, so a naive
+    `max(MIN_BUDGET_BYTES, ...)` would be invisible there — hence a light floor,
+    where the converted answer legitimately lands below MIN_BUDGET_BYTES and a
+    stray `max` would show up.
+    """
+    import dataclasses
+
+    from dfxm.common.advice import MIN_BUDGET_BYTES
+
+    unmeasurable = dataclasses.replace(laptop_hw_gl(), ram_total=0, ram_available=0)
+    assert headroom_bytes(unmeasurable) == MIN_BUDGET_BYTES
+    budget = working_set_budget_bytes(unmeasurable, rss_floor_bytes=8 * 1024 * 1024)
+    assert MIN_STREAM_BUDGET_BYTES < budget < MIN_BUDGET_BYTES
+
+
 def test_small_job_on_a_big_machine_stays_in_core():
     """The fast path must not pay for the slow path's safety."""
     plan = plan_run(workstation_sw_gl(), _est(4))
@@ -41,6 +122,32 @@ def test_big_job_on_a_small_machine_chunks():
     assert plan.chunk_layers >= 1
     assert plan.blocked is None
     assert any("chunk" in r.lower() for r in plan.reasons)
+
+
+def test_chunked_reason_names_the_unit_the_estimate_declares():
+    """`shape[0]` layers is right for six stages and wrong for `matched`.
+
+    `matched`'s `shape[0]` counts scan FOLDERS while what it chunks is one
+    scan's detector rows, so an estimate may name its own span. Both halves
+    asserted: the default must stay "layers", or the override would be the only
+    thing tested and the six correct stages could regress unnoticed.
+    """
+    default = plan_run(tiny_ram(), _est(20))
+    assert any("of 100 layers" in r for r in default.reasons), default.reasons
+
+    named = plan_run(
+        tiny_ram(),
+        CostEstimate(
+            peak_bytes=20 * GB,
+            input_bytes=GB,
+            shape=(37, 21, 2048, 2048),  # folders, frames, rows, columns
+            chunkable=True,
+            note=None,
+            chunk_span=(2048, "detector rows"),
+        ),
+    )
+    assert any("of 2048 detector rows" in r for r in named.reasons), named.reasons
+    assert not any("layers" in r for r in named.reasons), named.reasons
 
 
 def test_unchunkable_big_job_goes_disk_backed_not_blocked(tmp_path):

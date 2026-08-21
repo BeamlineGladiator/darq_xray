@@ -1,6 +1,13 @@
-"""StageUserError hints must survive the child-process boundary."""
+"""StageUserError hints must survive the child-process boundary.
 
+Also covers `StageRunner.pid` and the `tests/peak_rss.py` measurement harness
+that watches the child that `pid` identifies.
+"""
+
+import os
 import time
+
+import pytest
 
 from dfxm.runner import Failed, StageRunner
 
@@ -45,3 +52,85 @@ def test_plain_exception_has_empty_hint():
     failure = _run_to_failure(_fail_plain)
     assert failure.error == "boom"
     assert failure.hint == ""
+
+
+def test_stage_runner_exposes_child_pid():
+    runner = StageRunner("tests.peak_rss:_sleepy_target", {"seconds": 0.2})
+    assert runner.pid is None, "no child before start()"
+    runner.start()
+    try:
+        assert isinstance(runner.pid, int) and runner.pid > 0
+        assert runner.pid != os.getpid(), "pid must be the child's, not the parent's"
+    finally:
+        runner.cancel()
+
+
+# --- tests/peak_rss.py: the harness must not be able to measure nothing ------
+MIB = 1 << 20
+
+
+def test_peak_rss_sees_a_large_allocation():
+    """The harness's own reason to exist: it must observe a real allocation."""
+    from tests.peak_rss import measure_peak_rss
+
+    small, baseline = measure_peak_rss("tests.peak_rss:_hungry_target", {"mib": 8})
+    big, hungry = measure_peak_rss("tests.peak_rss:_hungry_target", {"mib": 256})
+    # Precondition: the target really ran (and really allocated) in both runs,
+    # rather than the child dying early and leaving two comparable near-zeros.
+    assert small == {"sum": 1.0} and big == {"sum": 1.0}
+    assert baseline > MIB, f"baseline {baseline} B is not a real child's RSS"
+    assert hungry - baseline > 128 * MIB, (
+        f"harness did not observe the allocation: {baseline} -> {hungry}"
+    )
+
+
+def test_peak_rss_raises_when_no_sample_can_be_read(monkeypatch):
+    """A sampler that reads nothing must fail loudly, not return 0."""
+    from tests import peak_rss
+
+    monkeypatch.setattr(peak_rss, "_sample_rss", lambda proc: None)
+    with pytest.raises(RuntimeError, match="measurement is dead"):
+        peak_rss.measure_peak_rss("tests.peak_rss:_sleepy_target", {"seconds": 0.2})
+
+
+def test_peak_rss_raises_on_an_implausible_peak(monkeypatch):
+    """A sampler stuck at zero must fail loudly too — 0 is never an answer."""
+    from tests import peak_rss
+
+    monkeypatch.setattr(peak_rss, "_sample_rss", lambda proc: 0)
+    with pytest.raises(RuntimeError, match="not reading the child"):
+        peak_rss.measure_peak_rss("tests.peak_rss:_sleepy_target", {"seconds": 0.2})
+
+
+def test_assert_peak_under_cannot_pass_on_a_dead_measurement(monkeypatch):
+    """The vacuous pass this harness exists to prevent: dead measurement, huge limit."""
+    from tests import peak_rss
+
+    monkeypatch.setattr(peak_rss, "_sample_rss", lambda proc: 0)
+    with pytest.raises(RuntimeError, match="not reading the child"):
+        peak_rss.assert_peak_under("tests.peak_rss:_sleepy_target", {"seconds": 0.2}, 8 << 30)
+
+
+def test_assert_peak_under_passes_and_catches_an_overrun():
+    """Same target, two limits: one it meets, one it cannot."""
+    from tests.peak_rss import assert_peak_under
+
+    result = assert_peak_under("tests.peak_rss:_hungry_target", {"mib": 8}, 2 << 30)
+    assert result == {"sum": 1.0}
+    with pytest.raises(AssertionError, match="over the"):
+        assert_peak_under("tests.peak_rss:_hungry_target", {"mib": 256}, 64 * MIB)
+
+
+def test_assert_peak_under_rejects_an_unmeetable_limit():
+    """A limit below a bare interpreter's floor says nothing about the stage."""
+    from tests.peak_rss import assert_peak_under
+
+    with pytest.raises(ValueError, match="floor"):
+        assert_peak_under("tests.peak_rss:_sleepy_target", {"seconds": 0.05}, 1024)
+
+
+def test_peak_rss_surfaces_a_stage_failure():
+    from tests.peak_rss import measure_peak_rss
+
+    with pytest.raises(RuntimeError, match="boom"):
+        measure_peak_rss("tests.peak_rss:_boom_target", {})

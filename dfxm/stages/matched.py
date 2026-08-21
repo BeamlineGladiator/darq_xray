@@ -260,22 +260,93 @@ class MatchedResult:
 # -----------------------------------------------------------------------------
 # Core (faithful port)
 # -----------------------------------------------------------------------------
-def load_pco_ff_frame(h5_path, pco_ff_path, frame_index):
-    """Single frame, per-pixel median background subtracted, negatives -> NaN."""
+# What one in-plane block of the stack costs, per element of it, on top of the
+# block's own stored bytes: the `.astype(np.float64)` upcast (8 B) and
+# `np.nanmedian`'s internals. Measured with `tracemalloc` over the upcast plus
+# the median, invariant in the stored dtype because everything after the upcast
+# is float64. The cost is NOT flat: it is a ~35 B/element asymptote plus a
+# per-block overhead that the element count divides, so SMALL frame counts are
+# the expensive case, not the large ones --
+#
+#     (41, 160, 160)  35.1     (11, 128, 128)  35.8     (11, 64, 64)  38.2
+#     (5, 128, 128)   36.8     (3, 256, 256)   44.7     (3, 64, 64)   50.0
+#
+# An earlier 36 was fitted to the (11, 128, 128)-and-up shapes alone and was
+# therefore under the true cost for every nf <= 4 and for nf = 5-8 on small
+# blocks; a short rocking scan is an ordinary input, and one measured run
+# exceeded its budget by 1.24x. 48 covers the worst measured case (50.0) only
+# barely; 64 is chosen for headroom. The number is a DIVISOR in
+# `_median_block_budget`, so charging too little buys a block larger than was
+# counted, while charging too much only buys a smaller block -- the median is
+# exact on any in-plane block, so a smaller block changes runtime and nothing
+# else. Round up, never down.
+#
+# Version-sensitive: measured on numpy 1.26.4, where `nanmedian` switches to an
+# `apply_along_axis` branch at >= 600 frames and the cost drops to ~8.0
+# B/element. A rocking scan is tens of frames, so the expensive branch is the
+# one to size against -- but that branch boundary, and the costs either side of
+# it, can move between numpy versions. `tests/test_stage_matched.py::
+# test_matched_median_working_set_constant_covers_the_measured_cost` re-measures
+# on the installed numpy and fails if this number stops covering it.
+MEDIAN_WORKING_SET_PER_ELEMENT = 64
+
+# The working set one `load_pco_ff_frame` call may hold. A fixed constant rather
+# than `advice.working_set_budget_bytes`: the median is exact on any in-plane
+# block, so a larger machine would buy nothing but a larger block, and a fixed
+# number means two machines run the identical blocking on the identical data.
+MEDIAN_BLOCK_WORKING_SET_BYTES = 128 * 1024 * 1024
+
+
+def _median_block_budget(dset, budget_bytes: int) -> int:
+    """*budget_bytes* of working set, in the block bytes ``iter_blocks`` counts.
+
+    ``iter_blocks`` sizes a block by its bytes **in the stored dtype**; this
+    stage then holds :data:`MEDIAN_WORKING_SET_PER_ELEMENT` more per element
+    while the median runs. Handing the budget over raw would buy a block ~33x
+    too large for a uint16 detector stack. Integer division rounds the budget
+    **down**, the safe direction.
+    """
+    itemsize = max(1, int(np.dtype(dset.dtype).itemsize))
+    return max(1, int(budget_bytes) * itemsize // (itemsize + MEDIAN_WORKING_SET_PER_ELEMENT))
+
+
+def load_pco_ff_frame(h5_path, pco_ff_path, frame_index, *, budget_bytes: int | None = None):
+    """Single frame, per-pixel median background subtracted, negatives -> NaN.
+
+    The median reduces along the **frame** axis, so it is exact on any in-plane
+    sub-block: ``stack[:, y0:y1, :]`` gives those rows the same answer the whole
+    stack does, because no pixel's median depends on any other pixel's. Blocking
+    in-plane is therefore lossless rather than approximate, which is why this
+    stage's :func:`estimate` reports ``chunkable=True``.
+
+    ``budget_bytes`` is the working set one block may cost, defaulting to
+    :data:`MEDIAN_BLOCK_WORKING_SET_BYTES`; it is a parameter so tests can force
+    the multi-block path on a small stack. ``0`` means zero, not "use the
+    default".
+    """
+    from ..common.volumeio import iter_blocks
+
     with h5py.File(h5_path, "r") as f:
         if pco_ff_path not in f:
             return None
         ds = f[pco_ff_path]
         if ds.ndim == 2:
+            # No median and — as before — no negative clamp on this path.
             return ds[:].astype(np.float64)
         if ds.ndim != 3:
             return None
         idx = min(int(frame_index), ds.shape[0] - 1)
-        stack = ds[:].astype(np.float64)
-    background = np.nanmedian(stack, axis=0)
-    corrected = stack[idx] - background
-    corrected[corrected < 0] = np.nan
-    return corrected
+        working_set = MEDIAN_BLOCK_WORKING_SET_BYTES if budget_bytes is None else int(budget_bytes)
+        budget = _median_block_budget(ds, working_set)
+        out = np.empty((ds.shape[1], ds.shape[2]), dtype=np.float64)
+        for ysl, block in iter_blocks(ds, budget_bytes=budget, axis=1):
+            sub = block.astype(np.float64)
+            out[ysl] = sub[idx] - np.nanmedian(sub, axis=0)
+    # Applied once to the finished frame, as the whole-stack form applied it —
+    # per block would be equivalent, but keeping it here keeps the diff honest
+    # about what changed.
+    out[out < 0] = np.nan
+    return out
 
 
 def match_nearest(strain_samy, strain_samz, rock_samy, rock_samz, threshold_mm):
@@ -331,25 +402,38 @@ def estimate(params: dict) -> CostEstimate:
     ``scan_elems * (itemsize + 16) + 12 * frame_elems * 8`` for one scan,
     independent of the folder count — ``input_bytes`` still sums every
     matching folder's stack (the data that will eventually be read, even
-    though only one is resident at a time). Not chunkable: an exact median
-    needs the whole stack.
+    though only one is resident at a time).
+
+    ``chunkable=True``. The median needs the whole stack along the **frame
+    axis** only — no pixel's median depends on any other pixel's — so
+    :func:`load_pco_ff_frame` blocks it in-plane and gets the identical frame
+    back (see that function). The earlier ``False``, reasoned "an exact median
+    needs the whole stack", was a statement the code itself contradicts.
+
+    Two caveats this model carries, both deliberately left for the
+    estimator-recalibration pass rather than fixed here. The peak expression
+    still describes the *un-budgeted* whole-stack form, so it is now a ceiling
+    reached only when a scan fits :data:`MEDIAN_BLOCK_WORKING_SET_BYTES` in one
+    block; and its ``+ 16`` under-states ``np.nanmedian``'s real internals,
+    measured at 35-50 B/element depending on the frame count (see
+    :data:`MEDIAN_WORKING_SET_PER_ELEMENT`, charged at 64).
     """
     p = {**STAGE.defaults(), **params}
     try:
         root = str(p.get("raw_root") or "").rstrip("/")
         folders = find_matching_folders(root, p.get("rocking_pattern") or "*") if root else []
         if not folders:
-            return CostEstimate(0, 0, None, False, "no scan folders resolved yet")
+            return CostEstimate(0, 0, None, True, "no scan folders resolved yet")
         first = resolve_input_file(folders[0])
         ds_path = str(p.get("pco_ff_path") or "1.1/measurement/pco_ff")
         with h5py.File(first, "r") as f:
             if ds_path not in f:
-                return CostEstimate(0, 0, None, False, f"{ds_path!r} not in {first!r}")
+                return CostEstimate(0, 0, None, True, f"{ds_path!r} not in {first!r}")
             ds = f[ds_path]
             scan_shape = tuple(int(d) for d in ds.shape)
             itemsize = int(ds.dtype.itemsize)
     except Exception as exc:  # noqa: BLE001 - an estimate is advisory, never fatal
-        return CostEstimate(0, 0, None, False, f"cannot size input: {type(exc).__name__}")
+        return CostEstimate(0, 0, None, True, f"cannot size input: {type(exc).__name__}")
 
     elems = 1
     for dim in scan_shape:
@@ -357,12 +441,17 @@ def estimate(params: dict) -> CostEstimate:
     frame_elems = elems // scan_shape[0] if scan_shape and scan_shape[0] else elems
     input_bytes = len(folders) * elems * itemsize
     peak = elems * (itemsize + 16) + 12 * frame_elems * 8
+    # `shape[0]` here counts scan FOLDERS, but what the stage chunks is one
+    # scan's detector rows, so it names its own span rather than let
+    # `advice.plan_run` read the folder count and call it "layers".
+    rows = scan_shape[1] if len(scan_shape) > 1 else 1
     return CostEstimate(
         peak,
         input_bytes,
         (len(folders), *scan_shape),
-        False,
-        "exact median needs the whole stack",
+        True,
+        None,
+        (rows, "detector rows"),
     )
 
 

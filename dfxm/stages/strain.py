@@ -31,6 +31,7 @@ from scipy.optimize import curve_fit
 
 from ..common.errors import StageUserError
 from ..common.figures import FigureSpec, ReplotGroup, crop_roi_2d, register, resolve_clim
+from ..common.h5io import StackedVolumeFile
 from ..common.plotting import (
     PlotStyle,
     add_colorbar,
@@ -377,9 +378,34 @@ def estimate(params: dict) -> CostEstimate:
     raises: an unreadable input reports an unknown cost with the reason in
     ``note``.
 
-    The peak is ``2 * n_layers * H * W * 8``: ``run()`` accumulates a float64
-    strain map per layer in ``slices`` and then ``np.stack`` builds a contiguous
-    copy, so both are resident at the high-water mark.
+    The arithmetic below, ``2 * n_layers * H * W * 8``, models the *old*
+    ``run()``: it accumulated a float64 strain map per layer in a ``slices``
+    list, and then ``save_stacked_volume`` called ``np.stack`` to build one
+    contiguous copy alongside it, so a whole volume and its duplicate were
+    resident together at the high-water mark. Neither survives — the ``slices``
+    local and ``save_stacked_volume`` were both deleted. ``run()`` now
+    ``append``s each layer to a ``StackedVolumeFile`` and drops it immediately,
+    so the resident set no longer scales with ``n_layers`` at all: the real peak
+    is a handful of layer-sized float64 arrays — ``process_maps_file``'s detrend
+    chain (``ccmth_original``, ``ccmth_map``, ``surface``) plus the ``strain``
+    map it returns.
+
+    **Recalibration warning — the fix is not simply dropping ``n_layers``.**
+    The current figure over-predicts, which is the safe direction, and is
+    deliberately left unchanged here. Two things a per-layer model must account
+    for before it can replace it:
+
+    * With ``save_plots`` on (the default), each layer rasterises three figures
+      at 120-200 dpi. An Agg canvas is sized by figure inches and dpi, **not**
+      by the data, so on modest layer shapes the rendering buffers — not the
+      arrays — are the high-water mark, and a model in bare ``H * W * 8`` units
+      **under**-predicts. Under-prediction is the dangerous direction: it
+      greenlights a run that then OOMs.
+    * ``StackedVolumeFile`` writes ``strain`` gzip-compressed one chunk per
+      layer, so h5py holds a compression buffer of about one layer on top.
+
+    ``total_input`` and the reported ``shape`` still legitimately scale with
+    ``n_layers``; only ``peak_bytes`` is the stale part.
     """
     p = {**STAGE.defaults(), **params}
     try:
@@ -788,22 +814,6 @@ def process_maps_file(
     return strain, layer
 
 
-def save_stacked_volume(path, slices, names, attrs, compression="gzip"):
-    volume = np.stack(slices, axis=0)
-    with h5py.File(path, "w") as f:
-        kw = {}
-        if compression:
-            kw["compression"] = compression
-            if compression == "gzip":
-                kw["compression_opts"] = 4
-        f.create_dataset("strain", data=volume, **kw)
-        f.attrs["num_layers"] = len(names)
-        f.attrs["source_folders"] = "\n".join(names)
-        for k, v in attrs.items():
-            f.attrs[k] = v
-    return volume.shape
-
-
 # -----------------------------------------------------------------------------
 # Helpers for string params
 # -----------------------------------------------------------------------------
@@ -871,57 +881,58 @@ def run(params: dict, progress: ProgressFn | None = None) -> StrainResult:
     out_dir = p["output_dir"] or os.path.join(default_out_root, "strain_maps")
     result = StrainResult(output_dir=out_dir)
 
-    slices: list[np.ndarray] = []
-    names: list[str] = []
-    for i, (name, maps_path) in enumerate(work):
-        progress(i / len(work), f"strain: {name}")
-        if not os.path.exists(maps_path):
-            result.skipped.append(f"{name}: {maps_filename} not found")
-            continue
-        try:
-            strain, layer = process_maps_file(
-                maps_path,
-                name,
-                ccmth_com_path=p["ccmth_com_path"],
-                ccmth_ref_deg=float(p["ccmth_ref_deg"]),
-                pixel_size_x_um=float(p["pixel_size_x_um"]),
-                pixel_size_y_um=float(p["pixel_size_y_um"]),
-                roi=roi,
-                vlim=vlim,
-                out_dir=out_dir,
-                save_plots=bool(p["save_plots"]),
-                style=style,
-            )
-        except StageUserError:
-            # Out-of-bounds ROI etc. is an input problem affecting every layer the
-            # same way — stop the run with a clear message rather than skip-and-continue.
-            raise
-        except (KeyError, OSError, ValueError) as exc:
-            result.skipped.append(f"{name}: {exc}")
-            continue
-        slices.append(strain)
-        names.append(name)
-        result.layers.append(layer)
-
-    if not slices:
-        progress(1.0, "no strain layers produced")
-        return result
-
-    shapes = {s.shape for s in slices}
-    if len(shapes) > 1:
-        raise ValueError(f"strain maps have differing shapes {shapes}; fix ROI")
-
     stacked_path = os.path.join(default_out_root, p["stacked_filename"])
-    attrs = dict(
-        description="Stacked 3D strain volume (cot, ccmth-only)",
-        ccmth_ref_deg=float(p["ccmth_ref_deg"]),
-        scale_x_um=float(p["pixel_size_x_um"]),
-        scale_y_um=float(p["pixel_size_y_um"]),
-    )
-    shape = save_stacked_volume(stacked_path, slices, names, attrs)
+    names: list[str] = []
+    with StackedVolumeFile(stacked_path, compression="gzip") as out:
+        for i, (name, maps_path) in enumerate(work):
+            progress(i / len(work), f"strain: {name}")
+            if not os.path.exists(maps_path):
+                result.skipped.append(f"{name}: {maps_filename} not found")
+                continue
+            try:
+                strain, layer = process_maps_file(
+                    maps_path,
+                    name,
+                    ccmth_com_path=p["ccmth_com_path"],
+                    ccmth_ref_deg=float(p["ccmth_ref_deg"]),
+                    pixel_size_x_um=float(p["pixel_size_x_um"]),
+                    pixel_size_y_um=float(p["pixel_size_y_um"]),
+                    roi=roi,
+                    vlim=vlim,
+                    out_dir=out_dir,
+                    save_plots=bool(p["save_plots"]),
+                    style=style,
+                )
+            except StageUserError:
+                # Out-of-bounds ROI etc. is an input problem affecting every layer the
+                # same way — stop the run with a clear message rather than skip-and-continue.
+                raise
+            except (KeyError, OSError, ValueError) as exc:
+                result.skipped.append(f"{name}: {exc}")
+                continue
+            out.append("strain", strain)
+            del strain
+            names.append(name)
+            result.layers.append(layer)
+
+        if not names:
+            out.abort()
+            progress(1.0, "no strain layers produced")
+            return result
+
+        out.set_attrs(
+            num_layers=len(names),
+            source_folders="\n".join(names),
+            description="Stacked 3D strain volume (cot, ccmth-only)",
+            ccmth_ref_deg=float(p["ccmth_ref_deg"]),
+            scale_x_um=float(p["pixel_size_x_um"]),
+            scale_y_um=float(p["pixel_size_y_um"]),
+        )
+        shape = out.shape("strain")
+
     result.stacked_path = stacked_path
     result.volume_shape = shape
-    progress(1.0, f"stacked {len(slices)} layers -> {os.path.basename(stacked_path)}")
+    progress(1.0, f"stacked {len(names)} layers -> {os.path.basename(stacked_path)}")
     return result
 
 

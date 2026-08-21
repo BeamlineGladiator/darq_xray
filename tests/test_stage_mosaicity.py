@@ -53,6 +53,62 @@ def test_batch_stacks_four_volumes_in_layer_order(tmp_path):
         assert f.attrs["num_layers"] == 3
 
 
+def test_mosaicity_volume_matches_layerwise_stack(tmp_path):
+    """The incremental writer's volumes equal np.stack of the per-layer maps."""
+    root = _make_root(tmp_path)
+    res = M.run({"mode": "batch", "root_folder": str(root), "folder_pattern": "layer__*"})
+    assert res.layers == ["layer__1", "layer__2", "layer__10"]
+
+    src = "/entry/chi/Center of mass/Center of mass"
+    per_layer = []
+    for name in res.layers:
+        with h5py.File(str(root / name / "maps.h5"), "r") as f:
+            per_layer.append(f[src][:])
+    expected = np.stack(per_layer, axis=0)
+    with h5py.File(res.stacked_path, "r") as f:
+        stored = f["/chi/Center of mass"][:]
+        assert f.attrs["source_folders"].split("\n") == res.layers
+    assert stored.dtype == expected.dtype
+    assert np.array_equal(stored, expected, equal_nan=True)
+    assert res.datasets["/chi/Center of mass"] == (3, 8, 10)
+
+
+def test_mosaicity_no_layers_leaves_no_stacked_file(tmp_path):
+    """Every folder skipped -> abort inside the with-block; no file, no .part."""
+    root = tmp_path / "root"
+    os.makedirs(root / "layer__1")  # matches the pattern but has no maps.h5
+    res = M.run({"mode": "batch", "root_folder": str(root), "folder_pattern": "layer__*"})
+    assert res.n_layers == 0 and res.stacked_path is None
+    assert list(root.glob("*.h5")) == []
+    assert list(root.glob("*.part")) == []
+
+
+def test_mosaicity_absent_dataset_creates_no_group(tmp_path):
+    """A layer set missing every mu map yields no /mu group at all — the old
+    code called require_group for all four routings up front."""
+    root = tmp_path / "root"
+    folder = root / "layer__1"
+    os.makedirs(folder, exist_ok=True)
+    rng = np.random.default_rng(0)
+    with h5py.File(os.path.join(folder, "maps.h5"), "w") as f:
+        f.create_dataset("/entry/chi/Center of mass/Center of mass", data=rng.random((4, 5)))
+    res = M.run({"mode": "batch", "root_folder": str(root), "folder_pattern": "layer__*"})
+    assert set(res.datasets) == {"/chi/Center of mass"}
+    with h5py.File(res.stacked_path, "r") as f:
+        assert list(f.keys()) == ["chi"]
+        assert list(f["chi"].keys()) == ["Center of mass"]
+
+
+def test_single_mode_missing_folder_skips_rather_than_raising(tmp_path):
+    """A stale 'Input folder' must come back as a skip banner, not a raw h5py
+    FileNotFoundError from the writer eagerly creating its part file."""
+    missing = tmp_path / "nope"
+    res = M.run({"mode": "single", "input_folder": str(missing)})
+    assert res.n_layers == 0 and res.stacked_path is None
+    assert res.skipped == ["nope: maps.h5 not found"]
+    assert not missing.exists()
+
+
 def test_batch_missing_maps_file_records_reason(tmp_path):
     root = tmp_path / "root"
     _write_mosa(str(root / "layer__1"), 0)

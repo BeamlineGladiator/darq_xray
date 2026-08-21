@@ -166,7 +166,13 @@ class StageRunner:
         return self._proc is not None and self._proc.is_alive()
 
     def cancel(self, timeout: float = 2.0) -> None:
-        """Terminate the child; escalate to kill if it ignores SIGTERM."""
+        """Terminate the child; escalate to kill if it ignores SIGTERM.
+
+        Sets ``finished`` even though no Done/Failed arrived, so ``finished``
+        means "this run is over", not "this run produced something". A caller
+        that cancels and then asks whether the stage delivered must look at
+        ``result``/``failure``, not at ``finished``.
+        """
         if self._proc and self._proc.is_alive():
             self._proc.terminate()
             self._proc.join(timeout)
@@ -184,6 +190,16 @@ class StageRunner:
     def finished(self) -> bool:
         """True once a Done/Failed was received (or the run was cancelled)."""
         return self._finished
+
+    @property
+    def pid(self) -> int | None:
+        """The child's PID once started, else None. Lets a caller watch its memory.
+
+        Stays set after the child exits (that is ``mp.Process.pid``'s own
+        behaviour), so a sampler can drain the queue after the process is gone
+        without losing the identity of what it was watching.
+        """
+        return self._proc.pid if self._proc is not None else None
 
     @property
     def result(self) -> Any:

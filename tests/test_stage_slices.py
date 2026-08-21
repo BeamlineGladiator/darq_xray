@@ -118,7 +118,16 @@ def _setup(tmp_path):
         f.attrs["specific_frame_idx"] = 2
     raw = tmp_path / "raw"
     raw.mkdir()
-    samy = np.array([0.0, 0.001, 0.0025, 0.004])
+    # samy is SUB-PIXEL on purpose. It used to run 0 → 4 µm against a 0.152 µm
+    # pixel, i.e. 0 → 26 px of X-shift on an 8 px-wide volume, which slid the
+    # data clean past itself: the aligned volume was **6 finite voxels out of
+    # 840** (0.7%). Nothing failed and no assertion was wrong — every colour
+    # limit, centring and equality check in this module was simply a statement
+    # about NaN, and could not have failed on real data either. That is the same
+    # defect Task 10 found in `test_stage_visualize.py::_setup`; found here the
+    # same way, by a precondition that turned out to be unsatisfiable.
+    # `_assert_mostly_finite` below is what stops it coming back.
+    samy = np.array([0.0, 0.00001, 0.000025, 0.00004])
     samz = np.array([0.0, 0.001, 0.0021, 0.0035])
     for base in ("mosa", "strain"):
         for i in range(L):
@@ -127,7 +136,31 @@ def _setup(tmp_path):
             with h5py.File(folder / f"{base}__{i + 1}.h5", "w") as f:
                 f.create_dataset("1.1/instrument/positioners/samy", data=samy[i])
                 f.create_dataset("1.1/instrument/positioners/samz", data=samz[i])
+    _assert_mostly_finite(proc, raw, tmp_path)
     return proc, raw
+
+
+# A NaN rim is expected (the samy canvas grows and the Z grid is resampled); a
+# volume that is *mostly* NaN is a broken fixture, not a hard test case.
+_MIN_FINITE_FRACTION = 0.5
+
+
+def _assert_mostly_finite(proc, raw, tmp_path):
+    """The aligned χ CoM volume this fixture produces must be mostly finite.
+
+    Asserted where the fixture is *defined*, not in one test that happens to
+    care, because every equality and colour-limit assertion in this module is
+    only as strong as the data behind it.
+    """
+    _fits, aligned, _limits = _prepare_at_budget(
+        proc, raw, tmp_path, 1 << 30, "midrange", cfg_kind="mosa_fwhm", abs_fwhm=False
+    )
+    fraction = float(np.isfinite(aligned).mean()) if aligned.size else 0.0
+    assert fraction >= _MIN_FINITE_FRACTION, (
+        f"the aligned fixture volume is only {100 * fraction:.1f}% finite "
+        f"(shape {aligned.shape}) — the samy shifts have slid it past itself, so "
+        "every assertion built on it is a statement about NaN"
+    )
 
 
 def test_run_writes_consolidated_h5_and_pngs(tmp_path):
@@ -343,6 +376,31 @@ def test_run_matching_grids_no_grid_note(tmp_path):
     proc, raw = _setup(tmp_path)
     res = SL.run(_minimal_params(proc, raw, tmp_path / "sl_nogrid"))
     assert not any("grid" in n for n in res.notes)
+
+
+def _two_volume_slices_params(tmp_path):
+    """Synthetic params that select several volumes (both map files + rocking)."""
+    proc, raw = _setup(tmp_path)
+    return _minimal_params(proc, raw, tmp_path / "sl_lifetime")
+
+
+def test_slices_releases_previous_volume(tmp_path, monkeypatch):
+    """The previous prepared volume is dead before the next one is built."""
+    import weakref
+
+    seen: list = []
+    real = SL.prepare_volume
+
+    def spy(cfg, p, *args, **kwargs):
+        # Every previously prepared volume must already be collectable.
+        assert all(ref() is None for ref in seen), "previous volume still alive"
+        prep = real(cfg, p, *args, **kwargs)
+        seen.append(weakref.ref(prep["data"]))
+        return prep
+
+    monkeypatch.setattr(SL, "prepare_volume", spy)
+    SL.run(_two_volume_slices_params(tmp_path))
+    assert len(seen) >= 2, "test needs at least two volumes to be meaningful"
 
 
 def test_run_warns_on_mismatched_y_heights(tmp_path):
@@ -903,3 +961,1102 @@ def test_build_slice_figure_centered_norm_pinned():
         _prep(center=True), {"name": "obl"}, np.zeros((5, 5)), u, v, offset_um=None
     )
     assert isinstance(fig.axes[0].images[0].norm, TwoSlopeNorm)
+
+
+# -- Z-blocked gather ---------------------------------------------------------
+# The stage samples planes from either a resident aligned volume (`sample_plane`)
+# or a stream of Z-blocks (`sample_planes_streamed`), and which one runs is
+# decided by how much memory the machine has. The two must therefore agree
+# bit-for-bit, or a figure would depend on the machine it was made on.
+_GATHER_GEOMETRY = {
+    "scale_x": 0.7,
+    "scale_y": 1.3,
+    "scale_z": 0.9,
+    "x_ref_shift_px": 2.0,
+    "y_ref_shift_px": 1.0,
+    "z_ref_shift_um": 0.5,
+}
+
+# Tilted in BOTH in-plane directions on purpose: that is the case the gather's
+# row/column probes cannot prune tightly, so it exercises the general path rather
+# than the two shapes the stage ships defaults for.
+_GATHER_PLANE = {
+    "plane_origin": (5.0, 12.0, 11.0),
+    "half_u": 12.0,
+    "half_v": 12.0,
+    "du": 0.5,
+    "dv": 0.5,
+}
+
+
+def _gather_volume(nz=24, ny=20, nx=20, seed=5):
+    """A volume with structure in all three axes, and a NaN region."""
+    rng = np.random.default_rng(seed)
+    z, y, x = np.mgrid[0:nz, 0:ny, 0:nx]
+    vol = (z * 100.0 + y * 10.0 + x).astype(np.float64) + rng.standard_normal((nz, ny, nx))
+    vol[nz // 3, ny // 2 :, :3] = np.nan  # NaN must travel with the sample, not the block
+    return vol
+
+
+def _gather_basis():
+    return SL.build_basis((0.6, 0.2, 0.77))
+
+
+def _in_core_prep(volume):
+    return {**_GATHER_GEOMETRY, "data": np.ascontiguousarray(volume, dtype=np.float64)}
+
+
+def _streamed_prep(volume, budget_bytes):
+    from dfxm.common import volumeio
+
+    volume = np.ascontiguousarray(volume, dtype=np.float64)
+    return {
+        **_GATHER_GEOMETRY,
+        "data": None,
+        "shape": volume.shape,
+        "blocks": lambda: volumeio.iter_blocks(volume, budget_bytes=int(budget_bytes)),
+    }
+
+
+def _n_blocks(volume, budget_bytes):
+    from dfxm.common import volumeio
+
+    return sum(1 for _ in volumeio.iter_blocks(volume, budget_bytes=int(budget_bytes)))
+
+
+def _gather_args(plane=None):
+    plane = plane or _GATHER_PLANE
+    u_hat, v_hat, _n = _gather_basis()
+    return (
+        plane["plane_origin"],
+        u_hat,
+        v_hat,
+        plane["half_u"],
+        plane["half_v"],
+        plane["du"],
+        plane["dv"],
+    )
+
+
+def test_slices_streamed_gather_matches_in_core():
+    """The Z-blocked gather returns the same image as sampling the whole volume."""
+    volume = _gather_volume()
+    budget = volume.nbytes // 6
+    reference = SL.sample_plane(_in_core_prep(volume), *_gather_args())[0]
+    streamed = SL.sample_plane_streamed(_streamed_prep(volume, budget), *_gather_args())[0]
+
+    # Assert the preconditions, or this passes while measuring nothing: the
+    # budget must really split the volume, the plane must really straddle its
+    # edges (so `cval=np.nan` is exercised), and it must really sample data.
+    assert _n_blocks(volume, budget) >= 5, "the budget must actually block the volume"
+    assert np.isnan(reference).any(), "the plane must run off the volume somewhere"
+    assert np.isfinite(reference).sum() > 100, "the plane must sample the volume somewhere"
+
+    assert np.array_equal(streamed, reference, equal_nan=True)
+
+
+def test_slices_gather_is_budget_independent():
+    from tests.equivalence import assert_budget_independent
+
+    volume = _gather_volume(seed=6)
+    assert_budget_independent(
+        lambda vol, budget_bytes: SL.sample_plane_streamed(
+            _streamed_prep(vol, budget_bytes), *_gather_args()
+        )[0],
+        volume,
+    )
+
+
+def test_slices_gather_walks_the_stream_once_for_a_whole_sweep():
+    """One pass over Z serves every plane — not one alignment per plane.
+
+    The output of a plane is a small 2-D image whatever the volume's size, so a
+    sweep can be gathered in a single traversal. Sampling plane by plane would
+    re-run the alignment chain once per plane, which on a real sweep is the
+    difference between one read of the volume and two hundred.
+    """
+    volume = _gather_volume(seed=7)
+    prep = _streamed_prep(volume, volume.nbytes // 6)
+    walks = []
+    inner = prep["blocks"]
+
+    def counting():
+        walks.append(1)
+        return inner()
+
+    prep["blocks"] = counting
+    _origin, u_hat, v_hat, half_u, half_v, du, dv = _gather_args()
+    _n_hat = _gather_basis()[2]
+    origins = [np.asarray(_origin, float) + off * _n_hat for off in (-4.0, -2.0, 0.0, 2.0, 4.0)]
+    planes, _u, _v = SL.sample_planes_streamed(prep, origins, u_hat, v_hat, half_u, half_v, du, dv)
+
+    assert len(planes) == 5
+    assert sum(walks) == 1, f"the sweep walked the Z stream {sum(walks)} times"
+    # …and each plane is what sampling it alone would have given.
+    for origin, plane in zip(origins, planes):
+        alone = SL.sample_plane(_in_core_prep(volume), origin, u_hat, v_hat, half_u, half_v, du, dv)
+        assert np.array_equal(plane, alone[0], equal_nan=True)
+
+
+def test_slices_gather_batches_a_sweep_without_changing_a_value():
+    """`max_resident_bytes` trades walks for resident planes and nothing else.
+
+    Splitting the sweep is what stops it holding its whole stack, and the price
+    is one extra traversal per batch. Both halves of that are asserted: the walk
+    count must really rise (or the batching is not happening and the value check
+    below compares a run against itself), and the planes must be unchanged.
+    """
+    volume = _gather_volume(seed=9)
+    _origin, u_hat, v_hat, half_u, half_v, du, dv = _gather_args()
+    n_hat = _gather_basis()[2]
+    origins = [np.asarray(_origin, float) + off * n_hat for off in (-4.0, -2.0, 0.0, 2.0, 4.0)]
+
+    def gather(max_resident_bytes):
+        prep = _streamed_prep(volume, volume.nbytes // 6)
+        walks = []
+        inner = prep["blocks"]
+        prep["blocks"] = lambda: (walks.append(1), inner())[1]
+        planes = list(
+            SL.iter_planes_streamed(
+                prep,
+                origins,
+                u_hat,
+                v_hat,
+                half_u,
+                half_v,
+                du,
+                dv,
+                max_resident_bytes=max_resident_bytes,
+            )
+        )
+        return planes, sum(walks)
+
+    axis_u, axis_v = SL._plane_axes(half_u, half_v, du, dv)
+    plane_bytes = len(axis_u) * len(axis_v) * 4
+    whole, whole_walks = gather(None)
+    batched, batched_walks = gather(2 * plane_bytes)
+
+    assert whole_walks == 1, "the unbounded gather must still be one walk"
+    assert batched_walks == 3, f"5 planes at 2 per batch is 3 walks, got {batched_walks}"
+    assert len(batched) == len(whole) == 5
+    for a, b in zip(batched, whole):
+        assert np.array_equal(a, b, equal_nan=True)
+    # …and the planes really carry data, or "equal" would be a statement about NaN.
+    assert np.isfinite(whole[2]).sum() > 100
+
+
+def test_sweep_batch_size_never_returns_zero_planes():
+    """A budget under one plane still yields one: a plane is indivisible here."""
+    assert SL.sweep_batch_size(10, 1000, None) == 10
+    assert SL.sweep_batch_size(10, 1000, 10_000) == 10  # …and never more than the sweep
+    assert SL.sweep_batch_size(10, 1000, 2500) == 2
+    assert SL.sweep_batch_size(10, 1000, 999) == 1
+    assert SL.sweep_batch_size(10, 1000, 0) == 1
+
+
+def test_gather_scratch_plane_multiple_is_rounded_the_safe_way():
+    """The per-plane scratch charge must cover what the gather holds, rounded UP.
+
+    It is *subtracted* from the budget before the plane batch is sized, so
+    rounding down leaves a batch bigger than what was counted — the permissive
+    direction, and the one this project has already had to correct twice.
+    Nothing else pins the number.
+    """
+    import math
+
+    # Per element of the coordinate rectangle, in float32-plane units:
+    coords = 3 * 8 / 4  # `_plane_coords` — (k, j, i) as float64
+    local = 3 * 8 / 4  # `np.stack([k[sel], j[sel], i[sel]])` at full selection
+    sampled = 8 / 4  # `map_coordinates`' float64 return
+    mask = 1 / 4  # the boolean `sel`
+    counted = coords + local + sampled + mask
+    assert counted == 14.25
+    assert SL.GATHER_SCRATCH_PLANE_MULTIPLE == math.ceil(counted)
+
+
+def test_sweep_resident_bytes_subtracts_the_stream_and_the_scratch():
+    """The plane batch gets what is left, never the whole budget, never nothing."""
+    plane = 1 << 20
+    budget = 512 << 20
+    reserved = 6
+    room = SL._sweep_resident_bytes(budget, plane, reserved)
+    assert (
+        room
+        == budget
+        - budget // SL.REDUCTION_WORKING_SET_MULTIPLE
+        - (SL.GATHER_SCRATCH_PLANE_MULTIPLE + reserved) * plane
+    )
+    assert 0 < room < budget
+    # A budget the scratch alone exhausts still buys one plane, not a negative one.
+    assert SL._sweep_resident_bytes(plane, plane, reserved) == plane
+
+
+def test_slices_gather_matches_in_core_for_the_shipped_plane_families():
+    """The two plane shapes the stage ships defaults for, which the probes prune.
+
+    A Z-normal plane has a constant `k` (its whole image lives in one block) and
+    the default oblique normal varies `k` along `u` only. Both take the pruning
+    branches that the deliberately-tilted fixture above does not, so a pruning
+    bug that dropped a band would show here and nowhere else.
+    """
+    volume = _gather_volume(seed=8)
+    budget = volume.nbytes // 6
+    for normal in ((0, 0, 1), (0.647648, 0, 0.761939)):
+        u_hat, v_hat, _n = SL.build_basis(normal)
+        args = ((5.0, 12.0, 11.0), u_hat, v_hat, 12.0, 12.0, 0.5, 0.5)
+        reference = SL.sample_plane(_in_core_prep(volume), *args)[0]
+        assert np.isfinite(reference).sum() > 100, f"normal {normal} sampled nothing"
+        streamed = SL.sample_plane_streamed(_streamed_prep(volume, budget), *args)[0]
+        assert np.array_equal(streamed, reference, equal_nan=True), f"normal {normal}"
+
+
+# -- the two rungs, end to end ------------------------------------------------
+def _rung_params(proc, raw, out, budget_bytes):
+    params = _minimal_params(proc, raw, out)
+    params["save_png"] = True
+    params["_budget_bytes"] = budget_bytes
+    return params
+
+
+def _h5_contents(path):
+    """Every dataset and attribute of an oblique_slices.h5, for exact comparison."""
+    out = {}
+
+    def visit(name, obj):
+        for key, value in obj.attrs.items():
+            out[f"{name}@{key}"] = np.asarray(value).tobytes()
+        if isinstance(obj, h5py.Dataset):
+            out[name] = obj[()].tobytes()
+
+    with h5py.File(path, "r") as f:
+        for key, value in f.attrs.items():
+            out[f"/@{key}"] = np.asarray(value).tobytes()
+        f.visititems(visit)
+    return out
+
+
+@pytest.mark.parametrize("center_method", ["midrange", "mean", "median"])
+def test_slices_both_rungs_produce_identical_products(tmp_path, center_method):
+    """Which rung runs depends on the machine, so neither product may differ.
+
+    Compared at the byte level: every dataset and attribute of
+    `oblique_slices.h5` and every PNG. The `_budget_bytes` injection is what
+    forces the rungs apart, and the run under it is asserted to have actually
+    taken the streaming one — without that this compares a run against itself.
+    """
+    proc, raw = _setup(tmp_path)
+    big = _rung_params(proc, raw, tmp_path / "in_core", 1 << 30)
+    small = _rung_params(proc, raw, tmp_path / "streamed", 4096)
+    big["center_method"] = small["center_method"] = center_method
+
+    rungs = []
+    real = SL.prepare_volume
+
+    def spy(*args, **kwargs):
+        prep = real(*args, **kwargs)
+        rungs.append(prep["data"] is not None)
+        return prep
+
+    monkeypatch = pytest.MonkeyPatch()
+    try:
+        monkeypatch.setattr(SL, "prepare_volume", spy)
+        in_core = SL.run(big)
+        assert rungs and all(rungs), "the generous budget must take the in-core rung"
+        rungs.clear()
+        streamed = SL.run(small)
+        assert rungs and not any(rungs), "the tiny budget must take the streaming rung"
+    finally:
+        monkeypatch.undo()
+
+    assert _h5_contents(in_core.output_h5) == _h5_contents(streamed.output_h5)
+    assert len(in_core.pngs) == len(streamed.pngs) > 0
+    for a, b in zip(sorted(in_core.pngs), sorted(streamed.pngs)):
+        assert os.path.basename(a) == os.path.basename(b)
+        with open(a, "rb") as fa, open(b, "rb") as fb:
+            assert fa.read() == fb.read(), os.path.basename(a)
+
+
+def test_slices_streaming_rung_never_materialises_a_volume(tmp_path):
+    """A small budget must not quietly assemble the aligned volume anyway."""
+    proc, raw = _setup(tmp_path)
+    params = _rung_params(proc, raw, tmp_path / "sl_nomat", 4096)
+    seen = []
+    real = SL.prepare_volume
+
+    monkeypatch = pytest.MonkeyPatch()
+    try:
+        monkeypatch.setattr(
+            SL, "prepare_volume", lambda *a, **k: seen.append(real(*a, **k)) or seen[-1]
+        )
+        SL.run(params)
+    finally:
+        monkeypatch.undo()
+    assert len(seen) >= 2, "the test needs several volumes to be meaningful"
+    assert all(prep["data"] is None for prep in seen)
+    assert all(callable(prep["blocks"]) for prep in seen)
+
+
+def _prepare_at_budget(
+    proc, raw, tmp_path, budget_bytes, center_method, cfg_kind="mosa_com", abs_fwhm=True
+):
+    """`prepare_volume` for the χ CoM volume at a chosen budget, drained to an array."""
+    import contextlib
+
+    p = {**SL.STAGE.defaults(), **_minimal_params(proc, raw, tmp_path / "unused")}
+    p["center_method"] = center_method
+    p["abs_fwhm"] = abs_fwhm
+    cfg = {
+        "h5_path": str(proc / "stacked_volumes.h5"),
+        "dataset_path": "chi/Center of mass",
+        "kind": cfg_kind,
+        "source": "stacked",
+        "raw_root": str(raw),
+        "raw_pattern": "mosa__*",
+        "roi_x": None,
+        "roi_y": None,
+    }
+    with contextlib.ExitStack() as opened:
+        prep = SL.prepare_volume(
+            cfg, p, 0.152, 0.385, -1, style=None, stack=opened, budget_bytes=budget_bytes
+        )
+        fits = prep["data"] is not None
+        blocks = [b for _sl, b in prep["blocks"]()]
+        data = np.concatenate(blocks, axis=0) if blocks else np.empty((0,))
+        limits = (prep["vmin_raw"], prep["vmax_raw"])
+    return fits, data, limits
+
+
+@pytest.mark.parametrize("center_method", ["midrange", "mean", "median"])
+def test_slices_both_rungs_agree_on_the_centred_volume_and_its_limits(tmp_path, center_method):
+    """The rungs must agree on VALUES, which the byte-level product check cannot see.
+
+    `test_slices_both_rungs_produce_identical_products` compares stored planes
+    and rendered PNGs, and that comparison is structurally blind to the change
+    this test exists for: the centring offset moves by about one ulp between
+    `np.nanmean` and `volumeio.stream_mean`, and a one-ulp shift in a float64
+    offset neither moves a percentile of `|value|` nor survives the float32 cast
+    the stored planes take. It was live and invisible on a real fixture — checked,
+    not assumed.
+
+    The precondition is asserted rather than hoped for: the fixture's own volume
+    must be one on which the two mean reductions genuinely disagree, or a
+    revert to `np.nanmean` would pass this test too. It is asserted on the
+    **aligned** volume — the array `_center_offset` is actually handed — and not
+    on the raw dataset: the two happen to separate the reductions alike today,
+    but the alignment chain sits between them, so checking the raw file would be
+    checking an array this code never sees and could drift into agreement
+    silently.
+    """
+    proc, raw = _setup(tmp_path)
+    from dfxm.common import volumeio
+
+    # `mosa_fwhm` with `abs_fwhm=False` runs the same alignment on the same
+    # dataset and skips the centring, so this is the uncentred aligned volume.
+    _fits, aligned, _limits = _prepare_at_budget(
+        proc, raw, tmp_path, 1 << 30, "midrange", cfg_kind="mosa_fwhm", abs_fwhm=False
+    )
+    finite = aligned[np.isfinite(aligned)]
+    assert finite.size, "the aligned volume must hold finite voxels"
+    assert float(np.nanmean(finite)) != float(volumeio.stream_mean([finite])), (
+        "the fixture no longer separates the compensated mean from np.nanmean on "
+        "the ALIGNED volume — this test would pass whether or not the "
+        "unification is present"
+    )
+
+    in_core_fits, in_core, in_core_limits = _prepare_at_budget(
+        proc, raw, tmp_path, 1 << 30, center_method
+    )
+    streamed_fits, streamed, streamed_limits = _prepare_at_budget(
+        proc, raw, tmp_path, 4096, center_method
+    )
+    assert in_core_fits and not streamed_fits, "the two budgets must take different rungs"
+    assert in_core_limits == streamed_limits
+    assert np.array_equal(in_core, streamed, equal_nan=True)
+
+
+# -- measured memory ----------------------------------------------------------
+def _peak_setup(tmp_path, L, NY, NX):
+    """A slices fixture at a chosen volume size — seven volumes, no PNGs."""
+    proc, raw = tmp_path / "proc", tmp_path / "raw"
+    proc.mkdir()
+    raw.mkdir()
+    rng = np.random.default_rng(0)
+    with h5py.File(proc / "stacked_volumes.h5", "w") as f:
+        for grp in ("chi", "mu"):
+            g = f.create_group(grp)
+            g.create_dataset("Center of mass", data=rng.standard_normal((L, NY, NX)))
+            g.create_dataset("FWHM", data=np.abs(rng.standard_normal((L, NY, NX))))
+    with h5py.File(proc / "stacked_strain_volumes.h5", "w") as f:
+        f.create_dataset("strain", data=rng.standard_normal((L, NY, NX)) * 1e-4)
+    with h5py.File(proc / "aligned_raw_rocking_volumes.h5", "w") as f:
+        f.create_dataset("sum_intensity", data=rng.standard_normal((L, NY, NX)).astype(np.float32))
+        f.create_dataset("specific_frame", data=rng.standard_normal((L, NY, NX)).astype(np.float32))
+        f.attrs["scale_x_um_per_px"] = 0.152
+        f.attrs["scale_y_um_per_px"] = 0.385
+        f.attrs["scale_z_um_per_px"] = 1.0
+        f.attrs["specific_frame_idx"] = 2
+    samy = np.linspace(0.0, 0.004, L)
+    samz = np.linspace(0.0, 0.006, L)
+    for base in ("mosa", "strain"):
+        for i in range(L):
+            folder = raw / f"{base}__{i + 1}"
+            folder.mkdir()
+            with h5py.File(folder / f"{base}__{i + 1}.h5", "w") as f:
+                f.create_dataset("1.1/instrument/positioners/samy", data=samy[i])
+                f.create_dataset("1.1/instrument/positioners/samz", data=samz[i])
+    data_bytes = 5 * L * NY * NX * 8 + 2 * L * NY * NX * 4
+    return proc, raw, data_bytes
+
+
+def _peak_params(proc, raw, out):
+    sj = json.dumps(
+        [
+            {
+                "name": "mid",
+                "normal": [0, 0, 1],
+                "origin": [1.0, 10.0, 3.0],
+                "half_u": 3.0,
+                "half_v": 3.0,
+                "du": 0.15,
+                "dv": 0.15,
+                "sweep_step_um": None,
+            },
+            {
+                "name": "obl",
+                "normal": [0.647648, 0, 0.761939],
+                "origin": [1.0, 10.0, 3.0],
+                "half_u": 3.0,
+                "half_v": 3.0,
+                "du": 0.15,
+                "dv": 0.15,
+                "sweep_step_um": 2.0,
+                "sweep_start_um": -2.0,
+                "sweep_stop_um": 2.0,
+            },
+        ]
+    )
+    return {
+        "mosa_volume_file": str(proc / "stacked_volumes.h5"),
+        "strain_volume_file": str(proc / "stacked_strain_volumes.h5"),
+        "aligned_rocking_file": str(proc / "aligned_raw_rocking_volumes.h5"),
+        "raw_root": str(raw),
+        "mosa_pattern": "mosa__*",
+        "strain_pattern": "strain__*",
+        "slices_json": sj,
+        "output_dir": str(out),
+        "save_png": False,
+    }
+
+
+def test_slices_peak_stays_under_budget(tmp_path):
+    """The streaming rung really lowers peak RSS, not just the code path taken.
+
+    `_budget_bytes` alone proves only that the blocks got smaller; a stage can
+    block its read and then materialise a float64 copy anyway. Measured in the
+    real child, seven 64x256x256 volumes (32 MiB a volume) against a ~104 MiB
+    child floor (PNGs off):
+
+        previous commit (whole volumes)   314.7 MiB   (~6.6 volumes of data)
+        this commit, machine budget       315.9 MiB   (the in-core rung, i.e.
+                                                       unchanged, as intended)
+        this commit, 64 MiB budget        179.2 MiB
+        this commit, 16 MiB budget        120.2 MiB   (~0.5 volumes)
+        this commit, 4 MiB budget         112.7 MiB
+
+    The 200 MiB limit sits between the two, so this fails against the previous
+    commit — checked by running it there, not assumed — and has ~1.66x of margin
+    on the passing side for a machine whose process image differs from this one's.
+    `_budget_bytes` is pinned rather than measured from the machine, so the
+    figure does not depend on how much RAM the runner happens to have.
+    """
+    from tests.peak_rss import assert_peak_under
+
+    proc, raw, _bytes = _peak_setup(tmp_path, 64, 256, 256)
+    params = {**_peak_params(proc, raw, tmp_path / "sl_peak"), "_budget_bytes": 16 << 20}
+    result = assert_peak_under("dfxm.stages.slices:run", params, 200 << 20, timeout=900)
+    assert len(result.volume_ids) == 7, "the run must actually have sliced the volumes"
+    assert result.n_planes_total == 28
+
+
+# The sweep fixture for the two peak tests below. The volume is 8x256x128 —
+# world box 19.4 x 98.6 x 6.0 µm — and the sweep is 201 planes of 801x801
+# float32 (2.45 MiB each, 492 MiB of stack) at 0.1 µm pitch, centred so that:
+#
+# * **every** plane's Z lies inside the volume (origin Z 3.0 µm, sweep ±2.9 µm
+#   against a 0-6 µm box), so no plane is skipped for being out of range, and
+# * ~23% of each plane's samples land in the volume — the plane is 80 µm wide
+#   against a 19.4 µm X extent, and covers Y entirely.
+#
+# That last number is the point of the geometry. The first version of this
+# fixture put an 80 µm plane over a 3.6 x 9.2 µm volume and swept ±100 µm, which
+# was **99.97% NaN** — 0.027% of the sweep finite. It measured the right byte
+# counts, but it is the exact fixture shape this project has already had to
+# repair twice, and a sampler that had stopped sampling would have passed it.
+# `_assert_sweep_samples_the_volume` is what stops that coming back.
+_SWEEP_ORIGIN = (9.7, 49.0, 3.0)
+_SWEEP_SHAPE = (8, 256, 128)
+_MIN_SWEEP_FINITE_FRACTION = 0.15
+
+
+def _sweep_peak_params(proc, raw, out, *, half=40.0, d=0.1, step=0.029, span=2.9):
+    """One volume, PNGs off, and a sweep whose PLANE STACK dwarfs the volume.
+
+    The volume is deliberately tiny (2 MB) so nothing but the sampled planes can
+    account for the peak: whatever this run costs above its process image is the
+    sweep. Only `include_strain` is on — seven volumes would multiply the
+    runtime without changing what is being measured, since the stage releases
+    each volume before preparing the next.
+
+    Returns `(params, n_planes, (nv, nu))`. The plane count comes from
+    `SL.slice_plane_offsets` on the actual spec rather than from arithmetic
+    here, so a floating-point edge in the sweep window cannot silently make the
+    two disagree.
+    """
+    spec = {
+        "name": "wide",
+        "normal": [0, 0, 1],
+        "origin": list(_SWEEP_ORIGIN),
+        "half_u": half,
+        "half_v": half,
+        "du": d,
+        "dv": d,
+        "sweep_step_um": step,
+        "sweep_start_um": -span,
+        "sweep_stop_um": span,
+    }
+    params = {
+        **_peak_params(proc, raw, out),
+        "slices_json": json.dumps([spec]),
+        "save_png": False,
+    }
+    for key in (
+        "include_mosa_com_chi",
+        "include_mosa_fwhm_chi",
+        "include_mosa_com_mu",
+        "include_mosa_fwhm_mu",
+        "include_raw_sum",
+        "include_raw_specific",
+    ):
+        params[key] = False
+    params["include_strain"] = True
+    u_um, v_um = SL._plane_axes(half, half, d, d)
+    return params, len(SL.slice_plane_offsets(spec)), (len(v_um), len(u_um))
+
+
+def _sweep_strain_cfg(proc, raw):
+    """The one volume `_sweep_peak_params` selects, as a `prepare_volume` cfg."""
+    return {
+        "h5_path": str(proc / "stacked_strain_volumes.h5"),
+        "dataset_path": "strain",
+        "kind": "strain",
+        "source": "stacked",
+        "raw_root": str(raw),
+        "raw_pattern": "strain__*",
+        "roi_x": None,
+        "roi_y": None,
+    }
+
+
+def _sweep_rung_is_in_core(proc, raw, tmp_path, budget_bytes):
+    """Whether `budget_bytes` puts the sweep fixture's volume on the in-core rung.
+
+    Run in-process against the same 2 MB volume the child gets, because the
+    child cannot be spied on — and the rung a peak test claims to measure has to
+    be asserted, not assumed. It was assumed once here: `_budget_bytes = 64 MiB`
+    was documented as the in-core rung and in fact streamed, because
+    `align_volume_streamed` prices a layer at ~41 B per float64 element and 8 of
+    them did not fit in the 9.1 MiB alignment share.
+    """
+    import contextlib
+
+    p = {**SL.STAGE.defaults(), **_peak_params(proc, raw, tmp_path / "unused")}
+    with contextlib.ExitStack() as opened:
+        prep = SL.prepare_volume(
+            _sweep_strain_cfg(proc, raw),
+            p,
+            0.152,
+            0.385,
+            -1,
+            style=None,
+            stack=opened,
+            budget_bytes=budget_bytes,
+        )
+        return prep["data"] is not None
+
+
+def _assert_sweep_samples_the_volume(h5_path, n_planes):
+    """The stored sweep must really carry samples, on every plane, everywhere.
+
+    Three separate ways this fixture could go quietly degenerate, each checked:
+    the aligned volume could be mostly NaN (the defect repaired in `_setup` and
+    in `test_stage_visualize.py`), the sweep could miss the volume in Z so most
+    planes are empty, or a pruning bug could drop a band out of some planes. A
+    single `> 100 finite somewhere` guard sees none of the three.
+    """
+    sampled = range(0, n_planes, 10)
+    with h5py.File(h5_path, "r") as f:
+        stored = f["strain"]["wide"]["slices"]
+        assert stored.shape[0] == n_planes
+        per_plane = [int(np.isfinite(stored[k]).sum()) for k in sampled]
+        plane_size = stored.shape[1] * stored.shape[2]
+    fraction = sum(per_plane) / (len(per_plane) * plane_size)
+    assert fraction >= _MIN_SWEEP_FINITE_FRACTION, (
+        f"the sweep is only {100 * fraction:.2f}% finite — the planes have slid "
+        "off the volume, so this fixture measures byte counts over NaN"
+    )
+    assert min(per_plane) >= 0.5 * _MIN_SWEEP_FINITE_FRACTION * plane_size, (
+        f"the emptiest sampled plane carries only {min(per_plane)} finite samples "
+        f"of {plane_size} — the sweep is meant to lie wholly inside the volume "
+        "in Z, so every plane should sample it"
+    )
+
+
+def _slice_rec(n_planes, nv, nu):
+    return {
+        "name": "wide",
+        "u_um": np.linspace(-1.0, 1.0, nu),
+        "v_um": np.linspace(-2.0, 2.0, nv),
+        "offsets": np.arange(n_planes, dtype=np.float64) * 0.5,
+        "normal": [0.0, 0.0, 1.0],
+        "origin": [0.0, 0.0, 0.0],
+        "up": [0.0, 1.0, 0.0],
+        "u_hat": [1.0, 0.0, 0.0],
+        "v_hat": [0.0, 1.0, 0.0],
+        "n_hat": [0.0, 0.0, 1.0],
+        "half_u": 1.0,
+        "half_v": 2.0,
+        "du": 0.1,
+        "dv": 0.2,
+        "sweep_step_um": 0.5,
+    }
+
+
+def test_plane_by_plane_write_is_byte_identical_to_a_whole_stack_write(tmp_path):
+    """The new writer must reproduce the old `create_dataset(data=stack)` exactly.
+
+    This is the direct check that the products did not move: the same planes are
+    written both ways and the stored dataset compared **raw**, together with the
+    layout parameters a downstream reader sees. `slices` planes are raw float32
+    samples, so this comparison does see a value change of even one ulp — unlike
+    a percentile or an 8-bit PNG, which cannot. What it does *not* cover is the
+    sampling itself (identical code on both sides here) or the h5 file's byte
+    image, which is not a product contract: `profiles` and the viewers read
+    `sg["slices"][k]`, never the file's bytes.
+
+    The chunk shape is asserted equal rather than merely present, because the
+    writer's buffer is sized from it — a silent change there would change how
+    much memory the stage holds without changing a stored value.
+    """
+    n_planes, nv, nu = 11, 20, 30
+    rng = np.random.default_rng(3)
+    planes = [rng.standard_normal((nv, nu)).astype(np.float32) for _ in range(n_planes)]
+    planes[4][3:7, 5:9] = np.nan  # NaN must survive the slab copy unchanged
+    rec = _slice_rec(n_planes, nv, nu)
+
+    with h5py.File(tmp_path / "whole.h5", "w") as f:
+        sg = f.create_group("vol").create_group("wide")
+        old = sg.create_dataset(
+            "slices",
+            data=np.stack(planes, axis=0).astype(np.float32),
+            compression="gzip",
+            compression_opts=4,
+        )
+        old_chunks, old_shape, old_dtype = old.chunks, old.shape, old.dtype
+
+    with h5py.File(tmp_path / "streamed.h5", "w") as f:
+        dset = SL.open_slice_dataset(f.create_group("vol"), rec)
+        writer = SL.PlaneWriter(dset)
+        assert writer.depth == dset.chunks[0], "the buffer must be one chunk row"
+        assert 1 < writer.depth < n_planes, (
+            f"the fixture must span several chunk rows (depth {writer.depth} of "
+            f"{n_planes} planes) or the buffered write path is never exercised"
+        )
+        for plane in planes:
+            writer.append(plane)
+        writer.close()
+        new_chunks, new_shape, new_dtype = dset.chunks, dset.shape, dset.dtype
+        stored = dset[()]
+
+    assert (new_shape, new_dtype, new_chunks) == (old_shape, old_dtype, old_chunks)
+    assert stored.tobytes() == np.stack(planes, axis=0).tobytes()
+
+
+def test_plane_writer_refuses_a_short_sweep(tmp_path):
+    """A sized dataset left partly unwritten is an unfinished product."""
+    with h5py.File(tmp_path / "short.h5", "w") as f:
+        dset = SL.open_slice_dataset(f.create_group("vol"), _slice_rec(11, 20, 30))
+        writer = SL.PlaneWriter(dset)
+        writer.append(np.zeros((20, 30), np.float32))
+        with pytest.raises(RuntimeError, match="sized for 11 planes"):
+            writer.close()
+
+
+def test_unwritten_planes_read_as_nan_not_zeros(tmp_path):
+    """An aborted sweep must leave NaN where it never sampled, never zeros.
+
+    Sizing the dataset up front means a run killed mid-sweep leaves a group whose
+    unwritten planes are readable, where the old whole-stack write left no group
+    at all — and `PlaneWriter.close()`'s count check cannot fire on that path,
+    because nothing calls it. HDF5's default fill is zero, and a plane of zeros
+    reads as *data*: `profiles` averages it into a CSV with no skip and no note.
+    NaN is what every reader here already treats as "no sample".
+
+    Simulated the way it really happens — the writer is abandoned mid-sweep with
+    no `close()` — rather than by trusting the creation-property list.
+    """
+    with h5py.File(tmp_path / "aborted.h5", "w") as f:
+        dset = SL.open_slice_dataset(f.create_group("vol"), _slice_rec(11, 20, 30))
+        assert np.isnan(dset.fillvalue), "the dataset must be NaN-filled, not zero-filled"
+        writer = SL.PlaneWriter(dset)
+        for _ in range(3):
+            writer.append(np.full((20, 30), 7.0, np.float32))
+        writer.flush()  # 3 of 11 planes on disk; the run then dies
+        stored = dset[()]
+    assert np.all(stored[:3] == 7.0)
+    assert np.isnan(stored[3:]).all(), "unwritten planes came back as data, not as NaN"
+
+
+# The rungs the two peak tests below pin, and the budgets that reach them. Both
+# are asserted at run time by `_sweep_rung_is_in_core`, never assumed: 64 MiB was
+# once documented here as the in-core rung and in fact streamed.
+_SWEEP_RUNGS = {"in_core": 1 << 30, "streamed": 4096}
+
+# Holding the sweep's stack ONCE must already exceed the limit by this much, or
+# the test would pass on code that holds it. The pre-change peak was about twice
+# the stack again, since `np.stack(planes)` held the list and the stack together.
+_STACK_OVER_LIMIT = 1.4
+_SWEEP_PEAK_LIMIT = 350 << 20
+
+
+@pytest.mark.parametrize("rung", sorted(_SWEEP_RUNGS))
+def test_slices_never_holds_the_whole_plane_stack(tmp_path, rung):
+    """A sweep's planes must be written as they are sampled, not accumulated.
+
+    The Z-blocked gather bounded the stage's *input*; on the shipped default
+    geometry the *output* is the larger term — ~172 planes of 2528x1789 float32
+    is 2.90 GiB for `oblique_full` alone against a 1.15 GiB volume, and
+    `np.stack(planes)` doubled it transiently. This fixture reproduces that
+    shape at 1/6th the size and asserts the peak no longer carries it.
+
+    **Both rungs, because both matter.** An earlier version measured only what
+    it called the in-core rung, on the argument that a 1.15 GiB STO2 volume fits
+    an 8 GB machine's 1.65-2.58 GiB budget. That was wrong twice over: measured,
+    `align_volume_streamed` returns `block_layers == 1` for STO2 at that budget
+    (it prices the alignment chain at ~41 B per float64 element and gets a 254 MB
+    share, against a 285 MB minimum), so the target machine takes the
+    **streaming** rung — and the budget that test pinned took the streaming rung
+    too, so its own claim about which code it measured was false. Both rungs are
+    now measured, and which one each budget reaches is asserted rather than
+    described.
+
+    Measured in the real child, one 8x256x128 volume (2 MB) and a 201-plane
+    sweep of 801x801 float32 (2.45 MiB a plane, 492 MiB of stack), PNGs off:
+
+        rung        before      after
+        in-core     1117.7      205.0 MiB
+        streamed    1105.8      239.3 MiB
+
+    The 350 MiB limit sits between them with ~3.2x of failing margin and
+    1.5-1.7x of passing margin. `_budget_bytes` is pinned so the figures do not
+    depend on the runner's RAM, and the stack-vs-limit precondition below is
+    what stops the test going insensitive if the fixture is ever shrunk.
+    """
+    from tests.peak_rss import assert_peak_under
+
+    budget = _SWEEP_RUNGS[rung]
+    proc, raw, _bytes = _peak_setup(tmp_path, *_SWEEP_SHAPE)
+    params, n_planes, (nv, nu) = _sweep_peak_params(proc, raw, tmp_path / f"sl_{rung}")
+    params["_budget_bytes"] = budget
+
+    assert _sweep_rung_is_in_core(proc, raw, tmp_path, budget) == (rung == "in_core"), (
+        f"budget {budget} does not reach the {rung} rung — this test would then "
+        "measure the same code twice and claim to have covered both"
+    )
+    stack_bytes = n_planes * nv * nu * 4
+    assert stack_bytes > _STACK_OVER_LIMIT * _SWEEP_PEAK_LIMIT, (
+        f"the sweep's stack is only {stack_bytes / (1 << 20):.1f} MiB against a "
+        f"{_SWEEP_PEAK_LIMIT / (1 << 20):.0f} MiB limit — holding it whole would "
+        "still pass, so this test would measure nothing"
+    )
+
+    result = assert_peak_under("dfxm.stages.slices:run", params, _SWEEP_PEAK_LIMIT, timeout=900)
+    assert result.volume_ids == ["strain"], "the run must actually have sliced a volume"
+    assert result.n_planes_total == n_planes
+    with h5py.File(result.output_h5, "r") as f:
+        assert f["strain"]["wide"]["slices"].dtype == np.float32
+    _assert_sweep_samples_the_volume(result.output_h5, n_planes)
+
+
+def test_slices_run_bounds_the_streamed_sweep(tmp_path):
+    """`run` must hand the gather a real `max_resident_bytes`, not `None`.
+
+    Everything under `iter_planes_streamed` is bounded and pinned, and none of it
+    matters if the one call site stops asking for a bound: dropping
+    `max_resident_bytes=_sweep_resident_bytes(...)` in `run` puts the whole sweep
+    back in memory on the streaming rung — 172 resident planes, 2.90 GiB, on the
+    shipped default — and leaves every other test in this module green. So the
+    call site is pinned here, by counting the walks of the Z-block stream that
+    `run` actually causes.
+
+    Not by asserting the argument was passed, which a refactor renames away, and
+    not by asserting the run merely finished. `n_planes` walks means every plane
+    got its own traversal, i.e. the budget really sized the batch; `None` would
+    be exactly one walk however long the sweep.
+    """
+    proc, raw, _bytes = _peak_setup(tmp_path, 4, 24, 24)
+    params, n_planes, (nv, nu) = _sweep_peak_params(
+        proc, raw, tmp_path / "sl_bound", half=2.0, d=0.2, step=0.5, span=1.0
+    )
+    params["_budget_bytes"] = 4096
+    assert n_planes >= 4, "a one-plane sweep cannot tell the two batchings apart"
+
+    rungs, walks = [], []
+    real = SL.prepare_volume
+
+    def spy(*args, **kwargs):
+        prep = real(*args, **kwargs)
+        rungs.append(prep["data"] is not None)
+        inner = prep["blocks"]
+        # Wrapped AFTER prepare_volume returns, so the colour-limit reductions
+        # it ran internally are not counted — only the sampling walks.
+        prep["blocks"] = lambda: (walks.append(1), inner())[1]
+        return prep
+
+    monkeypatch = pytest.MonkeyPatch()
+    try:
+        monkeypatch.setattr(SL, "prepare_volume", spy)
+        result = SL.run(params)
+    finally:
+        monkeypatch.undo()
+
+    assert rungs == [False], "the tiny budget must take the streaming rung"
+    assert result.n_planes_total == n_planes
+    plane_bytes = nv * nu * 4
+    assert (
+        SL.sweep_batch_size(n_planes, plane_bytes, SL._sweep_resident_bytes(4096, plane_bytes, 1))
+        == 1
+    )
+    assert sum(walks) == n_planes, (
+        f"the sweep walked the Z stream {sum(walks)} times for {n_planes} planes; "
+        "1 means `run` passed no `max_resident_bytes` and held the whole sweep"
+    )
+
+
+def test_rss_floor_covers_the_measured_process_image(tmp_path):
+    """`RSS_FLOOR_BYTES` must not sit below what this stage's child costs.
+
+    The formula in `advice.working_set_budget_bytes` is pinned by
+    `tests/test_common_advice.py`, but a *value* is not a formula: setting
+    `RSS_FLOOR_BYTES = 1` passes every one of those and the budget it derives is
+    then far too large. Only a live measurement catches that, and
+    `assert_floor_covers` brackets from both sides so an inflated constant fails
+    too.
+
+    **PNGs on**, which is the stage default: the first figure a run builds
+    imports the whole of matplotlib's rendering stack (measured 103.9 MiB
+    without it against 193.5 MiB with it), and every volume after the first
+    streams with that resident.
+    """
+    from tests.peak_rss import assert_floor_covers
+
+    proc, raw, data_bytes = _peak_setup(tmp_path, *(4, 6, 8))
+    params = {**_peak_params(proc, raw, tmp_path / "sl_floor"), "save_png": True}
+    assert_floor_covers(
+        SL.RSS_FLOOR_BYTES,
+        "dfxm.stages.slices:run",
+        params,
+        data_bytes=data_bytes,
+    )
+
+
+def test_reduction_working_set_multiple_is_rounded_the_safe_way():
+    """The budget divisor must cover what really holds a block, rounded UP.
+
+    `align_volume_streamed` prices the alignment chain and **nothing
+    downstream**. The colour-limit reductions layered on its blocks hold, per
+    float64 element at their peak, `dtype.itemsize + 8 * (retained + 1) + 1` =
+    41 B — the same figure `align_volume_streamed` computes for its own cached
+    median — plus one more block for the centred `b - center` the stream yields
+    through. The constant is a **divisor**, so a larger number means a smaller
+    budget and rounding *down* permits more than was counted; that is exactly the
+    defect `visualize` shipped (6 against the same 6.125) and had to correct.
+
+    Nothing else pins this number, and an unpinned constant in the permissive
+    direction is the failure mode this project has now met a dozen times. The
+    outcome is checked separately by `test_slices_peak_stays_under_budget`.
+    """
+    import math
+
+    per_element = 8 + 8 * (3 + 1) + 1  # the block, the rank search's arrays, the mask
+    counted = per_element / 8 + 1  # …expressed in blocks, plus the centred copy
+    assert counted == 6.125
+    assert SL.REDUCTION_WORKING_SET_MULTIPLE == math.ceil(counted)
+
+
+def test_aligned_block_budget_never_buys_more_than_the_budget():
+    """An `aligned` source's block budget converts currency and rounds down.
+
+    `iter_blocks` sizes a block by its bytes **in the stored dtype**, but the
+    stage holds far more per block than that: the float64 upcast, the centred
+    copy and the reductions' 41 B per float64 element. Handing the working-set
+    budget over raw would buy a block several times too large — and the stored
+    dtype here is float32, where the error is largest.
+    """
+
+    class _Dset:
+        dtype = np.dtype(np.float32)
+        shape = (8, 16, 16)
+
+    budget = 1 << 20
+    block_bytes = SL._aligned_block_budget(_Dset(), budget)
+    assert block_bytes == budget * 4 // (4 + 41 + 8)
+    # What that block actually costs, in the currency the budget is priced in.
+    elements = block_bytes // 4
+    assert elements * (4 + 41 + 8) <= budget
+
+
+def test_probe_slack_covers_the_rounding_it_guards_and_is_load_bearing(tmp_path):
+    """`_PROBE_SLACK_LAYERS` must cover the edge-probe rounding — and be needed.
+
+    `k` is affine in `(u, v)`, so its extremes over the grid sit on the grid's
+    edges and the row/column probes bound the interior exactly — *in exact
+    arithmetic*. They are computed in floating point, and the slack is what
+    stops a sample at a block boundary being pruned away into a NaN.
+
+    Two halves, because either alone would be satisfied by a constant that does
+    nothing. First, measure the discrepancy the slack guards over a randomised
+    family of planes and require it to be negligible against one layer. Second,
+    require that a **negative** slack actually breaks gather/in-core equality —
+    without that, `0.0` and `1.0` and any other value would pass alike and the
+    constant would be pinned by nothing.
+    """
+    volume = _gather_volume(seed=11)
+    prep_in_core = _in_core_prep(volume)
+    rng = np.random.default_rng(4)
+
+    worst = 0.0
+    for _ in range(200):
+        normal = rng.standard_normal(3)
+        if np.linalg.norm(normal) < 1e-6:
+            continue
+        u_hat, v_hat, _n = SL.build_basis(normal)
+        origin = rng.uniform(-2.0, 14.0, 3)
+        u_um, v_um = SL._plane_axes(8.0, 8.0, 0.5, 0.5)
+        interior = SL._plane_coords(prep_in_core, origin, u_hat, v_hat, u_um, v_um)[0]
+        row_k = SL._plane_k(prep_in_core, origin, u_hat, v_hat, u_um[[0, -1]], v_um)
+        col_k = SL._plane_k(prep_in_core, origin, u_hat, v_hat, u_um, v_um[[0, -1]])
+        # How far outside the probes' hull any interior sample lands, in layers.
+        for lo, hi in (
+            (row_k.min(axis=1)[:, None], row_k.max(axis=1)[:, None]),
+            (col_k.min(axis=0)[None, :], col_k.max(axis=0)[None, :]),
+        ):
+            worst = max(worst, float(np.max(lo - interior)), float(np.max(interior - hi)))
+    assert worst < 1e-9, f"edge probes miss interior samples by {worst} layers"
+    assert SL._PROBE_SLACK_LAYERS >= 1.0 > worst
+
+    # …and the slack is load-bearing: a negative one prunes real samples away.
+    budget = volume.nbytes // 6
+    args = _gather_args()
+    reference = SL.sample_plane(prep_in_core, *args)[0]
+    original = SL._PROBE_SLACK_LAYERS
+    try:
+        SL._PROBE_SLACK_LAYERS = -0.5
+        starved = SL.sample_plane_streamed(_streamed_prep(volume, budget), *args)[0]
+    finally:
+        SL._PROBE_SLACK_LAYERS = original
+    assert not np.array_equal(starved, reference, equal_nan=True), (
+        "a negative slack changed nothing — the pruning is not being exercised, "
+        "so this test cannot see a slack that is too small"
+    )
+    assert np.array_equal(
+        SL.sample_plane_streamed(_streamed_prep(volume, budget), *args)[0],
+        reference,
+        equal_nan=True,
+    ), "restoring the slack must restore equality"
+
+
+# -- the no-samz chain --------------------------------------------------------
+def _no_motor_dataset(nz=9, ny=7, nx=11, seed=12):
+    return np.random.default_rng(seed).standard_normal((nz, ny, nx)).astype(np.float32)
+
+
+@pytest.mark.parametrize("with_samy", [False, True])
+@pytest.mark.parametrize("roi", [None, (2, 9)])
+def test_no_samz_chain_blocks_and_matches_the_whole_volume_form(with_samy, roi):
+    """With no samz the remaining chain is per-layer, so it blocks exactly.
+
+    `align_volume_streamed` cannot serve this case (it always interpolates, and
+    would raise on `samz[0]`), and `visualize`/`paraview` answer it with a whole
+    in-core volume. This stage blocks it instead, so the path a run reaches by
+    *misconfiguration* is not the one path with no memory bound. The reference
+    here is the whole-volume chain this replaced, computed inline.
+    """
+    from dfxm.common import alignment as A
+
+    dset = _no_motor_dataset()
+    cfg = {"roi_x": roi, "roi_y": None}
+    samy = np.array([0.0, 0.00001, 0.000025, 0.00004, 0.00006, 0.00007, 0.00009, 0.0001, 0.00012])
+    samy = samy if with_samy else np.array([])
+    kwargs = dict(scale_x=0.152, samy_direction=-1, take_abs=True)
+
+    reference = np.abs(np.asarray(dset, dtype=np.float64))
+    reference = A.apply_roi_3d(reference, roi, None)
+    if with_samy:
+        reference = A.apply_samy_shifts_to_volume(reference, samy, 0.152, -1)
+
+    shape, dtype, scale_z = SL._unaligned_shape(dset, cfg, samy, 0.152, -1)
+    assert shape == reference.shape and dtype == np.float64 and scale_z == 2.0
+
+    counts = []
+    for budget in (1 << 30, dset.nbytes // 4, 1):
+        blocks = list(SL._unaligned_blocks(dset, cfg, samy, budget_bytes=budget, **kwargs)())
+        counts.append(len(blocks))
+        got = np.concatenate([b for _sl, b in blocks], axis=0)
+        assert np.array_equal(got, reference, equal_nan=True), f"budget {budget}"
+    assert counts[0] == 1 and counts[-1] == dset.shape[0], (
+        f"the budgets must actually change the blocking, got {counts}"
+    )
+
+
+def test_no_samz_prepare_volume_is_not_forced_in_core(tmp_path):
+    """The no-samz branch must obey the budget like every other path.
+
+    It used to set `fits = True` unconditionally, which made a misconfigured run
+    the only unbounded one. Both rungs must be reachable, and must agree.
+    """
+    import contextlib
+
+    proc = tmp_path / "proc"
+    proc.mkdir()
+    with h5py.File(proc / "stacked_volumes.h5", "w") as f:
+        f.create_dataset("chi/Center of mass", data=_no_motor_dataset(nz=12, ny=8, nx=10))
+    p = {**SL.STAGE.defaults(), "center_method": "midrange"}
+    cfg = {
+        "h5_path": str(proc / "stacked_volumes.h5"),
+        "dataset_path": "chi/Center of mass",
+        "kind": "mosa_com",
+        "source": "stacked",
+        "raw_root": "",  # no folders -> extract_motor_positions returns empty samy AND samz
+        "raw_pattern": "",
+        "roi_x": None,
+        "roi_y": None,
+    }
+
+    def prepared(budget):
+        with contextlib.ExitStack() as opened:
+            prep = SL.prepare_volume(
+                cfg, p, 0.152, 0.385, -1, style=None, stack=opened, budget_bytes=budget
+            )
+            return (
+                prep["data"] is not None,
+                np.concatenate([b for _sl, b in prep["blocks"]()], axis=0),
+                (prep["vmin_raw"], prep["vmax_raw"]),
+                prep["scale_z"],
+            )
+
+    in_core_fits, in_core, in_core_limits, sz = prepared(1 << 30)
+    streamed_fits, streamed, streamed_limits, sz2 = prepared(2048)
+    assert in_core_fits and not streamed_fits, "both rungs must be reachable here"
+    assert in_core_limits == streamed_limits
+    assert sz == sz2 == SL._NO_MOTOR_Z_STEP_UM
+    assert np.array_equal(in_core, streamed, equal_nan=True)
