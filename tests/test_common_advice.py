@@ -124,6 +124,32 @@ def test_big_job_on_a_small_machine_chunks():
     assert any("chunk" in r.lower() for r in plan.reasons)
 
 
+def test_chunked_reason_names_the_unit_the_estimate_declares():
+    """`shape[0]` layers is right for six stages and wrong for `matched`.
+
+    `matched`'s `shape[0]` counts scan FOLDERS while what it chunks is one
+    scan's detector rows, so an estimate may name its own span. Both halves
+    asserted: the default must stay "layers", or the override would be the only
+    thing tested and the six correct stages could regress unnoticed.
+    """
+    default = plan_run(tiny_ram(), _est(20))
+    assert any("of 100 layers" in r for r in default.reasons), default.reasons
+
+    named = plan_run(
+        tiny_ram(),
+        CostEstimate(
+            peak_bytes=20 * GB,
+            input_bytes=GB,
+            shape=(37, 21, 2048, 2048),  # folders, frames, rows, columns
+            chunkable=True,
+            note=None,
+            chunk_span=(2048, "detector rows"),
+        ),
+    )
+    assert any("of 2048 detector rows" in r for r in named.reasons), named.reasons
+    assert not any("layers" in r for r in named.reasons), named.reasons
+
+
 def test_unchunkable_big_job_goes_disk_backed_not_blocked(tmp_path):
     """Nothing refuses for lack of RAM — the escalation ends at disk-backed."""
     plan = plan_run(tiny_ram(), _est(20, chunkable=False), scratch_dir=str(tmp_path))

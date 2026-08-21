@@ -125,6 +125,10 @@ def _count_row_blocks(monkeypatch):
     """
     from dfxm.common import volumeio
 
+    # Undo any earlier patch first, so a per-budget sweep wraps the pristine
+    # function rather than the previous wrapper (which would leave every earlier
+    # `seen` list still recording).
+    monkeypatch.undo()
     real = volumeio.iter_blocks
     seen: list[int] = []
 

@@ -651,18 +651,24 @@ four pixel boxes) to open a visual picker showing the middle Z-layer of each
 product; drag a rectangle and click **OK** to fill the boxes automatically. The
 preview is oriented exactly like the exported maps.
 
-> [!info] Leaving the colour limits blank no longer loads the whole volume
+> [!info] Blank colour limits: large volumes no longer have to fit in memory
 > When both vmin/vmax boxes for a product are blank, its default limits are the
-> run's own 1st/99th percentiles. Computing them used to read the entire volume
-> into memory; it now reads it in blocks, so a replot of a large
-> `aligned_raw_rocking_volumes.h5` no longer needs room for the whole thing.
+> run's own 1st/99th percentiles. A volume small enough for this machine is read
+> in one piece and costs exactly what it always did; only one too large for that
+> is read in blocks, so a replot of a large `aligned_raw_rocking_volumes.h5` no
+> longer needs room for the whole thing.
 >
-> **The colours are unchanged** — the streamed percentile returns exactly what
-> the whole-volume one returned, not an approximation, so a replot made now sits
-> beside one made before this change with no visible difference. The cost is
-> **time**: an exact percentile in bounded memory reads the volume several times
-> over, and a small volume additionally pays a fixed ~23 MB of working space it
-> did not need before. Filling in vmin/vmax by hand skips the whole computation.
+> **The colours are unchanged either way** — the blocked percentile returns
+> exactly what the whole-volume one returns, not an approximation, so a replot
+> made now sits beside one made before this change with no visible difference,
+> and the two routes agree with each other. The cost of the blocked route is
+> **time**: an exact percentile in bounded memory reads the volume about a dozen
+> times over. Measured on this machine: 0.07 s for a 9 MB volume (one piece),
+> 5.7 s at 79 MB and 14.2 s at 202 MB (blocked).
+>
+> **Typing vmin and vmax in by hand skips the computation entirely** — the same
+> 202 MB replot takes 0.44 s instead of 15.4 s. Leave one box blank and the
+> percentile still runs, because the blank side needs a default.
 
 ### 5. Visualize volumes (`visualize`)
 

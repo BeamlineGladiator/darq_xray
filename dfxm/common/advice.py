@@ -245,11 +245,19 @@ def plan_run(profile, estimate, *, allow_downsample: bool = False, scratch_dir=N
     effective_peak = estimate.peak_bytes / (downsample**2)
 
     if estimate.chunkable:
-        n_layers = estimate.shape[0] if estimate.shape else 1
+        # `shape[0]` layers is right for a stage that chunks its volume along Z,
+        # and wrong for one that chunks something else (`matched` divides one
+        # scan's detector rows, while its `shape[0]` counts scan folders), so an
+        # estimate may name its own span and unit.
+        if estimate.chunk_span:
+            n_layers, unit = int(estimate.chunk_span[0]), str(estimate.chunk_span[1])
+            n_layers = max(1, n_layers)
+        else:
+            n_layers, unit = (estimate.shape[0] if estimate.shape else 1), "layers"
         per_layer = max(1, int(effective_peak / max(1, n_layers)))
         chunk_layers = max(1, min(n_layers, int(max(budget, MIN_BUDGET_BYTES) / per_layer)))
         reasons.append(
-            f"chunking into groups of {chunk_layers} of {n_layers} layers — slower, same result"
+            f"chunking into groups of {chunk_layers} of {n_layers} {unit} — slower, same result"
         )
         return RunPlan("chunked", budget, chunk_layers, downsample, None, tuple(reasons), None)
 

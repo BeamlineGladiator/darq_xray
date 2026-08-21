@@ -304,7 +304,8 @@ def load_pco_ff_frame(h5_path, pco_ff_path, frame_index, *, budget_bytes: int | 
 
     ``budget_bytes`` is the working set one block may cost, defaulting to
     :data:`MEDIAN_BLOCK_WORKING_SET_BYTES`; it is a parameter so tests can force
-    the multi-block path on a small stack.
+    the multi-block path on a small stack. ``0`` means zero, not "use the
+    default".
     """
     from ..common.volumeio import iter_blocks
 
@@ -318,7 +319,8 @@ def load_pco_ff_frame(h5_path, pco_ff_path, frame_index, *, budget_bytes: int | 
         if ds.ndim != 3:
             return None
         idx = min(int(frame_index), ds.shape[0] - 1)
-        budget = _median_block_budget(ds, budget_bytes or MEDIAN_BLOCK_WORKING_SET_BYTES)
+        working_set = MEDIAN_BLOCK_WORKING_SET_BYTES if budget_bytes is None else int(budget_bytes)
+        budget = _median_block_budget(ds, working_set)
         out = np.empty((ds.shape[1], ds.shape[2]), dtype=np.float64)
         for ysl, block in iter_blocks(ds, budget_bytes=budget, axis=1):
             sub = block.astype(np.float64)
@@ -421,12 +423,17 @@ def estimate(params: dict) -> CostEstimate:
     frame_elems = elems // scan_shape[0] if scan_shape and scan_shape[0] else elems
     input_bytes = len(folders) * elems * itemsize
     peak = elems * (itemsize + 16) + 12 * frame_elems * 8
+    # `shape[0]` here counts scan FOLDERS, but what the stage chunks is one
+    # scan's detector rows, so it names its own span rather than let
+    # `advice.plan_run` read the folder count and call it "layers".
+    rows = scan_shape[1] if len(scan_shape) > 1 else 1
     return CostEstimate(
         peak,
         input_bytes,
         (len(folders), *scan_shape),
         True,
         None,
+        (rows, "detector rows"),
     )
 
 
