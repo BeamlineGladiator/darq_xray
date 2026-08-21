@@ -946,3 +946,66 @@ def test_rss_floor_covers_the_measured_process_image(tmp_path):
         params,
         data_bytes=4 * L * NY * NX * 8,
     )
+
+
+def test_a_3d_product_that_overrides_the_budget_says_so(tmp_path, monkeypatch):
+    """The one place the stage is NOT bounded by its budget must announce itself.
+
+    A capped STO2 run peaks at 4.8 GiB against an 8 GB machine's 3.6 GiB
+    headroom, entirely because a 3-D product materialises the whole aligned
+    volume regardless of `_budget_bytes`. Silence there makes a setting look
+    like a mystery. The note must name the size and the way out.
+    """
+    proc, raw = _setup(tmp_path)
+    monkeypatch.setattr(V.R3, "save_top_view", lambda scene, path, **kw: path)
+    monkeypatch.setattr(V.R3, "volume_texture_limit", lambda *a, **kw: None)
+
+    result = V.run(
+        {
+            "mosa_volume_file": str(proc / "stacked_volumes.h5"),
+            "strain_volume_file": str(proc / "stacked_strain_volumes.h5"),
+            "raw_root": str(raw),
+            "mosa_pattern": "mosa__*",
+            "strain_pattern": "strain__*",
+            "output_dir": str(tmp_path / "viz"),
+            "save_layers": False,
+            "save_animation": False,
+            "save_topview": True,
+            # Force the streaming rung: without this the fixture fits in core and
+            # nothing is being overridden, so there is nothing to warn about.
+            "_budget_bytes": 4096,
+        }
+    )
+    notes = [n for d in result.datasets for n in d.notes]
+    overrides = [n for n in notes if "ignored the streaming budget" in n]
+    assert overrides, f"no budget-override note among {notes}"
+    assert "Save topview" in overrides[0]
+
+
+def test_no_budget_override_note_when_the_volume_fits_in_core(tmp_path, monkeypatch):
+    """Precondition guard for the test above.
+
+    On the in-core rung the whole volume exists anyway, so nothing was
+    overridden and the note would be a lie. Without this, the note could fire
+    unconditionally and the test above would still pass.
+    """
+    proc, raw = _setup(tmp_path)
+    monkeypatch.setattr(V.R3, "save_top_view", lambda scene, path, **kw: path)
+    monkeypatch.setattr(V.R3, "volume_texture_limit", lambda *a, **kw: None)
+
+    result = V.run(
+        {
+            "mosa_volume_file": str(proc / "stacked_volumes.h5"),
+            "strain_volume_file": str(proc / "stacked_strain_volumes.h5"),
+            "raw_root": str(raw),
+            "mosa_pattern": "mosa__*",
+            "strain_pattern": "strain__*",
+            "output_dir": str(tmp_path / "viz2"),
+            "save_layers": False,
+            "save_animation": False,
+            "save_topview": True,
+            "_budget_bytes": 8 << 30,
+        }
+    )
+    notes = [n for d in result.datasets for n in d.notes]
+    assert not [n for n in notes if "ignored the streaming budget" in n]

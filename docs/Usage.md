@@ -766,6 +766,15 @@ Align the stacked mosaicity/strain volumes and render them.
 > per-layer PNGs and the animation are unaffected. The interactive 3-D viewer
 > has the same constraint for the same reason.
 >
+> **How much this costs, measured.** On the STO2 dataset, capped at what an 8 GB
+> machine can safely offer (3.60 GB), the run still peaked at **4.80 GB** with
+> the 3-D products on — over that machine's budget — while producing output
+> identical to the unconstrained run (395 files compared). With them off the
+> stage stays inside the cap. So on a small machine this is a setting to change,
+> not a limit to work around; the run now **says so in a note on each dataset**,
+> naming the volume size and the two toggles, rather than leaving an unexplained
+> peak.
+>
 > **A second exception, and it means something is already wrong.** If the raw
 > folder pattern matches no folders there are no motor positions, so the volume
 > cannot be aligned and the run falls back to loading it whole — unbounded, as

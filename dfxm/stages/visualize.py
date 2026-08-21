@@ -1085,8 +1085,21 @@ def _process_dataset(
     # re-run the alignment chain two or three more times for a peak that is
     # already one whole volume. When no 3-D product is wanted nothing is ever
     # materialised.
-    data = _materialise(source) if (p["save_topview"] or p["save_rotation"]) else source
+    wants_3d = bool(p["save_topview"] or p["save_rotation"])
+    data = _materialise(source) if wants_3d else source
     prod = DatasetProducts(name=name, shape=tuple(data.shape), vmin=float(vmin), vmax=float(vmax))
+    if wants_3d and isinstance(source, _LayerSource):
+        # The alignment was blocked because the machine asked for it, and then a
+        # 3-D product overrode that and took the whole volume anyway. Say so:
+        # this is the one place where the stage's memory use is NOT bounded by
+        # the budget, and it is the reason a capped STO2 run peaks at 4.8 GiB
+        # against an 8 GB machine's 3.6 GiB headroom. Silence here is what makes
+        # that look like a mystery rather than a setting.
+        prod.notes.append(
+            f"3-D products need the whole {data.nbytes / (1 << 30):.2f} GiB volume in memory, "
+            "so this dataset ignored the streaming budget — turn off 'Save topview' "
+            "and 'Save rotation' to keep the run bounded"
+        )
 
     if p["save_layers"]:
         prod.layers_dir = Rnd.save_layer_pngs(
