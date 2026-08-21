@@ -29,18 +29,56 @@ TOTAL_FRACTION = 0.5
 # memory it saves.
 MIN_BUDGET_BYTES = 64 * 1024 * 1024
 
+# -- RSS headroom -> working-set (tracemalloc) budget -------------------------
 # `headroom_bytes` is RSS. `alignment.align_volume_streamed`'s `budget_bytes` is
-# `tracemalloc` — Python-level allocations, which do not carry the interpreter,
-# the extension modules, h5py's chunk cache, a memmap's resident pages or
+# `tracemalloc` — Python-level allocations, which carry neither the interpreter,
+# the extension modules, h5py's chunk cache, a memmap's resident pages nor
 # allocator fragmentation. Handing one straight to the other is a category
-# error, and this is the divisor that converts. The figure is the project's own
-# measurement of real peak RSS against modelled peak on the real dataset.
+# error, and this is where the two are related.
 #
-# With it, the worst case is a run that fits: the working-set model measures at
-# most 0.77x its budget, so peak RSS lands at most 0.77 x 1.66 / 1.66 = 0.77 of
-# headroom. Without it the same run lands at 1.28x headroom — over the very
-# limit the budget was asked to respect.
-RSS_PER_TRACEMALLOC = 1.66
+# **The relationship is additive, not a ratio.** Measured for the `paraview`
+# stage over 18 runs (two shapes x budgets 16/64/512 MB x 1/8/16 Z pieces), peak
+# RSS against peak traced bytes:
+#
+#     RSS = 230 MB + 1.18 x traced        (least squares, r^2 = 0.98)
+#
+# while the *ratio* RSS/traced over those same runs ranged from **2.06 to
+# 23.43** — it is not a constant and no single multiplier can stand in for it.
+# The intercept is the process image (interpreter, numpy, h5py, VTK) that
+# `tracemalloc` never sees; it dominates every small run, which is why the ratio
+# explodes as the traced peak shrinks. The slope is the part that scales:
+# allocations made inside extension libraries — chiefly VTK's deep copy of each
+# piece — which are resident but untraced.
+#
+# The constants below are an **upper envelope** of that data rather than the
+# least-squares line, so the model over-states RSS rather than under-stating it
+# (mean slack 17 MB, minimum 15 MB over the 18 runs, zero under-predictions).
+# They are empirical, and specific to this machine and this class of stage:
+#
+# * `MARGINAL_RSS_PER_TRACED_BYTE` is the slope, and travels reasonably — it is
+#   a property of how numpy and VTK allocate, not of what is imported.
+# * The **intercept does not travel**, which is why it is a required argument
+#   rather than a constant here: it is set by which extension modules a stage
+#   imports, and differs per stage by hundreds of MB (a VTK-importing stage
+#   against one that only needs matplotlib). The project's estimator gate
+#   reached the same verdict for its own per-stage error and said so plainly:
+#   not one universal factor.
+#
+# Explicitly NOT related to the ~1.66x by which `estimate().peak_bytes`
+# under-predicted real RSS on the real dataset. That is *estimator model error*
+# — a wrong guess at how much a stage allocates — and this is a *currency
+# conversion*. They are different quantities that happen to be dimensionless;
+# see `tests/peak_rss.py`'s module docstring, which keeps them apart.
+MARGINAL_RSS_PER_TRACED_BYTE = 1.3
+
+# A budget below this buys nothing. The alignment chain floors its blocking at
+# one output layer, so once the budget is under one layer's working set, making
+# it smaller cannot make the blocks smaller — it only turns every call into a
+# "budget too small" warning. Machines whose headroom does not cover the process
+# image land here; the run proceeds at its finest blocking, which is the best
+# answer available and the project's rule (nothing refuses to run for lack of
+# RAM).
+MIN_STREAM_BUDGET_BYTES = 4 * 1024 * 1024
 
 
 @dataclass(frozen=True)
@@ -80,23 +118,34 @@ def headroom_bytes(profile) -> int:
     return int(min(AVAILABLE_FRACTION * profile.ram_available, TOTAL_FRACTION * profile.ram_total))
 
 
-def working_set_budget_bytes(profile) -> int:
+def working_set_budget_bytes(profile, *, rss_floor_bytes: int) -> int:
     """:func:`headroom_bytes` converted into working-set (``tracemalloc``) currency.
 
     What a stage should hand to :func:`~dfxm.common.alignment.align_volume_streamed`
     as ``budget_bytes``. Never pass ``headroom_bytes`` there directly: it is an
-    RSS figure and ``budget_bytes`` is priced in Python allocations — see
-    :data:`RSS_PER_TRACEMALLOC`. This is the streaming counterpart of
-    :func:`~dfxm.common.volumeio.display_headroom_bytes`'s
-    :data:`~dfxm.common.volumeio.DISPLAY_COPIES` division: same shape of
-    correction, different reason.
+    RSS figure and ``budget_bytes`` is priced in Python allocations.
 
-    Deliberately not floored at :data:`MIN_BUDGET_BYTES` — that floor exists to
-    say "do not bother chunking below this", and applying it after the
-    conversion would hand back the unconverted number on exactly the small
-    machine the conversion protects.
+    Solves ``rss_floor_bytes + MARGINAL_RSS_PER_TRACED_BYTE * traced <=
+    headroom`` for ``traced`` — see the note above the constants for why the
+    relationship is additive and why a single ratio cannot express it.
+
+    *rss_floor_bytes* is **required and per stage**: the resident cost of the
+    stage's own process image before it touches data, which `tracemalloc` cannot
+    see and which is set by what the stage imports. A stage measures its own (a
+    child running it on trivial input) and names it. There is no default,
+    because a wrong floor here is silent and a missing one is not.
+
+    Returns at least :data:`MIN_STREAM_BUDGET_BYTES`, including when the floor
+    alone exceeds the headroom — that machine cannot host the run inside its
+    headroom at all, and the honest answer is the finest blocking available
+    rather than a refusal or a warning storm.
+
+    Deliberately not floored at :data:`MIN_BUDGET_BYTES` — that floor says "do
+    not bother chunking below this", and applying it here would hand back an
+    unconverted number on exactly the small machine the conversion protects.
     """
-    return max(1, int(headroom_bytes(profile) / RSS_PER_TRACEMALLOC))
+    affordable = (headroom_bytes(profile) - int(rss_floor_bytes)) / MARGINAL_RSS_PER_TRACED_BYTE
+    return max(MIN_STREAM_BUDGET_BYTES, int(affordable))
 
 
 def plan_run(profile, estimate, *, allow_downsample: bool = False, scratch_dir=None) -> RunPlan:

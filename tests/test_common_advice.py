@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from dfxm.common.advice import (
-    RSS_PER_TRACEMALLOC,
+    MARGINAL_RSS_PER_TRACED_BYTE,
+    MIN_STREAM_BUDGET_BYTES,
     advise_3d,
     headroom_bytes,
     plan_run,
@@ -32,28 +33,69 @@ def test_headroom_is_the_tighter_of_the_two_limits():
     assert headroom_bytes(tiny_ram()) == int(0.6 * 1 * GB)
 
 
-def test_working_set_budget_converts_rss_headroom_into_tracemalloc_currency():
-    """A streaming budget is priced in allocations; headroom is priced in RSS.
+FLOOR = 250 * 1024 * 1024  # a VTK-importing stage's process image
 
-    The conversion has to be a real one, so this asserts the divisor is applied
-    AND that it is greater than one — an accidental `RSS_PER_TRACEMALLOC = 1.0`
-    would make every assertion below true while converting nothing.
+
+def test_working_set_budget_solves_the_additive_rss_model():
+    """RSS = floor + marginal x traced, solved for traced against the headroom.
+
+    Both constants have to be doing work, so both are asserted non-degenerate: a
+    marginal of 1.0 or a floor that never reaches the arithmetic would leave the
+    equalities below true while converting nothing.
     """
-    assert RSS_PER_TRACEMALLOC > 1.0
-    for profile in (workstation_sw_gl(), tiny_ram(), laptop_hw_gl()):
+    assert MARGINAL_RSS_PER_TRACED_BYTE > 1.0
+    for profile in (workstation_sw_gl(), laptop_hw_gl()):
         rss = headroom_bytes(profile)
-        budget = working_set_budget_bytes(profile)
-        assert budget == int(rss / RSS_PER_TRACEMALLOC)
-        assert budget < rss, "the budget must be strictly below the RSS headroom"
+        assert rss > FLOOR, "fixture must be big enough that the floor is not the binding term"
+        budget = working_set_budget_bytes(profile, rss_floor_bytes=FLOOR)
+        assert budget == int((rss - FLOOR) / MARGINAL_RSS_PER_TRACED_BYTE)
+        # Feeding the answer back through the model must land inside headroom —
+        # the property the number exists to have.
+        assert FLOOR + MARGINAL_RSS_PER_TRACED_BYTE * budget <= rss
+
+
+def test_working_set_budget_is_per_stage_through_the_floor():
+    """The floor is the per-stage term, so it must change the answer.
+
+    A stage that imports VTK and one that does not differ by hundreds of MB of
+    process image, and the whole reason `rss_floor_bytes` is a required argument
+    rather than a module constant is that the difference has to reach the
+    budget. A shared constant would make these two equal.
+    """
+    profile = workstation_sw_gl()
+    light_floor = 32 * 1024 * 1024
+    light = working_set_budget_bytes(profile, rss_floor_bytes=light_floor)
+    heavy = working_set_budget_bytes(profile, rss_floor_bytes=FLOOR)
+    assert light > heavy
+    expected = (FLOOR - light_floor) / MARGINAL_RSS_PER_TRACED_BYTE
+    assert abs((light - heavy) - expected) <= 1  # int() truncation only
+
+
+def test_working_set_budget_survives_a_machine_smaller_than_the_process_image():
+    """Headroom under the floor means the run cannot fit — it still has to run.
+
+    The subtraction goes negative there, and the answer must be the finest
+    blocking available: not a negative budget, not a refusal. `tiny_ram` is not
+    small enough for this (0.6 GB of headroom, above a VTK stage's floor), which
+    is why the fixture is built explicitly — and why the precondition is
+    asserted rather than assumed.
+    """
+    import dataclasses
+
+    cramped = dataclasses.replace(
+        tiny_ram(), ram_total=512 * 1024 * 1024, ram_available=256 * 1024 * 1024
+    )
+    assert 0 < headroom_bytes(cramped) < FLOOR
+    assert working_set_budget_bytes(cramped, rss_floor_bytes=FLOOR) == MIN_STREAM_BUDGET_BYTES
 
 
 def test_working_set_budget_is_not_floored_back_up_to_the_min_budget():
-    """The MIN_BUDGET floor would undo the conversion on the smallest machine.
+    """MIN_BUDGET_BYTES ("do not bother chunking") must not leak in here.
 
     `tiny_ram` has 0.6 GB of headroom, well above MIN_BUDGET_BYTES, so a naive
-    `max(MIN_BUDGET_BYTES, ...)` would be invisible here — hence the explicit
-    unmeasurable-machine case, where headroom IS MIN_BUDGET_BYTES and the floor
-    would hand back the unconverted number.
+    `max(MIN_BUDGET_BYTES, ...)` would be invisible there — hence a light floor,
+    where the converted answer legitimately lands below MIN_BUDGET_BYTES and a
+    stray `max` would show up.
     """
     import dataclasses
 
@@ -61,7 +103,8 @@ def test_working_set_budget_is_not_floored_back_up_to_the_min_budget():
 
     unmeasurable = dataclasses.replace(laptop_hw_gl(), ram_total=0, ram_available=0)
     assert headroom_bytes(unmeasurable) == MIN_BUDGET_BYTES
-    assert working_set_budget_bytes(unmeasurable) < MIN_BUDGET_BYTES
+    budget = working_set_budget_bytes(unmeasurable, rss_floor_bytes=8 * 1024 * 1024)
+    assert MIN_STREAM_BUDGET_BYTES < budget < MIN_BUDGET_BYTES
 
 
 def test_small_job_on_a_big_machine_stays_in_core():

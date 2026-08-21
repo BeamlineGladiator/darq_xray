@@ -32,6 +32,19 @@ ProgressFn = Callable[[float, str], None]
 
 SAVE_DTYPE = np.float32  # float32 is plenty for visualisation
 
+# What a child running this stage costs resident before it touches a voxel:
+# interpreter, numpy, h5py and VTK. `tracemalloc` cannot see any of it, so it is
+# what :func:`~dfxm.common.advice.working_set_budget_bytes` must take off the
+# machine's headroom before converting the rest into an allocation budget.
+#
+# Measured at 229 MB (`tests/peak_rss.py` on an 8x32x32 export, where the data
+# is negligible); 250 MB is the figure used, leaving room for a heavier VTK
+# build than this one. Over-stating it is the safe direction — it shrinks the
+# budget, which streams harder. This is a per-stage number: it is set by what
+# this module imports, and a stage that never touches VTK sits hundreds of MB
+# below it.
+RSS_FLOOR_BYTES = 250 * 1024 * 1024
+
 
 def _noop(_frac: float, _msg: str) -> None:
     pass
@@ -1398,18 +1411,19 @@ def _run_budget_bytes(p: dict, out_dir: str) -> int:
     :func:`~dfxm.common.alignment.align_volume_streamed` prices its working set
     in — deliberately *not* RSS, which additionally carries the interpreter, VTK
     and h5py's buffers. So the machine's headroom, which *is* RSS, goes through
-    :func:`~dfxm.common.advice.working_set_budget_bytes` rather than straight in:
-    handing an RSS number to a ``tracemalloc`` budget is a category error, and it
-    lands the worst case at 1.28x the headroom it was meant to respect. An
-    injected ``_budget_bytes`` is taken as already being in working-set currency,
-    since a caller naming that key is naming the budget itself.
+    :func:`~dfxm.common.advice.working_set_budget_bytes` with this stage's own
+    :data:`RSS_FLOOR_BYTES` rather than straight in. An injected
+    ``_budget_bytes`` is taken as already being in working-set currency, since a
+    caller naming that key is naming the budget itself.
     """
     injected = p.get("_budget_bytes")
     if injected is not None:
         return max(1, int(injected))
     from ..common import advice, machine
 
-    return advice.working_set_budget_bytes(machine.profile(output_dir=out_dir))
+    return advice.working_set_budget_bytes(
+        machine.profile(output_dir=out_dir), rss_floor_bytes=RSS_FLOOR_BYTES
+    )
 
 
 def run(params: dict, progress: ProgressFn | None = None) -> ParaviewResult:
