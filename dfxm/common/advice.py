@@ -50,13 +50,27 @@ MIN_BUDGET_BYTES = 64 * 1024 * 1024
 # allocations made inside extension libraries — chiefly VTK's deep copy of each
 # piece — which are resident but untraced.
 #
-# The constants below are an **upper envelope** of that data rather than the
-# least-squares line, so the model over-states RSS rather than under-stating it
-# (mean slack 17 MB, minimum 15 MB over the 18 runs, zero under-predictions).
+# The constants below sit **above** the least-squares line, so the model
+# normally over-states RSS. It is not an envelope and does not promise to be
+# one: at a *fixed* traced peak (276.6-276.9 MB) measured RSS ranged over 45 MB
+# (566-613 MB), so there is untraced, blocking-dependent variance wider than any
+# margin worth claiming, and a sweep large enough will find a case the model
+# under-states. Both terms are therefore set with deliberate slack rather than
+# fitted tight — over-stating costs a slightly smaller budget, under-stating
+# costs an OOM — and the *floor* is where that slack is put, because it is the
+# term a stage can measure and pin (see `tests/peak_rss.py::assert_floor_covers`
+# and the test that calls it).
+#
 # They are empirical, and specific to this machine and this class of stage:
 #
-# * `MARGINAL_RSS_PER_TRACED_BYTE` is the slope, and travels reasonably — it is
-#   a property of how numpy and VTK allocate, not of what is imported.
+# * `MARGINAL_RSS_PER_TRACED_BYTE` is the slope. It is shared across stages on
+#   the argument that it is a property of how numpy and VTK allocate rather than
+#   of what is imported, and it errs safe: paraview's per-piece VTK deep copy is
+#   probably the heaviest slope in the pipeline, so a stage measuring its own
+#   should come in *below* this. **Escalation trigger for whoever measures the
+#   next stage: if a stage measures a marginal above 1.3, this constant stops
+#   being shared and becomes a per-stage argument like the floor.** Shared until
+#   contradicted, not shared on principle.
 # * The **intercept does not travel**, which is why it is a required argument
 #   rather than a constant here: it is set by which extension modules a stage
 #   imports, and differs per stage by hundreds of MB (a VTK-importing stage

@@ -38,12 +38,19 @@ SAVE_DTYPE = np.float32  # float32 is plenty for visualisation
 # machine's headroom before converting the rest into an allocation budget.
 #
 # Measured at 229 MB (`tests/peak_rss.py` on an 8x32x32 export, where the data
-# is negligible); 250 MB is the figure used, leaving room for a heavier VTK
-# build than this one. Over-stating it is the safe direction — it shrinks the
-# budget, which streams harder. This is a per-stage number: it is set by what
-# this module imports, and a stage that never touches VTK sits hundreds of MB
-# below it.
-RSS_FLOOR_BYTES = 250 * 1024 * 1024
+# is negligible), reproducibly to +/-0.1 MB. 300 MB is the figure used: the
+# extra is deliberate slack, not rounding. The additive RSS model is not an
+# envelope — at a fixed traced peak, measured RSS varies by ~45 MB with the
+# blocking alone — and this is the term with room to absorb that, since
+# over-stating the floor only shrinks the budget while under-stating it invites
+# an OOM. It also leaves room for a heavier VTK build than this one.
+#
+# Per stage by construction: it is set by what this module imports, and a stage
+# that never touches VTK sits hundreds of MB below it. Pinned against a live
+# measurement by `test_rss_floor_covers_the_measured_process_image`, so it fails
+# loudly on the first machine or VTK build where it stops travelling rather than
+# silently over-stating the budget.
+RSS_FLOOR_BYTES = 300 * 1024 * 1024
 
 
 def _noop(_frac: float, _msg: str) -> None:

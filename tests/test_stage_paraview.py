@@ -500,3 +500,46 @@ def test_scratch_dir_is_a_subdirectory_and_only_for_median(tmp_path, monkeypatch
     # empty subdirectory itself is cleaned up when the run ends.
     assert not list(out.glob("dfxm_scratch*"))
     assert not (out / PV.SCRATCH_SUBDIR).exists()
+
+
+def test_rss_floor_covers_the_measured_process_image(tmp_path):
+    """`RSS_FLOOR_BYTES` must not sit below what this stage's child actually costs.
+
+    The formula in `advice.working_set_budget_bytes` is pinned by the tests in
+    `tests/test_common_advice.py`, but a *value* is not a formula: setting
+    `RSS_FLOOR_BYTES = 1` passes every one of those, and the budget it derives
+    is then far too large. Only a live measurement can catch that, and only a
+    live measurement fails on the first VTK build where the constant stops
+    travelling — which is the whole reason it is written down as a constant.
+
+    **This is the recipe for Tasks 10-12.** Copy the call, not the number: the
+    floor is per stage by construction, so each stage measures its own.
+    """
+    from tests.peak_rss import assert_floor_covers
+
+    # The smallest real export, so what is measured is the process image and
+    # not an export: four 8x8x4 float64 fields is 8 KB of data against a
+    # ~229 MiB peak.
+    layers, ny, nx = 4, 8, 8
+    proc, raw = _setup(tmp_path, layers=layers, ny=ny, nx=nx)
+    params = {
+        "mosa_volume_file": str(proc / "stacked_volumes.h5"),
+        "strain_volume_file": "",
+        "raw_root": str(raw),
+        "mosa_pattern": "mosa__*",
+        "export_strain": False,
+        "output_dir": str(tmp_path / "pv"),
+        "num_pieces_z": 2,
+    }
+    measured = assert_floor_covers(
+        PV.RSS_FLOOR_BYTES,
+        "dfxm.stages.paraview:run",
+        params,
+        data_bytes=4 * layers * ny * nx * 8,
+        samples=2,
+        timeout=300,
+    )
+    # Not an equality: the constant carries deliberate slack for a heavier VTK
+    # and for the model's blocking-dependent variance. What must hold is that
+    # the slack is upward.
+    assert measured <= PV.RSS_FLOOR_BYTES

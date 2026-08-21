@@ -211,3 +211,92 @@ def assert_peak_under(target: str, params: dict, limit_bytes: int, **kwargs) -> 
         f"{limit_bytes / (1 << 20):.1f} MiB limit"
     )
     return result
+
+
+# -----------------------------------------------------------------------------
+# Pinning a stage's RSS floor
+# -----------------------------------------------------------------------------
+# A stage that streams hands `advice.working_set_budget_bytes` its own
+# `rss_floor_bytes` — the resident cost of its process image before it touches
+# data, which `tracemalloc` cannot see. That constant is measured once and then
+# written down, so nothing keeps it honest as VTK, numpy or the interpreter
+# move underneath it. Declaring it too LOW is the dangerous direction: it
+# over-states what the machine can afford and the budget comes out too large.
+#
+# `assert_floor_covers` is the check, and it is meant to be **copied verbatim**
+# by every stage that declares a floor. One call, in that stage's test module:
+#
+#     def test_rss_floor_covers_the_measured_process_image(tmp_path):
+#         from tests.peak_rss import assert_floor_covers
+#         params = _trivial_params(tmp_path)          # smallest real export
+#         assert_floor_covers(
+#             MY_STAGE.RSS_FLOOR_BYTES,
+#             "dfxm.stages.my_stage:run",
+#             params,
+#             data_bytes=<bytes of that input>,
+#         )
+#
+# Do not copy another stage's *number*. The floor is per stage by construction —
+# a VTK-importing stage sits hundreds of MB above one that only needs matplotlib
+# — so each stage measures its own and this test is what proves it did.
+
+# How far a declared floor may sit ABOVE the measured one before the slack is
+# more likely to be a stale copy from another stage than deliberate headroom.
+_FLOOR_SLACK_LIMIT = 2.5
+
+# The trivial input must be small enough that the data is noise against the
+# process image, or the "floor" measured is really a floor plus a volume.
+_FLOOR_DATA_FRACTION = 0.05
+
+
+def measure_process_floor(target: str, params: dict, *, samples: int = 3, **kwargs) -> int:
+    """Peak RSS of *target* on input small enough for the data to be noise.
+
+    The largest of *samples* runs, not the mean: this feeds a
+    ``floor >= measured`` assertion, so the pessimistic reading is the one that
+    keeps the assertion meaningful. Each run is a fresh `spawn` child, so the
+    spread across samples is allocator and page-cache noise (measured ±0.1 MiB
+    for `paraview`), not a trend.
+    """
+    peaks = [measure_peak_rss(target, params, **kwargs)[1] for _ in range(max(1, int(samples)))]
+    return max(peaks)
+
+
+def assert_floor_covers(
+    floor_bytes: int, target: str, params: dict, *, data_bytes: int, **kwargs
+) -> int:
+    """A stage's declared RSS floor must not sit below its measured process image.
+
+    *data_bytes* is how much input the trivial run actually reads; it is
+    required so this cannot silently become a comparison against a floor that
+    includes a volume. Returns the measured figure, so a caller can print or
+    further assert on it.
+
+    Fails in **both** directions, deliberately. Too low is unsafe (the budget
+    comes out too large). Too high by more than
+    :data:`_FLOOR_SLACK_LIMIT`x is the signature of a number copied from another
+    stage rather than measured for this one — the failure mode that makes a
+    per-stage constant quietly universal again.
+    """
+    measured = measure_process_floor(target, params, **kwargs)
+    if data_bytes > _FLOOR_DATA_FRACTION * measured:
+        # Assert the precondition rather than letting the comparison decide: on
+        # a large input this function measures a whole export and the assertion
+        # below would pass while meaning nothing.
+        raise ValueError(
+            f"{target}: the floor probe read {data_bytes / (1 << 20):.1f} MiB of input "
+            f"against a {measured / (1 << 20):.1f} MiB peak — that is not a process "
+            "image, it is an export. Shrink the fixture."
+        )
+    assert floor_bytes >= measured, (
+        f"{target}: declared RSS floor {floor_bytes / (1 << 20):.1f} MiB is BELOW the "
+        f"measured process image {measured / (1 << 20):.1f} MiB. The budget derived from "
+        "it will be too large. Re-measure and raise the constant."
+    )
+    assert floor_bytes <= _FLOOR_SLACK_LIMIT * measured, (
+        f"{target}: declared RSS floor {floor_bytes / (1 << 20):.1f} MiB is more than "
+        f"{_FLOOR_SLACK_LIMIT}x the measured {measured / (1 << 20):.1f} MiB. Deliberate "
+        "headroom is expected; this much suggests a number copied from another stage "
+        "instead of measured for this one."
+    )
+    return measured
