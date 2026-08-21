@@ -878,6 +878,38 @@ through the aligned volumes — all in one world frame so the slices co-register
 > stretches the raw volume. Rebuild the flagged volume with the same
 > detector-row window the map volumes use.
 
+> [!info] Volumes too big for this machine are sliced in Z-blocks — same planes, more patience
+> Like the [[#5. Visualize volumes (`visualize`)|visualize]] stage, and unlike the
+> ParaView export, this stage does **not** stream unconditionally. It measures
+> the machine's free memory first and takes whichever of two routes fits:
+>
+> - **It fits.** Each volume is aligned in one piece and the planes are cut from
+>   it exactly as they always were, at the same speed. This is the normal case on
+>   a workstation.
+> - **It does not fit.** The volume is aligned and read in Z-blocks, the colour
+>   limits come from exact streaming percentiles, and each plane is gathered from
+>   the blocks its samples fall in. Memory then stays roughly flat however large
+>   the dataset is — measured on a seven-volume, 32 MB-per-volume set, 315 MB of
+>   peak memory in one piece against 120 MB in blocks.
+>
+>   The cost is **time**: an exact percentile in bounded memory has to read a
+>   volume several times, so a memory-constrained run re-reads each volume
+>   roughly eight times over. It is the price of finishing rather than running
+>   out of memory, and **nothing about the result changes** — every stored plane
+>   and every PNG is byte-for-byte what the one-piece route produces. That
+>   equality is the point of the split: which route runs depends on your machine,
+>   so a plane that differed between them would be a plane that depended on your
+>   machine.
+>
+>   A whole sweep is gathered in **one** pass over the volume, not one pass per
+>   plane, so adding planes to a sweep costs sampling time and not extra reads.
+>
+> **What is *not* bounded by this** is the stack of sampled planes itself: a
+> sweep's planes are all held in memory until the volume's group is written. A
+> very fine `sweep_step_um` over a large `extent: "auto"` plane is therefore its
+> own memory cost, independent of the volume size — coarsen the step, or set
+> explicit `du`/`dv`, if a sweep is what makes a run too large.
+
 > [!note] Plot orientation
 > Slice plots follow the same convention as the per-layer renders: the vertical
 > plot axis (`v`) is the detector-vertical Y-like in-plane direction (world Y,

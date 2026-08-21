@@ -458,6 +458,10 @@ def test_iter_with_context_appends_the_next_block_head():
         seen[interior] += 1
         windows.append((interior, window))
     assert np.array_equal(seen, np.ones(20, dtype=int)), "interiors must tile exactly once"
+    # Assert the precondition: the loop below walks `windows[:-1]`, so at one
+    # block it iterates nothing and the whole context claim goes unchecked. The
+    # budget above asks for quarter-volume blocks, i.e. four of them.
+    assert len(windows) == 4, f"the fixture must produce several blocks, got {len(windows)}"
     # Every block but the last carries one row of the next.
     for interior, window in windows[:-1]:
         assert window.shape[0] == (interior.stop - interior.start) + 1

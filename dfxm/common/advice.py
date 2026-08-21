@@ -82,6 +82,22 @@ MIN_BUDGET_BYTES = 64 * 1024 * 1024
 #   independently measured bare process image (107.6 MB), which is what an
 #   additive model should do and a ratio cannot.
 #
+#   **Second independent test, `slices` (2026-08-21): 1.053, comfortably under.**
+#   Thirteen runs, three shapes x budgets 2/8/32/128/512 MB and the machine's own,
+#   giving 12 distinct traced levels spanning **36x** (5.9 to 213.2 MB):
+#
+#       RSS = 106.9 MB + 1.053 x traced        (least squares, r^2 = 0.995)
+#
+#   with local slopes between consecutive levels running -0.97 to 2.30 — the
+#   wild ones all at the low end, where the process image dominates and the
+#   points come from different shapes; over the well-conditioned upper half
+#   (62 MB traced and above) they run 0.76 to 1.21. The fitted intercept lands on
+#   that stage's independently measured PNGs-off process image (103.9 MB), the
+#   same corroboration `visualize` produced. Ratios over the same runs ranged
+#   1.52 to 18.53, which is again the point about a ratio not being a constant.
+#   So: three stages measured, none above the trigger, and the constant stays
+#   shared.
+#
 #   **How to measure this properly — the point estimate is not enough.** A
 #   sweep must give at least FIVE distinct traced levels spanning at least 5x,
 #   and the slope must be checked LOCALLY (between consecutive levels) as well

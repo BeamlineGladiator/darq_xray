@@ -206,10 +206,16 @@ _SLICES_ALL_TOGGLES_OFF = {
 }
 
 
-def test_slices_is_not_chunkable_and_peaks_at_four_arrays_worth(tmp_path):
+def test_slices_is_chunkable_and_peaks_at_four_arrays_worth(tmp_path):
     """astype(float64) + shifted canvas + interpolated output — four arrays'
     worth at the peak for a stacked-source volume (the read + 3 float64
     copies ``prepare_volume`` holds for ``mosa_volume_file``/``strain_volume_file``).
+
+    ``chunkable`` is **True**: the flag read False on the claim that "alignment
+    is a whole-volume operation", which is wrong — the alignment runs along Z, so
+    blocking it along Z is what `align_volume_streamed` does, and
+    `map_coordinates(order=1)` reads only the two Z layers bracketing each
+    sample. The peak figure itself still models the old whole-volume loop.
     """
     from dfxm.stages.slices import estimate
 
@@ -220,7 +226,7 @@ def test_slices_is_not_chunkable_and_peaks_at_four_arrays_worth(tmp_path):
     params["include_mosa_com_chi"] = True
     est = estimate(params)
     n = 4 * 8 * 16
-    assert est.chunkable is False
+    assert est.chunkable is True
     assert est.input_bytes == n * 4
     assert est.peak_bytes == n * 4 + 3 * n * 8
 
@@ -268,7 +274,7 @@ def test_slices_peak_across_two_volumes_is_the_max_pair_not_the_sum(tmp_path):
     load_peak_a = n_a * 4 + 3 * n_a * 8
     load_peak_b = n_b * 4 + 1 * n_b * 8
     expected = max(load_peak_a + n_b * 8, load_peak_b + n_a * 8)
-    assert est.chunkable is False
+    assert est.chunkable is True
     assert est.peak_bytes == expected
     assert est.peak_bytes < load_peak_a + load_peak_b, "peak must not be the sum of both volumes"
 
