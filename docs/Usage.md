@@ -920,14 +920,20 @@ through the aligned volumes — all in one world frame so the slices co-register
 >   so a plane that differed between them would be a plane that depended on your
 >   machine.
 >
->   A whole sweep is gathered in **one** pass over the volume, not one pass per
->   plane, so adding planes to a sweep costs sampling time and not extra reads.
+>   A sweep is gathered in as few passes over the volume as memory allows — one
+>   pass for as many planes as fit at a time, not one pass per plane. With the
+>   default slices on a 2891×700×76 dataset and 8 GB of RAM that is two or three
+>   passes for the whole 172-plane oblique sweep.
 >
-> **What is *not* bounded by this** is the stack of sampled planes itself: a
-> sweep's planes are all held in memory until the volume's group is written. A
-> very fine `sweep_step_um` over a large `extent: "auto"` plane is therefore its
-> own memory cost, independent of the volume size — coarsen the step, or set
-> explicit `du`/`dv`, if a sweep is what makes a run too large.
+> **The sweep itself is bounded too, and no longer needs watching.** A sweep's
+> planes used to be held in memory together until the volume's group was
+> written, which on the shipped default slices was the largest thing the stage
+> touched — about 2.9 GB of planes cut from a 1.1 GB volume, briefly doubled
+> while they were stacked. The HDF5 dataset is now created at full size before
+> any sampling and each plane is written as it is cut, so a finer
+> `sweep_step_um` or a larger `extent: "auto"` costs **time and disk**, not
+> memory. Measured on a 201-plane, 801×801 sweep: 1112 MB of peak memory before,
+> 202 MB after.
 
 > [!note] Plot orientation
 > Slice plots follow the same convention as the per-layer renders: the vertical

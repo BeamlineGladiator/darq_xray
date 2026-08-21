@@ -798,7 +798,7 @@ def test_rocking_specific_frame_title_includes_idx(tmp_path):
 
 
 def _make_oblique_slices_h5(tmp_path, n_planes=2, hu=8, wv=10):
-    """Write a minimal oblique_slices.h5 mirroring write_volume_group's real layout.
+    """Write a minimal oblique_slices.h5 mirroring open_volume_group/open_slice_dataset's real layout.
 
     One volume group "strain" with all real attrs, one slice subgroup "z_sweep"
     with `slices` (n_planes, hu, wv), `u_um`, `v_um`, `offsets_um`.
@@ -807,7 +807,7 @@ def _make_oblique_slices_h5(tmp_path, n_planes=2, hu=8, wv=10):
     rng = np.random.default_rng(42)
     with h5py.File(h5, "w") as f:
         vg = f.create_group("strain")
-        # attrs written by write_volume_group (lines 765-775 of slices.py)
+        # attrs written by slices.open_volume_group
         vg.attrs["kind"] = "strain"
         vg.attrs["dataset_path"] = "strain"
         vg.attrs["source_volume"] = "/fake/path.h5"
@@ -827,7 +827,7 @@ def _make_oblique_slices_h5(tmp_path, n_planes=2, hu=8, wv=10):
         sg.create_dataset("u_um", data=np.linspace(-40.0, 40.0, wv))
         sg.create_dataset("v_um", data=np.linspace(-30.0, 30.0, hu))
         sg.create_dataset("offsets_um", data=np.linspace(0.0, 10.0, n_planes))
-        # subgroup attrs (from write_volume_group lines 784-788)
+        # subgroup attrs (from slices.open_slice_dataset)
         sg.attrs["normal"] = np.array([0.0, 0.0, 1.0])
         sg.attrs["origin"] = np.array([0.0, 0.0, 0.0])
         sg.attrs["up"] = np.array([0.0, 1.0, 0.0])

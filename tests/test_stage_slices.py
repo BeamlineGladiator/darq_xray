@@ -1098,6 +1098,99 @@ def test_slices_gather_walks_the_stream_once_for_a_whole_sweep():
         assert np.array_equal(plane, alone[0], equal_nan=True)
 
 
+def test_slices_gather_batches_a_sweep_without_changing_a_value():
+    """`max_resident_bytes` trades walks for resident planes and nothing else.
+
+    Splitting the sweep is what stops it holding its whole stack, and the price
+    is one extra traversal per batch. Both halves of that are asserted: the walk
+    count must really rise (or the batching is not happening and the value check
+    below compares a run against itself), and the planes must be unchanged.
+    """
+    volume = _gather_volume(seed=9)
+    _origin, u_hat, v_hat, half_u, half_v, du, dv = _gather_args()
+    n_hat = _gather_basis()[2]
+    origins = [np.asarray(_origin, float) + off * n_hat for off in (-4.0, -2.0, 0.0, 2.0, 4.0)]
+
+    def gather(max_resident_bytes):
+        prep = _streamed_prep(volume, volume.nbytes // 6)
+        walks = []
+        inner = prep["blocks"]
+        prep["blocks"] = lambda: (walks.append(1), inner())[1]
+        planes = list(
+            SL.iter_planes_streamed(
+                prep,
+                origins,
+                u_hat,
+                v_hat,
+                half_u,
+                half_v,
+                du,
+                dv,
+                max_resident_bytes=max_resident_bytes,
+            )
+        )
+        return planes, sum(walks)
+
+    axis_u, axis_v = SL._plane_axes(half_u, half_v, du, dv)
+    plane_bytes = len(axis_u) * len(axis_v) * 4
+    whole, whole_walks = gather(None)
+    batched, batched_walks = gather(2 * plane_bytes)
+
+    assert whole_walks == 1, "the unbounded gather must still be one walk"
+    assert batched_walks == 3, f"5 planes at 2 per batch is 3 walks, got {batched_walks}"
+    assert len(batched) == len(whole) == 5
+    for a, b in zip(batched, whole):
+        assert np.array_equal(a, b, equal_nan=True)
+    # …and the planes really carry data, or "equal" would be a statement about NaN.
+    assert np.isfinite(whole[2]).sum() > 100
+
+
+def test_sweep_batch_size_never_returns_zero_planes():
+    """A budget under one plane still yields one: a plane is indivisible here."""
+    assert SL.sweep_batch_size(10, 1000, None) == 10
+    assert SL.sweep_batch_size(10, 1000, 10_000) == 10  # …and never more than the sweep
+    assert SL.sweep_batch_size(10, 1000, 2500) == 2
+    assert SL.sweep_batch_size(10, 1000, 999) == 1
+    assert SL.sweep_batch_size(10, 1000, 0) == 1
+
+
+def test_gather_scratch_plane_multiple_is_rounded_the_safe_way():
+    """The per-plane scratch charge must cover what the gather holds, rounded UP.
+
+    It is *subtracted* from the budget before the plane batch is sized, so
+    rounding down leaves a batch bigger than what was counted — the permissive
+    direction, and the one this project has already had to correct twice.
+    Nothing else pins the number.
+    """
+    import math
+
+    # Per element of the coordinate rectangle, in float32-plane units:
+    coords = 3 * 8 / 4  # `_plane_coords` — (k, j, i) as float64
+    local = 3 * 8 / 4  # `np.stack([k[sel], j[sel], i[sel]])` at full selection
+    sampled = 8 / 4  # `map_coordinates`' float64 return
+    mask = 1 / 4  # the boolean `sel`
+    counted = coords + local + sampled + mask
+    assert counted == 14.25
+    assert SL.GATHER_SCRATCH_PLANE_MULTIPLE == math.ceil(counted)
+
+
+def test_sweep_resident_bytes_subtracts_the_stream_and_the_scratch():
+    """The plane batch gets what is left, never the whole budget, never nothing."""
+    plane = 1 << 20
+    budget = 512 << 20
+    reserved = 6
+    room = SL._sweep_resident_bytes(budget, plane, reserved)
+    assert (
+        room
+        == budget
+        - budget // SL.REDUCTION_WORKING_SET_MULTIPLE
+        - (SL.GATHER_SCRATCH_PLANE_MULTIPLE + reserved) * plane
+    )
+    assert 0 < room < budget
+    # A budget the scratch alone exhausts still buys one plane, not a negative one.
+    assert SL._sweep_resident_bytes(plane, plane, reserved) == plane
+
+
 def test_slices_gather_matches_in_core_for_the_shipped_plane_families():
     """The two plane shapes the stage ships defaults for, which the probes prune.
 
@@ -1383,6 +1476,188 @@ def test_slices_peak_stays_under_budget(tmp_path):
     result = assert_peak_under("dfxm.stages.slices:run", params, 200 << 20, timeout=900)
     assert len(result.volume_ids) == 7, "the run must actually have sliced the volumes"
     assert result.n_planes_total == 28
+
+
+def _sweep_peak_params(proc, raw, out, *, half=40.0, d=0.1, step=1.0, span=100.0):
+    """One volume, PNGs off, and a sweep whose PLANE STACK dwarfs the volume.
+
+    The volume is deliberately tiny (kilobytes) so nothing but the sampled
+    planes can account for the peak: whatever this run costs above its process
+    image is the sweep. Only `include_strain` is on — seven volumes would
+    multiply the runtime without changing what is being measured, since the
+    stage releases each volume before preparing the next.
+    """
+    params = {
+        **_peak_params(proc, raw, out),
+        "slices_json": json.dumps(
+            [
+                {
+                    "name": "wide",
+                    "normal": [0, 0, 1],
+                    "origin": [1.0, 4.0, 3.0],
+                    "half_u": half,
+                    "half_v": half,
+                    "du": d,
+                    "dv": d,
+                    "sweep_step_um": step,
+                    "sweep_start_um": -span,
+                    "sweep_stop_um": span,
+                }
+            ]
+        ),
+        "save_png": False,
+        "_budget_bytes": 64 << 20,
+    }
+    for key in (
+        "include_mosa_com_chi",
+        "include_mosa_fwhm_chi",
+        "include_mosa_com_mu",
+        "include_mosa_fwhm_mu",
+        "include_raw_sum",
+        "include_raw_specific",
+    ):
+        params[key] = False
+    params["include_strain"] = True
+    n_planes = int(2 * span / step) + 1
+    nu = nv = int(round(2 * half / d)) + 1
+    return params, n_planes, (nv, nu)
+
+
+# Holding the sweep's stack ONCE must already blow the limit below, or this test
+# would pass on code that holds it. The pre-change peak was about twice this
+# figure again, because `np.stack(planes)` held the list and the stack together.
+_STACK_OVER_LIMIT = 1.5
+_SWEEP_PEAK_LIMIT = 300 << 20
+
+
+def _slice_rec(n_planes, nv, nu):
+    return {
+        "name": "wide",
+        "u_um": np.linspace(-1.0, 1.0, nu),
+        "v_um": np.linspace(-2.0, 2.0, nv),
+        "offsets": np.arange(n_planes, dtype=np.float64) * 0.5,
+        "normal": [0.0, 0.0, 1.0],
+        "origin": [0.0, 0.0, 0.0],
+        "up": [0.0, 1.0, 0.0],
+        "u_hat": [1.0, 0.0, 0.0],
+        "v_hat": [0.0, 1.0, 0.0],
+        "n_hat": [0.0, 0.0, 1.0],
+        "half_u": 1.0,
+        "half_v": 2.0,
+        "du": 0.1,
+        "dv": 0.2,
+        "sweep_step_um": 0.5,
+    }
+
+
+def test_plane_by_plane_write_is_byte_identical_to_a_whole_stack_write(tmp_path):
+    """The new writer must reproduce the old `create_dataset(data=stack)` exactly.
+
+    This is the direct check that the products did not move: the same planes are
+    written both ways and the stored dataset compared **raw**, together with the
+    layout parameters a downstream reader sees. `slices` planes are raw float32
+    samples, so this comparison does see a value change of even one ulp — unlike
+    a percentile or an 8-bit PNG, which cannot. What it does *not* cover is the
+    sampling itself (identical code on both sides here) or the h5 file's byte
+    image, which is not a product contract: `profiles` and the viewers read
+    `sg["slices"][k]`, never the file's bytes.
+
+    The chunk shape is asserted equal rather than merely present, because the
+    writer's buffer is sized from it — a silent change there would change how
+    much memory the stage holds without changing a stored value.
+    """
+    n_planes, nv, nu = 11, 20, 30
+    rng = np.random.default_rng(3)
+    planes = [rng.standard_normal((nv, nu)).astype(np.float32) for _ in range(n_planes)]
+    planes[4][3:7, 5:9] = np.nan  # NaN must survive the slab copy unchanged
+    rec = _slice_rec(n_planes, nv, nu)
+
+    with h5py.File(tmp_path / "whole.h5", "w") as f:
+        sg = f.create_group("vol").create_group("wide")
+        old = sg.create_dataset(
+            "slices",
+            data=np.stack(planes, axis=0).astype(np.float32),
+            compression="gzip",
+            compression_opts=4,
+        )
+        old_chunks, old_shape, old_dtype = old.chunks, old.shape, old.dtype
+
+    with h5py.File(tmp_path / "streamed.h5", "w") as f:
+        dset = SL.open_slice_dataset(f.create_group("vol"), rec)
+        writer = SL.PlaneWriter(dset)
+        assert writer.depth == dset.chunks[0], "the buffer must be one chunk row"
+        assert 1 < writer.depth < n_planes, (
+            f"the fixture must span several chunk rows (depth {writer.depth} of "
+            f"{n_planes} planes) or the buffered write path is never exercised"
+        )
+        for plane in planes:
+            writer.append(plane)
+        writer.close()
+        new_chunks, new_shape, new_dtype = dset.chunks, dset.shape, dset.dtype
+        stored = dset[()]
+
+    assert (new_shape, new_dtype, new_chunks) == (old_shape, old_dtype, old_chunks)
+    assert stored.tobytes() == np.stack(planes, axis=0).tobytes()
+
+
+def test_plane_writer_refuses_a_short_sweep(tmp_path):
+    """A sized dataset left partly unwritten is a silently zero-filled product."""
+    with h5py.File(tmp_path / "short.h5", "w") as f:
+        dset = SL.open_slice_dataset(f.create_group("vol"), _slice_rec(11, 20, 30))
+        writer = SL.PlaneWriter(dset)
+        writer.append(np.zeros((20, 30), np.float32))
+        with pytest.raises(RuntimeError, match="sized for 11 planes"):
+            writer.close()
+
+
+def test_slices_never_holds_the_whole_plane_stack(tmp_path):
+    """A sweep's planes must be written as they are sampled, not accumulated.
+
+    The Z-blocked gather bounded the stage's *input*; on the shipped default
+    geometry the *output* is the larger term — ~172 planes of 2528x1789 float32
+    is 2.90 GiB for `oblique_full` alone against a 1.15 GiB volume, and
+    `np.stack(planes)` doubled it transiently. This fixture reproduces that
+    shape at 1/8th the size and asserts the peak no longer carries it.
+
+    Measured in the real child, one 8x24x24 volume (37 kB) and a 201-plane
+    sweep of 801x801 float32 (2.45 MiB a plane, 492 MiB of stack), PNGs off:
+
+        before this commit   1111.9 MiB   (~104 MiB floor + 2x the stack)
+        after                 201.6 MiB   (~104 MiB floor + a 32 MiB chunk-row
+                                           buffer + ~37 MiB of plane scratch)
+
+    The 300 MiB limit sits between the two with ~3.7x of failing margin and
+    ~1.5x of passing margin. `_budget_bytes` is pinned so the figure does not
+    depend on the runner's RAM, and the stack-vs-limit precondition below is
+    what stops the test going insensitive if the fixture is ever shrunk.
+
+    It is the **in-core** rung that is measured, deliberately: that is the rung a
+    1.15 GiB STO2 volume takes on the 8 GB machine this phase supports (its
+    budget comes out at 1.6-2.6 GiB), so it is the rung on which the sweep really
+    was the largest array in the stage. The streaming rung's own bound is
+    `test_slices_gather_batches_a_sweep_without_changing_a_value`.
+    """
+    from tests.peak_rss import assert_peak_under
+
+    proc, raw, _bytes = _peak_setup(tmp_path, 8, 24, 24)
+    params, n_planes, (nv, nu) = _sweep_peak_params(proc, raw, tmp_path / "sl_sweep")
+    stack_bytes = n_planes * nv * nu * 4
+    assert stack_bytes > _STACK_OVER_LIMIT * _SWEEP_PEAK_LIMIT, (
+        f"the sweep's stack is only {stack_bytes / (1 << 20):.1f} MiB against a "
+        f"{_SWEEP_PEAK_LIMIT / (1 << 20):.0f} MiB limit — holding it whole would "
+        "still pass, so this test would measure nothing"
+    )
+
+    result = assert_peak_under("dfxm.stages.slices:run", params, _SWEEP_PEAK_LIMIT, timeout=900)
+    assert result.volume_ids == ["strain"], "the run must actually have sliced a volume"
+    assert result.n_planes_total == n_planes
+    with h5py.File(result.output_h5, "r") as f:
+        stored = f["strain"]["wide"]["slices"]
+        assert stored.shape == (n_planes, nv, nu)
+        assert stored.dtype == np.float32
+        # …and the planes are not all NaN: an overhanging plane is the point, a
+        # plane that sampled nothing would make the write path untested.
+        assert np.isfinite(stored[n_planes // 2]).sum() > 100
 
 
 def test_rss_floor_covers_the_measured_process_image(tmp_path):
