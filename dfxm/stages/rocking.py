@@ -604,10 +604,54 @@ def _parse_opt_int(text) -> int | None:
 
 
 def _colorbar_range(data: np.ndarray, lo: float, hi: float) -> tuple[float, float]:
+    """Percentile colour limits for an array the caller already holds.
+
+    Kept in its in-core form on purpose: every caller but the cold replot
+    reaches it with the array in hand (`_render` has just built the volume), so
+    streaming there would re-read a volume that is already resident. The replot
+    path, which held a whole volume purely to take these two numbers, goes
+    through :func:`_replot_default_clim` instead — and the two must agree
+    exactly, which is what `stream_quantile`'s numpy parity buys.
+    """
     valid = data[np.isfinite(data)]
     if valid.size == 0:
         return (0.0, 1.0)
     return (float(np.percentile(valid, lo)), float(np.percentile(valid, hi)))
+
+
+# What one block of the volume may cost, per element of it, while
+# `volumeio.stream_quantile` runs: the block itself in its stored dtype, plus
+# the reductions' own per-element temporaries — `_finite64`'s `isfinite` mask
+# (1 B) and float64 copy (8 B), the rank search's `window` (8 B) and its
+# `searchsorted` / `- 1` / `clip` index arrays (3 x 8 B). That is the same
+# `dtype.itemsize + 8 * (retained + 1) + 1` = 41 B/element accounting
+# `alignment.align_volume_streamed` prices its own cached median at, and that
+# `slices._aligned_block_budget` uses; it is shared rather than re-invented.
+QUANTILE_WORKING_SET_PER_ELEMENT = 41
+
+# The working set `_replot_default_clim` may hold for one block. A fixed
+# constant rather than `advice.working_set_budget_bytes`, deliberately: the
+# quantile is exact at every budget, so a larger machine would buy nothing but a
+# larger block, and a fixed number is one less thing that can differ between two
+# machines rendering the same replot. It is not a floor either — the reduction's
+# blocking-independent scaffold (`volumeio.centring_scaffold_bytes("median",
+# ...)`, ~26 MB at its worst case) sits on top of it and no block size pays it
+# off.
+REPLOT_CLIM_WORKING_SET_BYTES = 64 * 1024 * 1024
+
+
+def _clim_block_budget(dataset, budget_bytes: int) -> int:
+    """*budget_bytes* of working set, in the block bytes ``iter_blocks`` counts.
+
+    ``iter_blocks`` sizes a block by its bytes **in the stored dtype**, while
+    the streamed percentile holds :data:`QUANTILE_WORKING_SET_PER_ELEMENT` more
+    per element on top of it. Handing the budget over raw would buy a block
+    ~11x too large for a float32 volume. Integer division rounds the budget
+    **down**, which is the safe direction: a smaller block can only cost less
+    than counted.
+    """
+    itemsize = max(1, int(np.dtype(dataset.dtype).itemsize))
+    return max(1, int(budget_bytes) * itemsize // (itemsize + QUANTILE_WORKING_SET_PER_ELEMENT))
 
 
 def _motors(raw_root: str, pattern: str, samy_path: str, samz_path: str):
@@ -1025,19 +1069,39 @@ _DATASET_DISPLAY: dict[str, tuple[str, str]] = {
 }
 
 
-def _replot_default_clim(dataset, params: dict, style) -> tuple[float, float]:
+def _replot_default_clim(
+    dataset, params: dict, style, *, budget_bytes: int | None = None
+) -> tuple[float, float]:
     """Compute the default clim for a cold replot the same way the run does.
 
-    Reads the whole 3-D volume once (needed for the global percentile), then
-    applies ``_colorbar_range`` + ``apply_round_clim`` — mirroring the
-    ``_render`` path so blank-clim replots are faithful to the original PNGs.
-    Falls back to ``(0.0, 1.0)`` for an all-NaN volume.
+    Streams the two global percentiles rather than loading the whole volume to
+    take them. :func:`~dfxm.common.volumeio.stream_quantile` returns what
+    ``np.percentile`` returns — not an estimate and not budget-dependent — so a
+    cold replot's colours are the original PNGs' colours on any machine, which
+    is the only reason this may stream at all. Then ``apply_round_clim``, as
+    before. Falls back to ``(0.0, 1.0)`` for an all-NaN volume, matching
+    :func:`_colorbar_range`'s empty-input answer.
+
+    ``budget_bytes`` is the working set one block may cost, defaulting to
+    :data:`REPLOT_CLIM_WORKING_SET_BYTES`; it is a parameter so tests can force
+    the multi-block path on a small volume.
     """
+    from ..common.volumeio import dataset_blocks, stream_quantile
+
     defaults = STAGE.defaults()
     pct_lo = float(params.get("cbar_pct_lo", defaults["cbar_pct_lo"]))
     pct_hi = float(params.get("cbar_pct_hi", defaults["cbar_pct_hi"]))
-    vol = dataset[:]
-    vmin, vmax = _colorbar_range(vol, pct_lo, pct_hi)
+    budget = _clim_block_budget(dataset, budget_bytes or REPLOT_CLIM_WORKING_SET_BYTES)
+
+    def blocks():
+        # A factory, not a generator: `stream_quantile` traverses several times
+        # and diagnoses a stale one, unlike its stream_mean/minmax siblings.
+        return dataset_blocks(dataset, budget_bytes=budget)
+
+    vmin = stream_quantile(blocks, pct_lo)
+    vmax = stream_quantile(blocks, pct_hi)
+    if not np.isfinite(vmin) or not np.isfinite(vmax):
+        return (0.0, 1.0)
     vmin, vmax, _ = apply_round_clim(vmin, vmax, style)
     return vmin, vmax
 

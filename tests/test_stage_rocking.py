@@ -351,3 +351,110 @@ def test_rocking_replot_title_is_source_aware(tmp_path):
     assert len(captured) == 1
     expected_title = RK._sum_title("mosaicity")
     assert captured[0] == expected_title, f"got {captured[0]!r}, want {expected_title!r}"
+
+
+# -- the replot clim is streamed, and the colours must not move ---------------
+
+
+def _count_clim_blocks(monkeypatch):
+    """Record how many blocks each `dataset_blocks` traversal yielded.
+
+    Returned list stays empty if `_replot_default_clim` never streams at all,
+    which is what a reverted `dataset[:]` looks like — so the precondition
+    assertion below cannot pass vacuously.
+    """
+    from dfxm.common import volumeio
+
+    real = volumeio.dataset_blocks
+    seen: list[int] = []
+
+    def counting(dset, **kwargs):
+        n = 0
+        for block in real(dset, **kwargs):
+            n += 1
+            yield block
+        seen.append(n)
+
+    monkeypatch.setattr(volumeio, "dataset_blocks", counting)
+    return seen
+
+
+def _write_clim_volume(path, *, nan_fraction_cut=1.7):
+    """A float32 volume with a realistic scatter of NaNs, written to *path*."""
+    rng = np.random.default_rng(4)
+    volume = (rng.normal(size=(20, 16, 16)) * 1000.0).astype(np.float32)
+    volume[volume > nan_fraction_cut * 1000.0] = np.nan
+    with h5py.File(path, "w") as f:
+        f.create_dataset("sum_intensity", data=volume)
+    return volume
+
+
+def test_rocking_replot_clim_is_exactly_the_in_core_percentile(tmp_path, monkeypatch):
+    """The streamed percentile must equal the whole-volume one BIT for bit.
+
+    `_colorbar_range` is the in-core form the replot used before it streamed, so
+    comparing against it here is comparing against the colours every existing
+    PNG was rendered with. `approx` would hide exactly the drift this must not
+    have.
+    """
+    h5p = str(tmp_path / "clim.h5")
+    volume = _write_clim_volume(h5p)
+    finite = float(np.isfinite(volume).mean())
+    assert 0.5 < finite < 1.0, f"fixture must be mostly-finite WITH NaNs present, got {finite:.3f}"
+
+    defaults = RK.STAGE.defaults()
+    expected = RK._colorbar_range(volume, defaults["cbar_pct_lo"], defaults["cbar_pct_hi"])
+
+    seen = _count_clim_blocks(monkeypatch)
+    with h5py.File(h5p, "r") as f:
+        got = RK._replot_default_clim(f["sum_intensity"], {}, None, budget_bytes=16 * 1024)
+
+    assert seen, "_replot_default_clim must stream the volume, not load it"
+    assert min(seen) >= 5, f"the budget must have split the volume, got block counts {seen}"
+    assert got == expected, f"replot colours moved: {got!r} != in-core {expected!r}"
+
+
+def test_rocking_replot_clim_is_budget_independent(tmp_path, monkeypatch):
+    """Same volume, four budgets, one answer — no machine-dependent colours."""
+    h5p = str(tmp_path / "clim.h5")
+    _write_clim_volume(h5p)
+
+    answers = []
+    block_counts = []
+    for budget in (4 * 1024, 24 * 1024, 1 << 20, 64 << 20):
+        seen = _count_clim_blocks(monkeypatch)
+        with h5py.File(h5p, "r") as f:
+            answers.append(
+                RK._replot_default_clim(f["sum_intensity"], {}, None, budget_bytes=budget)
+            )
+        block_counts.append(min(seen))
+
+    assert len(set(block_counts)) > 1, (
+        f"the budgets must actually have changed the blocking, got {block_counts}"
+    )
+    assert min(block_counts) == 1, "one budget must fit the whole volume in a single block"
+    assert len(set(answers)) == 1, f"colour limits moved with the budget: {answers}"
+
+
+def test_rocking_replot_clim_falls_back_for_an_all_nan_volume(tmp_path):
+    """No finite voxel anywhere -> (0.0, 1.0), as the in-core form returned."""
+    h5p = str(tmp_path / "nan.h5")
+    with h5py.File(h5p, "w") as f:
+        f.create_dataset("sum_intensity", data=np.full((3, 4, 4), np.nan, dtype=np.float32))
+    with h5py.File(h5p, "r") as f:
+        assert RK._replot_default_clim(f["sum_intensity"], {}, None) == (0.0, 1.0)
+
+
+def test_rocking_clim_block_budget_never_buys_more_than_the_budget(tmp_path):
+    """The conversion rounds DOWN: a block must never cost more working set than asked."""
+    h5p = str(tmp_path / "clim.h5")
+    _write_clim_volume(h5p)
+    with h5py.File(h5p, "r") as f:
+        dset = f["sum_intensity"]
+        itemsize = dset.dtype.itemsize
+        for budget in (1 << 12, 1 << 16, 1 << 24):
+            block_bytes = RK._clim_block_budget(dset, budget)
+            working_set = block_bytes / itemsize * (itemsize + RK.QUANTILE_WORKING_SET_PER_ELEMENT)
+            assert working_set <= budget, (
+                f"budget {budget} bought a {working_set:.0f} B working set"
+            )

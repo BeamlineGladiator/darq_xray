@@ -651,6 +651,19 @@ four pixel boxes) to open a visual picker showing the middle Z-layer of each
 product; drag a rectangle and click **OK** to fill the boxes automatically. The
 preview is oriented exactly like the exported maps.
 
+> [!info] Leaving the colour limits blank no longer loads the whole volume
+> When both vmin/vmax boxes for a product are blank, its default limits are the
+> run's own 1st/99th percentiles. Computing them used to read the entire volume
+> into memory; it now reads it in blocks, so a replot of a large
+> `aligned_raw_rocking_volumes.h5` no longer needs room for the whole thing.
+>
+> **The colours are unchanged** — the streamed percentile returns exactly what
+> the whole-volume one returned, not an approximation, so a replot made now sits
+> beside one made before this change with no visible difference. The cost is
+> **time**: an exact percentile in bounded memory reads the volume several times
+> over, and a small volume additionally pays a fixed ~23 MB of working space it
+> did not need before. Filling in vmin/vmax by hand skips the whole computation.
+
 ### 5. Visualize volumes (`visualize`)
 
 Align the stacked mosaicity/strain volumes and render them.
@@ -1325,6 +1338,23 @@ pixel-aligned with the strain/mosaicity layer images.
 |---|---|
 | `frame_index` | which detector frame to show |
 | `match_threshold_mm` | max `(samy,samz)` distance to accept a match |
+
+> [!info] Long detector stacks no longer decide how much memory this needs
+> The background this stage subtracts is the per-pixel median **down the frame
+> axis**, so each pixel's background depends only on that pixel's own values.
+> The stack is therefore read a horizontal band at a time instead of whole, and
+> the memory a run needs stops following the frame count. Measured on a single
+> matched layer, 512×512 detector, uint16:
+>
+> | frames | stack on disk | peak memory before | peak memory now |
+> |---|---|---|---|
+> | 40 | 20 MB | 472 MB | 250 MB |
+> | 80 | 40 MB | 832 MB | 250 MB |
+> | 160 | 80 MB | 1526 MB | 250 MB |
+>
+> **The saved PNGs are identical** — a band of rows gets exactly the median the
+> whole stack gave it, so this is a change in how much is held at once and in
+> nothing else. There is no setting to choose; it always works this way.
 
 ---
 

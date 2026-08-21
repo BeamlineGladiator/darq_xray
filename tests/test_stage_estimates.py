@@ -279,10 +279,12 @@ def test_slices_peak_across_two_volumes_is_the_max_pair_not_the_sum(tmp_path):
     assert est.peak_bytes < load_peak_a + load_peak_b, "peak must not be the sum of both volumes"
 
 
-def test_matched_is_not_chunkable(tmp_path):
-    """An exact median needs the whole stack — bucket 3, disk-backed. Peak is the
+def test_matched_is_chunkable(tmp_path):
+    """The median needs the whole stack along the FRAME axis only, so an in-plane
+    block gives the identical answer and the stage chunks itself. Peak is the
     per-scan astype(float64) + nanmedian's internal copy + pooled/frame working
-    set, independent of how many scan folders match.
+    set, independent of how many scan folders match — now the ceiling reached
+    when a scan fits one block, not the figure every run reaches.
     """
     from dfxm.stages.matched import estimate
 
@@ -293,9 +295,30 @@ def test_matched_is_not_chunkable(tmp_path):
         f.create_dataset("1.1/measurement/pco_ff", data=np.zeros((6, 8, 16), dtype="uint16"))
     est = estimate({"raw_root": str(root), "rocking_pattern": "rock__*"})
     scan_elems, frame_elems = 6 * 8 * 16, 8 * 16
-    assert est.chunkable is False
+    assert est.chunkable is True
     assert est.peak_bytes == scan_elems * (2 + 16) + 12 * frame_elems * 8
     assert est.peak_bytes == 26112
+
+
+def test_matched_reports_chunkable_on_every_early_return(tmp_path):
+    """The three unresolved-input returns must agree with the resolved one.
+
+    A stage whose `chunkable` depends on whether the glob happened to match yet
+    would flip `advice.plan_run` between "chunked" and "disk-backed" while the
+    user is still typing the path.
+    """
+    from dfxm.stages.matched import estimate
+
+    for params in (
+        {"raw_root": "", "rocking_pattern": "rock__*"},
+        {"raw_root": str(tmp_path / "nope"), "rocking_pattern": "rock__*"},
+    ):
+        assert estimate(params).chunkable is True
+    empty = tmp_path / "raw" / "rock__1"
+    empty.mkdir(parents=True)
+    with h5py.File(empty / "rock__1.h5", "w") as f:
+        f.create_dataset("something/else", data=np.zeros((2, 2)))
+    assert estimate({"raw_root": str(tmp_path / "raw"), "rocking_pattern": "rock__*"}).chunkable
 
 
 def test_matched_peak_does_not_grow_with_folder_count(tmp_path):

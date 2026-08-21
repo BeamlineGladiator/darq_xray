@@ -114,6 +114,159 @@ def test_run_requires_raw_root():
         M.run({"raw_root": ""})
 
 
+# -- the median is blocked in-plane, and the frame must not move --------------
+
+
+def _count_row_blocks(monkeypatch):
+    """Record how many axis=1 blocks each `iter_blocks` traversal yielded.
+
+    Empty if `load_pco_ff_frame` never blocks at all — which is what a reverted
+    `ds[:]` looks like — so the precondition assertions cannot pass vacuously.
+    """
+    from dfxm.common import volumeio
+
+    real = volumeio.iter_blocks
+    seen: list[int] = []
+
+    def counting(dset, **kwargs):
+        assert kwargs.get("axis") == 1, "matched must block in-plane, not along the frame axis"
+        n = 0
+        for item in real(dset, **kwargs):
+            n += 1
+            yield item
+        seen.append(n)
+
+    monkeypatch.setattr(volumeio, "iter_blocks", counting)
+    return seen
+
+
+def _write_stack(path, stack):
+    with h5py.File(path, "w") as f:
+        f.create_dataset("1.1/measurement/pco_ff", data=stack)
+    return path
+
+
+def _whole_stack_frame(stack, idx):
+    """The pre-blocking form of `load_pco_ff_frame`, as the reference."""
+    stack = stack.astype(np.float64)
+    corrected = stack[idx] - np.nanmedian(stack, axis=0)
+    corrected[corrected < 0] = np.nan
+    return corrected
+
+
+def test_matched_blocked_median_matches_whole_stack(tmp_path, monkeypatch):
+    """A row-blocked median is the same median: it reduces along the frame axis."""
+    rng = np.random.default_rng(9)
+    stack = rng.normal(size=(11, 12, 14))
+    stack[rng.random(stack.shape) < 0.05] = np.nan  # NaNs, so nanmedian is doing work
+    path = _write_stack(str(tmp_path / "scan.h5"), stack)
+    expected = _whole_stack_frame(stack, 3)
+    assert np.isnan(expected).any() and np.isfinite(expected).mean() > 0.3, (
+        "fixture must produce a frame that is neither all-NaN nor NaN-free"
+    )
+
+    seen = _count_row_blocks(monkeypatch)
+    got = M.load_pco_ff_frame(path, "1.1/measurement/pco_ff", 3, budget_bytes=1024)
+
+    assert seen and seen[0] >= 4, f"the budget must have split the rows, got {seen}"
+    assert got.tobytes() == expected.tobytes(), "the blocked frame is not bit-equal"
+
+
+def test_matched_frame_is_budget_independent(tmp_path, monkeypatch):
+    """`axis=1` blocking is guaranteed by evidence, not construction — so check it.
+
+    `volumeio`'s budget-independence is structural only for `axis=0` (a value's
+    position in the flattened stream does not move with the block width). Under
+    column/row blocking the global index does move, so every `axis=1` consumer
+    owes a cross-budget check of its own. Same data, five budgets, compared as
+    bytes.
+    """
+    rng = np.random.default_rng(17)
+    stack = (rng.normal(size=(9, 40, 33)) * 250.0).astype(np.float32)
+    stack[rng.random(stack.shape) < 0.07] = np.nan
+    path = _write_stack(str(tmp_path / "scan.h5"), stack)
+
+    digests = []
+    block_counts = []
+    for budget in (256, 2048, 16 * 1024, 256 * 1024, 64 << 20):
+        seen = _count_row_blocks(monkeypatch)
+        frame = M.load_pco_ff_frame(path, "1.1/measurement/pco_ff", 4, budget_bytes=budget)
+        digests.append(frame.tobytes())
+        block_counts.append(seen[0])
+
+    assert len(set(block_counts)) >= 3, (
+        f"the budgets must actually have changed the row blocking, got {block_counts}"
+    )
+    assert min(block_counts) == 1 and max(block_counts) == stack.shape[1], (
+        f"the sweep must span one-block and one-row-per-block, got {block_counts}"
+    )
+    assert len(set(digests)) == 1, "the frame moved with the memory budget"
+    assert digests[0] == _whole_stack_frame(stack, 4).tobytes(), (
+        "every budget agrees, but not with the whole-stack median"
+    )
+
+
+def test_matched_two_dimensional_dataset_is_unchanged(tmp_path):
+    """A 2-D pco_ff is returned as-is — no median, and NO negative clamp."""
+    plane = np.array([[-1.0, 2.0], [3.0, -4.0]], dtype=np.float32)
+    path = _write_stack(str(tmp_path / "flat.h5"), plane)
+    got = M.load_pco_ff_frame(path, "1.1/measurement/pco_ff", 0)
+    assert np.array_equal(got, plane.astype(np.float64))
+    assert not np.isnan(got).any(), "the 2-D path must not clamp negatives to NaN"
+
+
+def test_matched_median_block_budget_never_buys_more_than_the_budget(tmp_path):
+    """The conversion rounds DOWN: a block must never cost more working set than asked."""
+    path = _write_stack(str(tmp_path / "scan.h5"), np.zeros((8, 16, 16), dtype=np.uint16))
+    with h5py.File(path, "r") as f:
+        ds = f["1.1/measurement/pco_ff"]
+        itemsize = ds.dtype.itemsize
+        for budget in (1 << 10, 1 << 16, 1 << 24):
+            block_bytes = M._median_block_budget(ds, budget)
+            working_set = block_bytes / itemsize * (itemsize + M.MEDIAN_WORKING_SET_PER_ELEMENT)
+            assert working_set <= budget, (
+                f"budget {budget} bought a {working_set:.0f} B working set"
+            )
+
+
+def test_matched_peak_does_not_follow_the_stack_size(tmp_path):
+    """The measured peak, not the model of it — a 40 MiB stack in a child process.
+
+    Before the in-plane blocking this run peaked at 832 MiB and grew ~17.5 B per
+    stored byte (measured: 20/40/80 MiB of stack -> 472/832/1526 MiB). It is now
+    flat at ~250 MiB across the same sweep, so the limit below is a real
+    discriminator rather than a rubber stamp.
+    """
+    from tests.peak_rss import assert_peak_under
+
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    _write_strain(str(raw), "strain__1", 0.0, 0.0)
+    folder = raw / "rock__1"
+    folder.mkdir()
+    frames = np.random.default_rng(3).integers(0, 4000, size=(80, 512, 512), dtype=np.uint16)
+    with h5py.File(folder / "rock__1.h5", "w") as f:
+        f.create_dataset("1.1/instrument/positioners/samy", data=0.0)
+        f.create_dataset("1.1/instrument/positioners/samz", data=0.0)
+        f.create_dataset("1.1/measurement/pco_ff", data=frames)
+    assert frames.nbytes >= 40 * (1 << 20), "the stack must be large enough to show in RSS"
+    del frames
+
+    result = assert_peak_under(
+        "dfxm.stages.matched:run",
+        {
+            "raw_root": str(raw),
+            "strain_pattern": "strain__*",
+            "rocking_pattern": "rock__*",
+            "frame_index": 0,
+            "match_threshold_mm": 0.001,
+            "output_dir": str(tmp_path / "out"),
+        },
+        384 * (1 << 20),
+    )
+    assert result.n_saved == 1, "a peak measured on a run that produced nothing proves nothing"
+
+
 def test_colormap_param_is_enum_dropdown():
     from dfxm.common.plotting import CMAP_CHOICES
     from dfxm.config.models import ParamType
