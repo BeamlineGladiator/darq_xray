@@ -245,45 +245,73 @@ def test_matched_median_working_set_constant_covers_the_measured_cost(tmp_path):
 
     Measures `load_pco_ff_frame` itself rather than a re-typed copy of its two
     lines, so the number tracks the shipped code.
+
+    The sweep must span the **penalty region**. The cost is a ~35 B/element
+    asymptote plus a per-block overhead the element count divides, so small
+    frame counts cost the most: an earlier version of this test sampled only
+    (11, 128, 128) and (41, 160, 160) — both sitting on the asymptote — and so
+    passed against a constant of 36 that (3, 64, 64) exceeds by 1.4x. Frame
+    counts 3/5/11/41 across small and large in-plane sizes, and the assertion is
+    against the WORST case, never an average.
     """
     import gc
     import tracemalloc
 
     rng = np.random.default_rng(11)
-    for dtype, shape in (("uint16", (11, 128, 128)), ("float32", (41, 160, 160))):
-        stack = rng.integers(0, 4000, size=shape).astype(dtype)
-        path = _write_stack(str(tmp_path / f"ws_{dtype}.h5"), stack)
-        itemsize = np.dtype(dtype).itemsize
-        elems = int(np.prod(shape))
+    shapes = [
+        (nf, n, n) for nf in (3, 5, 11, 41) for n in (64, 160)
+    ]  # small nf = the expensive end
+    measurements: dict[tuple[str, tuple[int, int, int]], float] = {}
 
-        with h5py.File(path, "r") as f:
-            block_bytes = M._median_block_budget(f["1.1/measurement/pco_ff"], 1 << 30)
-        assert block_bytes >= elems * itemsize, (
-            "precondition: this budget must buy the whole stack as ONE block, so the "
-            "measurement below is over a block of exactly `elems` elements"
-        )
+    for dtype in ("uint16", "float32"):
+        for shape in shapes:
+            stack = rng.integers(0, 4000, size=shape).astype(dtype)
+            path = _write_stack(str(tmp_path / f"ws_{dtype}_{shape[0]}_{shape[1]}.h5"), stack)
+            itemsize = np.dtype(dtype).itemsize
+            elems = int(np.prod(shape))
 
-        del stack
-        gc.collect()
-        tracemalloc.start()
-        base = tracemalloc.get_traced_memory()[0]
-        frame = M.load_pco_ff_frame(path, "1.1/measurement/pco_ff", 3, budget_bytes=1 << 30)
-        peak = tracemalloc.get_traced_memory()[1]
-        tracemalloc.stop()
+            with h5py.File(path, "r") as f:
+                block_bytes = M._median_block_budget(f["1.1/measurement/pco_ff"], 1 << 30)
+            assert block_bytes >= elems * itemsize, (
+                "precondition: this budget must buy the whole stack as ONE block, so the "
+                "measurement below is over a block of exactly `elems` elements"
+            )
 
-        # The constant prices what is held *besides* the block's own stored bytes
-        # and the frame the call returns.
-        measured = (peak - base - elems * itemsize - frame.nbytes) / elems
-        assert measured > 8.0, (
-            f"{dtype}: measured only {measured:.2f} B/element, at or below the bare "
-            "`.astype(np.float64)` upcast — `np.nanmedian`'s own cost is not in this "
-            "number, so the measurement is not seeing the thing it claims to bound"
-        )
-        assert measured <= M.MEDIAN_WORKING_SET_PER_ELEMENT, (
-            f"{dtype}: one block costs {measured:.2f} B/element, over the "
-            f"{M.MEDIAN_WORKING_SET_PER_ELEMENT} B MEDIAN_WORKING_SET_PER_ELEMENT charges "
-            "it — `_median_block_budget` divides by that, so blocks now exceed the budget"
-        )
+            del stack
+            gc.collect()
+            tracemalloc.start()
+            base = tracemalloc.get_traced_memory()[0]
+            frame = M.load_pco_ff_frame(path, "1.1/measurement/pco_ff", 1, budget_bytes=1 << 30)
+            peak = tracemalloc.get_traced_memory()[1]
+            tracemalloc.stop()
+
+            # The constant prices what is held *besides* the block's own stored
+            # bytes and the frame the call returns.
+            measured = (peak - base - elems * itemsize - frame.nbytes) / elems
+            assert measured > 8.0, (
+                f"{dtype} {shape}: measured only {measured:.2f} B/element, at or below the "
+                "bare `.astype(np.float64)` upcast — `np.nanmedian`'s own cost is not in "
+                "this number, so the measurement is not seeing the thing it claims to bound"
+            )
+            measurements[(dtype, shape)] = measured
+
+    worst_case, worst = max(measurements.items(), key=lambda kv: kv[1])
+
+    # Precondition on the SWEEP, not on the code under test: at least one shape
+    # must land in the penalty region — above the 36 B/element this constant used
+    # to be — or the sweep has drifted back to sampling only the flat asymptote
+    # and would pass whether or not the constant covers the real worst case.
+    assert worst > 36.0, (
+        f"precondition: the worst shape measured only {worst:.2f} B/element, so this "
+        "sweep no longer reaches the small-frame-count penalty region it exists to "
+        f"cover (measured: { {k: round(v, 2) for k, v in measurements.items()} })"
+    )
+
+    assert worst <= M.MEDIAN_WORKING_SET_PER_ELEMENT, (
+        f"{worst_case[0]} {worst_case[1]}: one block costs {worst:.2f} B/element, over "
+        f"the {M.MEDIAN_WORKING_SET_PER_ELEMENT} B MEDIAN_WORKING_SET_PER_ELEMENT charges "
+        "it — `_median_block_budget` divides by that, so blocks now exceed the budget"
+    )
 
 
 def test_matched_peak_does_not_follow_the_stack_size(tmp_path):

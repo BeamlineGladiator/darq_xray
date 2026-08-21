@@ -263,15 +263,32 @@ class MatchedResult:
 # What one in-plane block of the stack costs, per element of it, on top of the
 # block's own stored bytes: the `.astype(np.float64)` upcast (8 B) and
 # `np.nanmedian`'s internals. Measured with `tracemalloc` over the upcast plus
-# the median, on shapes from (11, 128, 128) to (41, 200, 200) and dtypes
-# uint16/float32/float64: 35.1-35.8 B/element, invariant in the stored dtype
-# because everything after the upcast is float64. Rounded UP to 36: the number
-# is a divisor below, so rounding down would permit a larger block than was
-# counted. (numpy takes a different branch at >= 600 frames --
-# `apply_along_axis` rather than the masked-array form -- which measures 8.0
+# the median, invariant in the stored dtype because everything after the upcast
+# is float64. The cost is NOT flat: it is a ~35 B/element asymptote plus a
+# per-block overhead that the element count divides, so SMALL frame counts are
+# the expensive case, not the large ones --
+#
+#     (41, 160, 160)  35.1     (11, 128, 128)  35.8     (11, 64, 64)  38.2
+#     (5, 128, 128)   36.8     (3, 256, 256)   44.7     (3, 64, 64)   50.0
+#
+# An earlier 36 was fitted to the (11, 128, 128)-and-up shapes alone and was
+# therefore under the true cost for every nf <= 4 and for nf = 5-8 on small
+# blocks; a short rocking scan is an ordinary input, and one measured run
+# exceeded its budget by 1.24x. 48 covers the worst measured case (50.0) only
+# barely; 64 is chosen for headroom. The number is a DIVISOR in
+# `_median_block_budget`, so charging too little buys a block larger than was
+# counted, while charging too much only buys a smaller block -- the median is
+# exact on any in-plane block, so a smaller block changes runtime and nothing
+# else. Round up, never down.
+#
+# Version-sensitive: measured on numpy 1.26.4, where `nanmedian` switches to an
+# `apply_along_axis` branch at >= 600 frames and the cost drops to ~8.0
 # B/element. A rocking scan is tens of frames, so the expensive branch is the
-# one to size against.)
-MEDIAN_WORKING_SET_PER_ELEMENT = 36
+# one to size against -- but that branch boundary, and the costs either side of
+# it, can move between numpy versions. `tests/test_stage_matched.py::
+# test_matched_median_working_set_constant_covers_the_measured_cost` re-measures
+# on the installed numpy and fails if this number stops covering it.
+MEDIAN_WORKING_SET_PER_ELEMENT = 64
 
 # The working set one `load_pco_ff_frame` call may hold. A fixed constant rather
 # than `advice.working_set_budget_bytes`: the median is exact on any in-plane
@@ -285,7 +302,7 @@ def _median_block_budget(dset, budget_bytes: int) -> int:
 
     ``iter_blocks`` sizes a block by its bytes **in the stored dtype**; this
     stage then holds :data:`MEDIAN_WORKING_SET_PER_ELEMENT` more per element
-    while the median runs. Handing the budget over raw would buy a block ~19x
+    while the median runs. Handing the budget over raw would buy a block ~33x
     too large for a uint16 detector stack. Integer division rounds the budget
     **down**, the safe direction.
     """
@@ -398,7 +415,8 @@ def estimate(params: dict) -> CostEstimate:
     still describes the *un-budgeted* whole-stack form, so it is now a ceiling
     reached only when a scan fits :data:`MEDIAN_BLOCK_WORKING_SET_BYTES` in one
     block; and its ``+ 16`` under-states ``np.nanmedian``'s real internals,
-    measured at ``+ 36`` (see :data:`MEDIAN_WORKING_SET_PER_ELEMENT`).
+    measured at 35-50 B/element depending on the frame count (see
+    :data:`MEDIAN_WORKING_SET_PER_ELEMENT`, charged at 64).
     """
     p = {**STAGE.defaults(), **params}
     try:

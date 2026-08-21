@@ -1421,6 +1421,12 @@ pixel-aligned with the strain/mosaicity layer images.
 > **The saved PNGs are identical** — a band of rows gets exactly the median the
 > whole stack gave it, so this is a change in how much is held at once and in
 > nothing else. There is no setting to choose; it always works this way.
+>
+> The band height is sized against a *measured* cost per element, and that cost
+> is highest for **short** scans (a handful of frames costs ~50 bytes per element
+> against ~35 for tens of frames). The stage charges the worst case, so a short
+> rocking scan reads in narrower bands — a little slower, still inside the
+> memory it promised, and the frames it writes do not change.
 
 ---
 
