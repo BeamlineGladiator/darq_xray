@@ -852,10 +852,12 @@ def _survey(providers, *, count_invalid: bool, find_range: bool) -> tuple[int, f
     in-core rung removes instead is the *re-alignment*: :func:`_drained` has
     already materialised each field, so this walk is one numpy pass over resident
     memory rather than a second traversal of the alignment chain. Measured on a
-    128x192x192 four-field export, this pass costs **1.00 s of a 3.61 s streamed
-    run and 0.09 s of a 3.38 s in-core one** — 28% against 2.7%. Skipping it
-    in-core could therefore buy at most 2.7%, in exchange for a second definition
-    of two numbers that reach the file.
+    128x192x192 four-field export, this pass costs **1.00 s of a 3.62 s streamed
+    run (27.7%)** against **0.089 s of a 3.45 s in-core one (2.6%)**; an
+    independent measurement on another machine put the in-core share at 0.158 s
+    (4.5%) and the streamed one at 27.3%. So skipping it in-core buys at most
+    ~4.5%, in exchange for a second definition of two numbers that reach the
+    file. It is not worth it.
     """
     from ..common import volumeio
 
@@ -1237,8 +1239,18 @@ def _drained(provider):
     measured at 1.2-1.7x the wall clock of the in-core exporter this replaced.
     Draining once collapses that back to one alignment; both passes then walk
     resident memory. Measured over three sizes of a four-field mosaicity export,
-    unconditional streaming against this rung: 0.117 -> 0.095 s (1 MB/volume),
-    0.961 -> 0.727 s (8 MB), 5.045 -> 3.379 s (36 MB) — 1.23x to 1.49x.
+    the old unconditional stream at the machine's own budget against this rung:
+    0.117 -> 0.095 s (1 MB/volume), 0.961 -> 0.727 s (8 MB), 5.045 -> 3.447 s
+    (36 MB) — 1.23x to 1.46x, and 1.42x in an independent measurement.
+
+    **The recovery is not uniform across budgets, and the old range should not
+    be repeated as if it were.** The unconditional stream was slow specifically
+    at a *large* budget, where each field is one huge block aligned twice with
+    nothing staying in cache: on the 36 MB export it cost 5.045 s at the
+    machine's budget but only 3.625 s at 1 GiB and 3.549 s at 64 MiB. So the
+    workstation — the machine that needed no streaming at all — was paying the
+    most, which is what makes this the right rung to add; a memory-constrained
+    machine was already near the in-core time.
 
     The writer is unchanged and unaware. It consumes providers, and a provider
     whose blocks come from an array is the same thing to it as one whose blocks
@@ -1275,12 +1287,18 @@ def _writable_providers(
     the same on both and is bounded by ``n_pieces`` rather than by the budget on
     both. It was briefly suppressed in-core on the argument that a piece must be
     a fraction of a volume set that is resident anyway — which is true and beside
-    the point: the piece's fields are held *on top of* the aligned volumes, so
-    at ``num_pieces_z = 1`` a run whose alignment sat inside its budget can peak
-    at about twice it. Measured on a 128x192x192 four-field export at a 1 GiB
-    budget: 492.8 MiB at 16 pieces against 632.5 MiB at one. (At that budget the
-    advisory correctly stays silent — 632.5 MiB is well inside 1 GiB — which is
-    the check that caught the suppression.)
+    the point: the piece's fields are held *on top of* whatever the alignment
+    left resident. Measured on a 128x192x192 four-field export, 16 pieces against
+    one: **413-421 -> 566 MiB in-core** (a 2 GiB budget) and **493 -> 633 MiB
+    streamed** (1 GiB). The piece pass adds ~145 MiB at ``n_pieces = 1`` on
+    *either* rung, which is what makes gating the advisory on the rung wrong.
+
+    On a real in-core run the advisory nonetheless never fires, and that is
+    arithmetic rather than suppression: taking the rung requires each field's
+    share of the budget to hold a whole alignment working set (~430 MB here
+    against a 36 MB volume, so ~5-12x), which already leaves room for one piece
+    of every field. The tests therefore exercise the ungated path by calling this
+    function directly.
     """
     shape = next(iter(providers.values())).shape if providers else None
     if shape is not None:

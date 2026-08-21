@@ -641,7 +641,7 @@ def test_paraview_peak_stays_under_budget(tmp_path):
     assert result.exports[0].n_pieces == 16
 
 
-def test_in_core_rung_keeps_the_streamed_writers_saving(tmp_path):
+def test_in_core_rung_keeps_the_streamed_writers_saving(tmp_path, monkeypatch):
     """Restoring an in-core rung must not restore the in-core *writer*.
 
     The ladder's rung is about the **alignment**, not the piece writer: on both
@@ -653,11 +653,35 @@ def test_in_core_rung_keeps_the_streamed_writers_saving(tmp_path):
     field and a whole-volume boolean mask before the first piece is written, and
     hand back the ~586-593 MiB this stage used to cost.
 
-    Same 128x192x192 four-field export as the streamed peak test, at a budget
-    that takes the in-core rung. Measured 492.8 MiB against the 576 MiB limit
-    (~83 MiB of margin), and the failing side is real rather than assumed: the
-    *same* run at `num_pieces_z = 1` — a comparable extra residency — measures
-    632.5 MiB, above the limit.
+    Same 128x192x192 four-field export as the streamed peak test. Measured
+    **409-421 MiB** on the in-core rung at 16 pieces over four runs, against the
+    576 MiB limit.
+
+    **The failing side is the regression itself, measured.** The variant this
+    guards against — the in-core rung routed through `save_volumes_as_pvti` —
+    was built and run twice: **594.9 and 595.1 MiB**. So the limit sits between
+    421 (passing, 155 MiB of margin) and 595 (failing by 19 MiB). The failing
+    margin is the thinner one, and it holds because the regression is a
+    deterministic +174 MiB of float64 cleaned copies, an order of magnitude
+    above the ~12 MiB run-to-run spread. The limit is kept high rather than
+    centred so a heavier VTK build — the process image is ~229 MiB here and
+    `RSS_FLOOR_BYTES` declares 300 MB — does not flake it.
+
+    Deliberately *not* calibrated against the same run at `num_pieces_z = 1`
+    (566.4 MiB): that is under the limit, so it witnesses nothing here. It is
+    evidence for a different claim — see `_writable_providers`.
+
+    **The budget must be 2 GiB, not 1.** `align_volume_streamed`'s working set
+    for a whole block of this fixture is ~430 MB per field, and the mosaicity
+    budget is divided by the four concurrent streams — so a 1 GiB budget leaves
+    each field 256 MB, blocks at 75/128 layers, and takes the **streaming** rung.
+    This test was written that way and measured the streaming rung while its
+    docstring claimed the in-core one; it then passed with `_fits_in_core`
+    forced to `False`, i.e. with the whole ladder deleted. `slices` has the
+    identical defect on record (`docs/Codebase.md`, `_budget_bytes = 64 MiB`
+    "streamed too"), one wave earlier. Hence the precondition below, which is
+    not optional decoration: the measurement runs in a spawn child where nothing
+    can be spied, so without it this test cannot see its own subject disappear.
     """
     from tests.peak_rss import assert_peak_under
 
@@ -672,8 +696,31 @@ def test_in_core_rung_keeps_the_streamed_writers_saving(tmp_path):
         "num_pieces_z": 16,
         # Pinned rather than measured from the machine: a laptop would take the
         # streaming rung here and measure something else entirely.
-        "_budget_bytes": 1 << 30,
+        "_budget_bytes": 2 << 30,
     }
+
+    # Precondition, in process and on the REAL decision: `_writable_providers`
+    # is handed the providers the stage actually built, so this reads the rung
+    # off the same objects the child will, and aborts before a voxel is read
+    # (the blocking is solved from shapes and motor arrays alone).
+    class _Stop(Exception):
+        pass
+
+    decisions: list[bool] = []
+
+    def probe(providers, **_kwargs):
+        decisions.append(PV._fits_in_core(providers))
+        raise _Stop
+
+    monkeypatch.setattr(PV, "_writable_providers", probe)
+    with pytest.raises(_Stop):
+        PV.run(params)
+    monkeypatch.undo()
+    assert decisions == [True], (
+        f"the budget does not select the in-core rung ({decisions}) — this test would "
+        "measure the streaming rung and pass with the ladder deleted"
+    )
+
     result = assert_peak_under(
         "dfxm.stages.paraview:run", params, limit_bytes=576 * (1 << 20), timeout=600
     )

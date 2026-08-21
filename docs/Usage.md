@@ -806,20 +806,23 @@ rendering, with a `valid_mask` and NaN sentinels.
 >   any dataset your machine can hold.
 > - **It does not fit.** The volumes are read and aligned in Z-blocks instead,
 >   and nothing is ever assembled whole. Memory then stays flat however large the
->   dataset is — measured on a four-field 36 MB-per-volume export, 493 MB of peak
->   memory when the volumes are aligned whole against 265 MB streamed.
+>   dataset is — measured on a four-field 36 MB-per-volume export, 264 MB of peak
+>   memory against 409-421 MB when the volumes are aligned whole.
 >
 >   The cost is **time**: the sentinel and the padded fraction need a pass over
 >   the data before any piece can be written, and on this route that pass has to
 >   align every field a second time. Measured on the same export: 3.4 s aligned
 >   in one piece against 3.6 s streamed at a 64 MB budget and 4.8 s at 16 MB.
 >
-> Streaming used to be unconditional here, and every export paid for it: 5.0 s
-> instead of 3.4 s on the export above, on a machine with memory to spare (the
-> worst case was precisely the machine that needed no streaming at all — one
-> huge block per field, aligned twice, nothing staying in cache). That had it
-> backwards: streaming is what lets a run finish on a machine that could not
-> otherwise hold it, not an improvement to charge everyone for.
+> Streaming used to be unconditional here, and the export that paid most for it
+> was the one on the machine with the most memory: 5.0 s instead of 3.4 s on the
+> export above, because a generous memory budget meant one huge block per field,
+> aligned twice, with nothing staying in cache. A memory-constrained machine was
+> already close to the aligned-whole time. That had it backwards — streaming is
+> what lets a run finish on a machine that could not otherwise hold it, not an
+> improvement to charge everyone for — so if you have been reading a "1.2-1.7x
+> on every export" note here, the honest version is that the penalty fell
+> hardest on exactly the runs that never needed streaming.
 >
 > Nothing about the result changes. The pieces are byte-for-byte identical on
 > both routes, and byte-for-byte what the original in-core exporter wrote. That
@@ -831,8 +834,9 @@ rendering, with a `valid_mask` and NaN sentinels.
 > written in one call, so one piece of every field is held on top of whatever the
 > alignment left resident — set by **Z pieces**, not by the free-memory
 > measurement. Too few pieces can therefore peak far above what the export
-> otherwise costs (measured at a 1 GB budget: 493 MB at 16 pieces, 633 MB at
-> one). The run says so when the count is too low for this machine — look for a
+> otherwise costs (measured on the export above: 409-421 MB at 16 pieces against
+> 566 MB at one when the volumes are aligned whole, and 493 MB against 633 MB
+> when they are streamed — about 145 MB added either way). The run says so when the count is too low for this machine — look for a
 > `Z pieces = N needs about … MB` note in the run log and the Results summary,
 > and raise **Z pieces** to the number it suggests. It is advice, never enforced:
 > your piece count stays exactly what you asked for.
