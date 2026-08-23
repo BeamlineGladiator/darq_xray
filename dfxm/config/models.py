@@ -47,6 +47,10 @@ class Param:
     ``advanced`` params collapse into the form's Advanced expander under
     their ``group`` header; ``must_exist`` marks input paths the GUI
     verifies on disk before launching a run (never set it on outputs).
+    ``advice_key`` names the advisory this parameter can carry: when
+    ``Advisory.hints`` has that key, the form renders its text as a note under
+    the field. Declaring it here rather than in the GUI keeps the form
+    schema-driven.
     """
 
     name: str
@@ -63,6 +67,7 @@ class Param:
     roi_group: str = ""  # params sharing a roi_group are one ROI-picker target
     roi_axis: str = ""  # "" | "x" | "y" | "both" ("both" = one 4-int "r0,r1,c0,c1" field)
     roi_frame: str = ""  # "" | "detector" | "map" — the coordinate frame of a ROI param
+    advice_key: str = ""  # key into Advisory.hints -> a note under this field
 
     def __post_init__(self) -> None:
         if self.type is ParamType.ENUM and not self.choices:
@@ -137,6 +142,15 @@ class CostEstimate:
     starts — without it a machine short of disk discovers the problem halfway
     through a long run, which is precisely the failure this phase exists to
     prevent. Zero by default, so estimators that never spill are unaffected.
+
+    ``confidence`` is ``"measured"`` when the model has been checked against a
+    real run, and ``"conservative"`` when it has not been recalibrated since the
+    phase-5 streaming rewrite and is known to over-predict. Over-predicting is
+    the safe direction — it only makes a stage stream harder — but a surface
+    that states 6.6 GB for a run that needs 0.18 GB teaches the user to ignore
+    it, so the GUI renders a marked estimate as "at most ~N". The marker is
+    removed per stage as each model is measured and rewritten; there is no
+    separate cleanup to remember.
     """
 
     peak_bytes: int
@@ -146,6 +160,7 @@ class CostEstimate:
     note: str | None = None
     chunk_span: tuple[int, str] | None = None
     scratch_bytes: int = 0
+    confidence: str = "measured"
 
 
 @dataclass(frozen=True)

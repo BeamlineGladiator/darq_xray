@@ -13,11 +13,12 @@ from __future__ import annotations
 import os
 from dataclasses import replace
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
+    QLabel,
     QListWidget,
     QListWidgetItem,
     QMainWindow,
@@ -29,9 +30,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from dfxm.common.advice import human_bytes
 from dfxm.common.plotting import PUBLICATION_STYLE, PlotStyle
 from dfxm.config.models import Experiment
 
+from . import advisor
 from .bindings import STAGE_ORDER, STAGE_SPECS
 from .experiment_panel import ExperimentPanel
 from .form_state import FormStateStore
@@ -123,6 +126,11 @@ class MainWindow(QMainWindow):
         self._figure_builder_btn = QPushButton("Figure builder…")
         self._figure_builder_btn.clicked.connect(self._on_figure_builder)
 
+        # "System check…" — what this machine is and what it implies for
+        # settings. The only surface that pays for a GL probe on demand.
+        self._system_check_btn = QPushButton("System check…")
+        self._system_check_btn.clicked.connect(self._on_system_check)
+
         # Light/dark theme toggle.
         self._theme_btn = QPushButton()
         self._theme_btn.setCheckable(True)
@@ -138,6 +146,7 @@ class MainWindow(QMainWindow):
         left_layout.addWidget(self._nav, 1)
         left_layout.addWidget(self._pub_style_btn)
         left_layout.addWidget(self._figure_builder_btn)
+        left_layout.addWidget(self._system_check_btn)
         left_layout.addWidget(self._theme_btn)
 
         splitter = QSplitter()
@@ -148,11 +157,40 @@ class MainWindow(QMainWindow):
         splitter.setSizes([380, 720])
         self.setCentralWidget(splitter)
 
+        # Ambient machine readout. Cheap fields only, on a timer — it must never
+        # probe GL (that costs a child process) and never block the UI.
+        self._machine_label = QLabel("")
+        self.statusBar().addPermanentWidget(self._machine_label)
+        self._machine_timer = QTimer(self)
+        self._machine_timer.setInterval(5000)
+        self._machine_timer.timeout.connect(self._refresh_machine_status)
+        self._machine_timer.start()
+        self._refresh_machine_status()
+
         self._main_splitter = splitter
         for name in STAGE_ORDER:
             self._window_state.register_stage_splitter(self._views[name].inner_splitter)
 
         self._window_state.restore(self, self._main_splitter)
+
+    # -- machine status bar --------------------------------------------------
+
+    def _refresh_machine_status(self) -> None:
+        """Cores, free disk, RAM and (only if already probed) the GL stack.
+
+        Unmeasured fields are omitted rather than shown as zero: a probe that
+        failed is recorded in `probe_errors`, and "0.0 B free" would read as a
+        full disk.
+        """
+        prof = advisor.cached_profile(os.getcwd())
+        parts = [f"{prof.cpu_logical} cores"]
+        if prof.disk_free:
+            parts.append(f"{human_bytes(prof.disk_free)} free")
+        if prof.ram_total:
+            parts.append(f"{human_bytes(prof.ram_available)}/{human_bytes(prof.ram_total)} RAM")
+        if prof.gl_status == "ok" and prof.gl is not None:
+            parts.append("software GL" if prof.gl.software else "hardware GL")
+        self._machine_label.setText(" · ".join(parts))
 
     # -- global plot style --------------------------------------------------
 
@@ -219,6 +257,13 @@ class MainWindow(QMainWindow):
         self._figure_builder.show()
         self._figure_builder.raise_()
         self._figure_builder.activateWindow()
+
+    def _on_system_check(self) -> None:
+        """Open the System check dialog — the only surface that probes GL
+        on demand, and the one place that shows the whole machine at once."""
+        from .widgets.system_check import SystemCheckDialog
+
+        SystemCheckDialog(self).exec()
 
     # Which StageResult attribute holds the stacked/aligned output h5 path,
     # for the stages the panel picker needs a CATALOG file from (not their

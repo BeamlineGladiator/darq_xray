@@ -258,6 +258,27 @@ def probe_gl(*, timeout: float = 120.0, use_cache: bool = True) -> tuple[GLInfo 
     )
 
 
+def invalidate_gl_cache() -> None:
+    """Discard every remembered GL answer so the next probe reaches a fresh
+    child process.
+
+    Clears the in-process memo (``_GL_MEMO``) and removes the on-disk cache
+    file (``gl_cache_path()``, if it exists). Without this, ``probe_gl(...,
+    use_cache=True)`` — which :func:`profile` always uses internally — keeps
+    returning whatever this process (or a previous run) already measured, no
+    matter how many times it is called again. This is the one function a
+    caller that genuinely wants a fresh measurement (the System check
+    dialog's Re-probe button) should reach for; a lone ``probe_gl(...,
+    use_cache=False)`` call is not enough on its own, since its result is
+    never written back for the *next* ``probe_gl`` call to see.
+    """
+    _GL_MEMO.clear()
+    try:
+        os.remove(gl_cache_path())
+    except OSError:
+        pass
+
+
 def profile(
     *,
     output_dir: str | None = None,

@@ -95,6 +95,55 @@ you set stays put next time you open the app. Drag the divider between the
 parameter form and the Log/Results/Output panel to rebalance them; the new width
 applies to every stage and is remembered.
 
+**The status bar** always shows a compact read of this machine — logical CPU
+cores, free disk, and total/available RAM — refreshed every few seconds, e.g.
+`36 cores · 2000.0 GB free · 460.0 GB/502.0 GB RAM`. It only ever shows what has
+already been measured: an unmeasured field (a failed probe, or on a machine
+where a value could not be read) is left out rather than shown as `0.0 B`,
+which would misleadingly read as a full disk. The GL renderer (`software GL` /
+`hardware GL`) appears only once something else has already probed it — this
+readout itself never triggers a GL probe, since that costs a child process.
+
+### System check
+
+The status bar gives an ambient read of the machine; **System check…** (left
+column, beside *Figure builder…*) is the one place that shows the whole
+machine at once, and the only place in the app that will pay for a GL probe on
+demand. Opening it (or pressing **Re-probe**) measures CPU, RAM, disk, the
+OpenGL stack, and ffmpeg — the GL probe runs a short-lived child process, so
+the dialog shows a wait cursor while it works.
+
+Each row pairs a measured value with what it means for your settings:
+
+- **CPU** — logical/physical core counts. Informational only: the pipeline
+  does not parallelise across cores yet.
+- **RAM** — available of total. When a run does not fit, the affected stage
+  streams instead — slower, same result.
+- **Headroom** — the most a run will plan to use on this machine, leaving
+  room for Qt and the OS. This is the number the cost line and pre-flight
+  banner compare a run's estimate against.
+- **Disk** — free space on the filesystem the app was **launched from**, not
+  necessarily where your data or a stage's output lives — this dialog never
+  reads a stage's `output_dir` (it measures `os.getcwd()`). For the figure
+  that actually gates a given run, look at that stage's own cost line instead
+  (below its Run button — see "The cost line" under [[#The stage panel]]),
+  which does measure the right disk.
+- **OpenGL** — the renderer and its 3-D texture size cap. On a software
+  (CPU) renderer the row says so and recommends surface mode, because volume
+  mode renders **blank** past the texture cap on that hardware. When the
+  probe has not run yet, or crashed, the row reads **unknown** with the
+  reason (never a blank or a zero) and any error detail appears beneath the
+  table.
+- **ffmpeg** — resolved path, or "not found". Without it, video exports fall
+  back to GIF.
+
+Press **Re-probe** after installing a graphics driver, moving to different
+hardware, or if the OpenGL row still says "unknown" from a previous crashed
+probe — it forces a fresh measurement and discards any cached result. Press
+**Copy as text** to put a plain-text dump of every row (plus any probe
+errors) on the clipboard; it is meant for pasting into a bug report or a
+message to support, not for reading on screen.
+
 ### Experiment presets
 
 An **experiment** captures everything shared across stages: data roots, folder
@@ -272,7 +321,7 @@ Every stage uses the same layout:
 | **Parameter form** (left) | Auto-generated from the stage's schema. The few **essential** fields show first; the rest collapse under **Advanced (N settings)**, grouped by theme (Calibration, Data layout, Alignment, Appearance, Output, …). Hover any label for a tooltip. Scrolling the form never changes a spin box or dropdown any more — a field only reacts to the wheel once you've clicked into it; otherwise the wheel just scrolls the page. |
 | **Help panel** (under the form) | Explains whichever field has focus — what it does, its unit, and the calibration warning where relevant. Idles on a description of the stage. |
 | **Run / Cancel + progress** | Runs the stage in a **separate process**; the bar and step text track progress; **Cancel** truly kills it. Before launching, input paths are checked on disk — a missing one blocks the run and focuses the offending field. Once a run/batch is more than 5 % done and has been going for more than 2 seconds, the progress text may also show a `~… left` estimate; the estimate starts fresh every time you click **Run**, so it never carries a stale reading over from a previous run. |
-| **Status banner** (above the tabs) | Green one-liner on success; on failure, the error in plain language plus an actionable hint (the full traceback stays in **Log**). |
+| **Status banner** (above the tabs) | Green one-liner on success; on failure, the error in plain language plus an actionable hint (the full traceback stays in **Log**); on **Run**, a blue-grey banner states the same cost line the form already showed, so the number you saw before clicking is still visible once the run is underway. |
 | **Log** tab | Live progress + streamed messages. |
 | **Results** tab | A text summary of what was produced — including every skipped layer/input and the reason. |
 | **Output** tab | A representative image preview. |
@@ -282,6 +331,68 @@ A help box under the form shows the current stage's description by default. Clic
 a field and it shows that field's help; click away (or open another stage) and it
 returns to the stage description. The same per-field help is also available as a
 hover tooltip on each field and its label.
+
+#### The cost line
+
+Under the button row, a one-line advisory shows what this run is expected to
+cost **on this machine** — it recomputes shortly after you stop typing, and
+again as soon as the stage opens. It reads like `needs ~1.2 GB, 9.0 GB safely
+available — expected to run in memory`, or `at most ~4.1 GB (conservative estimate), 3.6
+GB safely available — expected to stream`. `needs ~N` is a normal estimate;
+`at most ~N (conservative estimate)` means the stage's estimator has not been
+recalibrated since the last rewrite and tends to over-predict, so the real run
+may be lighter. Hover the line for the reasoning behind it (why that strategy,
+what would change it). The line is purely informative — it never changes what
+the run does, and it disappears for stages with nothing to estimate yet (e.g.
+`concat`, `profiles`, or a form that is not filled in enough to size the run).
+
+Clicking **Run** repeats this cost line as a blue-grey banner above the tabs,
+so it stays visible once the form scrolls out of the way. This banner is
+informative only, same as the cost line — it never stops a run.
+
+**The one thing that can stop a run: not enough scratch disk.** If the run
+would need to stream to a scratch folder and this machine does not have room
+for it, a "Not enough scratch disk" dialog appears — *"This run needs N GB of
+scratch disk but only M GB is free. It may fail part-way through. Run
+anyway?"* — with **OK** / **Cancel** buttons, **Cancel** as the default, so
+pressing Enter by reflex does not launch a run that cannot finish. Choosing
+**Cancel** starts nothing and leaves the form exactly as it was — perfectly
+safe, just try again after freeing disk space or pointing the stage's scratch
+folder elsewhere. Choosing **OK** starts the run normally; it may still fail
+part-way through if the disk really does run out, same as it would have
+without this warning. Memory is never a reason a run is blocked — only
+scratch disk is, and only after asking you.
+
+#### Per-field notes
+
+A handful of fields can carry their own advisory note, shown as a small
+warning line directly under that field's editor — separate from the cost line
+above, and only appearing when it has something to say. It clears itself the
+moment the setting it warned about no longer applies (you change the field, or
+the condition it was about goes away), so it never lingers as stale advice.
+
+Today the one field that carries this is **visualize**'s **3D render mode**
+(under Advanced → Appearance). `volume` mode uploads the whole aligned grid to
+the graphics card as **one** 3-D texture, and every graphics stack caps how
+big that texture may be (2048 px per axis on typical software/llvmpipe GL —
+narrower than a typical ~2891 px-wide aligned volume). Push past that cap and
+the renderer does not error — it draws **nothing at all**, so the 3-D top view
+and rotation video come out as blank images with no indication anything went
+wrong. Once this session has checked your machine's graphics capability (see
+below), opening the visualize stage with `render_mode=volume` selected shows a
+note under the field naming the exact limit and by how much you'd need to
+downsample, and recommends `surface` mode instead when your GL stack is
+software-rendered (surface mode uploads geometry, not one giant texture, and
+is far faster on a software renderer besides). Switch to `surface` or
+`isosurface`, or crop/downsample the volume, and the note clears.
+
+This note needs to know your GL stack's texture limit, which the app only
+checks once per session — quietly, in the background, the first time you open
+a stage that has a field like this (currently just visualize), so it never
+delays opening any other stage or blocks the form while you type. Until that
+check lands, the note simply stays silent rather than guessing; the
+after-the-run notice described in visualize's own section below (dataset notes
++ the 3-D viewer's status line) still catches an oversized render either way.
 
 #### Picking an ROI interactively
 
@@ -714,9 +825,12 @@ Align the stacked mosaicity/strain volumes and render them.
 > renderer draws **nothing**, so the top view and the orbit video would be blank
 > images with no error. The stage now detects this and records it in the
 > dataset's notes (shown in the run summary); the same hint appears in the 3-D
-> viewer's status line. Crop the map ROI (or raise **Downsample** in the 3-D
-> viewer) until the largest axis fits, or render on a machine with a real GPU.
-> Nothing is downsampled automatically — the products keep full resolution.
+> viewer's status line, and — once this session's one-time GL check has run —
+> as a note under the **3D render mode** field itself, before you ever click
+> Run (see [[#Per-field notes]] above). Crop the map ROI (or raise
+> **Downsample** in the 3-D viewer) until the largest axis fits, or render on a
+> machine with a real GPU. Nothing is downsampled automatically — the products
+> keep full resolution.
 
 > [!tip] Picking the run-time ROI interactively
 > Click **Pick ROI…** (in the button row alongside Run/Cancel) to open a visual

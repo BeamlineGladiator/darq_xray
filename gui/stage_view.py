@@ -29,12 +29,14 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from dfxm.common.advisory import HINT_3D_TEXTURE
 from dfxm.common.eta import EtaEstimator
 from dfxm.common.figures import FigureSpec, figures_for
 from dfxm.config.models import Experiment, StageSpec
 from dfxm.runner import Done, Failed, Log, Progress, StageRunner
 from dfxm.stages.registry import STAGE_TARGETS
 
+from .advisor import StageAdvisor, probe_gl_async
 from .bindings import experiment_overrides
 from .form_state import FormStateStore
 from .viewers import append_line_job, inject_line_into_jobs, volume_sources
@@ -174,6 +176,19 @@ class StageView(QWidget):
             self._roi_buttons[_grp] = _btn
         btn_row.addStretch(1)
 
+        # Live cost line: what this run is expected to cost on this machine.
+        # Advisory only — it never changes what the stage does.
+        self._advice_label = QLabel("")
+        self._advice_label.setWordWrap(True)
+        self._advice_label.setProperty("role", "muted")
+        self._advice_label.setVisible(False)
+        self._advisor = StageAdvisor(spec, self._form.values, parent=self)
+        self._advisor.advisoryReady.connect(self._show_advisory)
+        # Connected unconditionally: the save-on-edit hookup above is gated on a
+        # store (absent in unit tests), and the cost line must follow the form
+        # either way.
+        self._form.changed.connect(self._advisor.request)
+
         # ROI fields: mark any value that deviates from the experiment-derived one
         self._roi_param_names = tuple(p.name for p in spec.params if p.roi_group or p.roi_frame)
         if self._roi_param_names:
@@ -203,6 +218,7 @@ class StageView(QWidget):
         left_layout = QVBoxLayout(left)
         left_layout.addWidget(self._form)
         left_layout.addLayout(btn_row)
+        left_layout.addWidget(self._advice_label)
         left_layout.addLayout(progress_row)
         left_layout.addWidget(self._help)
         left_layout.addStretch(1)
@@ -274,6 +290,10 @@ class StageView(QWidget):
     def showEvent(self, event) -> None:  # Qt hook
         super().showEvent(event)
         self._help.show_idle()  # every stage opens on its description
+        self._advisor.request()
+        # A stage with a 3-D setting is the only reason to pay for a GL probe.
+        if any(p.advice_key == HINT_3D_TEXTURE for p in self._spec.params):
+            probe_gl_async()
 
     # -- experiment wiring ------------------------------------------------
     def _initial_values(self) -> dict:
@@ -354,8 +374,9 @@ class StageView(QWidget):
         self._persist_now()
 
     # -- banner / validation ------------------------------------------------
-    def _show_banner(self, html_text: str, *, error: bool) -> None:
-        self._banner.setProperty("role", "banner-error" if error else "banner-success")
+    def _show_banner(self, html_text: str, *, error: bool = False, role: str = "") -> None:
+        kind = role or ("banner-error" if error else "banner-success")
+        self._banner.setProperty("role", kind)
         self._banner.style().unpolish(self._banner)
         self._banner.style().polish(self._banner)
         self._banner.setText(html_text)
@@ -363,6 +384,14 @@ class StageView(QWidget):
 
     def _hide_banner(self) -> None:
         self._banner.setVisible(False)
+
+    def _show_advisory(self, advisory) -> None:
+        """Render the live cost line. Empty headline -> hidden, never stale."""
+        text = advisory.headline if advisory is not None else ""
+        self._advice_label.setText(text)
+        self._advice_label.setToolTip("\n".join(advisory.details) if advisory else "")
+        self._advice_label.setVisible(bool(text))
+        self._form.apply_hints(advisory.hints if advisory is not None else {})
 
     def _validate_inputs(self, params: dict) -> tuple[str, str] | None:
         """First (param_name, message) whose must_exist path is set but absent.
@@ -406,6 +435,25 @@ class StageView(QWidget):
             # Snapshot the CURRENT session publication style so every new run
             # renders with whatever the style dialog says right now.
             run_params["plot_style"] = asdict(window.global_plot_style())
+        # Pre-flight: what will this cost, and can the disk take it? Computed
+        # fresh on the click (cheap, and never stale). Advisory only — it never
+        # changes what the stage does, and only the disk question can stop it.
+        # This estimator call runs synchronously on the GUI thread (unlike the
+        # debounced `StageAdvisor.request()` path), so it gets a wait cursor.
+        with busy_cursor():
+            advisory = self._advisor.compute_blocking()
+        if advisory.blocked and not self._confirm_blocked(advisory.blocked):
+            return
+        self._show_advisory(advisory)
+        if advisory.headline:
+            lines = [html.escape(advisory.headline)]
+            lines += [html.escape(d) for d in advisory.details]
+            self._show_banner("<br>".join(lines), role="banner-info")
+        self._start_runner(run_params)
+
+    def _start_runner(self, run_params: dict) -> None:
+        """Launch the stage child. Split out of `_on_run` so the pre-flight
+        checks above it can be tested without spawning a process."""
         target = STAGE_TARGETS[self._stage_name]
         self._log.clear()
         self._results.clear()
@@ -423,6 +471,23 @@ class StageView(QWidget):
         self._runner = StageRunner(target, run_params, start_method="spawn")
         self._runner.start()
         self._timer.start()
+
+    def _confirm_blocked(self, reason: str) -> bool:
+        """Ask before a run the machine may not have the disk to finish.
+
+        The project's rule is that nothing refuses to run for lack of RAM; disk
+        is the one genuine blocker, and even then the answer is the user's. The
+        default button is Cancel so a stray Enter cannot launch a long run that
+        dies part-way.
+        """
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setWindowTitle("Not enough scratch disk")
+        box.setText(f"This run {reason}.")
+        box.setInformativeText("It may fail part-way through. Run anyway?")
+        box.setStandardButtons(QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel)
+        box.setDefaultButton(QMessageBox.StandardButton.Cancel)
+        return box.exec() == QMessageBox.StandardButton.Ok
 
     def _on_cancel(self) -> None:
         if self._runner is not None:

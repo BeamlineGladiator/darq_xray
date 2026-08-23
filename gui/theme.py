@@ -85,6 +85,7 @@ PALETTES: dict[str, Palette] = {"light": LIGHT, "dark": DARK}
 # tokens, which must contrast the *surface*.
 _BANNER_ERROR = "#c62828"
 _BANNER_SUCCESS = "#2e7d32"
+_BANNER_INFO = "#37474f"
 
 
 def build_qss(p: Palette) -> str:
@@ -181,6 +182,10 @@ def build_qss(p: Palette) -> str:
     }}
     QLabel[role="banner-success"] {{
         background: {_BANNER_SUCCESS}; color: #ffffff;
+        border-radius: 7px; padding: 6px 10px;
+    }}
+    QLabel[role="banner-info"] {{
+        background: {_BANNER_INFO}; color: #ffffff;
         border-radius: 7px; padding: 6px 10px;
     }}
     QPushButton[role="chip"] {{

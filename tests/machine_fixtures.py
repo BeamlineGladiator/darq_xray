@@ -70,7 +70,7 @@ def tiny_ram() -> MachineProfile:
         ram_total=8 * GB,
         ram_available=1 * GB,
         disk_free=40 * GB,
-        gl=GLInfo("llvmpipe (LLVM 15.0)", "Mesa", "4.5", 2048, True),
+        gl=None,
         gl_status="crashed",
         ffmpeg=None,
         probe_errors=("gl: child exited with -11",),

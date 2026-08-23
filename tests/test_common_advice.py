@@ -272,3 +272,18 @@ def test_a_chunked_run_that_does_not_spill_is_never_disk_blocked():
     assert plan.blocked is None
     assert plan.scratch_dir is None
     assert not any("scratch disk" in r for r in plan.reasons)
+
+
+def test_the_chunking_reason_starts_with_the_pinned_prefix():
+    """advisory.py filters on this prefix; a reworded message must fail here,
+    not leak a chunk count into the GUI."""
+    from dfxm.common import advice
+    from dfxm.common.machine import MachineProfile
+
+    prof = MachineProfile(
+        "Linux", 4, 2, 8 * 1024**3, 1 * 1024**3, 40 * 1024**3, None, "unprobed", None, ()
+    )
+    est = CostEstimate(200 * 1024**3, 100 * 1024**3, (76, 1200, 1800), True)
+    plan = advice.plan_run(prof, est)
+    assert plan.strategy == "chunked"  # precondition for the reason to exist
+    assert any(r.startswith(advice.CHUNK_REASON_PREFIX) for r in plan.reasons)

@@ -121,3 +121,8 @@ def test_rocking_roi_params_are_detector_frame():
 
     assert rocking.STAGE.get("roi_x").roi_frame == "detector"
     assert rocking.STAGE.get("roi_y").roi_frame == "detector"
+
+
+def test_advice_key_defaults_empty_and_is_settable():
+    assert Param("x", ParamType.STR, "X").advice_key == ""
+    assert Param("x", ParamType.STR, "X", advice_key="3d_texture").advice_key == "3d_texture"

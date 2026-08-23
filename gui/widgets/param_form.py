@@ -76,6 +76,7 @@ class ParamForm(QWidget):
         self._adv_box: QWidget | None = None
         self._labels: dict[str, QLabel] = {}
         self._base_label: dict[str, str] = {}
+        self._notes: dict[str, QLabel] = {}
 
         initial = values or {}
         outer = QVBoxLayout(self)
@@ -87,6 +88,7 @@ class ParamForm(QWidget):
         ess_form = QFormLayout()
         for p in essentials:
             ess_form.addRow(self._label_for(p), self._make_editor(p, initial))
+            self._add_note_row(ess_form, p)
         outer.addLayout(ess_form)
 
         if advanced:
@@ -109,6 +111,7 @@ class ParamForm(QWidget):
                     adv_layout.addLayout(form)
                     group_forms[p.group] = form
                 form.addRow(self._label_for(p), self._make_editor(p, initial))
+                self._add_note_row(form, p)
             self._adv_box.setVisible(False)
             self._adv_toggle.toggled.connect(self._on_adv_toggled)
             outer.addWidget(self._adv_toggle)
@@ -127,6 +130,23 @@ class ParamForm(QWidget):
             self._param_for_widget[w] = p
             w.setToolTip(tip)
         return editor
+
+    def _add_note_row(self, form: QFormLayout, p: Param) -> None:
+        """A hidden, full-width note row under *p*'s editor.
+
+        Only for params that declare an ``advice_key`` — a hidden row per field
+        would be dead weight on every form. The editor itself is NOT wrapped:
+        `self._editors[name]` must stay the real widget, which `gui_smoke` and
+        the wheel-guard tests reach into directly.
+        """
+        if not p.advice_key:
+            return
+        note = QLabel("")
+        note.setWordWrap(True)
+        note.setProperty("role", "warning")
+        note.setVisible(False)
+        form.addRow(note)
+        self._notes[p.name] = note
 
     def _on_adv_toggled(self, checked: bool) -> None:
         assert self._adv_toggle is not None and self._adv_box is not None
@@ -187,6 +207,25 @@ class ParamForm(QWidget):
                 continue
             val = values.get(p.name)
             setter(self._empty_value(p) if val is None else val)
+
+    def set_field_note(self, name: str, text: str) -> None:
+        """Show *text* under *name*'s editor; empty text hides the row."""
+        note = self._notes.get(name)
+        if note is None:
+            return
+        note.setText(text)
+        note.setVisible(bool(text))
+
+    def apply_hints(self, hints: dict) -> None:
+        """Route an advisory's hints to their fields, clearing every other note.
+
+        Clearing matters: a hint that no longer applies (the user picked a
+        lighter render mode) must disappear rather than linger as advice about
+        a setting they already changed.
+        """
+        for p in self._params:
+            if p.advice_key:
+                self.set_field_note(p.name, hints.get(p.advice_key, ""))
 
     def set_field_marker(self, name: str, marked: bool, tooltip: str = "") -> None:
         """Toggle a '⚠' suffix on *name*'s row label (deviates-from-experiment)."""

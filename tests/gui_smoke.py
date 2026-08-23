@@ -1263,6 +1263,42 @@ def main() -> int:
     assert len(_panel41._windows) == 0
     print("[41] 3-D viewer: launcher opens window, controls live, close frees")
 
+    # [42] Live cost line: driving the event loop until the debounced
+    # StageAdvisor settles populates the strain view's cost line from a real
+    # Advisory (strain has a wired estimator; earlier steps already gave its
+    # form real path values).
+    strain_view42 = win._views["strain"]
+    # Reset the advisor's state before requesting: step [4] already ran
+    # sview._on_run() on this SAME view object (strain), which calls
+    # compute_blocking() and _show_advisory() synchronously, so
+    # _advisor.latest and _advice_label are already populated from THAT call.
+    # Without this reset the wait loop below exits on iteration zero and both
+    # assertions pass without the debounce timer, the _AdvisoryWorker thread,
+    # or advisoryReady ever running.
+    strain_view42._advisor.latest = None
+    strain_view42._advice_label.setText("")
+    strain_view42._advisor.request()  # force a fresh debounced request
+    t0 = time.time()
+    while strain_view42._advisor.latest is None and time.time() - t0 < 15:
+        app.processEvents()
+        time.sleep(0.02)
+    assert strain_view42._advisor.latest is not None, "advisor never produced an Advisory"
+    assert strain_view42._advice_label.text(), "cost line text is empty"
+    print(f"[42] live cost line populated: {strain_view42._advice_label.text()!r}")
+
+    # [43] System check dialog: rows()/as_text() are populated from a real
+    # machine measurement; the dialog closes cleanly.
+    from gui.widgets.system_check import SystemCheckDialog as _SCD43
+
+    scdlg43 = _SCD43(win)
+    scdlg43.show()
+    app.processEvents()
+    assert scdlg43.rows(), "SystemCheckDialog.rows() is empty"
+    assert scdlg43.as_text(), "SystemCheckDialog.as_text() is empty"
+    scdlg43.close()
+    app.processEvents()
+    print("[43] System check dialog: rows()/as_text() populated; closes cleanly")
+
     print("\nGUI SMOKE PASSED")
     return 0
 
