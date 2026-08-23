@@ -181,13 +181,21 @@ class MainWindow(QMainWindow):
         Unmeasured fields are omitted rather than shown as zero: a probe that
         failed is recorded in `probe_errors`, and "0.0 B free" would read as a
         full disk.
+
+        Every figure names the resource it measures ("free disk", "free of ...
+        RAM"). The first version read `320.9 GB free · 469.0 GB/502.4 GB RAM`,
+        where the leading number was disk and said so nowhere — two byte counts
+        side by side with only one of them labelled invite reading both as the
+        same resource.
         """
         prof = advisor.cached_profile(os.getcwd())
         parts = [f"{prof.cpu_logical} cores"]
         if prof.disk_free:
-            parts.append(f"{human_bytes(prof.disk_free)} free")
+            parts.append(f"{human_bytes(prof.disk_free)} free disk")
         if prof.ram_total:
-            parts.append(f"{human_bytes(prof.ram_available)}/{human_bytes(prof.ram_total)} RAM")
+            parts.append(
+                f"{human_bytes(prof.ram_available)} free of {human_bytes(prof.ram_total)} RAM"
+            )
         if prof.gl_status == "ok" and prof.gl is not None:
             parts.append("software GL" if prof.gl.software else "hardware GL")
         self._machine_label.setText(" · ".join(parts))

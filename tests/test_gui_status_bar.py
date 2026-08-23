@@ -12,6 +12,7 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 
 _app = QApplication.instance() or QApplication([])
 
+from dfxm.common.advice import human_bytes  # noqa: E402
 from gui import advisor as A  # noqa: E402
 from gui.main_window import MainWindow  # noqa: E402
 from tests.machine_fixtures import tiny_ram, windows_no_vtk, workstation_sw_gl  # noqa: E402
@@ -25,6 +26,26 @@ def test_status_bar_names_cores_disk_and_ram(monkeypatch):
     assert "36 cores" in text
     assert "RAM" in text
     assert "free" in text
+
+
+def test_each_byte_count_names_the_resource_it_measures(monkeypatch):
+    """Disk and RAM sit side by side; neither may appear as a bare number.
+
+    The readout first shipped as `2000.0 GB free · 460.0 GB/502.0 GB RAM`,
+    where the leading figure was free *disk* and nothing on the line said so.
+    """
+    prof = workstation_sw_gl()
+    # Precondition: the two free figures differ, so a label satisfied by the
+    # wrong number cannot make this test pass by accident.
+    assert prof.disk_free != prof.ram_available
+    monkeypatch.setattr(A, "cached_profile", lambda d: prof)
+    win = MainWindow()
+    win._refresh_machine_status()
+    text = win._machine_label.text()
+    assert f"{human_bytes(prof.disk_free)} free disk" in text, text
+    assert f"{human_bytes(prof.ram_available)} free of {human_bytes(prof.ram_total)} RAM" in text, (
+        text
+    )
 
 
 def test_software_gl_is_called_out(monkeypatch):

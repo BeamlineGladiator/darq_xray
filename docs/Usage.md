@@ -97,7 +97,9 @@ applies to every stage and is remembered.
 
 **The status bar** always shows a compact read of this machine — logical CPU
 cores, free disk, and total/available RAM — refreshed every few seconds, e.g.
-`36 cores · 2000.0 GB free · 460.0 GB/502.0 GB RAM`. It only ever shows what has
+`36 cores · 2000.0 GB free disk · 460.0 GB free of 502.0 GB RAM`. Every byte
+count names the resource it measures, so the disk figure and the memory figure
+can never be mistaken for each other. It only ever shows what has
 already been measured: an unmeasured field (a failed probe, or on a machine
 where a value could not be read) is left out rather than shown as `0.0 B`,
 which would misleadingly read as a full disk. The GL renderer (`software GL` /
@@ -336,9 +338,12 @@ hover tooltip on each field and its label.
 
 Under the button row, a one-line advisory shows what this run is expected to
 cost **on this machine** — it recomputes shortly after you stop typing, and
-again as soon as the stage opens. It reads like `needs ~1.2 GB, 9.0 GB safely
-available — expected to run in memory`, or `at most ~4.1 GB (conservative estimate), 3.6
-GB safely available — expected to stream`. `needs ~N` is a normal estimate;
+again as soon as the stage opens. It reads like `needs ~1.2 GB RAM, 9.0 GB safely
+available — expected to run in memory`, or `at most ~4.1 GB RAM (conservative estimate), 3.6
+GB safely available — expected to stream`. Both figures are **memory**, and the
+line says so — the reasoning behind it can also mention scratch **disk**
+(`caching aligned blocks to 12.0 GB of scratch disk`), which is a different
+resource with its own free-space check. `needs ~N` is a normal estimate;
 `at most ~N (conservative estimate)` means the stage's estimator has not been
 recalibrated since the last rewrite and tends to over-predict, so the real run
 may be lighter. Hover the line for the reasoning behind it (why that strategy,

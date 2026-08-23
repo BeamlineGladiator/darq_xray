@@ -88,8 +88,15 @@ class Advisory:
 
 
 def _headline(estimate: CostEstimate, plan: RunPlan, conservative: bool) -> str:
+    """One line naming the cost, the headroom, and the expected strategy.
+
+    Both byte counts are RAM, and the lead says so: the same banner can also
+    carry `plan.reasons` lines measured in scratch *disk*, and an unlabelled
+    "N safely available" beside them reads as whichever resource the eye
+    reached for last.
+    """
     need = advice.human_bytes(estimate.peak_bytes)
-    lead = f"at most ~{need} (conservative estimate)" if conservative else f"needs ~{need}"
+    lead = f"at most ~{need} RAM (conservative estimate)" if conservative else f"needs ~{need} RAM"
     strategy = _STRATEGY_WORDS.get(plan.strategy, plan.strategy)
     return f"{lead}, {advice.human_bytes(plan.budget_bytes)} safely available — {strategy}"
 

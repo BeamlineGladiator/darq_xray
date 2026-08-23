@@ -78,6 +78,29 @@ def test_in_core_headline_names_cost_and_headroom(monkeypatch):
     assert "1.0 GB" in adv.headline
 
 
+def test_the_headline_says_its_figures_are_ram():
+    """The cost line's two byte counts are memory, and must say so.
+
+    They can sit in the same banner as `plan.reasons` lines measured in
+    scratch *disk*; an unlabelled "N safely available" beside those reads as
+    whichever resource the eye reached for last.
+    """
+    spec = _spec_with("tests.test_common_advisory:_cheap_estimate")
+    plain = advise_stage(spec, {}, profile=workstation_sw_gl())
+    assert plain.conservative is False  # precondition: the normal lead
+    assert "RAM" in plain.headline, plain.headline
+
+    cons = advise_stage(
+        _spec_with("tests.test_common_advisory:_conservative_estimate"),
+        {},
+        profile=workstation_sw_gl(),
+    )
+    # The conservative lead is a separate branch of `_headline` and needs its
+    # own label — the plain assertion above cannot reach it.
+    assert cons.conservative is True  # precondition
+    assert "RAM" in cons.headline, cons.headline
+
+
 def test_streaming_headline_says_expected_and_hides_the_chunk_count():
     spec = _spec_with("tests.test_common_advisory:_huge_estimate")
     adv = advise_stage(spec, {}, profile=tiny_ram())

@@ -233,13 +233,13 @@ def plan_run(profile, estimate, *, allow_downsample: bool = False, scratch_dir=N
 
     if estimate.peak_bytes <= budget:
         reasons.append(
-            f"needs {human_bytes(estimate.peak_bytes)}, {human_bytes(budget)} available"
+            f"needs {human_bytes(estimate.peak_bytes)} RAM, {human_bytes(budget)} available"
             " — running in memory"
         )
         return RunPlan("in-core", budget, 0, 1, None, tuple(reasons), None)
 
     reasons.append(
-        f"needs {human_bytes(estimate.peak_bytes)} but only {human_bytes(budget)}"
+        f"needs {human_bytes(estimate.peak_bytes)} RAM but only {human_bytes(budget)}"
         " is safely available"
     )
 
