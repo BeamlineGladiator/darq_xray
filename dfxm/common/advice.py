@@ -159,7 +159,7 @@ class Advice:
     reasons: tuple[str, ...]
 
 
-def _human(nbytes: float) -> str:
+def human_bytes(nbytes: float) -> str:
     for unit in ("B", "KB", "MB", "GB", "TB"):
         if abs(nbytes) < 1024 or unit == "TB":
             return f"{nbytes:.1f} {unit}"
@@ -217,6 +217,15 @@ def working_set_budget_bytes(profile, *, rss_floor_bytes: int) -> int:
     return max(MIN_STREAM_BUDGET_BYTES, int(affordable))
 
 
+# The one `plan_run` reason that carries `chunk_layers`. `advisory.py` replaces
+# any reason starting with this prefix, because the group count is display-only
+# and is NOT the blocking a stage picks — visualize/slices/paraview each derive
+# their own from `working_set_budget_bytes` with a per-stage RSS floor. Pinned
+# as a constant so a reworded message fails a test instead of silently escaping
+# the filter and reaching the user.
+CHUNK_REASON_PREFIX = "chunking into groups of"
+
+
 def plan_run(profile, estimate, *, allow_downsample: bool = False, scratch_dir=None) -> RunPlan:
     """Decide the execution strategy for *estimate* on *profile*."""
     budget = headroom_bytes(profile)
@@ -224,12 +233,14 @@ def plan_run(profile, estimate, *, allow_downsample: bool = False, scratch_dir=N
 
     if estimate.peak_bytes <= budget:
         reasons.append(
-            f"needs {_human(estimate.peak_bytes)}, {_human(budget)} available — running in memory"
+            f"needs {human_bytes(estimate.peak_bytes)}, {human_bytes(budget)} available"
+            " — running in memory"
         )
         return RunPlan("in-core", budget, 0, 1, None, tuple(reasons), None)
 
     reasons.append(
-        f"needs {_human(estimate.peak_bytes)} but only {_human(budget)} is safely available"
+        f"needs {human_bytes(estimate.peak_bytes)} but only {human_bytes(budget)}"
+        " is safely available"
     )
 
     downsample = 1
@@ -257,7 +268,7 @@ def plan_run(profile, estimate, *, allow_downsample: bool = False, scratch_dir=N
         per_layer = max(1, int(effective_peak / max(1, n_layers)))
         chunk_layers = max(1, min(n_layers, int(max(budget, MIN_BUDGET_BYTES) / per_layer)))
         reasons.append(
-            f"chunking into groups of {chunk_layers} of {n_layers} {unit} — slower, same result"
+            f"{CHUNK_REASON_PREFIX} {chunk_layers} of {n_layers} {unit} — slower, same result"
         )
         # A chunked run that spills to scratch (the median centring statistic is
         # the one irreducibly whole-array step) must be checked against free disk
@@ -266,11 +277,13 @@ def plan_run(profile, estimate, *, allow_downsample: bool = False, scratch_dir=N
         chunk_blocked = None
         if scratch_needed and profile.disk_free and scratch_needed > profile.disk_free:
             chunk_blocked = (
-                f"needs {_human(scratch_needed)} of scratch disk but only "
-                f"{_human(profile.disk_free)} is free"
+                f"needs {human_bytes(scratch_needed)} of scratch disk but only "
+                f"{human_bytes(profile.disk_free)} is free"
             )
         elif scratch_needed:
-            reasons.append(f"caching aligned blocks to {_human(scratch_needed)} of scratch disk")
+            reasons.append(
+                f"caching aligned blocks to {human_bytes(scratch_needed)} of scratch disk"
+            )
         return RunPlan(
             "chunked",
             budget,
@@ -286,7 +299,8 @@ def plan_run(profile, estimate, *, allow_downsample: bool = False, scratch_dir=N
     blocked = None
     if profile.disk_free and needed > profile.disk_free:
         blocked = (
-            f"needs {_human(needed)} of scratch disk but only {_human(profile.disk_free)} is free"
+            f"needs {human_bytes(needed)} of scratch disk but only "
+            f"{human_bytes(profile.disk_free)} is free"
         )
     return RunPlan("disk-backed", budget, 0, downsample, scratch_dir, tuple(reasons), blocked)
 

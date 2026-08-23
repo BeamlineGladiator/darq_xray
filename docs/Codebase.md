@@ -267,14 +267,16 @@ skips GL unless `probe_gl_now=True`.
 Machine-aware policy: pure functions over a `MachineProfile` and a
 `CostEstimate` deciding what a run should actually do, with no Qt and no IO of
 its own. `RunPlan` / `Advice` are the frozen result dataclasses. **Wiring status
-(as of this task):** `plan_run` has no production caller — the stages derive
-their own budgets from `working_set_budget_bytes`/`machine.profile` directly —
-`RunPlan.blocked` therefore has no consumer, and nothing in `gui/` calls
-`StageSpec.estimator()`. The estimators and the policy are exercised by the test
-suite and by the stages' own budget derivation; surfacing a cost estimate (or a
-block) in the GUI is not built. Say so rather than describing the intended
+(as of this task):** `plan_run` now has one production caller,
+`advisory.advise_stage` — but that caller is itself not yet wired into `gui/`,
+so `RunPlan.blocked` still has no GUI-facing consumer. The estimators and the
+policy are exercised by the test suite, by the stages' own budget derivation,
+and by `advisory.py`'s composition; surfacing a cost estimate (or a block) to
+the user in the GUI is not built. Say so rather than describing the intended
 end state: the docs asserted a user-visible estimate that a user cannot observe.
-`headroom_bytes`
+`human_bytes(nbytes) -> str` formats a byte count as `"1.2 GB"`-style text
+(promoted from the private `_human` so `advisory.py` can reuse it — every call
+site in this module was updated to the new name in the same change). `headroom_bytes`
 takes the tighter of two limits — 60% of available RAM (guards against other
 processes) and 50% of total RAM (guards against a misleading "available" behind
 a large page cache). `working_set_budget_bytes(profile, *, rss_floor_bytes)` is
@@ -361,7 +363,14 @@ previously had no disk check at all, so such a run could start on a machine with
 no room for the spill and fail partway through. Pinned by
 `test_a_chunked_run_that_spills_is_blocked_when_the_disk_is_too_small` and its
 two siblings, one of which guards against the check ever switching from
-`scratch_bytes` to `peak_bytes` and blocking runs that touch no disk. `advise_3d` downsamples a volume to fit
+`scratch_bytes` to `peak_bytes` and blocking runs that touch no disk.
+`CHUNK_REASON_PREFIX = "chunking into groups of"` pins the one `plan_run`
+reason that carries `chunk_layers` — `advisory.py` filters on this exact
+prefix to strip the group count before anything reaches the user (the count is
+display-only, not the blocking a stage actually picks), and the reason string
+is built from the constant rather than hard-coded so a reworded message fails
+`test_the_chunking_reason_starts_with_the_pinned_prefix` instead of silently
+slipping past the filter. `advise_3d` downsamples a volume to fit
 `GL_MAX_3D_TEXTURE_SIZE` and steers software-GL machines toward geometry
 render modes (surface/isosurface upload geometry instead of one large 3-D
 texture, so volume mode silently renders blank past the limit). Every decision
@@ -382,6 +391,11 @@ the advisory path and the execution path are parallel, not sequential.
 | Function | What it does |
 |---|---|
 | `disk_probe_dir(spec, params) -> str` | Which directory's filesystem to measure for free space: `params["output_dir"]` when the user set one; otherwise the directory of the first filled-in `must_exist` input (`spec.params` in declaration order — a file path yields its parent, a directory is returned as-is); otherwise `os.getcwd()`. Its own docstring: not cosmetic — `output_dir` is optional on every estimating stage (each `run()` computes its own default internally, e.g. `paraview.py:1630`), so reading it alone would measure the filesystem the *app* was started from while the data sits on an external drive, and the scratch-disk check that decides whether a run is blocked would be answered about the wrong disk. |
+| `advise_stage(spec, params, *, profile=None) -> Advisory` | The single entry point Tasks 4-10's four GUI surfaces call to render a run's cost. Resolves `probe_dir = disk_probe_dir(spec, params)`, then a `MachineProfile` — the caller's `profile` if supplied (the GUI passes its cached one so a per-form-change call does not re-probe), else `machine.profile(output_dir=probe_dir)`. **Never raises**: `spec.estimator()` and the estimator call both sit inside one `try`/`except Exception`, because an estimator opens user-supplied HDF5 paths and raw scan folders, and a missing/corrupt/half-typed path is the ordinary state of a form mid-edit, not an error — a caught failure becomes `Advisory(prof, None, None, f"cannot estimate cost: {type(exc).__name__}")` instead of an exception escaping into a Qt form-change handler and taking the window down (pinned by `test_a_raising_estimator_becomes_a_headline_not_an_exception`; removing the `try`/`except` is one of this task's three mandatory mutations). No estimator on the spec (`estimator() is None`) returns an all-empty `Advisory` with `headline=""`. A resolved estimate with `peak_bytes == 0` (nothing to price yet) returns `Advisory(prof, estimate, None, estimate.note or "not enough input to estimate cost")` — `plan` stays `None`, since there is nothing to plan. Otherwise calls `advice.plan_run(prof, estimate, scratch_dir=probe_dir)`, reads `conservative = estimate.confidence != "measured"`, and returns the full `Advisory` with `headline`/`details` built by the two helpers below. |
+| `_headline(estimate, plan, conservative) -> str` | `"needs ~{human_bytes(peak_bytes)}, {human_bytes(budget_bytes)} safely available — {strategy}"`, or with `conservative=True`, `"at most ~{need} (conservative estimate), ..."`. `strategy` is looked up in `_STRATEGY_WORDS` (`"in-core"`→"runs in memory", `"chunked"`→"expected to stream", `"disk-backed"`→"expected to run disk-backed") — hedged deliberately: the prediction and the eventual run share a headroom figure so they agree in direction, but are computed independently by parallel paths, and the wording must not read as an instruction to the stage. |
+| `_details(plan, conservative) -> tuple[str, ...]` | `plan.reasons`, **not verbatim** — any reason starting with `advice.CHUNK_REASON_PREFIX` is replaced with the fixed sentence `"blocking the work into groups — slower, same result"`, because `plan_run` writes the chunk-group count into that reason and the count is display-only (not the blocking a stage actually picks — visualize/slices/paraview each derive their own from `working_set_budget_bytes` with a per-stage RSS floor). Appends `_CONSERVATIVE_NOTE` when `conservative`. Returning `plan.reasons` unfiltered is the other mandatory mutation: it makes `test_streaming_headline_says_expected_and_hides_the_chunk_count` fail, because the chunk-count sentence then reaches the rendered text. |
+
+`Advisory` (frozen dataclass): `profile: MachineProfile`, `estimate: CostEstimate | None`, `plan: RunPlan | None`, `headline: str`, `details: tuple[str, ...] = ()`, `blocked: str | None = None` (carried straight from `plan.blocked`), `conservative: bool = False`, `hints: dict[str, str] = field(default_factory=dict)` (unused by this task; reserved for a later one). Everything a GUI surface needs to render a run's cost lives on this one object — the four surfaces compute no policy of their own, only presentation.
 
 #### `volumeio.py` (new)
 Bounded-memory HDF5 volume reading. Pure module — no Qt, no stage-specific

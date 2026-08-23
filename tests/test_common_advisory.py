@@ -4,8 +4,12 @@ from __future__ import annotations
 
 import os
 
-from dfxm.common.advisory import disk_probe_dir
-from dfxm.config.models import Param, ParamType, StageSpec
+from dfxm.common import advice
+from dfxm.common.advisory import advise_stage, disk_probe_dir
+from dfxm.config.models import CostEstimate, Param, ParamType, StageSpec
+from tests.machine_fixtures import tiny_ram, workstation_sw_gl
+
+GB = 1024**3
 
 _SPEC = StageSpec(
     name="demo",
@@ -54,3 +58,105 @@ def test_ignores_params_that_are_not_inputs(tmp_path):
         params=(Param("some_output", ParamType.SAVE_PATH, "Out"),),
     )
     assert disk_probe_dir(spec, {"some_output": str(tmp_path / "x.h5")}) == os.getcwd()
+
+
+def _spec_with(estimator_target: str) -> StageSpec:
+    return StageSpec(
+        name="demo",
+        label="Demo",
+        description="",
+        params=_SPEC.params,
+        estimate=estimator_target,
+    )
+
+
+def test_in_core_headline_names_cost_and_headroom(monkeypatch):
+    spec = _spec_with("tests.test_common_advisory:_cheap_estimate")
+    adv = advise_stage(spec, {}, profile=workstation_sw_gl())
+    assert adv.plan.strategy == "in-core"
+    assert "runs in memory" in adv.headline
+    assert "1.0 GB" in adv.headline
+
+
+def test_streaming_headline_says_expected_and_hides_the_chunk_count():
+    spec = _spec_with("tests.test_common_advisory:_huge_estimate")
+    adv = advise_stage(spec, {}, profile=tiny_ram())
+    assert adv.plan.strategy == "chunked"  # precondition
+    assert adv.plan.chunk_layers > 0  # precondition: there IS a count
+    assert "expected to stream" in adv.headline
+    rendered = " ".join((adv.headline, *adv.details))
+    assert advice.CHUNK_REASON_PREFIX not in rendered
+    # Not "no digit anywhere" — the headroom figure itself may contain digits
+    # that happen to include the chunk count (e.g. "614.4 MB" contains "1").
+    # The actual requirement is that the chunk-count SENTENCE is gone,
+    # replaced by the generic streaming-groups sentence.
+    assert any("blocking the work into groups" in d for d in adv.details)
+
+
+def test_conservative_estimate_is_marked_in_the_headline_and_details():
+    spec = _spec_with("tests.test_common_advisory:_conservative_estimate")
+    adv = advise_stage(spec, {}, profile=workstation_sw_gl())
+    assert adv.conservative is True
+    assert "at most" in adv.headline
+    assert any("over-predict" in d for d in adv.details)
+
+
+def test_measured_estimate_is_not_marked():
+    spec = _spec_with("tests.test_common_advisory:_cheap_estimate")
+    adv = advise_stage(spec, {}, profile=workstation_sw_gl())
+    assert adv.conservative is False
+    assert "at most" not in adv.headline
+
+
+def test_a_raising_estimator_becomes_a_headline_not_an_exception():
+    spec = _spec_with("tests.test_common_advisory:_boom")
+    adv = advise_stage(spec, {}, profile=workstation_sw_gl())
+    assert adv.estimate is None and adv.plan is None
+    assert "FileNotFoundError" in adv.headline
+
+
+def test_a_stage_without_an_estimator_says_nothing():
+    spec = StageSpec(name="demo", label="Demo", description="", params=())
+    adv = advise_stage(spec, {}, profile=workstation_sw_gl())
+    assert adv.headline == "" and adv.estimate is None
+
+
+def test_an_unpriced_estimate_shows_its_note():
+    spec = _spec_with("tests.test_common_advisory:_unpriced")
+    adv = advise_stage(spec, {}, profile=workstation_sw_gl())
+    assert adv.headline == "no readable volume files selected yet"
+    assert adv.plan is None
+
+
+def test_blocked_on_scratch_disk_is_carried_through():
+    spec = _spec_with("tests.test_common_advisory:_spilling_estimate")
+    adv = advise_stage(spec, {}, profile=tiny_ram())
+    # Precondition: this machine really is short of disk for this estimate,
+    # or the test silently becomes a test of the unblocked path.
+    assert adv.estimate.scratch_bytes > tiny_ram().disk_free
+    assert adv.blocked and "scratch disk" in adv.blocked
+
+
+# -- estimator stand-ins, resolved by StageSpec.estimator() -------------------
+def _cheap_estimate(params):
+    return CostEstimate(1 * GB, 1 * GB, (10, 100, 100), True)
+
+
+def _huge_estimate(params):
+    return CostEstimate(200 * GB, 100 * GB, (76, 1200, 1800), True)
+
+
+def _conservative_estimate(params):
+    return CostEstimate(1 * GB, 1 * GB, (10, 100, 100), True, confidence="conservative")
+
+
+def _unpriced(params):
+    return CostEstimate(0, 0, None, True, "no readable volume files selected yet")
+
+
+def _spilling_estimate(params):
+    return CostEstimate(200 * GB, 100 * GB, (76, 1200, 1800), True, scratch_bytes=100 * GB)
+
+
+def _boom(params):
+    raise FileNotFoundError("no such file")
