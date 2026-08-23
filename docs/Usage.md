@@ -104,6 +104,42 @@ which would misleadingly read as a full disk. The GL renderer (`software GL` /
 `hardware GL`) appears only once something else has already probed it — this
 readout itself never triggers a GL probe, since that costs a child process.
 
+### System check
+
+The status bar gives an ambient read of the machine; **System check…** (left
+column, beside *Figure builder…*) is the one place that shows the whole
+machine at once, and the only place in the app that will pay for a GL probe on
+demand. Opening it (or pressing **Re-probe**) measures CPU, RAM, disk, the
+OpenGL stack, and ffmpeg — the GL probe runs a short-lived child process, so
+the dialog shows a wait cursor while it works.
+
+Each row pairs a measured value with what it means for your settings:
+
+- **CPU** — logical/physical core counts. Informational only: the pipeline
+  does not parallelise across cores yet.
+- **RAM** — available of total. When a run does not fit, the affected stage
+  streams instead — slower, same result.
+- **Headroom** — the most a run will plan to use on this machine, leaving
+  room for Qt and the OS. This is the number the cost line and pre-flight
+  banner compare a run's estimate against.
+- **Disk** — free space on the filesystem holding your output directory. The
+  one genuine blocker: a run that must spill to scratch needs this much free.
+- **OpenGL** — the renderer and its 3-D texture size cap. On a software
+  (CPU) renderer the row says so and recommends surface mode, because volume
+  mode renders **blank** past the texture cap on that hardware. When the
+  probe has not run yet, or crashed, the row reads **unknown** with the
+  reason (never a blank or a zero) and any error detail appears beneath the
+  table.
+- **ffmpeg** — resolved path, or "not found". Without it, video exports fall
+  back to GIF.
+
+Press **Re-probe** after installing a graphics driver, moving to different
+hardware, or if the OpenGL row still says "unknown" from a previous crashed
+probe — it forces a fresh measurement and discards any cached result. Press
+**Copy as text** to put a plain-text dump of every row (plus any probe
+errors) on the clipboard; it is meant for pasting into a bug report or a
+message to support, not for reading on screen.
+
 ### Experiment presets
 
 An **experiment** captures everything shared across stages: data roots, folder

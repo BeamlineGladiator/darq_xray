@@ -126,6 +126,11 @@ class MainWindow(QMainWindow):
         self._figure_builder_btn = QPushButton("Figure builder…")
         self._figure_builder_btn.clicked.connect(self._on_figure_builder)
 
+        # "System check…" — what this machine is and what it implies for
+        # settings. The only surface that pays for a GL probe on demand.
+        self._system_check_btn = QPushButton("System check…")
+        self._system_check_btn.clicked.connect(self._on_system_check)
+
         # Light/dark theme toggle.
         self._theme_btn = QPushButton()
         self._theme_btn.setCheckable(True)
@@ -141,6 +146,7 @@ class MainWindow(QMainWindow):
         left_layout.addWidget(self._nav, 1)
         left_layout.addWidget(self._pub_style_btn)
         left_layout.addWidget(self._figure_builder_btn)
+        left_layout.addWidget(self._system_check_btn)
         left_layout.addWidget(self._theme_btn)
 
         splitter = QSplitter()
@@ -251,6 +257,13 @@ class MainWindow(QMainWindow):
         self._figure_builder.show()
         self._figure_builder.raise_()
         self._figure_builder.activateWindow()
+
+    def _on_system_check(self) -> None:
+        """Open the System check dialog — the only surface that probes GL
+        on demand, and the one place that shows the whole machine at once."""
+        from .widgets.system_check import SystemCheckDialog
+
+        SystemCheckDialog(self).exec()
 
     # Which StageResult attribute holds the stacked/aligned output h5 path,
     # for the stages the panel picker needs a CATALOG file from (not their
