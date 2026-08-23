@@ -368,6 +368,21 @@ texture, so volume mode silently renders blank past the limit). Every decision
 carries a plain-language reason string — written once here and reused by the
 log, the GUI banner and the stage result notes.
 
+#### `advisory.py` (new)
+Composes a `MachineProfile`, a `CostEstimate` and a `RunPlan` into one
+`Advisory` for the GUI to render — Qt-free and side-effect-free apart from the
+probes it delegates to. This is the single place that decides *what the user
+is told* about a run's cost; the four GUI surfaces render an `Advisory` and
+compute no policy of their own. It composes `machine.py`/`advice.py`/a stage's
+`estimate()`, it does not add new policy — nothing here changes what a stage
+does: since phase 5 each volume stage derives its own streaming budget from
+`advice.working_set_budget_bytes` with its own measured `RSS_FLOOR_BYTES`, so
+the advisory path and the execution path are parallel, not sequential.
+
+| Function | What it does |
+|---|---|
+| `disk_probe_dir(spec, params) -> str` | Which directory's filesystem to measure for free space: `params["output_dir"]` when the user set one; otherwise the directory of the first filled-in `must_exist` input (`spec.params` in declaration order — a file path yields its parent, a directory is returned as-is); otherwise `os.getcwd()`. Its own docstring: not cosmetic — `output_dir` is optional on every estimating stage (each `run()` computes its own default internally, e.g. `paraview.py:1630`), so reading it alone would measure the filesystem the *app* was started from while the data sits on an external drive, and the scratch-disk check that decides whether a run is blocked would be answered about the wrong disk. |
+
 #### `volumeio.py` (new)
 Bounded-memory HDF5 volume reading. Pure module — no Qt, no stage-specific
 logic. The governing guarantee for the **streaming** helpers (`iter_blocks`,
