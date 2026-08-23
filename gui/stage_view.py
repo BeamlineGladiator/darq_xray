@@ -370,8 +370,9 @@ class StageView(QWidget):
         self._persist_now()
 
     # -- banner / validation ------------------------------------------------
-    def _show_banner(self, html_text: str, *, error: bool) -> None:
-        self._banner.setProperty("role", "banner-error" if error else "banner-success")
+    def _show_banner(self, html_text: str, *, error: bool = False, role: str = "") -> None:
+        kind = role or ("banner-error" if error else "banner-success")
+        self._banner.setProperty("role", kind)
         self._banner.style().unpolish(self._banner)
         self._banner.style().polish(self._banner)
         self._banner.setText(html_text)
@@ -429,6 +430,22 @@ class StageView(QWidget):
             # Snapshot the CURRENT session publication style so every new run
             # renders with whatever the style dialog says right now.
             run_params["plot_style"] = asdict(window.global_plot_style())
+        # Pre-flight: what will this cost, and can the disk take it? Computed
+        # fresh on the click (cheap, and never stale). Advisory only — it never
+        # changes what the stage does, and only the disk question can stop it.
+        advisory = self._advisor.compute_blocking()
+        if advisory.blocked and not self._confirm_blocked(advisory.blocked):
+            return
+        self._show_advisory(advisory)
+        if advisory.headline:
+            lines = [html.escape(advisory.headline)]
+            lines += [html.escape(d) for d in advisory.details]
+            self._show_banner("<br>".join(lines), role="banner-info")
+        self._start_runner(run_params)
+
+    def _start_runner(self, run_params: dict) -> None:
+        """Launch the stage child. Split out of `_on_run` so the pre-flight
+        checks above it can be tested without spawning a process."""
         target = STAGE_TARGETS[self._stage_name]
         self._log.clear()
         self._results.clear()
@@ -446,6 +463,23 @@ class StageView(QWidget):
         self._runner = StageRunner(target, run_params, start_method="spawn")
         self._runner.start()
         self._timer.start()
+
+    def _confirm_blocked(self, reason: str) -> bool:
+        """Ask before a run the machine may not have the disk to finish.
+
+        The project's rule is that nothing refuses to run for lack of RAM; disk
+        is the one genuine blocker, and even then the answer is the user's. The
+        default button is Cancel so a stray Enter cannot launch a long run that
+        dies part-way.
+        """
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setWindowTitle("Not enough scratch disk")
+        box.setText(f"This run {reason}.")
+        box.setInformativeText("It may fail part-way through. Run anyway?")
+        box.setStandardButtons(QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel)
+        box.setDefaultButton(QMessageBox.StandardButton.Cancel)
+        return box.exec() == QMessageBox.StandardButton.Ok
 
     def _on_cancel(self) -> None:
         if self._runner is not None:

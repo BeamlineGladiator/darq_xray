@@ -272,7 +272,7 @@ Every stage uses the same layout:
 | **Parameter form** (left) | Auto-generated from the stage's schema. The few **essential** fields show first; the rest collapse under **Advanced (N settings)**, grouped by theme (Calibration, Data layout, Alignment, Appearance, Output, …). Hover any label for a tooltip. Scrolling the form never changes a spin box or dropdown any more — a field only reacts to the wheel once you've clicked into it; otherwise the wheel just scrolls the page. |
 | **Help panel** (under the form) | Explains whichever field has focus — what it does, its unit, and the calibration warning where relevant. Idles on a description of the stage. |
 | **Run / Cancel + progress** | Runs the stage in a **separate process**; the bar and step text track progress; **Cancel** truly kills it. Before launching, input paths are checked on disk — a missing one blocks the run and focuses the offending field. Once a run/batch is more than 5 % done and has been going for more than 2 seconds, the progress text may also show a `~… left` estimate; the estimate starts fresh every time you click **Run**, so it never carries a stale reading over from a previous run. |
-| **Status banner** (above the tabs) | Green one-liner on success; on failure, the error in plain language plus an actionable hint (the full traceback stays in **Log**). |
+| **Status banner** (above the tabs) | Green one-liner on success; on failure, the error in plain language plus an actionable hint (the full traceback stays in **Log**); on **Run**, a blue-grey banner states the same cost line the form already showed, so the number you saw before clicking is still visible once the run is underway. |
 | **Log** tab | Live progress + streamed messages. |
 | **Results** tab | A text summary of what was produced — including every skipped layer/input and the reason. |
 | **Output** tab | A representative image preview. |
@@ -296,6 +296,23 @@ may be lighter. Hover the line for the reasoning behind it (why that strategy,
 what would change it). The line is purely informative — it never changes what
 the run does, and it disappears for stages with nothing to estimate yet (e.g.
 `concat`, `profiles`, or a form that is not filled in enough to size the run).
+
+Clicking **Run** repeats this cost line as a blue-grey banner above the tabs,
+so it stays visible once the form scrolls out of the way. This banner is
+informative only, same as the cost line — it never stops a run.
+
+**The one thing that can stop a run: not enough scratch disk.** If the run
+would need to stream to a scratch folder and this machine does not have room
+for it, a "Not enough scratch disk" dialog appears — *"This run needs N GB of
+scratch disk but only M GB is free. It may fail part-way through. Run
+anyway?"* — with **OK** / **Cancel** buttons, **Cancel** as the default, so
+pressing Enter by reflex does not launch a run that cannot finish. Choosing
+**Cancel** starts nothing and leaves the form exactly as it was — perfectly
+safe, just try again after freeing disk space or pointing the stage's scratch
+folder elsewhere. Choosing **OK** starts the run normally; it may still fail
+part-way through if the disk really does run out, same as it would have
+without this warning. Memory is never a reason a run is blocked — only
+scratch disk is, and only after asking you.
 
 #### Picking an ROI interactively
 
