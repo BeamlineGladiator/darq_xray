@@ -37,6 +37,10 @@ _CONSERVATIVE_NOTE = (
 
 _CHUNK_REPLACEMENT = "blocking the work into groups — slower, same result"
 
+# Advisory key for the 3-D texture ceiling. Declared on the parameter it belongs
+# to (`visualize`'s `render_mode`) rather than matched by name in the GUI.
+HINT_3D_TEXTURE = "3d_texture"
+
 
 def disk_probe_dir(spec: StageSpec, params: dict) -> str:
     """Which directory's filesystem to measure for free space.
@@ -102,6 +106,22 @@ def _details(plan: RunPlan, conservative: bool) -> tuple[str, ...]:
     return tuple(out)
 
 
+def _hints(profile: MachineProfile, estimate: CostEstimate, params: dict) -> dict[str, str]:
+    """Per-parameter advisories. Empty until GL has actually been probed.
+
+    The texture ceiling is not cosmetic: volume mode uploads the grid as ONE
+    3-D texture, and past `GL_MAX_3D_TEXTURE_SIZE` VTK renders nothing at all —
+    a silently blank product rather than an error.
+    """
+    mode = str(params.get("render_mode") or "")
+    if not mode or profile.gl is None or estimate.shape is None:
+        return {}
+    result = advice.advise_3d(profile, estimate.shape, mode)
+    if not result.reasons:
+        return {}
+    return {HINT_3D_TEXTURE: " ".join(result.reasons)}
+
+
 def advise_stage(
     spec: StageSpec, params: dict, *, profile: MachineProfile | None = None
 ) -> Advisory:
@@ -139,4 +159,5 @@ def advise_stage(
         details=_details(plan, conservative),
         blocked=plan.blocked,
         conservative=conservative,
+        hints=_hints(prof, estimate, params),
     )

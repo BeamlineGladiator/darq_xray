@@ -26,14 +26,15 @@ _cache: dict[str, tuple[float, machine.MachineProfile]] = {}
 def cached_profile(output_dir: str) -> machine.MachineProfile:
     """A recent :class:`MachineProfile` for *output_dir*'s filesystem.
 
-    **Never probes GL.** The probe costs a child process; only the System check
-    dialog and the one-shot background probe may pay for it.
+    **Never probes GL** on its own — ``probe_gl_now=_gl_ready`` is False until
+    the one-shot background probe (or the System check dialog) has already
+    succeeded, so this is always a cache lookup here, never a spawn.
     """
     now = time.monotonic()
     hit = _cache.get(output_dir)
     if hit is not None and now - hit[0] < _PROFILE_TTL_S:
         return hit[1]
-    prof = machine.profile(output_dir=output_dir)
+    prof = machine.profile(output_dir=output_dir, probe_gl_now=_gl_ready)
     _cache[output_dir] = (now, prof)
     return prof
 
@@ -41,6 +42,62 @@ def cached_profile(output_dir: str) -> machine.MachineProfile:
 def clear_profile_cache() -> None:
     """Drop every cached profile (tests, and a forced re-probe)."""
     _cache.clear()
+
+
+_gl_ready = False
+
+
+def gl_ready() -> bool:
+    """True once a GL probe has succeeded in this session."""
+    return _gl_ready
+
+
+def _set_gl_ready(value: bool) -> None:
+    """Test seam; production code sets this through `probe_gl_async`."""
+    global _gl_ready
+    _gl_ready = value
+
+
+class _GlProbeWorker(QThread):
+    """The one GL probe this session pays for. Result is cached on disk by
+    `machine.probe_gl`, so every later launch is a file read."""
+
+    finished_ok = Signal(bool)
+
+    def run(self) -> None:  # worker thread
+        try:
+            _info, status = machine.probe_gl()
+        except Exception:  # noqa: BLE001 — a dead probe is a result, not a crash
+            status = "crashed"
+        self.finished_ok.emit(status == "ok")
+
+
+_gl_worker: _GlProbeWorker | None = None
+
+
+def probe_gl_async() -> None:
+    """Probe GL once per session, off the GUI thread.
+
+    Costs a child process, so it is never triggered by the cost path. Once it
+    lands, `cached_profile` starts including GL — `machine.probe_gl` memoises
+    in-process and caches on disk, so that is a lookup, not another child.
+    """
+    global _gl_worker
+    if _gl_ready or _gl_worker is not None:
+        return
+
+    def _done(ok: bool) -> None:
+        global _gl_worker
+        _gl_worker = None
+        if ok:
+            _set_gl_ready(True)
+            clear_profile_cache()  # so the next profile carries GL
+
+    worker = _GlProbeWorker()
+    worker.finished_ok.connect(_done)
+    _gl_worker = worker
+    keep_alive(worker)
+    worker.start()
 
 
 class _AdvisoryWorker(QThread):

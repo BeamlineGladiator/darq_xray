@@ -5,9 +5,9 @@ from __future__ import annotations
 import os
 
 from dfxm.common import advice
-from dfxm.common.advisory import advise_stage, disk_probe_dir
+from dfxm.common.advisory import HINT_3D_TEXTURE, advise_stage, disk_probe_dir
 from dfxm.config.models import CostEstimate, Param, ParamType, StageSpec
-from tests.machine_fixtures import tiny_ram, workstation_sw_gl
+from tests.machine_fixtures import laptop_hw_gl, tiny_ram, windows_no_vtk, workstation_sw_gl
 
 GB = 1024**3
 
@@ -160,3 +160,37 @@ def _spilling_estimate(params):
 
 def _boom(params):
     raise FileNotFoundError("no such file")
+
+
+def test_an_oversized_volume_on_software_gl_gets_a_texture_hint():
+    spec = _spec_with("tests.test_common_advisory:_wide_estimate")
+    prof = workstation_sw_gl()
+    # Precondition: the fixture volume really does exceed this GL stack's cap,
+    # or the hint under test is not the one being exercised.
+    assert prof.gl.max_3d_texture == 2048
+    adv = advise_stage(spec, {"render_mode": "volume"}, profile=prof)
+    assert HINT_3D_TEXTURE in adv.hints
+    assert "2048" in adv.hints[HINT_3D_TEXTURE]
+
+
+def test_no_texture_hint_when_the_volume_fits():
+    spec = _spec_with("tests.test_common_advisory:_wide_estimate")
+    adv = advise_stage(spec, {"render_mode": "volume"}, profile=laptop_hw_gl())
+    assert HINT_3D_TEXTURE not in adv.hints
+
+
+def test_no_texture_hint_for_geometry_render_modes():
+    """Surface/isosurface upload geometry, not one big texture."""
+    spec = _spec_with("tests.test_common_advisory:_wide_estimate")
+    adv = advise_stage(spec, {"render_mode": "surface"}, profile=workstation_sw_gl())
+    assert HINT_3D_TEXTURE not in adv.hints
+
+
+def test_no_texture_hint_when_gl_is_unprobed():
+    spec = _spec_with("tests.test_common_advisory:_wide_estimate")
+    adv = advise_stage(spec, {"render_mode": "volume"}, profile=windows_no_vtk())
+    assert adv.hints == {}
+
+
+def _wide_estimate(params):
+    return CostEstimate(1 * GB, 1 * GB, (76, 1200, 2891), True)

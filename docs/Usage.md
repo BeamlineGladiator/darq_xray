@@ -323,6 +323,37 @@ part-way through if the disk really does run out, same as it would have
 without this warning. Memory is never a reason a run is blocked — only
 scratch disk is, and only after asking you.
 
+#### Per-field notes
+
+A handful of fields can carry their own advisory note, shown as a small
+warning line directly under that field's editor — separate from the cost line
+above, and only appearing when it has something to say. It clears itself the
+moment the setting it warned about no longer applies (you change the field, or
+the condition it was about goes away), so it never lingers as stale advice.
+
+Today the one field that carries this is **visualize**'s **3D render mode**
+(under Advanced → Appearance). `volume` mode uploads the whole aligned grid to
+the graphics card as **one** 3-D texture, and every graphics stack caps how
+big that texture may be (2048 px per axis on typical software/llvmpipe GL —
+narrower than a typical ~2891 px-wide aligned volume). Push past that cap and
+the renderer does not error — it draws **nothing at all**, so the 3-D top view
+and rotation video come out as blank images with no indication anything went
+wrong. Once this session has checked your machine's graphics capability (see
+below), opening the visualize stage with `render_mode=volume` selected shows a
+note under the field naming the exact limit and by how much you'd need to
+downsample, and recommends `surface` mode instead when your GL stack is
+software-rendered (surface mode uploads geometry, not one giant texture, and
+is far faster on a software renderer besides). Switch to `surface` or
+`isosurface`, or crop/downsample the volume, and the note clears.
+
+This note needs to know your GL stack's texture limit, which the app only
+checks once per session — quietly, in the background, the first time you open
+a stage that has a field like this (currently just visualize), so it never
+delays opening any other stage or blocks the form while you type. Until that
+check lands, the note simply stays silent rather than guessing; the
+after-the-run notice described in visualize's own section below (dataset notes
++ the 3-D viewer's status line) still catches an oversized render either way.
+
 #### Picking an ROI interactively
 
 The **strain**, **visualize**, **paraview**, and **slices** stages show a
@@ -754,9 +785,12 @@ Align the stacked mosaicity/strain volumes and render them.
 > renderer draws **nothing**, so the top view and the orbit video would be blank
 > images with no error. The stage now detects this and records it in the
 > dataset's notes (shown in the run summary); the same hint appears in the 3-D
-> viewer's status line. Crop the map ROI (or raise **Downsample** in the 3-D
-> viewer) until the largest axis fits, or render on a machine with a real GPU.
-> Nothing is downsampled automatically — the products keep full resolution.
+> viewer's status line, and — once this session's one-time GL check has run —
+> as a note under the **3D render mode** field itself, before you ever click
+> Run (see [[#Per-field notes]] above). Crop the map ROI (or raise
+> **Downsample** in the 3-D viewer) until the largest axis fits, or render on a
+> machine with a real GPU. Nothing is downsampled automatically — the products
+> keep full resolution.
 
 > [!tip] Picking the run-time ROI interactively
 > Click **Pick ROI…** (in the button row alongside Run/Cancel) to open a visual

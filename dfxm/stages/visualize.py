@@ -368,6 +368,7 @@ STAGE = StageSpec(
             choices=("volume", "surface", "isosurface"),
             advanced=True,
             group="Appearance",
+            advice_key="3d_texture",
             help=(
                 "How the 3-D top view and rotation video draw the volume: 'volume' is "
                 "true volumetric rendering (shaded, transfer-function opacity), "

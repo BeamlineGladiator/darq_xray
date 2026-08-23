@@ -35,7 +35,7 @@ from dfxm.config.models import Experiment, StageSpec
 from dfxm.runner import Done, Failed, Log, Progress, StageRunner
 from dfxm.stages.registry import STAGE_TARGETS
 
-from .advisor import StageAdvisor
+from .advisor import StageAdvisor, probe_gl_async
 from .bindings import experiment_overrides
 from .form_state import FormStateStore
 from .viewers import append_line_job, inject_line_into_jobs, volume_sources
@@ -290,6 +290,9 @@ class StageView(QWidget):
         super().showEvent(event)
         self._help.show_idle()  # every stage opens on its description
         self._advisor.request()
+        # A stage with a 3-D setting is the only reason to pay for a GL probe.
+        if any(p.advice_key == "3d_texture" for p in self._spec.params):
+            probe_gl_async()
 
     # -- experiment wiring ------------------------------------------------
     def _initial_values(self) -> dict:
@@ -387,6 +390,7 @@ class StageView(QWidget):
         self._advice_label.setText(text)
         self._advice_label.setToolTip("\n".join(advisory.details) if advisory else "")
         self._advice_label.setVisible(bool(text))
+        self._form.apply_hints(advisory.hints if advisory is not None else {})
 
     def _validate_inputs(self, params: dict) -> tuple[str, str] | None:
         """First (param_name, message) whose must_exist path is set but absent.

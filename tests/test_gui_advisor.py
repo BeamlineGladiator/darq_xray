@@ -64,8 +64,10 @@ def _drain(timeout_s=10.0):
 @pytest.fixture(autouse=True)
 def _clean_advisor_state():
     A.clear_profile_cache()
+    A._set_gl_ready(False)
     yield
     A.clear_profile_cache()
+    A._set_gl_ready(False)
 
 
 def test_profile_is_cached_within_the_ttl(monkeypatch):
@@ -172,3 +174,31 @@ def test_compute_blocking_returns_and_stores_latest():
     got = adv.compute_blocking()
     assert got.plan is not None
     assert adv.latest is got
+
+
+def test_gl_is_not_probed_until_asked(monkeypatch):
+    monkeypatch.setattr(
+        A.machine,
+        "probe_gl",
+        lambda **kw: pytest.fail("GL must not be probed by the cost path"),
+    )
+    A.clear_profile_cache()
+    A._set_gl_ready(False)
+    A.cached_profile(os.getcwd())
+
+
+def test_once_probed_the_cached_profile_carries_gl(monkeypatch):
+    from dfxm.common.machine import GLInfo
+
+    monkeypatch.setattr(
+        A.machine,
+        "probe_gl",
+        lambda **kw: (GLInfo("llvmpipe", "Mesa", "4.5", 2048, True), "ok"),
+    )
+    A.clear_profile_cache()
+    A._set_gl_ready(False)
+    A.probe_gl_async()
+    _drain(10.0)
+    assert A.gl_ready() is True
+    A.clear_profile_cache()
+    assert A.cached_profile(os.getcwd()).gl is not None

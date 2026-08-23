@@ -132,3 +132,20 @@ def test_the_confirmation_defaults_to_cancel(monkeypatch):
     view = StageView("strain", STAGE_SPECS["strain"], Experiment())
     assert view._confirm_blocked("needs more disk") is False
     assert seen["default"].text().endswith("Cancel")
+
+
+def test_hints_reach_the_form():
+    view = StageView("visualize", STAGE_SPECS["visualize"], Experiment())
+    view._show_advisory(
+        Advisory(
+            workstation_sw_gl(),
+            None,
+            None,
+            "a headline",
+            (),
+            hints={"3d_texture": "downsample 2x or volume mode renders blank"},
+        )
+    )
+    assert "renders blank" in view._form._notes["render_mode"].text()
+    view._show_advisory(Advisory(workstation_sw_gl(), None, None, "a headline", ()))
+    assert view._form._notes["render_mode"].text() == ""
