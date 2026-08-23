@@ -4,6 +4,7 @@ import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+import threading  # noqa: E402
 import time  # noqa: E402
 
 import pytest  # noqa: E402
@@ -29,6 +30,27 @@ _SPEC = StageSpec(
 
 
 def _cheap_estimate(params):
+    return CostEstimate(1 * GB, 1 * GB, (10, 100, 100), True)
+
+
+# A stand-in estimator that blocks until the test releases it, so a test can
+# hold one worker genuinely in flight while it fires more `request()` calls —
+# the only way to actually exercise the `_pending` latest-wins collapse rather
+# than just the debounce-timer restart.
+_SLOW_SPEC = StageSpec(
+    name="slow",
+    label="Slow",
+    description="",
+    params=(Param("output_dir", ParamType.DIR, "Out"),),
+    estimate="tests.test_gui_advisor:_slow_estimate",
+)
+_slow_calls: list[int] = []
+_slow_release = threading.Event()
+
+
+def _slow_estimate(params):
+    _slow_calls.append(1)
+    _slow_release.wait(timeout=5.0)
     return CostEstimate(1 * GB, 1 * GB, (10, 100, 100), True)
 
 
@@ -94,6 +116,55 @@ def test_request_debounces_and_emits_once():
     _drain(5.0)
     assert len(seen) == 1
     assert "runs in memory" in seen[0].headline
+
+
+def test_request_collapses_requests_made_while_a_worker_is_in_flight():
+    """The `_pending` re-run path, not just the debounce-timer restart.
+
+    `test_request_debounces_and_emits_once` fires all its `request()` calls
+    before the timer ever expires, so every call just restarts the same
+    single-shot timer — `_pending` is never touched and a deleted
+    `if self._worker is not None: ...` guard in `_start()` would not fail it.
+    This test holds a worker genuinely running (blocked inside the estimator)
+    and fires requests while it is in flight, so it is `_pending`'s collapse
+    — one more run after the current one lands, not one per request — that
+    is actually under test.
+    """
+    _slow_calls.clear()
+    _slow_release.clear()
+    seen = []
+    adv = A.StageAdvisor(_SLOW_SPEC, lambda: {}, debounce_ms=10)
+    adv.advisoryReady.connect(seen.append)
+
+    adv.request()
+    deadline = time.monotonic() + 5.0
+    while not _slow_calls and time.monotonic() < deadline:
+        _app.processEvents()
+        time.sleep(0.01)
+    assert _slow_calls, "the first worker never started"
+    # Precondition: a worker is genuinely running right now, blocked on the
+    # release event — without this, the test below would be meaningless.
+    assert adv._worker is not None
+
+    for _ in range(5):
+        adv.request()
+        _drain(0.2)  # let each debounce timer expire while the worker is still blocked
+
+    # None of those five requests may have started a second worker — the
+    # worker is still blocked on _slow_release, so any new estimator call
+    # would already show up here.
+    assert len(_slow_calls) == 1
+    assert adv._pending is True
+
+    _slow_release.set()  # let the in-flight worker (and its one collapsed re-run) finish
+    deadline = time.monotonic() + 5.0
+    while (len(_slow_calls) < 2 or len(seen) < 2) and time.monotonic() < deadline:
+        _app.processEvents()
+        time.sleep(0.01)
+
+    # Exactly ONE further worker ran after the five collapsed requests — not five.
+    assert len(_slow_calls) == 2
+    assert len(seen) == 2
 
 
 def test_compute_blocking_returns_and_stores_latest():
