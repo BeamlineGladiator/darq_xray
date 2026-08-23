@@ -684,6 +684,118 @@ def test_slices_reports_no_scratch_on_the_coarse_fallback_return_either(tmp_path
     assert est.scratch_bytes == 0
 
 
+# -----------------------------------------------------------------------------
+# confidence marking
+# -----------------------------------------------------------------------------
+# The four stages whose estimators still model the pre-phase-5
+# accumulate-then-np.stack code. Measured over-prediction on real STO2:
+# strain 5.2x (2.627 GiB est vs 0.508 actual), mosaicity 36x (6.566 vs 0.181).
+
+
+def test_cost_estimate_confidence_defaults_to_measured():
+    est = CostEstimate(1, 1, None, True)
+    assert est.confidence == "measured"
+
+
+def test_strain_estimator_marks_itself_conservative(tmp_path):
+    from dfxm.stages.strain import estimate
+
+    root = _make_layers(tmp_path, n_layers=3, dtype="float32")
+    est = estimate(_strain_params(root))
+    # Precondition: this test is meaningless on the empty-input early return,
+    # which never reaches the marked `return` statement.
+    assert est.peak_bytes > 0, "fixture did not reach the priced return"
+    assert est.confidence == "conservative"
+
+
+def test_mosaicity_estimator_marks_itself_conservative(tmp_path):
+    from dfxm.stages.mosaicity import estimate
+
+    root = _make_layers(tmp_path, n_layers=3, dtype="float32", mosa=True)
+    params = {
+        "mode": "batch",
+        "root_folder": root,
+        "folder_pattern": "layer__*",
+        "maps_filename": "maps.h5",
+        **MOSA_PATHS,
+    }
+    est = estimate(params)
+    assert est.peak_bytes > 0, "fixture did not reach the priced return"
+    assert est.confidence == "conservative"
+
+
+def test_rocking_estimator_marks_itself_conservative(tmp_path):
+    from dfxm.stages.rocking import estimate
+
+    root = tmp_path / "raw"
+    for i in range(2):
+        scan = root / f"rock__{i}"
+        scan.mkdir(parents=True)
+        with h5py.File(scan / f"rock__{i}.h5", "w") as f:
+            f.create_dataset("1.1/measurement/pco_ff", data=np.zeros((3, 8, 16), dtype="uint16"))
+    est = estimate({"raw_root": str(root), "rocking_pattern": "rock__*"})
+    assert est.peak_bytes > 0, "fixture did not reach the priced return"
+    assert est.confidence == "conservative"
+
+
+def test_matched_estimator_marks_itself_conservative(tmp_path):
+    from dfxm.stages.matched import estimate
+
+    root = tmp_path / "raw"
+    scan = root / "rock__1"
+    scan.mkdir(parents=True)
+    with h5py.File(scan / "rock__1.h5", "w") as f:
+        f.create_dataset("1.1/measurement/pco_ff", data=np.zeros((6, 8, 16), dtype="uint16"))
+    est = estimate({"raw_root": str(root), "rocking_pattern": "rock__*"})
+    assert est.peak_bytes > 0, "fixture did not reach the priced return"
+    assert est.confidence == "conservative"
+
+
+def test_visualize_estimator_is_not_marked(tmp_path):
+    from dfxm.stages.visualize import estimate
+
+    mosa_path = tmp_path / "stacked_volumes.h5"
+    with h5py.File(mosa_path, "w") as f:
+        for name in ("chi/Center of mass", "chi/FWHM", "mu/Center of mass", "mu/FWHM"):
+            f.create_dataset(name, data=np.zeros((4, 8, 16), dtype="float64"))
+    strain_path = tmp_path / "stacked_strain_volumes.h5"
+    with h5py.File(strain_path, "w") as f:
+        f.create_dataset("strain", data=np.zeros((4, 8, 16), dtype="float64"))
+
+    est = estimate({"mosa_volume_file": str(mosa_path), "strain_volume_file": str(strain_path)})
+    assert est.peak_bytes > 0, "fixture did not reach the priced return"
+    assert est.confidence == "measured"
+
+
+def test_paraview_estimator_is_not_marked(tmp_path):
+    from dfxm.stages.paraview import estimate
+
+    mosa_path = tmp_path / "stacked_volumes.h5"
+    with h5py.File(mosa_path, "w") as f:
+        for name in ("chi/Center of mass", "chi/FWHM", "mu/Center of mass", "mu/FWHM"):
+            f.create_dataset(name, data=np.zeros((4, 8, 16), dtype="float64"))
+    strain_path = tmp_path / "stacked_strain_volumes.h5"
+    with h5py.File(strain_path, "w") as f:
+        f.create_dataset("strain", data=np.zeros((4, 8, 16), dtype="float64"))
+
+    est = estimate({"mosa_volume_file": str(mosa_path), "strain_volume_file": str(strain_path)})
+    assert est.peak_bytes > 0, "fixture did not reach the priced return"
+    assert est.confidence == "measured"
+
+
+def test_slices_estimator_is_not_marked(tmp_path):
+    from dfxm.stages.slices import estimate
+
+    path = tmp_path / "mosa.h5"
+    with h5py.File(path, "w") as f:
+        f.create_dataset("chi/Center of mass", data=np.zeros((4, 8, 16), dtype="float32"))
+    params = {"mosa_volume_file": str(path), **_SLICES_ALL_TOGGLES_OFF}
+    params["include_mosa_com_chi"] = True
+    est = estimate(params)
+    assert est.peak_bytes > 0, "fixture did not reach the priced return"
+    assert est.confidence == "measured"
+
+
 def test_alignment_estimators_read_motors_but_never_voxels(tmp_path, monkeypatch):
     """The cheapness contract, as widened by the aligned-extent correction.
 

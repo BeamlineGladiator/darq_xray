@@ -465,6 +465,7 @@ def estimate(params: dict) -> CostEstimate:
         (n_layers, *layer_shape),
         True,
         f"{present} datasets stacked together",
+        confidence="conservative",
     )
 
 

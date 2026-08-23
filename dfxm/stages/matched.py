@@ -452,6 +452,7 @@ def estimate(params: dict) -> CostEstimate:
         True,
         None,
         (rows, "detector rows"),
+        confidence="conservative",
     )
 
 

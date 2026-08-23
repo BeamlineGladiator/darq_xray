@@ -737,7 +737,7 @@ def estimate(params: dict) -> CostEstimate:
         scan_elems * (itemsize + 4) + 2 * n * layer_elems * 4,
         20 * n * layer_elems,
     )
-    return CostEstimate(peak, total, (n, *scan_shape), True, None)
+    return CostEstimate(peak, total, (n, *scan_shape), True, None, confidence="conservative")
 
 
 def _render(

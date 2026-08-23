@@ -428,7 +428,9 @@ def estimate(params: dict) -> CostEstimate:
     n_layers = len(work)
     input_bytes = n_layers * layer_elems * itemsize
     peak_bytes = 2 * n_layers * layer_elems * 8
-    return CostEstimate(peak_bytes, input_bytes, (n_layers, *layer_shape), True, None)
+    return CostEstimate(
+        peak_bytes, input_bytes, (n_layers, *layer_shape), True, None, confidence="conservative"
+    )
 
 
 # -----------------------------------------------------------------------------
