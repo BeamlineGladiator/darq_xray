@@ -119,7 +119,7 @@ def test_request_debounces_and_emits_once():
         adv.request()
     _drain(5.0)
     assert len(seen) == 1
-    assert "runs in memory" in seen[0].headline
+    assert "expected to run in memory" in seen[0].headline
 
 
 def test_request_collapses_requests_made_while_a_worker_is_in_flight():
@@ -204,3 +204,28 @@ def test_once_probed_the_cached_profile_carries_gl(monkeypatch):
     assert A.gl_ready() is True
     A.clear_profile_cache()
     assert A.cached_profile(os.getcwd()).gl is not None
+
+
+def test_probe_gl_async_uses_the_bounded_timeout_not_probe_gls_120s_default(monkeypatch):
+    """M9: `_GlProbeWorker` is pinned via `keep_alive` and joined with no
+    timeout of its own by `MainWindow.closeEvent`'s `wait_for_workers()`, so a
+    hanging driver would otherwise make closing the window look frozen for up
+    to `machine.probe_gl`'s full 120 s default."""
+    from dfxm.common.machine import GLInfo
+
+    seen_kwargs: dict = {}
+
+    def _fake_probe_gl(**kw):
+        seen_kwargs.update(kw)
+        return GLInfo("llvmpipe", "Mesa", "4.5", 2048, True), "ok"
+
+    monkeypatch.setattr(A.machine, "probe_gl", _fake_probe_gl)
+    A.clear_profile_cache()
+    A._set_gl_ready(False)
+    A.probe_gl_async()
+    _drain(10.0)
+    # Precondition: the constant this worker is expected to pass really is
+    # shorter than probe_gl's own default, or the assertion below would be
+    # trivially satisfied by any timeout at all.
+    assert A.GL_PROBE_TIMEOUT_S < 120.0
+    assert seen_kwargs.get("timeout") == A.GL_PROBE_TIMEOUT_S

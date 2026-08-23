@@ -20,6 +20,17 @@ from .widgets.busy import keep_alive
 # surfaces plus a 5 s timer cost one probe rather than five.
 _PROFILE_TTL_S = 5.0
 
+# `machine.probe_gl`'s own default (120 s) exists so a slow-but-alive probe on
+# unusual hardware still finishes; that is too long to sit on a GUI teardown
+# or shutdown path. `_GlProbeWorker` is pinned via `keep_alive` and joined (no
+# timeout) by `MainWindow.closeEvent`'s `wait_for_workers()`, so a hanging
+# driver would otherwise make closing the window look frozen for up to two
+# minutes. 15 s is generous for a real probe (context creation + one child
+# process spawn) while keeping that worst case bounded to something a user
+# will wait out rather than force-kill. `SystemCheckDialog._measure` reuses
+# the same figure for the same reason on its own (modal) probe.
+GL_PROBE_TIMEOUT_S = 15.0
+
 _cache: dict[str, tuple[float, machine.MachineProfile]] = {}
 
 
@@ -66,7 +77,7 @@ class _GlProbeWorker(QThread):
 
     def run(self) -> None:  # worker thread
         try:
-            _info, status = machine.probe_gl()
+            _info, status = machine.probe_gl(timeout=GL_PROBE_TIMEOUT_S)
         except Exception:  # noqa: BLE001 — a dead probe is a result, not a crash
             status = "crashed"
         self.finished_ok.emit(status == "ok")

@@ -1268,6 +1268,15 @@ def main() -> int:
     # Advisory (strain has a wired estimator; earlier steps already gave its
     # form real path values).
     strain_view42 = win._views["strain"]
+    # Reset the advisor's state before requesting: step [4] already ran
+    # sview._on_run() on this SAME view object (strain), which calls
+    # compute_blocking() and _show_advisory() synchronously, so
+    # _advisor.latest and _advice_label are already populated from THAT call.
+    # Without this reset the wait loop below exits on iteration zero and both
+    # assertions pass without the debounce timer, the _AdvisoryWorker thread,
+    # or advisoryReady ever running.
+    strain_view42._advisor.latest = None
+    strain_view42._advice_label.setText("")
     strain_view42._advisor.request()  # force a fresh debounced request
     t0 = time.time()
     while strain_view42._advisor.latest is None and time.time() - t0 < 15:

@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (
 from dfxm.common import advice, machine
 from dfxm.common.advice import human_bytes
 
-from ..advisor import clear_profile_cache
+from ..advisor import GL_PROBE_TIMEOUT_S, clear_profile_cache
 from .busy import busy_cursor
 
 _UNKNOWN = "unknown"
@@ -78,7 +78,7 @@ class SystemCheckDialog(QDialog):
                 # redisplay the old answer. Invalidate both first.
                 machine.invalidate_gl_cache()
                 clear_profile_cache()
-            return machine.profile(probe_gl_now=True)
+            return machine.profile(probe_gl_now=True, gl_timeout=GL_PROBE_TIMEOUT_S)
 
     def _on_reprobe(self) -> None:
         self._profile = self._measure(use_cache=False)
@@ -112,7 +112,9 @@ class SystemCheckDialog(QDialog):
             (
                 "Disk",
                 f"{human_bytes(p.disk_free)} free" if p.disk_free else _UNKNOWN,
-                "The one genuine blocker: a run that must spill to scratch needs this.",
+                "Free space on the filesystem the app was launched from, not a stage's "
+                "output directory — this dialog measures no output_dir. See a stage's "
+                "own cost line for the figure that actually gates that stage's run.",
             ),
         ]
         # `gl_status` is the source of truth for whether the GL probe actually

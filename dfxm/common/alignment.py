@@ -226,6 +226,59 @@ def aligned_extent(
     return n_out, ny, nx_new
 
 
+def aligned_shape_for_params(
+    p: dict,
+    shape: tuple[int, ...],
+    *,
+    pattern_key: str,
+    roi_x_key: str = "roi_x",
+    roi_y_key: str = "roi_y",
+) -> tuple[int, int, int] | None:
+    """The aligned ``(nz, ny, nx)`` shape for *shape*, from a stage's params.
+
+    The estimator-facing wrapper around :func:`roi_shape` + :func:`aligned_extent`:
+    it resolves the ROI and the motor positions out of a stage's parameter dict
+    and returns the post-alignment array's shape.
+
+    One implementation, shared by every caller that needs the aligned extent —
+    :func:`aligned_elems_for_params` (the byte-pricing callers: ``visualize``,
+    ``paraview``, ``slices``) is a thin wrapper around this, and
+    :func:`~dfxm.common.advisory._aligned_shape_for_hint` (the 3-D texture-cap
+    hint) uses it directly, because a per-caller copy is how the seven peak
+    models drifted apart in the first place. The stages differ only in which
+    parameter names hold the ROI and the folder pattern, so those are
+    arguments.
+
+    **Never raises, and returns ``None`` rather than guessing.** An estimate is
+    advisory and reruns on every GUI form change, so a half-typed ROI, an absent
+    ``raw_root`` or a pixel size still being entered must yield "unknown", not an
+    exception and not a fabricated shape. ``None`` also correctly describes the
+    no-motor path, where the run skips both the samy shift and the
+    Z-interpolation and no aligned array is ever built.
+    """
+    try:
+        scale_x = float(p.get("pixel_size_x_um") or 0.0)
+        if scale_x <= 0:
+            return None
+        samy, samz = raster.motor_positions_for_estimate(
+            p.get("raw_root"), p.get(pattern_key), p.get("samy_path"), p.get("samz_path")
+        )
+        if len(samy) == 0 and len(samz) == 0:
+            return None
+        roi_x = _parse_roi(p.get(roi_x_key))
+        roi_y = _parse_roi(p.get(roi_y_key))
+        cropped = roi_shape(shape, roi_x, roi_y)
+        return aligned_extent(
+            cropped,
+            samy,
+            samz,
+            scale_x=scale_x,
+            samy_direction=int(p.get("samy_direction") or 1),
+        )
+    except Exception:  # noqa: BLE001 - an estimate is advisory, never fatal
+        return None
+
+
 def aligned_elems_for_params(
     p: dict,
     shape: tuple[int, ...],
@@ -236,44 +289,16 @@ def aligned_elems_for_params(
 ) -> int:
     """Element count of the aligned volume for *shape*, from a stage's params.
 
-    The estimator-facing wrapper around :func:`roi_shape` + :func:`aligned_extent`:
-    it resolves the ROI and the motor positions out of a stage's parameter dict
-    and returns ``nz * ny * nx`` of the post-alignment array.
-
-    One implementation, three callers (``visualize``, ``paraview``, ``slices``),
-    because a per-stage copy is how the seven peak models drifted apart in the
-    first place. The stages differ only in which parameter names hold the ROI
-    and the folder pattern, so those are arguments.
-
-    **Never raises, and returns 0 rather than guessing.** An estimate is
-    advisory and reruns on every GUI form change, so a half-typed ROI, an absent
-    ``raw_root`` or a pixel size still being entered must yield "unknown", not an
-    exception and not a fabricated number. Zero also correctly describes the
-    no-motor path, where the run skips both the samy shift and the
-    Z-interpolation and no aligned array is ever built.
+    ``nz * ny * nx`` of :func:`aligned_shape_for_params`'s result, or 0 when
+    that returns ``None`` (see its docstring for every case that means).
     """
-    try:
-        scale_x = float(p.get("pixel_size_x_um") or 0.0)
-        if scale_x <= 0:
-            return 0
-        samy, samz = raster.motor_positions_for_estimate(
-            p.get("raw_root"), p.get(pattern_key), p.get("samy_path"), p.get("samz_path")
-        )
-        if len(samy) == 0 and len(samz) == 0:
-            return 0
-        roi_x = _parse_roi(p.get(roi_x_key))
-        roi_y = _parse_roi(p.get(roi_y_key))
-        cropped = roi_shape(shape, roi_x, roi_y)
-        nz, ny, nx = aligned_extent(
-            cropped,
-            samy,
-            samz,
-            scale_x=scale_x,
-            samy_direction=int(p.get("samy_direction") or 1),
-        )
-        return int(nz) * int(ny) * int(nx)
-    except Exception:  # noqa: BLE001 - an estimate is advisory, never fatal
+    shape_out = aligned_shape_for_params(
+        p, shape, pattern_key=pattern_key, roi_x_key=roi_x_key, roi_y_key=roi_y_key
+    )
+    if shape_out is None:
         return 0
+    nz, ny, nx = shape_out
+    return int(nz) * int(ny) * int(nx)
 
 
 def _parse_roi(text) -> tuple[int, int] | None:

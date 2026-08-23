@@ -122,8 +122,12 @@ Each row pairs a measured value with what it means for your settings:
 - **Headroom** — the most a run will plan to use on this machine, leaving
   room for Qt and the OS. This is the number the cost line and pre-flight
   banner compare a run's estimate against.
-- **Disk** — free space on the filesystem holding your output directory. The
-  one genuine blocker: a run that must spill to scratch needs this much free.
+- **Disk** — free space on the filesystem the app was **launched from**, not
+  necessarily where your data or a stage's output lives — this dialog never
+  reads a stage's `output_dir` (it measures `os.getcwd()`). For the figure
+  that actually gates a given run, look at that stage's own cost line instead
+  (below its Run button — see "The cost line" under [[#The stage panel]]),
+  which does measure the right disk.
 - **OpenGL** — the renderer and its 3-D texture size cap. On a software
   (CPU) renderer the row says so and recommends surface mode, because volume
   mode renders **blank** past the texture cap on that hardware. When the
@@ -333,7 +337,7 @@ hover tooltip on each field and its label.
 Under the button row, a one-line advisory shows what this run is expected to
 cost **on this machine** — it recomputes shortly after you stop typing, and
 again as soon as the stage opens. It reads like `needs ~1.2 GB, 9.0 GB safely
-available — runs in memory`, or `at most ~4.1 GB (conservative estimate), 3.6
+available — expected to run in memory`, or `at most ~4.1 GB (conservative estimate), 3.6
 GB safely available — expected to stream`. `needs ~N` is a normal estimate;
 `at most ~N (conservative estimate)` means the stage's estimator has not been
 recalibrated since the last rewrite and tends to over-predict, so the real run

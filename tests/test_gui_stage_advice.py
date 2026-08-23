@@ -20,7 +20,8 @@ from tests.machine_fixtures import workstation_sw_gl  # noqa: E402
 
 
 def _advisory(
-    headline="needs ~1.0 GB, 4.0 GB safely available — runs in memory", details=("a reason",)
+    headline="needs ~1.0 GB, 4.0 GB safely available — expected to run in memory",
+    details=("a reason",),
 ):
     return Advisory(workstation_sw_gl(), None, None, headline, details)
 
@@ -33,7 +34,7 @@ def test_advice_line_starts_hidden():
 def test_advice_line_shows_headline_and_tooltips_details():
     view = StageView("strain", STAGE_SPECS["strain"], Experiment())
     view._show_advisory(_advisory())
-    assert "runs in memory" in view._advice_label.text()
+    assert "expected to run in memory" in view._advice_label.text()
     assert "a reason" in view._advice_label.toolTip()
     assert view._advice_label.isVisibleTo(view) is True
 
@@ -99,7 +100,7 @@ def test_run_shows_the_cost_in_an_info_banner(monkeypatch):
     assert started, "the run must still start"
     assert view._banner.isVisibleTo(view)
     assert view._banner.property("role") == "banner-info"
-    assert "runs in memory" in view._banner.text()
+    assert "expected to run in memory" in view._banner.text()
 
 
 def test_a_blocked_run_asks_and_starts_when_accepted(monkeypatch):

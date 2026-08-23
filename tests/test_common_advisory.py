@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 
-from dfxm.common import advice
+from dfxm.common import advice, alignment
 from dfxm.common.advisory import HINT_3D_TEXTURE, advise_stage, disk_probe_dir
 from dfxm.config.models import CostEstimate, Param, ParamType, StageSpec
 from tests.machine_fixtures import laptop_hw_gl, tiny_ram, windows_no_vtk, workstation_sw_gl
@@ -74,7 +74,7 @@ def test_in_core_headline_names_cost_and_headroom(monkeypatch):
     spec = _spec_with("tests.test_common_advisory:_cheap_estimate")
     adv = advise_stage(spec, {}, profile=workstation_sw_gl())
     assert adv.plan.strategy == "in-core"
-    assert "runs in memory" in adv.headline
+    assert "expected to run in memory" in adv.headline
     assert "1.0 GB" in adv.headline
 
 
@@ -113,6 +113,19 @@ def test_a_raising_estimator_becomes_a_headline_not_an_exception():
     adv = advise_stage(spec, {}, profile=workstation_sw_gl())
     assert adv.estimate is None and adv.plan is None
     assert "FileNotFoundError" in adv.headline
+
+
+def test_estimator_returning_a_non_cost_estimate_does_not_raise():
+    """advise_stage's never-raises contract must hold even when the estimator
+    returns something that is not a genuine CostEstimate. The earlier version
+    wrapped only the `estimator(dict(params))` call in a try/except, so
+    `estimate.peak_bytes` a few lines later raised `AttributeError` past the
+    guard -- and `StageView._on_run`'s `compute_blocking()` call (the GUI
+    thread, on the Run click) does not catch it."""
+    spec = _spec_with("tests.test_common_advisory:_returns_none")
+    adv = advise_stage(spec, {}, profile=workstation_sw_gl())
+    assert adv.estimate is None and adv.plan is None
+    assert "cannot estimate cost" in adv.headline
 
 
 def test_a_stage_without_an_estimator_says_nothing():
@@ -162,6 +175,10 @@ def _boom(params):
     raise FileNotFoundError("no such file")
 
 
+def _returns_none(params):
+    return None
+
+
 def test_an_oversized_volume_on_software_gl_gets_a_texture_hint():
     spec = _spec_with("tests.test_common_advisory:_wide_estimate")
     prof = workstation_sw_gl()
@@ -189,18 +206,92 @@ def test_no_texture_hint_when_the_volume_fits():
 def test_no_texture_hint_for_geometry_render_modes():
     """Surface/isosurface upload geometry, not one big texture."""
     spec = _spec_with("tests.test_common_advisory:_wide_estimate")
-    adv = advise_stage(spec, {"render_mode": "surface"}, profile=workstation_sw_gl())
+    prof = workstation_sw_gl()
+    # Precondition: this fixture volume really would trigger the hint on this
+    # profile in volume mode (see
+    # test_an_oversized_volume_on_software_gl_gets_a_texture_hint) — otherwise
+    # "surface" suppressing the hint below would be untested, and this
+    # assertion would pass vacuously even if the mode check were deleted.
+    assert prof.gl.max_3d_texture < max(_wide_estimate({}).shape)
+    adv = advise_stage(spec, {"render_mode": "surface"}, profile=prof)
     assert HINT_3D_TEXTURE not in adv.hints
 
 
 def test_no_texture_hint_when_gl_is_unprobed():
     spec = _spec_with("tests.test_common_advisory:_wide_estimate")
-    adv = advise_stage(spec, {"render_mode": "volume"}, profile=windows_no_vtk())
+    prof = windows_no_vtk()
+    # Precondition: this fixture's no-hint outcome really is because GL was
+    # never probed successfully (gl_status != "ok"), not because gl happens to
+    # be None for some other reason, or this test would pass vacuously.
+    assert prof.gl_status != "ok"
+    assert prof.gl is None
+    adv = advise_stage(spec, {"render_mode": "volume"}, profile=prof)
     assert adv.hints == {}
 
 
 def _wide_estimate(params):
     return CostEstimate(1 * GB, 1 * GB, (76, 1200, 2891), True)
+
+
+_RAW_SHAPE = (3, 50, 100)  # comfortably under workstation_sw_gl's 2048 px cap
+
+
+def _raw_shape_estimate(params):
+    return CostEstimate(1 * GB, 1 * GB, _RAW_SHAPE, True)
+
+
+def test_texture_hint_uses_the_aligned_shape_not_the_raw_on_disk_one(tmp_path):
+    """I2: the pre-fix `_hints` compared the GL cap against `estimate.shape` —
+    the raw on-disk shape a volume-producing stage's estimator reads straight
+    out of HDF5 — but VTK actually uploads the ALIGNED volume
+    (`apply_roi_3d -> apply_samy_shifts_to_volume -> interpolate_to_uniform_z`),
+    which the samy X-pad widens well past the raw shape. Comparing the raw
+    shape therefore stays silent in the dangerous direction: a volume that
+    will actually render blank can still read as comfortably under the cap.
+
+    Build a real raw_root with samy motors spanning enough millimetres, at
+    this fixture's pixel scale, to push the ALIGNED X extent from comfortably
+    under the cap to comfortably over it, while the RAW shape stays under it
+    throughout.
+    """
+    import h5py
+
+    raw_root = tmp_path / "raw"
+    samy_mm = [0.0, 0.15, 0.30]  # -> offsets [0, 1000, 2000] px at 0.15 um/px
+    samz_mm = [0.0, 0.01, 0.02]
+    for i, (sy, sz) in enumerate(zip(samy_mm, samz_mm)):
+        folder = raw_root / f"mosa__{i}"
+        folder.mkdir(parents=True)
+        with h5py.File(folder / f"mosa__{i}.h5", "w") as f:
+            f["1.1/instrument/positioners/samy"] = sy
+            f["1.1/instrument/positioners/samz"] = sz
+
+    params = {
+        "render_mode": "volume",
+        "raw_root": str(raw_root),
+        "mosa_pattern": "mosa__*",
+        "pixel_size_x_um": 0.15,
+        "samy_direction": 1,
+        "samy_path": "1.1/instrument/positioners/samy",
+        "samz_path": "1.1/instrument/positioners/samz",
+    }
+    prof = workstation_sw_gl()
+
+    # Preconditions pinning the fixture in the region this test claims to
+    # cover: the RAW shape must genuinely read as fitting the cap (else the
+    # pre-fix bug would already have warned, and this test would not
+    # distinguish the fix from the bug it replaces), and the widened ALIGNED
+    # shape resolved by the same machinery `_hints` now uses must genuinely
+    # exceed it.
+    assert max(_RAW_SHAPE) + 1 <= prof.gl.max_3d_texture
+    aligned = alignment.aligned_shape_for_params(params, _RAW_SHAPE, pattern_key="mosa_pattern")
+    assert aligned is not None
+    assert max(aligned) + 1 > prof.gl.max_3d_texture
+
+    spec = _spec_with("tests.test_common_advisory:_raw_shape_estimate")
+    adv = advise_stage(spec, params, profile=prof)
+    assert HINT_3D_TEXTURE in adv.hints
+    assert str(prof.gl.max_3d_texture) in adv.hints[HINT_3D_TEXTURE]
 
 
 def test_advise_stage_never_raises_when_hint_computation_blows_up(monkeypatch):

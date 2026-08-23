@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from dfxm.common.advisory import HINT_3D_TEXTURE
 from dfxm.common.eta import EtaEstimator
 from dfxm.common.figures import FigureSpec, figures_for
 from dfxm.config.models import Experiment, StageSpec
@@ -291,7 +292,7 @@ class StageView(QWidget):
         self._help.show_idle()  # every stage opens on its description
         self._advisor.request()
         # A stage with a 3-D setting is the only reason to pay for a GL probe.
-        if any(p.advice_key == "3d_texture" for p in self._spec.params):
+        if any(p.advice_key == HINT_3D_TEXTURE for p in self._spec.params):
             probe_gl_async()
 
     # -- experiment wiring ------------------------------------------------
@@ -437,7 +438,10 @@ class StageView(QWidget):
         # Pre-flight: what will this cost, and can the disk take it? Computed
         # fresh on the click (cheap, and never stale). Advisory only — it never
         # changes what the stage does, and only the disk question can stop it.
-        advisory = self._advisor.compute_blocking()
+        # This estimator call runs synchronously on the GUI thread (unlike the
+        # debounced `StageAdvisor.request()` path), so it gets a wait cursor.
+        with busy_cursor():
+            advisory = self._advisor.compute_blocking()
         if advisory.blocked and not self._confirm_blocked(advisory.blocked):
             return
         self._show_advisory(advisory)
