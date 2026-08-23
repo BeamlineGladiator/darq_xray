@@ -275,14 +275,20 @@ the only caller.
 #### `advice.py` (new)
 Machine-aware policy: pure functions over a `MachineProfile` and a
 `CostEstimate` deciding what a run should actually do, with no Qt and no IO of
-its own. `RunPlan` / `Advice` are the frozen result dataclasses. **Wiring status
-(as of this task):** `plan_run` now has one production caller,
-`advisory.advise_stage` — but that caller is itself not yet wired into `gui/`,
-so `RunPlan.blocked` still has no GUI-facing consumer. The estimators and the
+its own. `RunPlan` / `Advice` are the frozen result dataclasses. **Wiring
+status:** `plan_run` has one production caller, `advisory.advise_stage`, which
+is itself wired into `gui/` via `gui/advisor.py`'s `StageAdvisor` — both the
+live cost line and the pre-flight banner on `StageView` (cost-advisory Tasks
+5–6) render an `Advisory` built this way, so `RunPlan.blocked` now has a
+GUI-facing consumer: it drives `StageView`'s blocked confirmation before a run
+launches (`_confirm_blocked`, see `stage_view.py` below). The status-bar
+readout and the System check dialog (Task 10) are separate surfaces that read
+a `MachineProfile` directly and compute their own strings via `advice.py`
+rather than going through `advise_stage`/`Advisory` — they show what the
+machine *is*, not what a specific run will cost. The estimators and the
 policy are exercised by the test suite, by the stages' own budget derivation,
-and by `advisory.py`'s composition; surfacing a cost estimate (or a block) to
-the user in the GUI is not built. Say so rather than describing the intended
-end state: the docs asserted a user-visible estimate that a user cannot observe.
+and by `advisory.py`'s composition, which is the sole source of what the cost
+line and pre-flight banner display — neither computes policy of its own.
 `human_bytes(nbytes) -> str` formats a byte count as `"1.2 GB"`-style text
 (promoted from the private `_human` so `advisory.py` can reuse it — every call
 site in this module was updated to the new name in the same change). `headroom_bytes`

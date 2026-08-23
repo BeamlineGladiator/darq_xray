@@ -65,9 +65,11 @@ def _drain(timeout_s=10.0):
 def _clean_advisor_state():
     A.clear_profile_cache()
     A._set_gl_ready(False)
+    A._gl_worker = None
     yield
     A.clear_profile_cache()
     A._set_gl_ready(False)
+    A._gl_worker = None
 
 
 def test_profile_is_cached_within_the_ttl(monkeypatch):

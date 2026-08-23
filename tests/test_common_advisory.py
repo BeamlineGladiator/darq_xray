@@ -175,7 +175,14 @@ def test_an_oversized_volume_on_software_gl_gets_a_texture_hint():
 
 def test_no_texture_hint_when_the_volume_fits():
     spec = _spec_with("tests.test_common_advisory:_wide_estimate")
-    adv = advise_stage(spec, {"render_mode": "volume"}, profile=laptop_hw_gl())
+    prof = laptop_hw_gl()
+    # Precondition: GL really was probed (not merely unprobed, which would also
+    # produce no hint, but for the wrong reason) and its cap genuinely exceeds
+    # the fixture volume's longest axis, or a no-hint assertion below would
+    # pass vacuously even if the fixture were ever changed to gl=None.
+    assert prof.gl is not None
+    assert prof.gl.max_3d_texture > max(_wide_estimate({}).shape)
+    adv = advise_stage(spec, {"render_mode": "volume"}, profile=prof)
     assert HINT_3D_TEXTURE not in adv.hints
 
 
@@ -194,3 +201,17 @@ def test_no_texture_hint_when_gl_is_unprobed():
 
 def _wide_estimate(params):
     return CostEstimate(1 * GB, 1 * GB, (76, 1200, 2891), True)
+
+
+def test_advise_stage_never_raises_when_hint_computation_blows_up(monkeypatch):
+    """advise_stage's never-raises contract must hold even when the hint
+    computation itself blows up (a real estimate/plan must still come back)."""
+
+    def _boom_advise_3d(*a, **k):
+        raise RuntimeError("GL query exploded")
+
+    monkeypatch.setattr(advice, "advise_3d", _boom_advise_3d)
+    spec = _spec_with("tests.test_common_advisory:_wide_estimate")
+    adv = advise_stage(spec, {"render_mode": "volume"}, profile=workstation_sw_gl())
+    assert adv.estimate is not None and adv.plan is not None
+    assert adv.hints == {}

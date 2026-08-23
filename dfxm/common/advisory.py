@@ -112,14 +112,24 @@ def _hints(profile: MachineProfile, estimate: CostEstimate, params: dict) -> dic
     The texture ceiling is not cosmetic: volume mode uploads the grid as ONE
     3-D texture, and past `GL_MAX_3D_TEXTURE_SIZE` VTK renders nothing at all —
     a silently blank product rather than an error.
+
+    Wrapped in its own try/except (rather than relying on `advise_stage`'s
+    outer one, which only covers the estimator call) because this function is
+    handed `params["render_mode"]` straight from the user-facing form: the
+    enum constrains it in production, but `advise_stage`'s never-raises
+    contract is absolute and this guard is cheap. Any failure here degrades to
+    "no hint" rather than taking the caller's window down.
     """
-    mode = str(params.get("render_mode") or "")
-    if not mode or profile.gl_status != "ok" or profile.gl is None or estimate.shape is None:
+    try:
+        mode = str(params.get("render_mode") or "")
+        if not mode or profile.gl_status != "ok" or profile.gl is None or estimate.shape is None:
+            return {}
+        result = advice.advise_3d(profile, estimate.shape, mode)
+        if not result.reasons:
+            return {}
+        return {HINT_3D_TEXTURE: " ".join(result.reasons)}
+    except Exception:  # noqa: BLE001 — advise_stage must never raise
         return {}
-    result = advice.advise_3d(profile, estimate.shape, mode)
-    if not result.reasons:
-        return {}
-    return {HINT_3D_TEXTURE: " ".join(result.reasons)}
 
 
 def advise_stage(
