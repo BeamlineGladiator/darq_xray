@@ -188,7 +188,7 @@ class MainWindow(QMainWindow):
             parts.append(f"{human_bytes(prof.disk_free)} free")
         if prof.ram_total:
             parts.append(f"{human_bytes(prof.ram_available)}/{human_bytes(prof.ram_total)} RAM")
-        if prof.gl is not None:
+        if prof.gl_status == "ok" and prof.gl is not None:
             parts.append("software GL" if prof.gl.software else "hardware GL")
         self._machine_label.setText(" · ".join(parts))
 

@@ -71,7 +71,12 @@ class SystemCheckDialog(QDialog):
         """Measure this machine, GL included. The one place that pays for it."""
         with busy_cursor("Probing this machine…"):
             if not use_cache:
-                machine.probe_gl(use_cache=False)
+                # A lone `probe_gl(use_cache=False)` call is not enough here:
+                # its fresh result is never written back, so the very next
+                # `probe_gl(use_cache=True)` call below (the one `profile`
+                # makes) would just hit the still-stale memo/disk cache and
+                # redisplay the old answer. Invalidate both first.
+                machine.invalidate_gl_cache()
                 clear_profile_cache()
             return machine.profile(probe_gl_now=True)
 

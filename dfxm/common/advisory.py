@@ -114,7 +114,7 @@ def _hints(profile: MachineProfile, estimate: CostEstimate, params: dict) -> dic
     a silently blank product rather than an error.
     """
     mode = str(params.get("render_mode") or "")
-    if not mode or profile.gl is None or estimate.shape is None:
+    if not mode or profile.gl_status != "ok" or profile.gl is None or estimate.shape is None:
         return {}
     result = advice.advise_3d(profile, estimate.shape, mode)
     if not result.reasons:

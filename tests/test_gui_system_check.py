@@ -12,6 +12,7 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 
 _app = QApplication.instance() or QApplication([])
 
+from dfxm.common import machine  # noqa: E402
 from gui.widgets.system_check import SystemCheckDialog  # noqa: E402
 from tests.machine_fixtures import tiny_ram, windows_no_vtk, workstation_sw_gl  # noqa: E402
 
@@ -56,3 +57,46 @@ def test_as_text_is_copyable_plain_text():
     dlg = SystemCheckDialog(profile=workstation_sw_gl())
     text = dlg.as_text()
     assert "CPU" in text and "<" not in text
+
+
+def test_reprobe_reaches_a_fresh_child_not_the_cached_result(monkeypatch, tmp_path):
+    """Re-probe must reach a fresh child, not redisplay whatever the
+    in-process memo (or the on-disk cache) already holds — that memo can be
+    populated by something entirely unrelated to this dialog (a prior
+    System check open, the one-shot background probe, another test in the
+    same process), so simulate exactly that: seed it with a stale answer,
+    then confirm Re-probe overwrites it rather than returning it.
+    """
+    monkeypatch.setattr(machine, "gl_cache_path", lambda: str(tmp_path / "gl_probe.json"))
+    monkeypatch.setattr(
+        machine,
+        "_GL_MEMO",
+        {
+            "result": {
+                "status": "ok",
+                "renderer": "stale-cached",
+                "vendor": "Mesa",
+                "version": "4.5",
+                "max_3d_texture": 2048,
+            }
+        },
+    )
+    calls = []
+
+    def fake_child(timeout):
+        calls.append(timeout)
+        return {
+            "status": "ok",
+            "renderer": "fresh-probe",
+            "vendor": "Mesa",
+            "version": "4.6",
+            "max_3d_texture": 4096,
+        }
+
+    monkeypatch.setattr(machine, "_run_gl_child", fake_child)
+
+    dlg = SystemCheckDialog(profile=workstation_sw_gl())
+    dlg._on_reprobe()
+    gl_row = next(r for r in dlg.rows() if r[0] == "OpenGL")
+    assert "fresh-probe" in gl_row[1]
+    assert calls, "Re-probe must reach the child probe, not the stale memo"
