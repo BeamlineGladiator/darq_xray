@@ -95,6 +95,15 @@ you set stays put next time you open the app. Drag the divider between the
 parameter form and the Log/Results/Output panel to rebalance them; the new width
 applies to every stage and is remembered.
 
+**The status bar** always shows a compact read of this machine — logical CPU
+cores, free disk, and total/available RAM — refreshed every few seconds, e.g.
+`36 cores · 2000.0 GB free · 460.0 GB/502.0 GB RAM`. It only ever shows what has
+already been measured: an unmeasured field (a failed probe, or on a machine
+where a value could not be read) is left out rather than shown as `0.0 B`,
+which would misleadingly read as a full disk. The GL renderer (`software GL` /
+`hardware GL`) appears only once something else has already probed it — this
+readout itself never triggers a GL probe, since that costs a child process.
+
 ### Experiment presets
 
 An **experiment** captures everything shared across stages: data roots, folder
