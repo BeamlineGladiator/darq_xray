@@ -102,15 +102,27 @@ def _headline(estimate: CostEstimate, plan: RunPlan, conservative: bool) -> str:
 
 
 def _details(plan: RunPlan, conservative: bool) -> tuple[str, ...]:
-    """`plan.reasons`, with the chunk-count sentence replaced.
+    """`plan.reasons`, with the chunk-count sentence replaced and the
+    headline-duplicating in-core sentence dropped.
 
-    NOT `plan.reasons` verbatim: `plan_run` writes the group count into its own
-    reasons, and that number is display-only — it is not the blocking a stage
-    picks. Pinned by `advice.CHUNK_REASON_PREFIX` so a reworded reason fails a
-    test rather than leaking the count.
+    NOT `plan.reasons` verbatim, for two reasons:
+
+    * `plan_run` writes the group count into its own reasons, and that number is
+      display-only — it is not the blocking a stage picks. Pinned by
+      `advice.CHUNK_REASON_PREFIX` so a reworded reason fails a test rather than
+      leaking the count.
+    * An in-core plan's headroom reason states the same three facts as
+      `_headline` (peak, budget, strategy), and every surface renders the two
+      together — `StageView._on_run` stacks them in the pre-flight banner, and
+      the cost line puts the details in the tooltip under that same headline.
+      Rendered as-is it said the same thing twice. Dropped by
+      `advice.INCORE_REASON_SUFFIX`; see that constant for why it is keyed on
+      the sentence rather than on `plan.strategy`.
     """
     out = [
-        _CHUNK_REPLACEMENT if r.startswith(advice.CHUNK_REASON_PREFIX) else r for r in plan.reasons
+        _CHUNK_REPLACEMENT if r.startswith(advice.CHUNK_REASON_PREFIX) else r
+        for r in plan.reasons
+        if not r.endswith(advice.INCORE_REASON_SUFFIX)
     ]
     if conservative:
         out.append(_CONSERVATIVE_NOTE)

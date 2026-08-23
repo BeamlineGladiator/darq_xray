@@ -347,13 +347,17 @@ resource with its own free-space check. `needs ~N` is a normal estimate;
 `at most ~N (conservative estimate)` means the stage's estimator has not been
 recalibrated since the last rewrite and tends to over-predict, so the real run
 may be lighter. Hover the line for the reasoning behind it (why that strategy,
-what would change it). The line is purely informative — it never changes what
-the run does, and it disappears for stages with nothing to estimate yet (e.g.
-`concat`, `profiles`, or a form that is not filled in enough to size the run).
+what would change it) — a run that simply fits in memory has nothing to add
+beyond the line itself, so there is no tooltip in that case. The line is purely
+informative — it never changes what the run does, and it disappears for stages
+with nothing to estimate yet (e.g. `concat`, `profiles`, or a form that is not
+filled in enough to size the run).
 
 Clicking **Run** repeats this cost line as a blue-grey banner above the tabs,
-so it stays visible once the form scrolls out of the way. This banner is
-informative only, same as the cost line — it never stops a run.
+so it stays visible once the form scrolls out of the way. Any extra reasoning
+(streaming, scratch disk, a conservative estimate) is listed under it; a run
+that fits in memory shows the one line only, not a restatement of it. This
+banner is informative only, same as the cost line — it never stops a run.
 
 **The one thing that can stop a run: not enough scratch disk.** If the run
 would need to stream to a scratch folder and this machine does not have room

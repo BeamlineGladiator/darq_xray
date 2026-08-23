@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 
-from dfxm.common import advice, alignment
+from dfxm.common import advice, advisory, alignment
 from dfxm.common.advisory import HINT_3D_TEXTURE, advise_stage, disk_probe_dir
 from dfxm.config.models import CostEstimate, Param, ParamType, StageSpec
 from tests.machine_fixtures import laptop_hw_gl, tiny_ram, windows_no_vtk, workstation_sw_gl
@@ -76,6 +76,35 @@ def test_in_core_headline_names_cost_and_headroom(monkeypatch):
     assert adv.plan.strategy == "in-core"
     assert "expected to run in memory" in adv.headline
     assert "1.0 GB" in adv.headline
+
+
+def test_the_in_core_detail_does_not_restate_the_headline():
+    """An in-core run's only `plan.reason` says what the headline already says.
+
+    `StageView._on_run` stacks the headline over the details, so the pre-flight
+    banner printed the same sentence twice — caught on the first real STO2 run
+    (`needs ~10.5 GB RAM, 251.2 GB safely available — expected to run in
+    memory` / `needs 10.5 GB RAM, 251.2 GB available — running in memory`).
+    Every fixture until then carried extra reasons that hid the repeat.
+    """
+    spec = _spec_with("tests.test_common_advisory:_cheap_estimate")
+    adv = advise_stage(spec, {}, profile=workstation_sw_gl())
+    assert adv.plan.strategy == "in-core"  # precondition
+    assert adv.conservative is False  # precondition: no extra note to keep
+    # precondition: the duplicate really is what `plan_run` emits upstream.
+    assert any(r.endswith(advice.INCORE_REASON_SUFFIX) for r in adv.plan.reasons)
+    assert adv.details == ()
+
+
+def test_a_conservative_in_core_run_still_keeps_its_note():
+    """Dropping the in-core reason must not take the conservative note with it.
+
+    Same branch of `_details`; only the duplicated headroom sentence goes.
+    """
+    spec = _spec_with("tests.test_common_advisory:_conservative_estimate")
+    adv = advise_stage(spec, {}, profile=workstation_sw_gl())
+    assert adv.plan.strategy == "in-core"  # precondition
+    assert adv.details == (advisory._CONSERVATIVE_NOTE,)
 
 
 def test_the_headline_says_its_figures_are_ram():

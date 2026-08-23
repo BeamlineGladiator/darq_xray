@@ -225,6 +225,15 @@ def working_set_budget_bytes(profile, *, rss_floor_bytes: int) -> int:
 # the filter and reaching the user.
 CHUNK_REASON_PREFIX = "chunking into groups of"
 
+# The in-core reason restates the advisory headline word for word in substance
+# — same peak, same budget, same strategy — so `advisory._details` drops it and
+# the pre-flight banner prints the sentence once. Keyed on this constant rather
+# than on `strategy == "in-core"` so that a *second*, genuinely new in-core
+# reason would still reach the user, and a reword here fails
+# `test_the_in_core_detail_does_not_restate_the_headline` rather than silently
+# reintroducing the duplicate.
+INCORE_REASON_SUFFIX = " — running in memory"
+
 
 def plan_run(profile, estimate, *, allow_downsample: bool = False, scratch_dir=None) -> RunPlan:
     """Decide the execution strategy for *estimate* on *profile*."""
@@ -234,7 +243,7 @@ def plan_run(profile, estimate, *, allow_downsample: bool = False, scratch_dir=N
     if estimate.peak_bytes <= budget:
         reasons.append(
             f"needs {human_bytes(estimate.peak_bytes)} RAM, {human_bytes(budget)} available"
-            " — running in memory"
+            f"{INCORE_REASON_SUFFIX}"
         )
         return RunPlan("in-core", budget, 0, 1, None, tuple(reasons), None)
 
