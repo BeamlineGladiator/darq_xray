@@ -35,6 +35,7 @@ from dfxm.config.models import Experiment, StageSpec
 from dfxm.runner import Done, Failed, Log, Progress, StageRunner
 from dfxm.stages.registry import STAGE_TARGETS
 
+from .advisor import StageAdvisor
 from .bindings import experiment_overrides
 from .form_state import FormStateStore
 from .viewers import append_line_job, inject_line_into_jobs, volume_sources
@@ -174,6 +175,19 @@ class StageView(QWidget):
             self._roi_buttons[_grp] = _btn
         btn_row.addStretch(1)
 
+        # Live cost line: what this run is expected to cost on this machine.
+        # Advisory only — it never changes what the stage does.
+        self._advice_label = QLabel("")
+        self._advice_label.setWordWrap(True)
+        self._advice_label.setProperty("role", "muted")
+        self._advice_label.setVisible(False)
+        self._advisor = StageAdvisor(spec, self._form.values, parent=self)
+        self._advisor.advisoryReady.connect(self._show_advisory)
+        # Connected unconditionally: the save-on-edit hookup above is gated on a
+        # store (absent in unit tests), and the cost line must follow the form
+        # either way.
+        self._form.changed.connect(self._advisor.request)
+
         # ROI fields: mark any value that deviates from the experiment-derived one
         self._roi_param_names = tuple(p.name for p in spec.params if p.roi_group or p.roi_frame)
         if self._roi_param_names:
@@ -203,6 +217,7 @@ class StageView(QWidget):
         left_layout = QVBoxLayout(left)
         left_layout.addWidget(self._form)
         left_layout.addLayout(btn_row)
+        left_layout.addWidget(self._advice_label)
         left_layout.addLayout(progress_row)
         left_layout.addWidget(self._help)
         left_layout.addStretch(1)
@@ -274,6 +289,7 @@ class StageView(QWidget):
     def showEvent(self, event) -> None:  # Qt hook
         super().showEvent(event)
         self._help.show_idle()  # every stage opens on its description
+        self._advisor.request()
 
     # -- experiment wiring ------------------------------------------------
     def _initial_values(self) -> dict:
@@ -363,6 +379,13 @@ class StageView(QWidget):
 
     def _hide_banner(self) -> None:
         self._banner.setVisible(False)
+
+    def _show_advisory(self, advisory) -> None:
+        """Render the live cost line. Empty headline -> hidden, never stale."""
+        text = advisory.headline if advisory is not None else ""
+        self._advice_label.setText(text)
+        self._advice_label.setToolTip("\n".join(advisory.details) if advisory else "")
+        self._advice_label.setVisible(bool(text))
 
     def _validate_inputs(self, params: dict) -> tuple[str, str] | None:
         """First (param_name, message) whose must_exist path is set but absent.

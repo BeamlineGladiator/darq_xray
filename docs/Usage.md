@@ -283,6 +283,20 @@ a field and it shows that field's help; click away (or open another stage) and i
 returns to the stage description. The same per-field help is also available as a
 hover tooltip on each field and its label.
 
+#### The cost line
+
+Under the button row, a one-line advisory shows what this run is expected to
+cost **on this machine** — it recomputes shortly after you stop typing, and
+again as soon as the stage opens. It reads like `needs ~1.2 GB, 9.0 GB safely
+available — runs in memory`, or `at most ~4.1 GB (conservative estimate), 3.6
+GB safely available — expected to stream`. `needs ~N` is a normal estimate;
+`at most ~N (conservative estimate)` means the stage's estimator has not been
+recalibrated since the last rewrite and tends to over-predict, so the real run
+may be lighter. Hover the line for the reasoning behind it (why that strategy,
+what would change it). The line is purely informative — it never changes what
+the run does, and it disappears for stages with nothing to estimate yet (e.g.
+`concat`, `profiles`, or a form that is not filled in enough to size the run).
+
 #### Picking an ROI interactively
 
 The **strain**, **visualize**, **paraview**, and **slices** stages show a
