@@ -47,6 +47,10 @@ class Param:
     ``advanced`` params collapse into the form's Advanced expander under
     their ``group`` header; ``must_exist`` marks input paths the GUI
     verifies on disk before launching a run (never set it on outputs).
+    ``advice_key`` names the advisory this parameter can carry: when
+    ``Advisory.hints`` has that key, the form renders its text as a note under
+    the field. Declaring it here rather than in the GUI keeps the form
+    schema-driven.
     """
 
     name: str
@@ -63,6 +67,7 @@ class Param:
     roi_group: str = ""  # params sharing a roi_group are one ROI-picker target
     roi_axis: str = ""  # "" | "x" | "y" | "both" ("both" = one 4-int "r0,r1,c0,c1" field)
     roi_frame: str = ""  # "" | "detector" | "map" — the coordinate frame of a ROI param
+    advice_key: str = ""  # key into Advisory.hints -> a note under this field
 
     def __post_init__(self) -> None:
         if self.type is ParamType.ENUM and not self.choices:
