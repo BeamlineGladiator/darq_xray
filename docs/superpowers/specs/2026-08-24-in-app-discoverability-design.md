@@ -1,7 +1,11 @@
 # In-app discoverability pass — design
 
 Date: 2026-08-24
-Status: approved in brainstorming; awaiting user review before planning
+Status: IMPLEMENTED — merged 2026-08-24 as master `32e529e` (rollback
+`git reset --hard 0cc61f4`). Two premises in this document were falsified
+during implementation and are corrected in place at §1 and §2.2: the
+group-level anchor was dropped (`311829d`), and `matched.colormap` proved
+unreachable as a fallback, resolved by a headless guard (`cd46f62`).
 Baseline: master `7dc3c91`
 
 ## Problem
