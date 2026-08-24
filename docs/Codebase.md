@@ -130,9 +130,14 @@ to build forms.
 `see_also`, both valid anchor kinds, every bad anchor reported (not just the
 first), and all three construction-time rejections.
 `tests/test_gui_see_also_render.py` covers the GUI side (offscreen Qt): the two
-anchor kinds rendering in the right places and always visible, `role="hint"` (not
-`"warning"`), the editor staying unwrapped, an unknown param anchor rendering
-nothing instead of crashing, and the help panel's idle/per-param pointer lines.
+anchor kinds rendering in the right places and always visible — **placement is
+asserted, not just existence** (the stage row is index 0 of the form's outer
+layout; the param row is exactly one `QFormLayout` row past that param's editor,
+via `getWidgetPosition`) — `role="hint"` (not `"warning"`), the editor staying
+unwrapped, an unknown param anchor rendering nothing instead of crashing, the
+help panel's idle/per-param pointer lines, `html.escape` on both pointer sites,
+and one end-to-end test building a real `StageView` over a `dataclasses.replace`d
+spec so the three wiring lines in `stage_view.py` are covered too.
 
 #### `presets.py`
 
