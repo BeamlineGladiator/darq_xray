@@ -1371,6 +1371,20 @@ strain and misorientation line up.
 > **Jobs from marks…** turns them into jobs in one guided pass — see
 > [[#Jobs from marks… (profiles)]].
 
+#### The jobs summary row
+
+`jobs_json` is not shown as a wall of raw JSON. The form renders it as one
+quiet summary line naming each job and its plane offset —
+`2 jobs: oblique_full @ +0 µm, ridge @ +12.5 µm` — with an **Edit raw JSON…**
+button beside it that opens the full text in a dialog (**OK** applies the
+edit, **Cancel** leaves the field untouched). An empty list reads `no jobs`,
+and text that is not valid JSON reads `unreadable JSON — open the editor to
+fix it` rather than silently looking fine.
+
+**Pick line…** and **Jobs from marks…** write into exactly the same field, so
+the summary updates the moment they finish; the raw JSON they produced is
+still what the run receives, and is still one click away.
+
 #### Jobs JSON: per-job `fields` and `reference`
 
 Each job in `jobs_json` may carry two optional keys that override the global

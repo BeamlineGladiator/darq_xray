@@ -1332,6 +1332,29 @@ def main() -> int:
     assert "turbo" not in sview44._results.toPlainText(), "[44] leaked its fake style"
     print("[44] style stamp: finished run records the style it used")
 
+    # [45] Jobs summary editor: the profiles job list renders as a one-line
+    # summary instead of raw JSON, and the summary tracks whatever is written
+    # into the field — which is exactly what the two picker call sites do.
+    # _on_edit is deliberately NOT called: it opens a modal dialog.
+    from gui.widgets.jobs_summary import JobsSummaryEditor as _JSE45
+
+    pview45 = win._views["profiles"]
+    ed45 = pview45._form._editors["jobs_json"]
+    assert isinstance(ed45, _JSE45), f"jobs_json editor is {type(ed45).__name__}"
+    _stashed45 = pview45._form.values()["jobs_json"]
+    try:
+        _raw45 = (
+            '[{"name": "oblique_full", "offset_um": 0.0}, {"name": "ridge", "offset_um": 12.5}]'
+        )
+        pview45._form.set_values({"jobs_json": _raw45})
+        _sum45 = ed45._summary.text()
+        assert "2 jobs" in _sum45 and "oblique_full" in _sum45 and "ridge" in _sum45, _sum45
+        assert pview45._form.values()["jobs_json"] == _raw45, "form did not return the raw JSON"
+    finally:
+        pview45._form.set_values({"jobs_json": _stashed45})
+    assert pview45._form.values()["jobs_json"] == _stashed45, "[45] leaked its job list"
+    print("[45] jobs summary editor: summary tracks the raw JSON")
+
     print("\nGUI SMOKE PASSED")
     return 0
 

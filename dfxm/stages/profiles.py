@@ -150,11 +150,13 @@ STAGE = StageSpec(
             ParamType.TEXT,
             "Jobs (JSON)",
             default=_DEFAULT_JOBS,
+            editor="summary_json",
             help=(
                 "JSON list of profile jobs: slice name, plane offset, line start/end in µm "
                 "('start_uv'/'end_uv'), and band width in pixels. Optional per-job 'fields' "
                 "(list of field ids to profile, in order) and 'reference' (top image) override "
-                "the global Fields/Reference. Easiest filled by 'Pick line…'."
+                "the global Fields/Reference. Easiest filled by 'Pick line…'; "
+                "'Edit raw JSON…' opens the full list."
             ),
         ),
         Param(

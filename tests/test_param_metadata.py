@@ -126,3 +126,14 @@ def test_rocking_roi_params_are_detector_frame():
 def test_advice_key_defaults_empty_and_is_settable():
     assert Param("x", ParamType.STR, "X").advice_key == ""
     assert Param("x", ParamType.STR, "X", advice_key="3d_texture").advice_key == "3d_texture"
+
+
+def test_param_editor_hint_defaults_off_and_is_settable():
+    assert Param("x", ParamType.STR, "X").editor == ""
+    assert Param("x", ParamType.TEXT, "X", editor="summary_json").editor == "summary_json"
+
+
+def test_profiles_declares_the_summary_editor_for_its_job_list():
+    from gui.bindings import STAGE_SPECS
+
+    assert STAGE_SPECS["profiles"].get("jobs_json").editor == "summary_json"

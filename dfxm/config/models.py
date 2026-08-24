@@ -51,6 +51,10 @@ class Param:
     ``Advisory.hints`` has that key, the form renders its text as a note under
     the field. Declaring it here rather than in the GUI keeps the form
     schema-driven.
+    ``editor`` names a non-default editor for a param whose normal widget is a
+    poor fit — ``"summary_json"`` renders a TEXT param holding a JSON list as a
+    one-line summary with the raw text behind a button. An unknown value falls
+    back to the type's normal editor.
     """
 
     name: str
@@ -68,6 +72,7 @@ class Param:
     roi_axis: str = ""  # "" | "x" | "y" | "both" ("both" = one 4-int "r0,r1,c0,c1" field)
     roi_frame: str = ""  # "" | "detector" | "map" — the coordinate frame of a ROI param
     advice_key: str = ""  # key into Advisory.hints -> a note under this field
+    editor: str = ""  # render hint: "" = by type; "summary_json" = summary + raw dialog
 
     def __post_init__(self) -> None:
         if self.type is ParamType.ENUM and not self.choices:

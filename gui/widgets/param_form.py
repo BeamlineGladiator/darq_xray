@@ -9,6 +9,11 @@ Maps each parameter type to an editor widget:
 * ``PATH`` / ``DIR`` / ``SAVE_PATH`` -> ``QLineEdit`` + a "Browse…" button
 * ``STR``   -> ``QLineEdit``
 
+A param may override that mapping with a ``Param.editor`` render hint:
+``"summary_json"`` renders a ``TEXT`` param as a
+:class:`~gui.widgets.jobs_summary.JobsSummaryEditor` (one-line summary + an
+"Edit raw JSON…" dialog). An unknown hint falls back to the type's editor.
+
 Calibration parameters (``param.calibration``) get a highlighted label and a
 "⚠ calibration" suffix, because their values are physically meaningful.
 """
@@ -316,6 +321,8 @@ class ParamForm(QWidget):
             return self._float_editor(p, value)
         if p.type in (ParamType.PATH, ParamType.DIR, ParamType.SAVE_PATH):
             return self._path_editor(p, value)
+        if p.type is ParamType.TEXT and p.editor == "summary_json":
+            return self._summary_json_editor(p, value)
         if p.type is ParamType.TEXT:
             return self._text_editor(p, value)
         return self._str_editor(p, value)
@@ -378,6 +385,13 @@ class ParamForm(QWidget):
             te.setPlainText(str(value))
         self._register(p.name, te.toPlainText, lambda v: te.setPlainText(str(v)), te.textChanged)
         return te
+
+    def _summary_json_editor(self, p: Param, value: Any) -> QWidget:
+        from .jobs_summary import JobsSummaryEditor
+
+        ed = JobsSummaryEditor("" if value is None else str(value), p.label)
+        self._register(p.name, ed.text, ed.setText, ed.textChanged)
+        return ed
 
     def _path_editor(self, p: Param, value: Any) -> QWidget:
         container = QWidget()
