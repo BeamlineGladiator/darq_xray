@@ -33,10 +33,20 @@ from .plotting import (
 
 
 def cmap_nan_transparent(name: str):
-    """Colormap copy that renders NaN (padded) voxels as transparent white."""
-    cmap = get_cmap(name).copy()
-    cmap.set_bad(color="white", alpha=0.0)
-    return cmap
+    """Colormap copy that renders NaN (padded) voxels as transparent white.
+
+    `with_extremes(bad=...)` rather than `copy()` + `set_bad(...)`: matplotlib
+    3.11 raises a `PendingDeprecationWarning` from `set_bad`, which turns any
+    caller running warnings-as-errors into a failure (it broke
+    `test_compose_render.py::test_degenerate_roi_extent_renders_placeholder_not_singular_imshow`,
+    whose whole point is that rendering that panel is warning-free). The
+    alpha goes in the RGBA tuple because `with_extremes` takes no separate
+    `alpha`; the two spellings were verified to produce identical `get_bad()`
+    and identical mapping of a NaN-bearing row under matplotlib 3.6.3 and
+    3.11.1. `with_extremes` already returns a copy, so the explicit one is gone
+    — the shared registry colormap is still never mutated.
+    """
+    return get_cmap(name).with_extremes(bad=(1.0, 1.0, 1.0, 0.0))
 
 
 def draw_map_layer(

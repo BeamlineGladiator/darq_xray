@@ -971,11 +971,17 @@ def test_stream_quantile_subtracts_in_the_arrays_dtype():
     """
     values = np.array([14.359252, 31153.064], dtype=np.float32)
     data = values.reshape(2, 1, 1)
-    expected = float(np.percentile(values, 59.94683904708903))
-    assert expected == 18681.02878953133  # float64 subtraction gives ...740256337
-    got = volumeio.stream_quantile(
-        lambda: volumeio.dataset_blocks(data, budget_bytes=4), 59.94683904708903
-    )
+    q = 59.94683904708903
+    expected = float(np.percentile(values, q))
+    # The float32 answer must differ from the float64 one, or this case proves
+    # nothing. Asserted rather than hardcoded because the float32 answer is
+    # numpy-version-specific — 18681.02878953133 on numpy 1.26, 18681.02734375
+    # on numpy 2.5, which computes the whole interpolation in float32 (see
+    # `volumeio._lerp`). The float64 reference, 18681.028740256337, is the same
+    # on both. Pinning either literal pins the suite to one numpy.
+    naive_float64 = float(np.percentile(values.astype(np.float64), q))
+    assert expected != naive_float64, "this pair no longer discriminates the dtypes"
+    got = volumeio.stream_quantile(lambda: volumeio.dataset_blocks(data, budget_bytes=4), q)
     assert got == expected
 
 

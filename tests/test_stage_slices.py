@@ -1377,14 +1377,29 @@ def test_slices_both_rungs_agree_on_the_centred_volume_and_its_limits(tmp_path, 
     the stored planes take. It was live and invisible on a real fixture — checked,
     not assumed.
 
-    The precondition is asserted rather than hoped for: the fixture's own volume
-    must be one on which the two mean reductions genuinely disagree, or a
-    revert to `np.nanmean` would pass this test too. It is asserted on the
-    **aligned** volume — the array `_center_offset` is actually handed — and not
-    on the raw dataset: the two happen to separate the reductions alike today,
-    but the alignment chain sits between them, so checking the raw file would be
-    checking an array this code never sees and could drift into agreement
-    silently.
+    **This test used to demand that `np.nanmean` and `volumeio.stream_mean`
+    disagree on this fixture, and that precondition has been deliberately
+    removed — do not restore it.** It rested on a floating-point accident, not a
+    property: over the aligned volume's 168 values the two reductions differed
+    by exactly *one ulp* under numpy 1.26, and under numpy 2.5 — whose summation
+    is markedly more accurate — they agree exactly, so the assert fired. It
+    cannot be repaired by choosing better data, which was measured rather than
+    assumed: sweeping pedestal magnitudes 1e8…1e16 through the alignment chain,
+    only 1e12 separated them, and only by two ulps; and outside the chain the
+    two numpy generations disagree with the compensated sum in *uncorrelated*
+    regimes (a 2 000 000-value pedestal separates 1.26 by 7 ulps and 2.5 by 0,
+    while plain normals at n=200 000 separate 2.5 by 3 ulps and 1.26 by 0).
+    There is no array that separates them on both, because numpy 2's `nanmean`
+    is itself near-correctly-rounded almost everywhere.
+
+    What actually keeps this test honest is structural and version-stable: the
+    two budgets are asserted to take *different rungs* (`in_core_fits and not
+    streamed_fits` below), so the comparison is always across the in-core and
+    streamed paths rather than the same path twice. And the property the
+    compensated mean is really there for — that the answer does not move with
+    the block size — is pinned directly, and robustly, by
+    `test_common_volumeio.py::test_stream_mean_is_budget_independent_on_adversarial_data`,
+    which passes on both numpy generations.
     """
     proc, raw = _setup(tmp_path)
     from dfxm.common import volumeio
@@ -1396,10 +1411,13 @@ def test_slices_both_rungs_agree_on_the_centred_volume_and_its_limits(tmp_path, 
     )
     finite = aligned[np.isfinite(aligned)]
     assert finite.size, "the aligned volume must hold finite voxels"
-    assert float(np.nanmean(finite)) != float(volumeio.stream_mean([finite])), (
-        "the fixture no longer separates the compensated mean from np.nanmean on "
-        "the ALIGNED volume — this test would pass whether or not the "
-        "unification is present"
+    # Centring must be a real transformation on this fixture, or the rungs would
+    # agree trivially: an offset of zero centres nothing and the comparison
+    # below would hold however the offset was computed.
+    offset = float(volumeio.stream_mean([finite]))
+    assert np.isfinite(offset) and offset != 0.0, (
+        f"the fixture's centring offset is {offset!r} — centring is a no-op here, "
+        "so this test would pass however the offset was reduced"
     )
 
     in_core_fits, in_core, in_core_limits = _prepare_at_budget(

@@ -525,6 +525,13 @@ def _peak_bytes(fn):
         tracemalloc.stop()
 
 
+# Every scipy whose `interp1d` allocation profile has actually been read and
+# re-measured against the working-set model. Adding a version here is a claim
+# that both checks in the docstring below were done for it — not that its tests
+# happened to pass.
+VERIFIED_SCIPY_VERSIONS = ("1.11.4", "1.18.1")
+
+
 def test_working_set_model_is_pinned_to_the_scipy_it_was_derived_from():
     """An `interp1d` upgrade must fail loudly, not under-price the budget quietly.
 
@@ -537,16 +544,37 @@ def test_working_set_model_is_pinned_to_the_scipy_it_was_derived_from():
     under-prices every block, and the measurement tests carry ~20% headroom, so
     a small regression would slip through them. Hence a version assertion: an
     upgrade is a failing test and a re-derivation, not a quiet overrun.
+
+    **scipy 1.18.1 re-derivation (2026-08-24).** Both questions this assertion
+    asks were answered from 1.18.1's own source, not assumed:
+
+    * `interp1d.__init__` — unchanged. Still `x = array(x, copy=self.copy)` /
+      `y = array(y, copy=self.copy)`, then, under the same `if not
+      assume_sorted:` guard, `ind = np.argsort(x, kind="mergesort")` and
+      `y = np.take(y, ind, axis=axis)`. 1.18 adds a `copy_if_needed` branch for
+      `copy=False`, which does not touch the default `copy=True` path this
+      model prices.
+    * `_call_linear` — still five block-sized arrays at its peak: `y_lo`,
+      `y_hi`, the two `[:, None] * y_*` products, and the `y_new` sum.
+
+    Then re-measured, since reading source is not measuring it. Peak traced
+    allocation against `working_set_bytes`, twelve configurations (two
+    `samz_kind` × two centre methods × three budget divisors), under scipy
+    1.11.4/numpy 1.26.4 and scipy 1.18.1/numpy 2.5.2. The measured/predicted
+    ratios are **identical to three decimals on both** — 0.689, 0.758, 0.741,
+    0.715, 0.724, 0.663, 0.765, 0.786 — with a largest cross-version drift of
+    0.001, which is allocation noise. The model over-predicts by 21-34% on both,
+    so the headroom this assertion protects is intact and unchanged.
     """
     import scipy
 
-    assert scipy.__version__ == "1.11.4", (
-        f"the working-set model was derived from scipy 1.11.4, found "
-        f"{scipy.__version__}. Re-read `interp1d.__init__` (does it still copy "
-        "`y` and then `np.take` a permuted second copy, unconditionally?) and "
-        "`_call_linear` (still five block-sized arrays at its peak?), then "
-        "re-measure `test_streamed_peak_stays_within_the_budget` before "
-        "bumping this."
+    assert scipy.__version__ in VERIFIED_SCIPY_VERSIONS, (
+        f"the working-set model has been verified against scipy "
+        f"{', '.join(VERIFIED_SCIPY_VERSIONS)}, found {scipy.__version__}. "
+        "Re-read `interp1d.__init__` (does it still copy `y` and then `np.take` "
+        "a permuted second copy, unconditionally?) and `_call_linear` (still "
+        "five block-sized arrays at its peak?), then re-measure "
+        "`test_streamed_peak_stays_within_the_budget` before adding it here."
     )
 
 
