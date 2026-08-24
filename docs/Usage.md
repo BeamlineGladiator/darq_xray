@@ -1554,6 +1554,24 @@ pixel-aligned with the strain/mosaicity layer images.
 | `frame_index` | which detector frame to show |
 | `match_threshold_mm` | max `(samy,samz)` distance to accept a match |
 
+> [!warning] These layers now follow the publication style — expect a different look
+> matched used to colour its layers from its own `Colormap` dropdown
+> (**Advanced → Appearance**). It no longer does. Like every other figure stage,
+> it now draws its one quantity — raw intensity — with the **Raw intensity**
+> colormap from **Publication style…**, and with that group's colourbar number
+> format. **So the next run will produce layers that look different from the ones
+> you already have** if your Raw-intensity colormap is not `gray`, or if the raw
+> group's tick format (`arb` in the tuned publication style) differs from the
+> plain automatic one matched used before. The data, the colour *limits* and the
+> saved filenames are unchanged — only the colouring and the colourbar numbers.
+>
+> The `Colormap` dropdown itself is kept only so saved forms, presets and
+> existing command lines stay valid; it changes nothing, on the GUI or headless
+> path alike. A headless `python3 -m dfxm.stages.matched` run has no publication
+> style at all and so renders the group's default, `gray` with plain automatic
+> colourbar ticks — matched's historical look, unchanged — whatever `--colormap`
+> says.
+
 > [!info] Long detector stacks no longer decide how much memory this needs
 > The background this stage subtracts is the per-pixel median **down the frame
 > axis**, so each pixel's background depends only on that pixel's own values.
@@ -1621,7 +1639,7 @@ plots that quantity (runs, previews, exports and the 3-D viewers alike):
 | Mosa misorientation | χ/μ centre-of-mass maps & slices | `fast` (ParaView's default map, registered with matplotlib) |
 | Mosa FWHM | χ/μ peak-broadening maps & slices | `magma` |
 | Strain | strain maps, detrend diagnostics, strain slices | `RdBu_r` |
-| Raw intensity | rocking volumes, raw slices | `gray` |
+| Raw intensity | rocking volumes, raw slices, matched rocking-frame layers | `gray` |
 
 The choices persist across sessions together with the rest of the style.
 
@@ -1643,13 +1661,16 @@ The choices persist across sessions together with the rest of the style.
 > those range fields lives inside the collapsed **Advanced** expander, while
 > the pointer itself sits above it.
 
-The matched stage additionally keeps its own per-stage `colormap` dropdown in
-its parameter form (under **Advanced → Appearance**). It is the **fallback**,
-used for any quantity that has no group in the table above; the **Raw
-intensity** group is what drives matched's raw-intensity layers. A *See also*
-line under that dropdown (inside **Advanced**) says so; the same text is
-appended to the dropdown's entry in the help panel when you click into it, and
-to the dropdown's own hover tooltip.
+The matched stage still shows a per-stage `colormap` dropdown in its parameter
+form (under **Advanced → Appearance**), but it is **inert**: matched draws a
+single quantity, raw intensity, so the **Raw intensity** row above is what
+colours its layers, and the dropdown is kept only so saved forms, presets and
+existing command lines stay valid. A *See also* line under that dropdown
+(inside **Advanced**) says exactly that; the same text is appended to the
+dropdown's entry in the help panel when you click into it, and to the
+dropdown's own hover tooltip. See
+[[#9. Rocking-matched layers (`matched`)|the matched stage]] for what changed
+and why your next matched run will not look like your last one.
 
 **Scale bar**
 

@@ -5,11 +5,13 @@ frame loading, and pixel-aligned grayscale layer output.
 from __future__ import annotations
 
 import os
+from dataclasses import asdict
 
 import h5py
 import numpy as np
 import pytest
 
+from dfxm.common.plotting import PlotStyle
 from dfxm.stages import matched as M
 
 NF, H, W = 4, 6, 8
@@ -361,3 +363,89 @@ def test_colormap_param_is_enum_dropdown():
     assert p.type is ParamType.ENUM
     assert tuple(p.choices) == CMAP_CHOICES
     assert p.default == "gray"
+
+
+# -- the raw quantity group ---------------------------------------------------
+def _one_layer_setup(tmp_path):
+    """The smallest input run() will process: one matched strain/rocking pair."""
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    _write_strain(str(raw), "strain__1", 0.0, 0.0)
+    frames = np.random.default_rng(0).standard_normal((NF, H, W)) + 10.0
+    _write_rocking(str(raw), "rock__1", 0.0, 0.0, frames)
+    return {
+        "raw_root": str(raw),
+        "strain_pattern": "strain__*",
+        "rocking_pattern": "rock__*",
+        "frame_index": 0,
+        "match_threshold_mm": 0.001,
+        "output_dir": str(tmp_path / "out"),
+        "colormap": "gray",
+        "plot_style": asdict(PlotStyle(cmap_raw="turbo")),
+    }
+
+
+def _capture_layer_figure(monkeypatch):
+    """Record the cmap/group handed to render.layer_figure, still rendering."""
+    seen = {}
+    real = M.Rnd.layer_figure
+
+    def spy(layer, vmin, vmax, cmap, ex, ey, title, cbar, *, style=None, group=None):
+        seen["cmap"] = cmap
+        seen["group"] = group
+        return real(layer, vmin, vmax, cmap, ex, ey, title, cbar, style=style, group=group)
+
+    monkeypatch.setattr(M.Rnd, "layer_figure", spy)
+    return seen
+
+
+def test_run_renders_the_raw_quantity_group(tmp_path, monkeypatch):
+    """matched draws rocking-curve frames — the "raw" group, like rocking.py."""
+    params = _one_layer_setup(tmp_path)
+    assert params["colormap"] == "gray"  # precondition: the fallback differs
+    seen = _capture_layer_figure(monkeypatch)
+    res = M.run(params)
+    assert res.n_saved == 1  # precondition: a layer was actually drawn
+    assert seen["group"] == "raw"
+    assert seen["cmap"] == "turbo"  # the style's raw cmap, not the param
+
+
+def test_the_export_rebuild_resolves_the_same_colormap_as_the_run(tmp_path, monkeypatch):
+    """An exported figure must match the PNG the run saved."""
+    params = _one_layer_setup(tmp_path)
+    res = M.run(params)
+    assert res.recorded and res.recorded[0].colormap == "gray"  # precondition
+    specs = M.figures(res, params)
+    assert specs  # precondition: there is something to rebuild
+    seen = _capture_layer_figure(monkeypatch)
+    specs[0].build(PlotStyle(cmap_raw="turbo"))
+    assert seen["cmap"] == "turbo"
+    assert seen["group"] == "raw"
+
+
+def test_the_stage_colormap_is_still_the_fallback_without_a_group():
+    from dfxm.common.plotting import resolve_cmap
+
+    assert resolve_cmap(PlotStyle(cmap_raw="turbo"), None, fallback="magma") == "magma"
+
+
+def test_a_headless_run_ignores_the_stage_colormap_too(tmp_path, monkeypatch):
+    """No injected style is where a fallback could plausibly fire — it does not.
+
+    `resolve_cmap` returns its fallback only for ``group=None``; a literal
+    "raw" resolves against a bare ``PlotStyle()`` instead. So the stage's own
+    dropdown colours nothing on any path, which is what the help text and
+    docs/Usage.md now say.
+    """
+    from dfxm.common.plotting import style_from_params
+
+    params = _one_layer_setup(tmp_path)
+    params.pop("plot_style")
+    params["colormap"] = "turbo"
+    assert style_from_params(params) is None  # precondition: the headless path
+    assert PlotStyle().cmap_raw == "gray"  # precondition: distinguishable from "turbo"
+    seen = _capture_layer_figure(monkeypatch)
+    res = M.run(params)
+    assert res.n_saved == 1  # precondition: a layer was actually drawn
+    assert seen["group"] == "raw"
+    assert seen["cmap"] == "gray"  # the raw group's default, not the param

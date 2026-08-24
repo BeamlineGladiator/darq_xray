@@ -22,7 +22,7 @@ from ..common import render as Rnd
 from ..common.errors import StageUserError
 from ..common.figures import FigureSpec, register
 from ..common.h5io import resolve_input_file
-from ..common.plotting import CMAP_CHOICES, apply_round_clim, style_from_params
+from ..common.plotting import CMAP_CHOICES, apply_round_clim, resolve_cmap, style_from_params
 from ..common.raster import extract_motor_positions, find_h5_file
 from ..common.sort import find_matching_folders
 from ..config.models import CostEstimate, Param, ParamType, SeeAlso, StageSpec
@@ -169,7 +169,13 @@ STAGE = StageSpec(
             choices=CMAP_CHOICES,
             advanced=True,
             group="Appearance",
-            help="Colormap for the saved PNGs (default gray).",
+            help=(
+                "Recorded with each layer, and kept so saved forms, presets and CLI "
+                "invocations stay valid — but it no longer decides how the figures "
+                "look. matched draws a single quantity, raw intensity, and takes both "
+                "its colormap and its colourbar number format from that quantity's "
+                "group."
+            ),
         ),
         Param(
             "vmin",
@@ -224,8 +230,8 @@ STAGE = StageSpec(
         ),
         SeeAlso(
             "param:colormap",
-            "“Publication style…” drives the raw-intensity colormap; this is "
-            "the fallback for anything without a quantity group.",
+            "The Raw intensity group in “Publication style…” (left panel) is what "
+            "colours these layers; this dropdown no longer does.",
         ),
     ),
     estimate="dfxm.stages.matched:estimate",
@@ -597,12 +603,13 @@ def run(params: dict, progress: ProgressFn | None = None) -> MatchedResult:
             shifted,
             vmin,
             vmax,
-            p["colormap"],
+            resolve_cmap(style, "raw", fallback=p["colormap"]),
             ext_x,
             ext_y,
             title,
             "Intensity − background (a.u.)",
             style=style,
+            group="raw",
         )
         png = os.path.join(layers_dir, f"layer_{i:04d}.png")
         fig.savefig(png, dpi=150, facecolor="white", bbox_inches="tight")
@@ -610,7 +617,13 @@ def run(params: dict, progress: ProgressFn | None = None) -> MatchedResult:
         result.n_saved += 1
         # NOTE: figures().build() in this module mirrors this exact recompute
         # (load_pco_ff_frame → _apply_shift_single → layer_figure) to rebuild
-        # the figure at export time; keep the two in sync.
+        # the figure at export time; keep the two in sync. That includes the
+        # colour resolution: both pass group="raw" and both resolve the cmap
+        # through resolve_cmap(style, "raw", ...), so an exported figure keeps
+        # the saved PNG's colormap and colourbar tick format. The recorded
+        # `colormap` below is only the fallback for a group-less resolve, which
+        # a literal "raw" never reaches — it is kept so the record still says
+        # what the stage form asked for.
         result.recorded.append(
             MatchedLayer(
                 raw_h5=_rock_h5(raw_root, rock_names[m]),
@@ -678,12 +691,13 @@ def figures(result: MatchedResult, params: dict) -> list[FigureSpec]:
                 shifted,
                 vmin,
                 vmax,
-                colormap,
+                resolve_cmap(style, "raw", fallback=colormap),
                 ext_x,
                 ext_y,
                 title,
                 "Intensity − background (a.u.)",
                 style=style,
+                group="raw",
             )
             return fig
 
