@@ -84,6 +84,11 @@ after concat because it runs outside the app. Above the rail, the experiment
 header shows the active preset and its calibration in one line; **Edit…**
 opens the full schema-driven editor (every field explained in its help panel).
 
+Each button below the rail — **Publication style…**, **Figure builder…**,
+**System check…** and the theme toggle — carries a tooltip saying what it opens,
+so the two subsystems reached from here (the session-global figure style and the
+multi-panel composer) are identifiable without clicking.
+
 **Appearance.** A light/dark toggle (☀ Light / ☾ Dark) sits at the bottom of
 the left column, beside *Publication style…*. Your choice is remembered between
 sessions. Switching theme only affects the on-screen app and the embedded
@@ -333,6 +338,22 @@ A help box under the form shows the current stage's description by default. Clic
 a field and it shows that field's help; click away (or open another stage) and it
 returns to the stage description. The same per-field help is also available as a
 hover tooltip on each field and its label.
+
+#### Hover help on the buttons
+
+Every action button in the button row carries a tooltip saying what it *does*,
+not just what it is called — hover **Pick line…**, **Jobs from marks…**,
+**Replot…**, **Pin planes…**, **Mark planes…** or **Pick ROI…** to see which
+file it reads, what it writes back into the form, and whether it re-runs the
+stage (**Replot…** does not). The **3D** tab has one too, naming the
+**Open 3D viewer…** button you have to press inside it after a run.
+
+The two export buttons at the bottom of the **Output** tab explain their own
+greyed-out state: before a run they read *"Available once a run has produced
+figures."*, and once a run has finished they switch to *"Save figures from the
+last run as PNG/PDF/SVG."* Starting a new run greys them out again and puts the
+first wording back, so the hover help never promises something the buttons
+cannot do.
 
 #### The cost line
 
@@ -1617,7 +1638,7 @@ pixel-aligned with the strain/mosaicity layer images.
 
 ## Publication export
 
-After a stage runs successfully, the **Output** tab gains two buttons at the bottom right:
+After a stage runs successfully, the **Output** tab gains two buttons at the bottom right. Both are greyed out until then and say so on hover — see [[#Hover help on the buttons]]:
 
 - **Export…** — single-figure export: opens a dialog with a live preview, a figure selector drop-down (if the stage produced multiple figures), per-figure style controls, and an **Export** button that writes into a folder you pick.
 - **Export all…** — batch export: exports every figure the stage produced into a single folder you pick via a folder-chooser dialog. Progress is shown per-figure in a banner; one bad figure never aborts the rest. The banner and a warning dialog report how many figures succeeded and what went wrong with any failures.

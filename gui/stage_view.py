@@ -71,6 +71,11 @@ _SAVE_DEBOUNCE_MS = 400  # coalesce rapid form edits into one QSettings write
 # Stages whose run yields an aligned 3-D volume worth viewing interactively.
 _VOLUME_STAGES = ("visualize", "rocking")
 
+# Hover help for the export buttons. Two constants rather than two literals so
+# the wording and the enabled state are switched together in _enable_exports().
+EXPORT_TIP_DISABLED = "Available once a run has produced figures."
+EXPORT_TIP_ENABLED = "Save figures from the last run as PNG/PDF/SVG."
+
 
 class ExportResult(NamedTuple):
     """Outcome of one figure in an :meth:`StageView.export_all` batch."""
@@ -145,27 +150,40 @@ class StageView(QWidget):
         self._jobs_marks_btn: QPushButton | None = None
         if stage_name == "profiles":
             self._pick_btn = QPushButton("Pick line…")
+            self._pick_btn.setToolTip(
+                "Draw a profile line on a slice; writes it into the job list."
+            )
             self._pick_btn.clicked.connect(self._on_pick_line)
             btn_row.addWidget(self._pick_btn)
             self._jobs_marks_btn = QPushButton("Jobs from marks…")
+            self._jobs_marks_btn.setToolTip(
+                "Build profile jobs from the planes starred in the slices stage."
+            )
             self._jobs_marks_btn.clicked.connect(self._on_jobs_from_marks)
             btn_row.addWidget(self._jobs_marks_btn)
         # slices/strain/mosaicity/rocking/profiles: re-render layers from an existing h5
         self._replot_btn: QPushButton | None = None
         if stage_name in ("slices", "strain", "mosaicity", "rocking", "profiles"):
             self._replot_btn = QPushButton("Replot…")
+            self._replot_btn.setToolTip(
+                "Re-render figures from an existing .h5 without re-running the stage."
+            )
             self._replot_btn.clicked.connect(self._on_replot)
             btn_row.addWidget(self._replot_btn)
         # slices: pin sweep planes into pinned_slices_json (built lazily on click)
         self._pin_btn: QPushButton | None = None
         if stage_name == "slices":
             self._pin_btn = QPushButton("Pin planes…")
+            self._pin_btn.setToolTip("Pin sweep planes so later runs re-render only those.")
             self._pin_btn.clicked.connect(self._on_pin_planes)
             btn_row.addWidget(self._pin_btn)
         # slices: star interesting planes into /marks (built lazily on click)
         self._mark_btn: QPushButton | None = None
         if stage_name == "slices":
             self._mark_btn = QPushButton("Mark planes…")
+            self._mark_btn.setToolTip(
+                "Star interesting planes; other stages can pick them up from /marks."
+            )
             self._mark_btn.clicked.connect(self._on_mark_planes)
             btn_row.addWidget(self._mark_btn)
         # ROI-grouped stages: one "Pick ROI…" button per distinct roi_group
@@ -176,6 +194,9 @@ class StageView(QWidget):
                 _seen_groups.append(p.roi_group)
         for _grp in _seen_groups:
             _btn = QPushButton("Pick ROI…")
+            _btn.setToolTip(
+                "Draw the region of interest on a preview instead of typing pixel bounds."
+            )
             _btn.clicked.connect(lambda _checked=False, g=_grp: self._on_pick_roi_group(g))
             btn_row.addWidget(_btn)
             self._roi_buttons[_grp] = _btn
@@ -243,9 +264,11 @@ class StageView(QWidget):
         # Export buttons — disabled until a successful run populates _last_result.
         self._export_btn = QPushButton("Export…")
         self._export_btn.setEnabled(False)
+        self._export_btn.setToolTip(EXPORT_TIP_DISABLED)
         self._export_btn.clicked.connect(self._on_export_clicked)
         self._export_all_btn = QPushButton("Export all…")
         self._export_all_btn.setEnabled(False)
+        self._export_all_btn.setToolTip(EXPORT_TIP_DISABLED)
         self._export_all_btn.clicked.connect(self._on_export_all_clicked)
         export_row = QHBoxLayout()
         export_row.addStretch(1)
@@ -266,7 +289,12 @@ class StageView(QWidget):
         self._vol3d: Volume3DPanel | None = None
         if stage_name in _VOLUME_STAGES:
             self._vol3d = Volume3DPanel()
-            self._tabs.addTab(self._vol3d, "3D")
+            idx = self._tabs.addTab(self._vol3d, "3D")
+            self._tabs.setTabToolTip(
+                idx,
+                "Interactive 3-D view of this stage's volumes — run the stage, "
+                "then pick a volume and click “Open 3D viewer…”.",
+            )
 
         self._banner = QLabel("")
         self._banner.setWordWrap(True)
@@ -482,8 +510,7 @@ class StageView(QWidget):
         self._progress_plain = ""
         self._eta.reset()
         self._log.append(f"Running stage '{self._stage_name}'…")
-        self._export_btn.setEnabled(False)
-        self._export_all_btn.setEnabled(False)
+        self._enable_exports(False)
         self._set_running(True)
         self.runStarted.emit(self._stage_name)
         self._runner = StageRunner(target, run_params, start_method="spawn")
@@ -938,12 +965,22 @@ class StageView(QWidget):
                 self._stage_name,
                 style_json=style_json,
             )
-        self._export_btn.setEnabled(True)
-        self._export_all_btn.setEnabled(True)
+        self._enable_exports()
         self._set_running(False)
         self.runFinished.emit(self._stage_name, True)
 
     # -- export ---------------------------------------------------------------
+
+    def _enable_exports(self, on: bool = True) -> None:
+        """Enable (or disable) the export buttons and set the matching wording.
+
+        The enabled state and the hover help are switched in one place so they
+        cannot drift: a disabled button always says what would enable it, and an
+        enabled one always says what it saves.
+        """
+        for btn in (self._export_btn, self._export_all_btn):
+            btn.setEnabled(on)
+            btn.setToolTip(EXPORT_TIP_ENABLED if on else EXPORT_TIP_DISABLED)
 
     def _figures(self) -> list[FigureSpec]:
         """Return the list of FigureSpecs for the last successful run (or [] if none)."""

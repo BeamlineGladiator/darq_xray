@@ -117,6 +117,9 @@ class MainWindow(QMainWindow):
 
         # "Publication style…" button — lives in the left column below the rail.
         self._pub_style_btn = QPushButton("Publication style…")
+        self._pub_style_btn.setToolTip(
+            "Fonts, scale bars and the per-quantity colormaps used by every stage's figures."
+        )
         self._pub_style_btn.clicked.connect(self._on_pub_style)
 
         # "Figure builder…" button — non-modal multi-panel composer window,
@@ -124,11 +127,16 @@ class MainWindow(QMainWindow):
         # module never pulls in the compose/matplotlib machinery).
         self._figure_builder = None
         self._figure_builder_btn = QPushButton("Figure builder…")
+        self._figure_builder_btn.setToolTip("Compose multi-panel figures from any stage's outputs.")
         self._figure_builder_btn.clicked.connect(self._on_figure_builder)
 
         # "System check…" — what this machine is and what it implies for
         # settings. The only surface that pays for a GL probe on demand.
         self._system_check_btn = QPushButton("System check…")
+        self._system_check_btn.setToolTip(
+            "Measure this machine — CPU, RAM, free disk and OpenGL — and what "
+            "each means for stage settings."
+        )
         self._system_check_btn.clicked.connect(self._on_system_check)
 
         # Light/dark theme toggle.
