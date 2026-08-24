@@ -1299,6 +1299,23 @@ def main() -> int:
     app.processEvents()
     print("[43] System check dialog: rows()/as_text() populated; closes cleanly")
 
+    # [44] Style-at-run stamp: a finished run's Results tab names the style the
+    # run was LAUNCHED with, not whatever the style dialog says now. Step [4]
+    # already ran strain for real through _on_run (so _last_style is a genuine
+    # capture); here we plant a distinguishable one and re-finish that result.
+    from dfxm.common.plotting import PlotStyle as _PS44
+
+    sview44 = win._views["strain"]
+    assert sview44._last_style is not None, "_on_run in step [4] left no captured style"
+    live44 = win.global_plot_style().cmap_strain
+    assert live44 != "turbo", "precondition: the live session style must differ from the stamp"
+    sview44._last_style = _PS44(cmap_strain="turbo")
+    sview44._finish_ok(sview44._last_result)
+    _text44 = sview44._results.toPlainText()
+    assert "strain=turbo" in _text44, _text44[-200:]
+    assert f"strain={live44}" not in _text44, "stamped the CURRENT style, not the captured one"
+    print("[44] style stamp: finished run records the style it used")
+
     print("\nGUI SMOKE PASSED")
     return 0
 

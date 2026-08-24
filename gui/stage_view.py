@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
 from dfxm.common.advisory import HINT_3D_TEXTURE
 from dfxm.common.eta import EtaEstimator
 from dfxm.common.figures import FigureSpec, figures_for
+from dfxm.common.plotting import PlotStyle
 from dfxm.config.models import Experiment, StageSpec
 from dfxm.runner import Done, Failed, Log, Progress, StageRunner
 from dfxm.stages.registry import STAGE_TARGETS
@@ -102,6 +103,10 @@ class StageView(QWidget):
         self._runner: StageRunner | None = None
         self._last_params: dict = {}
         self._last_result = None
+        # The publication style the last run was LAUNCHED with (snapshotted in
+        # _on_run). Editing the style afterwards must not change what a finished
+        # run reports it rendered with — see style_stamp().
+        self._last_style: PlotStyle | None = None
         # Persistence bookkeeping: only a genuine *user* edit dirties a stage, so
         # untouched stages never freeze a snapshot (they keep following the
         # experiment). ``_loading`` suppresses the dirty flag during our own
@@ -435,8 +440,11 @@ class StageView(QWidget):
             from dataclasses import asdict
 
             # Snapshot the CURRENT session publication style so every new run
-            # renders with whatever the style dialog says right now.
-            run_params["plot_style"] = asdict(window.global_plot_style())
+            # renders with whatever the style dialog says right now. Keep the
+            # snapshot: the Results tab stamps the style THIS run used, which a
+            # later style edit must not rewrite.
+            self._last_style = window.global_plot_style()
+            run_params["plot_style"] = asdict(self._last_style)
         # Pre-flight: what will this cost, and can the disk take it? Computed
         # fresh on the click (cheap, and never stale). Advisory only — it never
         # changes what the stage does, and only the disk question can stop it.
@@ -892,7 +900,10 @@ class StageView(QWidget):
         summary = _summarize(self._stage_name, result)
         first_line = summary.splitlines()[0] if summary else "done"
         self._show_banner(f"✓ {html.escape(first_line)}", error=False)
-        self._results.setPlainText(summary)
+        # The banner keeps to first_line — the style stamp belongs in Results,
+        # not in the one-line banner.
+        stamp = style_stamp(self._last_style)
+        self._results.setPlainText(f"{summary}\n\n{stamp}" if stamp else summary)
         img = _representative_image(self._stage_name, result)
         shown = False
         if img and os.path.exists(img):
@@ -1039,6 +1050,24 @@ class StageView(QWidget):
         self._run_btn.setEnabled(not running)
         self._cancel_btn.setEnabled(running)
         self._form.setEnabled(not running)
+
+
+def style_stamp(style: PlotStyle | None) -> str:
+    """One line naming the publication style a run rendered with.
+
+    Runs snapshot the style at launch (:meth:`StageView._on_run`), so a style
+    edited afterwards does not retro-apply to a finished run — a fact users
+    reasonably expect to work the other way. Recording it on the result is how
+    they can tell.
+    """
+    if style is None:
+        return ""
+    return (
+        "Rendered with publication style: "
+        f"mosa_com={style.cmap_mosa_com}, mosa_fwhm={style.cmap_mosa_fwhm}, "
+        f"strain={style.cmap_strain}, raw={style.cmap_raw}, "
+        f"font ×{style.font_scale:g}"
+    )
 
 
 def _summarize(stage_name: str, result) -> str:

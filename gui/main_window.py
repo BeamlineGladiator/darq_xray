@@ -247,8 +247,21 @@ class MainWindow(QMainWindow):
         btn_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
         btn_box.rejected.connect(dlg.reject)
 
+        # The timing rule, stated where it bites: a run snapshots this style when
+        # Run is pressed, so editing it afterwards does not retro-apply. The
+        # Results tab of a finished run stamps the style it actually used.
+        note = QLabel(
+            "These settings apply to runs started from now on — a finished run "
+            "keeps the style it was launched with, and its Results tab says which. "
+            "Use “Replot…” (strain, mosaicity, rocking, slices, profiles) to "
+            "re-render finished results with the current style."
+        )
+        note.setWordWrap(True)
+        note.setProperty("role", "hint")
+
         layout = QVBoxLayout(dlg)
         layout.addWidget(scroll, 1)
+        layout.addWidget(note)
         layout.addWidget(btn_box)
 
         dlg.exec()

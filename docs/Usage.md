@@ -325,7 +325,7 @@ Every stage uses the same layout:
 | **Run / Cancel + progress** | Runs the stage in a **separate process**; the bar and step text track progress; **Cancel** truly kills it. Before launching, input paths are checked on disk — a missing one blocks the run and focuses the offending field. Once a run/batch is more than 5 % done and has been going for more than 2 seconds, the progress text may also show a `~… left` estimate; the estimate starts fresh every time you click **Run**, so it never carries a stale reading over from a previous run. |
 | **Status banner** (above the tabs) | Green one-liner on success; on failure, the error in plain language plus an actionable hint (the full traceback stays in **Log**); on **Run**, a blue-grey banner states the same cost line the form already showed, so the number you saw before clicking is still visible once the run is underway. |
 | **Log** tab | Live progress + streamed messages. |
-| **Results** tab | A text summary of what was produced — including every skipped layer/input and the reason. |
+| **Results** tab | A text summary of what was produced — including every skipped layer/input and the reason. For a run started from the GUI it ends with a `Rendered with publication style: …` line naming the four group colormaps and the font scale **that run** used — see [[#The "Publication style…" editor]]. |
 | **Output** tab | A representative image preview. |
 | **3D** tab | (visualize & rocking only) interactive volume viewer — see [[#Interactive viewers]]. |
 
@@ -1627,6 +1627,16 @@ Clicking it opens a scrollable style editor (the same control set as the per-fig
 > style **as it is at the moment you press Run**. Edit the style, re-run, and
 > the new look is guaranteed to apply. Headless CLI runs (without the GUI) keep
 > the plain legacy look.
+>
+> The snapshot is taken **at launch**, so editing the style afterwards does *not*
+> retro-apply to a run that has already finished. Two places say so:
+> - the **Results** tab of a finished run ends with the style that run rendered
+>   with — `Rendered with publication style: mosa_com=…, mosa_fwhm=…, strain=…,
+>   raw=…, font ×…`;
+> - the **Publication style…** dialog states the rule at its foot and points at
+>   **Replot…** (available on strain, mosaicity, rocking, slices and profiles),
+>   which re-renders finished results from the saved `.h5` using the **current**
+>   style.
 
 ### Style controls
 
