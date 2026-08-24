@@ -1324,8 +1324,8 @@ def main() -> int:
         sview44._last_style = _PS44(cmap_strain="turbo")
         sview44._finish_ok(sview44._last_result)
         _text44 = sview44._results.toPlainText()
-        assert "strain=turbo" in _text44, _text44[-200:]
-        assert f"strain={live44}" not in _text44, "stamped the CURRENT style, not the captured one"
+        assert "Strain=turbo" in _text44, _text44[-200:]
+        assert f"Strain={live44}" not in _text44, "stamped the CURRENT style, not the captured one"
     finally:
         sview44._last_style = _stashed44
         sview44._finish_ok(sview44._last_result)

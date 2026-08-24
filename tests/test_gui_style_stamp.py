@@ -38,6 +38,26 @@ def test_the_stamp_names_all_four_group_colormaps_and_the_font_scale():
         assert expected in stamp, expected
 
 
+def test_the_stamp_names_the_groups_the_way_the_style_dialog_does():
+    """One vocabulary across the feature's surfaces.
+
+    The stamp used to spell the groups `mosa_com=…, raw=…` — the PlotStyle
+    field suffixes — while the style editor the user would go and change labels
+    the same four rows "Mosa misorientation" … "Raw intensity", and matched's
+    pointer and the Usage table both say "Raw intensity". Reading the labels off
+    `CMAP_GROUP_LABELS` is what keeps them from drifting apart again.
+    """
+    from dfxm.common.plotting import CMAP_GROUPS
+    from gui.widgets.export_dialog import CMAP_GROUP_LABELS
+
+    # the labels really do cover every group PlotStyle has a cmap field for
+    assert tuple(CMAP_GROUP_LABELS) == tuple(CMAP_GROUPS)
+    stamp = style_stamp(PlotStyle())
+    for group, label in CMAP_GROUP_LABELS.items():
+        assert f"{label}=" in stamp, label
+        assert f"{group}=" not in stamp, group  # no field suffixes left
+
+
 def test_the_stamp_says_it_is_the_style_the_run_used():
     stamp = style_stamp(PlotStyle())
     assert "rendered with" in stamp.lower()
@@ -93,7 +113,7 @@ def test_finished_run_records_the_style_it_was_launched_with_not_the_current_one
     view._finish_ok(SimpleNamespace(layers=[], skipped=[]))
 
     text = view._results.toPlainText()
-    assert "strain=turbo" in text
+    assert "Strain=turbo" in text
     assert "seismic" not in text
 
 
@@ -128,8 +148,55 @@ def test_the_capture_survives_the_style_being_edited_mid_run(monkeypatch):
     view._finish_ok(SimpleNamespace(layers=[], skipped=[]))
 
     text = view._results.toPlainText()
-    assert "strain=turbo" in text
+    assert "Strain=turbo" in text
     assert "seismic" not in text
+
+
+def _rocking_result():
+    """The minimum a rocking result needs to survive `_finish_ok`.
+
+    `aligned_path` points nowhere, so `viewers.volume_sources` installs no
+    sources — the 3-D panel still gets the style_json, which is what is under
+    test.
+    """
+    return SimpleNamespace(
+        output_dir="",
+        aligned_path="/nonexistent/aligned.h5",
+        volume_shape=None,
+        datasets=[],
+        skipped=[],
+    )
+
+
+def test_the_3d_tab_is_handed_the_style_the_run_used_not_the_live_one():
+    """One run, one style — the Results tab and the 3D tab must not disagree.
+
+    `_finish_ok` stamps the CAPTURED style into Results and used to hand the
+    3-D panel `style_to_json(window.global_plot_style())`, the LIVE one, in the
+    same method: on visualize/rocking, a style edited between Run and finish
+    made a 3-D export come out in a style the run's own Results line denies.
+    """
+    view = StageView("rocking", STAGE_SPECS["rocking"], Experiment())
+    assert view._vol3d is not None  # precondition: rocking is a 3-D stage
+    view.global_plot_style = lambda: PlotStyle(cmap_raw="seismic")
+    view._last_style = PlotStyle(cmap_raw="turbo")
+    assert view.global_plot_style().cmap_raw != "turbo"  # precondition: they differ
+
+    view._finish_ok(_rocking_result())
+
+    assert '"cmap_raw": "turbo"' in view._vol3d._style_json
+    assert "seismic" not in view._vol3d._style_json
+
+
+def test_the_3d_tab_falls_back_to_the_live_style_when_nothing_was_captured():
+    """The `or` half: a run with no captured style still styles its 3-D windows."""
+    view = StageView("rocking", STAGE_SPECS["rocking"], Experiment())
+    assert view._last_style is None  # precondition: nothing captured
+    view.global_plot_style = lambda: PlotStyle(cmap_raw="seismic")
+
+    view._finish_ok(_rocking_result())
+
+    assert '"cmap_raw": "seismic"' in view._vol3d._style_json
 
 
 def test_a_run_that_captured_no_style_leaves_the_summary_alone():

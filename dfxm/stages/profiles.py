@@ -313,7 +313,8 @@ STAGE = StageSpec(
     see_also=(
         SeeAlso(
             "",
-            "Colormaps are set per quantity group in “Publication style…” (left panel), not here.",
+            "Colormaps are set per quantity group in “Publication style…” "
+            "(left panel); the trace and line colours in Advanced below are this stage's own.",
         ),
     ),
 )

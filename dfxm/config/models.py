@@ -234,17 +234,35 @@ class StageSpec:
         raise KeyError(f"no param named {name!r} in stage {self.name!r}")
 
     def see_also_problems(self) -> list[str]:
-        """Anchors that name no existing parameter (empty list = all valid).
+        """Anchors that are unusable on this spec (empty list = all valid).
 
-        Prefix validity is enforced by :class:`SeeAlso` itself; this is the
-        cross-reference the dataclass cannot do on its own.
+        Two cross-references :class:`SeeAlso` cannot do on its own (it sees one
+        pointer, never the spec around it); prefix validity is already enforced
+        at construction.
+
+        1. An anchor naming a parameter this spec does not have — it would
+           render nowhere.
+        2. The *same* anchor declared twice. ``ParamForm`` keys its pointer rows
+           by anchor in one dict, so duplicates disagree with each other about
+           what happens: two ``"param:x"`` entries render neither row (last
+           wins in the lookup the row builder consults), while two ``""``
+           entries render both rows and collide only in the test hook. Neither
+           is a thing anyone means, so both are reported here.
         """
         names = {p.name for p in self.params}
-        return [
+        problems = [
             f"stage {self.name!r}: see-also anchor names unknown param {s.param_name!r}"
             for s in self.see_also
             if s.param_name and s.param_name not in names
         ]
+        seen: set[str] = set()
+        for s in self.see_also:
+            if s.anchor in seen:
+                problems.append(
+                    f"stage {self.name!r}: see-also anchor {s.anchor!r} is declared twice"
+                )
+            seen.add(s.anchor)
+        return problems
 
     def coerce_all(self, values: dict[str, Any]) -> dict[str, Any]:
         """Coerce a dict of raw values, filling in defaults for missing keys."""

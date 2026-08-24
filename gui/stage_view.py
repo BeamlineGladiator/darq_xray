@@ -959,7 +959,13 @@ class StageView(QWidget):
             if hasattr(window, "global_plot_style"):
                 from dfxm.common.plotting import style_to_json
 
-                style_json = style_to_json(window.global_plot_style())
+                # The style this run RENDERED with, exactly like the stamp two
+                # dozen lines up — the 3-D windows opened from a finished run
+                # must not disagree with the Results tab about which style that
+                # was. Falls back to the live one only when nothing was
+                # captured (a view whose window gained global_plot_style after
+                # the run, and the direct-_finish_ok path in tests/smoke).
+                style_json = style_to_json(self._last_style or window.global_plot_style())
             self._vol3d.set_sources(
                 volume_sources(self._stage_name, result, self._last_params),
                 self._stage_name,
@@ -1109,14 +1115,23 @@ def style_stamp(style: PlotStyle | None) -> str:
     says "(colormaps / font)" rather than claiming to pin the whole style: two
     runs differing only in, say, ``axes_mode`` or ``um_per_cm`` stamp
     identically, and the line must not promise otherwise.
+
+    The groups are named with the SAME labels the style editor puts on its
+    dropdowns (``export_dialog.CMAP_GROUP_LABELS``), not their field suffixes:
+    a reader who is told ``raw=gray`` has to translate that back to the "Raw
+    intensity" row they would go and change. Imported lazily because
+    ``export_dialog`` drags in the matplotlib Qt canvas, which has no business
+    loading at GUI startup.
     """
     if style is None:
         return ""
+    from .widgets.export_dialog import CMAP_GROUP_LABELS
+
+    groups = ", ".join(
+        f"{label}={getattr(style, f'cmap_{group}')}" for group, label in CMAP_GROUP_LABELS.items()
+    )
     return (
-        "Rendered with publication style (colormaps / font): "
-        f"mosa_com={style.cmap_mosa_com}, mosa_fwhm={style.cmap_mosa_fwhm}, "
-        f"strain={style.cmap_strain}, raw={style.cmap_raw}, "
-        f"font ×{style.font_scale:g}"
+        f"Rendered with publication style (colormaps / font): {groups}, font ×{style.font_scale:g}"
     )
 
 

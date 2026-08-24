@@ -66,13 +66,20 @@ _TICK_FMT_LABELS = {
 _OFFSET_POS = ["top", "bottom"]
 # Display labels for plotting.AXES_MODES (values stay canonical in the core).
 _AXES_MODE_LABELS = {"full": "Full", "no_frame": "No frame", "none": "None"}
+# The app's ONE naming of the four `plotting.CMAP_GROUPS` quantity groups, in
+# display order: the colormap dropdown rows and the per-group colourbar rows
+# here, and `gui.stage_view.style_stamp`'s "rendered with" line. Every surface
+# that names a group to a user reads it from here — the stamp used to spell them
+# `mosa_com=…`, i.e. the field suffixes, which is the one place on the feature
+# that spoke the code's vocabulary instead of the dialog's.
+CMAP_GROUP_LABELS = {
+    "mosa_com": "Mosa misorientation",
+    "mosa_fwhm": "Mosa FWHM",
+    "strain": "Strain",
+    "raw": "Raw intensity",
+}
 # (group field-suffix, friendly label) — drives the per-group colourbar rows.
-_CBAR_GROUPS = (
-    ("mosa_com", "Mosa misorientation"),
-    ("mosa_fwhm", "Mosa FWHM"),
-    ("strain", "Strain"),
-    ("raw", "Raw intensity"),
-)
+_CBAR_GROUPS = tuple(CMAP_GROUP_LABELS.items())
 _LOCS = list(SCALE_BAR_LOCS)
 
 
@@ -244,11 +251,9 @@ class StyleControls(QWidget):
 
         # --- Colormaps section (one dropdown per quantity group) ---
         form.addRow(QLabel("<b>Colormaps</b>"))
-        cmap_rows = (
-            ("_w_cmap_mosa_com", "cmap_mosa_com", "Mosa misorientation"),
-            ("_w_cmap_mosa_fwhm", "cmap_mosa_fwhm", "Mosa FWHM"),
-            ("_w_cmap_strain", "cmap_strain", "Strain"),
-            ("_w_cmap_raw", "cmap_raw", "Raw intensity"),
+        cmap_rows = tuple(
+            (f"_w_cmap_{group}", f"cmap_{group}", label)
+            for group, label in CMAP_GROUP_LABELS.items()
         )
         for attr, field_name, label in cmap_rows:
             combo = QComboBox()

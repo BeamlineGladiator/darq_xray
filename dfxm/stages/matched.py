@@ -169,12 +169,11 @@ STAGE = StageSpec(
             choices=CMAP_CHOICES,
             advanced=True,
             group="Appearance",
-            help=(
-                "Colormap for the saved PNGs on a headless run — the CLI, which has no "
-                "publication style. In the app the style wins instead: matched draws a "
-                "single quantity, raw intensity, and takes that group's colormap and "
-                "colourbar number format."
-            ),
+            # Says WHAT the field is, and nothing about where the real control
+            # lives — that is the `param:colormap` see-also pointer's job below.
+            # The two render concatenated in one label (`param_help_html`), so a
+            # rule stated in both is a rule the user reads twice in one box.
+            help="Colormap for the saved PNGs on a headless CLI run (default gray).",
         ),
         Param(
             "vmin",
@@ -230,8 +229,7 @@ STAGE = StageSpec(
         SeeAlso(
             "param:colormap",
             "In the app the Raw intensity group in “Publication style…” (left panel) "
-            "colours these layers, not this dropdown — which applies only to headless "
-            "CLI runs, where there is no style.",
+            "colours these layers, not this dropdown.",
         ),
     ),
     estimate="dfxm.stages.matched:estimate",
@@ -655,7 +653,10 @@ def figures(result: MatchedResult, params: dict) -> list[FigureSpec]:
 
     Each spec's ``build(style)`` re-reads the raw rocking frame, re-applies the
     samy X-shift, and calls ``render.layer_figure`` with the same arguments that
-    ``run()`` used, so the rebuilt figure matches the saved PNG exactly.
+    ``run()`` used, so the rebuilt figure matches the saved PNG **given the same
+    style**; an export uses the style current at export time, and since this
+    stage now resolves its colormap through that style's ``"raw"`` group, a
+    style edited since the run changes how the rebuild looks.
 
     If the raw ``.h5`` file is missing at build time, ``FileNotFoundError`` is
     raised (the GUI surfaces it with a clear message).
