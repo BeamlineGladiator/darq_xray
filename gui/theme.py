@@ -174,6 +174,7 @@ def build_qss(p: Palette) -> str:
     QLabel[role="warning"] {{ color: {p.warning}; }}
     QLabel[role="calib"] {{ color: {p.error}; font-weight: bold; }}
     QLabel[role="notes"] {{ color: {p.error}; font-style: italic; }}
+    QLabel[role="hint"] {{ color: {p.ink_muted}; font-style: italic; }}
     QLabel[role="group-header"] {{ font-weight: bold; color: {p.ink}; }}
     HelpPanel {{ background: {p.accent_soft}; border-left: 3px solid {p.accent}; }}
     QLabel[role="banner-error"] {{

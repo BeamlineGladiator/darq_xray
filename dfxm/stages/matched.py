@@ -22,10 +22,10 @@ from ..common import render as Rnd
 from ..common.errors import StageUserError
 from ..common.figures import FigureSpec, register
 from ..common.h5io import resolve_input_file
-from ..common.plotting import CMAP_CHOICES, apply_round_clim, style_from_params
+from ..common.plotting import CMAP_CHOICES, apply_round_clim, resolve_cmap, style_from_params
 from ..common.raster import extract_motor_positions, find_h5_file
 from ..common.sort import find_matching_folders
-from ..config.models import CostEstimate, Param, ParamType, StageSpec
+from ..config.models import CostEstimate, Param, ParamType, SeeAlso, StageSpec
 
 ProgressFn = Callable[[float, str], None]
 
@@ -169,7 +169,11 @@ STAGE = StageSpec(
             choices=CMAP_CHOICES,
             advanced=True,
             group="Appearance",
-            help="Colormap for the saved PNGs (default gray).",
+            # Says WHAT the field is, and nothing about where the real control
+            # lives — that is the `param:colormap` see-also pointer's job below.
+            # The two render concatenated in one label (`param_help_html`), so a
+            # rule stated in both is a rule the user reads twice in one box.
+            help="Colormap for the saved PNGs on a headless CLI run (default gray).",
         ),
         Param(
             "vmin",
@@ -214,6 +218,18 @@ STAGE = StageSpec(
             ParamType.DIR,
             "Output dir",
             help="Where the matched layer PNGs are written.",
+        ),
+    ),
+    see_also=(
+        SeeAlso(
+            "",
+            "Colormaps are set per quantity group in “Publication style…” "
+            "(left panel); the range fields in Advanced below are this stage's own.",
+        ),
+        SeeAlso(
+            "param:colormap",
+            "In the app the Raw intensity group in “Publication style…” (left panel) "
+            "colours these layers, not this dropdown.",
         ),
     ),
     estimate="dfxm.stages.matched:estimate",
@@ -581,16 +597,21 @@ def run(params: dict, progress: ProgressFn | None = None) -> MatchedResult:
             f"Rocking Curve (frame {frame_index}, median-subtracted)\n"
             f"Z = {z_um[i]:.2f} µm (Layer {i}/{result.n_strain - 1})\n{rock_names[m]}"
         )
+        # matched draws one quantity — rocking-curve detector frames — so the
+        # publication style's "raw" group is what should colour it. A headless
+        # run has no style at all, and there the stage's own dropdown decides.
+        cmap_group = "raw" if style is not None else None
         fig, _, _ = Rnd.layer_figure(
             shifted,
             vmin,
             vmax,
-            p["colormap"],
+            resolve_cmap(style, cmap_group, fallback=p["colormap"]),
             ext_x,
             ext_y,
             title,
             "Intensity − background (a.u.)",
             style=style,
+            group=cmap_group,
         )
         png = os.path.join(layers_dir, f"layer_{i:04d}.png")
         fig.savefig(png, dpi=150, facecolor="white", bbox_inches="tight")
@@ -598,7 +619,12 @@ def run(params: dict, progress: ProgressFn | None = None) -> MatchedResult:
         result.n_saved += 1
         # NOTE: figures().build() in this module mirrors this exact recompute
         # (load_pco_ff_frame → _apply_shift_single → layer_figure) to rebuild
-        # the figure at export time; keep the two in sync.
+        # the figure at export time; keep the two in sync. That includes the
+        # colour resolution: both derive the same `cmap_group` from whether a
+        # style is present and feed it to both resolve_cmap and layer_figure,
+        # so an exported figure keeps the saved PNG's colormap and colourbar
+        # tick format. The `colormap` recorded below is the live fallback for
+        # the no-style (headless) branch — not dead weight.
         result.recorded.append(
             MatchedLayer(
                 raw_h5=_rock_h5(raw_root, rock_names[m]),
@@ -627,7 +653,10 @@ def figures(result: MatchedResult, params: dict) -> list[FigureSpec]:
 
     Each spec's ``build(style)`` re-reads the raw rocking frame, re-applies the
     samy X-shift, and calls ``render.layer_figure`` with the same arguments that
-    ``run()`` used, so the rebuilt figure matches the saved PNG exactly.
+    ``run()`` used, so the rebuilt figure matches the saved PNG **given the same
+    style**; an export uses the style current at export time, and since this
+    stage now resolves its colormap through that style's ``"raw"`` group, a
+    style edited since the run changes how the rebuild looks.
 
     If the raw ``.h5`` file is missing at build time, ``FileNotFoundError`` is
     raised (the GUI surfaces it with a clear message).
@@ -662,16 +691,20 @@ def figures(result: MatchedResult, params: dict) -> list[FigureSpec]:
                     f"(path={pco_ff_path!r}, frame={frame_index})"
                 )
             shifted = _apply_shift_single(img, shift_px, pad_left, nx_new)
+            # The same rule as run(): the style's "raw" group when there is a
+            # style, the recorded stage colormap when there is not.
+            cmap_group = "raw" if style is not None else None
             fig, _, _ = Rnd.layer_figure(
                 shifted,
                 vmin,
                 vmax,
-                colormap,
+                resolve_cmap(style, cmap_group, fallback=colormap),
                 ext_x,
                 ext_y,
                 title,
                 "Intensity − background (a.u.)",
                 style=style,
+                group=cmap_group,
             )
             return fig
 

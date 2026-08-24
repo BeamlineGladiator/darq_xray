@@ -1352,12 +1352,15 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 
 _app = QApplication.instance() or QApplication([])
 
+from dfxm.config.models import Experiment  # noqa: E402
 from gui.bindings import STAGE_SPECS  # noqa: E402
 from gui.stage_view import EXPORT_TIP_DISABLED, EXPORT_TIP_ENABLED, StageView  # noqa: E402
 
 
 def _view(stage):
-    return StageView(stage, STAGE_SPECS[stage])
+    # StageView(stage_name, spec, experiment) — the third argument is required;
+    # see tests/test_gui_stage_eta.py for the same construction.
+    return StageView(stage, STAGE_SPECS[stage], Experiment())
 
 
 def test_every_stage_action_button_has_a_tooltip():

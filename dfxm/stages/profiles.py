@@ -56,7 +56,7 @@ from ..common.plotting import (
     trace_fixed_scale,
     trace_height_cm,
 )
-from ..config.models import Param, ParamType, StageSpec
+from ..config.models import Param, ParamType, SeeAlso, StageSpec
 from .slices import MARKS_GROUP, nearest_plane_index
 
 ProgressFn = Callable[[float, str], None]
@@ -150,11 +150,13 @@ STAGE = StageSpec(
             ParamType.TEXT,
             "Jobs (JSON)",
             default=_DEFAULT_JOBS,
+            editor="summary_json",
             help=(
                 "JSON list of profile jobs: slice name, plane offset, line start/end in µm "
                 "('start_uv'/'end_uv'), and band width in pixels. Optional per-job 'fields' "
                 "(list of field ids to profile, in order) and 'reference' (top image) override "
-                "the global Fields/Reference. Easiest filled by 'Pick line…'."
+                "the global Fields/Reference. Easiest filled by 'Pick line…'; "
+                "'Edit raw JSON…' opens the full list."
             ),
         ),
         Param(
@@ -306,6 +308,13 @@ STAGE = StageSpec(
             ParamType.DIR,
             "Output dir",
             help="Where the figures and CSVs are written (blank = next to the slices file).",
+        ),
+    ),
+    see_also=(
+        SeeAlso(
+            "",
+            "Colormaps are set per quantity group in “Publication style…” "
+            "(left panel); the trace and line colours in Advanced below are this stage's own.",
         ),
     ),
 )

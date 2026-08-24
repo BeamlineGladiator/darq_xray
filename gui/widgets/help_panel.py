@@ -17,12 +17,13 @@ from dfxm.config.models import Param
 from ..theme import ThemeController
 
 
-def param_help_html(p: Param, error_color: str | None = None) -> str:
+def param_help_html(p: Param, error_color: str | None = None, see_also: str = "") -> str:
     """Rich-text help for *p*: label (+unit), calibration note, help text.
 
     The calibration note is coloured with *error_color* when given (the help
     panel), otherwise rendered plain (tooltips, which do not restyle on theme
-    change).
+    change). *see_also* — a :class:`~dfxm.config.models.SeeAlso` pointer's text
+    for this parameter — is appended as a "See also:" line when non-empty.
     """
     head = f"<b>{html.escape(p.label)}</b>"
     if p.unit:
@@ -39,6 +40,8 @@ def param_help_html(p: Param, error_color: str | None = None) -> str:
             parts.append(warn)
     if p.help:
         parts.append(html.escape(p.help))
+    if see_also:
+        parts.append(f"<i>See also:</i> {html.escape(see_also)}")
     return "<br>".join(parts)
 
 
@@ -53,6 +56,7 @@ class HelpPanel(QFrame):
         self._label.setWordWrap(True)
         self._idle_html = ""
         self._current: Param | None = None
+        self._see_also: dict[str, str] = {}
         self._error_color = ThemeController.instance().palette.error
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 6, 8, 6)
@@ -63,10 +67,22 @@ class HelpPanel(QFrame):
         self._error_color = palette.error
         self._render()
 
-    def set_idle(self, title: str, description: str) -> None:
-        """Set (and show) the text used when no field is focused."""
+    def set_idle(self, title: str, description: str, see_also: str = "") -> None:
+        """Set (and show) the text used when no field is focused.
+
+        *see_also* is the stage-level pointer text, appended as its own line so
+        a newcomer idling on the stage description sees where a feature they
+        expected on the form actually lives.
+        """
         self._idle_html = f"<b>{html.escape(title)}</b> — {html.escape(description)}"
+        if see_also:
+            self._idle_html += f"<br><i>See also:</i> {html.escape(see_also)}"
         self._current = None
+        self._render()
+
+    def set_see_also(self, mapping: dict[str, str]) -> None:
+        """Pointer text per parameter name, appended when that param is shown."""
+        self._see_also = dict(mapping)
         self._render()
 
     def show_idle(self) -> None:
@@ -81,4 +97,8 @@ class HelpPanel(QFrame):
         if self._current is None:
             self._label.setText(self._idle_html)
             return
-        self._label.setText(param_help_html(self._current, self._error_color))
+        self._label.setText(
+            param_help_html(
+                self._current, self._error_color, self._see_also.get(self._current.name, "")
+            )
+        )

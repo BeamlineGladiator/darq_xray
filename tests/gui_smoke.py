@@ -1275,6 +1275,8 @@ def main() -> int:
     # Without this reset the wait loop below exits on iteration zero and both
     # assertions pass without the debounce timer, the _AdvisoryWorker thread,
     # or advisoryReady ever running.
+    _stashed_latest42 = strain_view42._advisor.latest
+    _stashed_label42 = strain_view42._advice_label.text()
     strain_view42._advisor.latest = None
     strain_view42._advice_label.setText("")
     strain_view42._advisor.request()  # force a fresh debounced request
@@ -1285,6 +1287,11 @@ def main() -> int:
     assert strain_view42._advisor.latest is not None, "advisor never produced an Advisory"
     assert strain_view42._advice_label.text(), "cost line text is empty"
     print(f"[42] live cost line populated: {strain_view42._advice_label.text()!r}")
+    # Put the shared strain view back the way step [4] left it — this step
+    # borrows a view that later steps also use.
+    strain_view42._advisor.latest = _stashed_latest42
+    strain_view42._advice_label.setText(_stashed_label42)
+    assert strain_view42._advisor.latest is _stashed_latest42, "[42] leaked its reset advisor"
 
     # [43] System check dialog: rows()/as_text() are populated from a real
     # machine measurement; the dialog closes cleanly.
@@ -1298,6 +1305,55 @@ def main() -> int:
     scdlg43.close()
     app.processEvents()
     print("[43] System check dialog: rows()/as_text() populated; closes cleanly")
+
+    # [44] Style-at-run stamp: a finished run's Results tab names the style the
+    # run was LAUNCHED with, not whatever the style dialog says now. Step [4]
+    # already ran strain for real through _on_run (so _last_style is a genuine
+    # capture); here we plant a distinguishable one and re-finish that result.
+    # The plant is stashed and undone (including a re-_finish_ok, which also
+    # rewrites the Results text) so later steps inherit the real captured
+    # style rather than this step's fake one.
+    from dfxm.common.plotting import PlotStyle as _PS44
+
+    sview44 = win._views["strain"]
+    _stashed44 = sview44._last_style
+    assert _stashed44 is not None, "_on_run in step [4] left no captured style"
+    live44 = win.global_plot_style().cmap_strain
+    assert live44 != "turbo", "precondition: the live session style must differ from the stamp"
+    try:
+        sview44._last_style = _PS44(cmap_strain="turbo")
+        sview44._finish_ok(sview44._last_result)
+        _text44 = sview44._results.toPlainText()
+        assert "Strain=turbo" in _text44, _text44[-200:]
+        assert f"Strain={live44}" not in _text44, "stamped the CURRENT style, not the captured one"
+    finally:
+        sview44._last_style = _stashed44
+        sview44._finish_ok(sview44._last_result)
+    assert "turbo" not in sview44._results.toPlainText(), "[44] leaked its fake style"
+    print("[44] style stamp: finished run records the style it used")
+
+    # [45] Jobs summary editor: the profiles job list renders as a one-line
+    # summary instead of raw JSON, and the summary tracks whatever is written
+    # into the field — which is exactly what the two picker call sites do.
+    # _on_edit is deliberately NOT called: it opens a modal dialog.
+    from gui.widgets.jobs_summary import JobsSummaryEditor as _JSE45
+
+    pview45 = win._views["profiles"]
+    ed45 = pview45._form._editors["jobs_json"]
+    assert isinstance(ed45, _JSE45), f"jobs_json editor is {type(ed45).__name__}"
+    _stashed45 = pview45._form.values()["jobs_json"]
+    try:
+        _raw45 = (
+            '[{"name": "oblique_full", "offset_um": 0.0}, {"name": "ridge", "offset_um": 12.5}]'
+        )
+        pview45._form.set_values({"jobs_json": _raw45})
+        _sum45 = ed45._summary.text()
+        assert "2 jobs" in _sum45 and "oblique_full" in _sum45 and "ridge" in _sum45, _sum45
+        assert pview45._form.values()["jobs_json"] == _raw45, "form did not return the raw JSON"
+    finally:
+        pview45._form.set_values({"jobs_json": _stashed45})
+    assert pview45._form.values()["jobs_json"] == _stashed45, "[45] leaked its job list"
+    print("[45] jobs summary editor: summary tracks the raw JSON")
 
     print("\nGUI SMOKE PASSED")
     return 0

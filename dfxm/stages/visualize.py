@@ -35,7 +35,7 @@ from ..common.h5io import sum_dataset_bytes
 from ..common.plotting import apply_round_clim, resolve_cmap, style_from_params
 from ..common.raster import extract_motor_positions
 from ..common.sort import find_matching_folders
-from ..config.models import CostEstimate, Param, ParamType, StageSpec
+from ..config.models import CostEstimate, Param, ParamType, SeeAlso, StageSpec
 
 ProgressFn = Callable[[float, str], None]
 
@@ -411,6 +411,12 @@ STAGE = StageSpec(
                 "Falls back to linear (with a note) when the colour range includes "
                 "zero or negative values."
             ),
+        ),
+    ),
+    see_also=(
+        SeeAlso(
+            "",
+            "Colormaps are set per quantity group in “Publication style…” (left panel), not here.",
         ),
     ),
     estimate="dfxm.stages.visualize:estimate",

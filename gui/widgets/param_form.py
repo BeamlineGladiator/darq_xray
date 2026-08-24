@@ -9,6 +9,11 @@ Maps each parameter type to an editor widget:
 * ``PATH`` / ``DIR`` / ``SAVE_PATH`` -> ``QLineEdit`` + a "Browse…" button
 * ``STR``   -> ``QLineEdit``
 
+A param may override that mapping with a ``Param.editor`` render hint:
+``"summary_json"`` renders a ``TEXT`` param as a
+:class:`~gui.widgets.jobs_summary.JobsSummaryEditor` (one-line summary + an
+"Edit raw JSON…" dialog). An unknown hint falls back to the type's editor.
+
 Calibration parameters (``param.calibration``) get a highlighted label and a
 "⚠ calibration" suffix, because their values are physically meaningful.
 """
@@ -37,7 +42,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from dfxm.config.models import Param, ParamType
+from dfxm.config.models import Param, ParamType, SeeAlso
 
 from .help_panel import param_help_html
 from .wheel_guard import install_wheel_guard
@@ -64,6 +69,7 @@ class ParamForm(QWidget):
         params: Sequence[Param],
         values: dict[str, Any] | None = None,
         parent: QWidget | None = None,
+        see_also: Sequence[SeeAlso] = (),
     ) -> None:
         super().__init__(parent)
         self._params = list(params)
@@ -77,10 +83,16 @@ class ParamForm(QWidget):
         self._labels: dict[str, QLabel] = {}
         self._base_label: dict[str, str] = {}
         self._notes: dict[str, QLabel] = {}
+        self._see_also_labels: dict[str, QLabel] = {}
+        self._see_also_by_param = {s.param_name: s for s in see_also if s.param_name}
+        self._stage_see_also = tuple(s for s in see_also if not s.param_name)
 
         initial = values or {}
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
+
+        for entry in self._stage_see_also:
+            outer.addWidget(self._see_also_label("", entry.text))
 
         essentials = [p for p in self._params if not p.advanced]
         advanced = [p for p in self._params if p.advanced]
@@ -89,6 +101,7 @@ class ParamForm(QWidget):
         for p in essentials:
             ess_form.addRow(self._label_for(p), self._make_editor(p, initial))
             self._add_note_row(ess_form, p)
+            self._add_see_also_row(ess_form, p)
         outer.addLayout(ess_form)
 
         if advanced:
@@ -112,6 +125,7 @@ class ParamForm(QWidget):
                     group_forms[p.group] = form
                 form.addRow(self._label_for(p), self._make_editor(p, initial))
                 self._add_note_row(form, p)
+                self._add_see_also_row(form, p)
             self._adv_box.setVisible(False)
             self._adv_toggle.toggled.connect(self._on_adv_toggled)
             outer.addWidget(self._adv_toggle)
@@ -124,7 +138,8 @@ class ParamForm(QWidget):
     def _make_editor(self, p: Param, initial: dict[str, Any]) -> QWidget:
         editor = self._build_editor(p, initial.get(p.name, p.default))
         self._editors[p.name] = editor
-        tip = param_help_html(p)
+        entry = self._see_also_by_param.get(p.name)
+        tip = param_help_html(p, see_also=entry.text if entry else "")
         for w in (editor, *editor.findChildren(QWidget)):
             w.installEventFilter(self)
             self._param_for_widget[w] = p
@@ -147,6 +162,35 @@ class ParamForm(QWidget):
         note.setVisible(False)
         form.addRow(note)
         self._notes[p.name] = note
+
+    def _see_also_label(self, key: str, text: str) -> QLabel:
+        """A quiet, always-visible pointer row (role="hint", never hidden).
+
+        Distinct from `_add_note_row`'s role="warning" advisory rows, which
+        start hidden and carry cost warnings: a pointer is static text whose
+        whole purpose is being visible without being sought.
+        """
+        label = QLabel(text)
+        label.setWordWrap(True)
+        label.setProperty("role", "hint")
+        self._see_also_labels[key] = label
+        return label
+
+    def _add_see_also_row(self, form: QFormLayout, p: Param) -> None:
+        """A pointer row under *p*'s editor, when the spec declares one.
+
+        The editor itself is NOT wrapped: `self._editors[name]` must stay the
+        real widget, which `gui_smoke` and the wheel-guard tests reach into
+        directly — the same constraint `_add_note_row` documents.
+
+        An anchor naming a parameter this form does not have simply never
+        matches and renders nothing; `StageSpec.see_also_problems()` is what
+        turns that into a test failure, so it must not also crash the form.
+        """
+        entry = self._see_also_by_param.get(p.name)
+        if entry is None:
+            return
+        form.addRow(self._see_also_label(p.name, entry.text))
 
     def _on_adv_toggled(self, checked: bool) -> None:
         assert self._adv_toggle is not None and self._adv_box is not None
@@ -277,6 +321,8 @@ class ParamForm(QWidget):
             return self._float_editor(p, value)
         if p.type in (ParamType.PATH, ParamType.DIR, ParamType.SAVE_PATH):
             return self._path_editor(p, value)
+        if p.type is ParamType.TEXT and p.editor == "summary_json":
+            return self._summary_json_editor(p, value)
         if p.type is ParamType.TEXT:
             return self._text_editor(p, value)
         return self._str_editor(p, value)
@@ -339,6 +385,13 @@ class ParamForm(QWidget):
             te.setPlainText(str(value))
         self._register(p.name, te.toPlainText, lambda v: te.setPlainText(str(v)), te.textChanged)
         return te
+
+    def _summary_json_editor(self, p: Param, value: Any) -> QWidget:
+        from .jobs_summary import JobsSummaryEditor
+
+        ed = JobsSummaryEditor("" if value is None else str(value), p.label)
+        self._register(p.name, ed.text, ed.setText, ed.textChanged)
+        return ed
 
     def _path_editor(self, p: Param, value: Any) -> QWidget:
         container = QWidget()

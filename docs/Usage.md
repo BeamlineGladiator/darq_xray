@@ -84,6 +84,11 @@ after concat because it runs outside the app. Above the rail, the experiment
 header shows the active preset and its calibration in one line; **Edit…**
 opens the full schema-driven editor (every field explained in its help panel).
 
+Each button below the rail — **Publication style…**, **Figure builder…**,
+**System check…** and the theme toggle — carries a tooltip saying what it opens,
+so the two subsystems reached from here (the session-global figure style and the
+multi-panel composer) are identifiable without clicking.
+
 **Appearance.** A light/dark toggle (☀ Light / ☾ Dark) sits at the bottom of
 the left column, beside *Publication style…*. Your choice is remembered between
 sessions. Switching theme only affects the on-screen app and the embedded
@@ -325,7 +330,7 @@ Every stage uses the same layout:
 | **Run / Cancel + progress** | Runs the stage in a **separate process**; the bar and step text track progress; **Cancel** truly kills it. Before launching, input paths are checked on disk — a missing one blocks the run and focuses the offending field. Once a run/batch is more than 5 % done and has been going for more than 2 seconds, the progress text may also show a `~… left` estimate; the estimate starts fresh every time you click **Run**, so it never carries a stale reading over from a previous run. |
 | **Status banner** (above the tabs) | Green one-liner on success; on failure, the error in plain language plus an actionable hint (the full traceback stays in **Log**); on **Run**, a blue-grey banner states the same cost line the form already showed, so the number you saw before clicking is still visible once the run is underway. |
 | **Log** tab | Live progress + streamed messages. |
-| **Results** tab | A text summary of what was produced — including every skipped layer/input and the reason. |
+| **Results** tab | A text summary of what was produced — including every skipped layer/input and the reason. For a run started from the GUI it ends with a `Rendered with publication style (colormaps / font): …` line naming the four group colormaps and the font scale **that run** used — see [[#The "Publication style…" editor]]. |
 | **Output** tab | A representative image preview. |
 | **3D** tab | (visualize & rocking only) interactive volume viewer — see [[#Interactive viewers]]. |
 
@@ -333,6 +338,22 @@ A help box under the form shows the current stage's description by default. Clic
 a field and it shows that field's help; click away (or open another stage) and it
 returns to the stage description. The same per-field help is also available as a
 hover tooltip on each field and its label.
+
+#### Hover help on the buttons
+
+Every action button in the button row carries a tooltip saying what it *does*,
+not just what it is called — hover **Pick line…**, **Jobs from marks…**,
+**Replot…**, **Pin planes…**, **Mark planes…** or **Pick ROI…** to see what it
+writes back into the form and whether it re-runs the stage (**Replot…** does
+not). The **3D** tab has one too, naming the **Open 3D viewer…** button you
+have to press inside it after a run.
+
+The two export buttons at the bottom of the **Output** tab explain their own
+greyed-out state: before a run they read *"Available once a run has produced
+figures."*, and once a run has finished they switch to *"Save figures from the
+last run as PNG/PDF/SVG."* Starting a new run greys them out again and puts the
+first wording back, so the hover help never promises something the buttons
+cannot do.
 
 #### The cost line
 
@@ -1371,6 +1392,23 @@ strain and misorientation line up.
 > **Jobs from marks…** turns them into jobs in one guided pass — see
 > [[#Jobs from marks… (profiles)]].
 
+#### The jobs summary row
+
+`jobs_json` is not shown as a wall of raw JSON. The form renders it as one
+quiet summary line naming each job and its plane offset —
+`2 jobs: oblique_full @ +0 µm, ridge @ +12.5 µm` — with an **Edit raw JSON…**
+button beside it that opens the full text in a dialog (**OK** applies the
+edit, **Cancel** leaves the field untouched). An empty list reads `no jobs`;
+text that is not valid JSON reads `unreadable JSON — open the editor to fix
+it` rather than silently looking fine; and a list that is valid JSON but not
+shaped like jobs (no `name` on an entry) falls back to a plain count —
+`3 entries` — rather than guessing. Job names are shown literally, so a name
+containing `<` or `>` reads back exactly as you typed it.
+
+**Pick line…** and **Jobs from marks…** write into exactly the same field, so
+the summary updates the moment they finish; the raw JSON they produced is
+still what the run receives, and is still one click away.
+
 #### Jobs JSON: per-job `fields` and `reference`
 
 Each job in `jobs_json` may carry two optional keys that override the global
@@ -1554,6 +1592,40 @@ pixel-aligned with the strain/mosaicity layer images.
 | `frame_index` | which detector frame to show |
 | `match_threshold_mm` | max `(samy,samz)` distance to accept a match |
 
+> [!warning] In the app these layers now follow the publication style — expect a different look
+> matched used to colour its layers from its own `Colormap` dropdown
+> (**Advanced → Appearance**), even in the GUI. It no longer does. Like every
+> other figure stage, a run **from the app** now draws matched's one quantity —
+> raw intensity — with the **Raw intensity** colormap from **Publication
+> style…**, and with that group's colourbar number format. **So your next run
+> will produce layers that look different from the ones you already have** if
+> your Raw-intensity colormap is not `gray`, or if the raw group's tick format
+> (`arb` in the tuned publication style) differs from the plain automatic one
+> matched used before. The data, the colour *limits* and the saved filenames are
+> unchanged — only the colouring and the colourbar numbers.
+>
+> **The colourbar numbers do not merely change format — with the tuned style
+> they go away.** The raw group's number format is `arb` ("arbitrary units") in
+> the tuned publication style, which draws the colour ramp with **no numeric
+> ticks at all** (matched's colourbar label already says "a.u.", so nothing is
+> appended either). This is the default in-app outcome, not an edge case, and it
+> is exactly how `rocking` already renders its raw volumes. Your `vmin`/`vmax`
+> and the auto percentiles under **Advanced → Appearance** still set the colour
+> limits — they simply stop being readable off the figure. Pick a numeric format
+> for **Raw intensity** under **Publication style… → Colourbar — per group** if
+> you need the numbers back.
+>
+> The rule in one line: **the publication style wins whenever there is one, and
+> the `Colormap` dropdown decides when there is not.** A headless
+> `python3 -m dfxm.stages.matched` run has no style, so `--colormap` keeps
+> working exactly as it always did (and its `gray` default keeps matched's
+> historical look, plain automatic colourbar ticks included). Exports follow the
+> same rule, so an exported figure still matches the PNG the run saved **given
+> the same style** — an export renders with the style as it is *at export time*,
+> while the run rendered with the style captured when you pressed Run, so edit
+> the Raw-intensity colormap in between and the export and the saved PNG will
+> differ (see [[#The "Publication style…" editor]]).
+
 > [!info] Long detector stacks no longer decide how much memory this needs
 > The background this stage subtracts is the per-pixel median **down the frame
 > axis**, so each pixel's background depends only on that pixel's own values.
@@ -1581,7 +1653,7 @@ pixel-aligned with the strain/mosaicity layer images.
 
 ## Publication export
 
-After a stage runs successfully, the **Output** tab gains two buttons at the bottom right:
+After a stage runs successfully, the **Output** tab gains two buttons at the bottom right. Both are greyed out until then and say so on hover — see [[#Hover help on the buttons]]:
 
 - **Export…** — single-figure export: opens a dialog with a live preview, a figure selector drop-down (if the stage produced multiple figures), per-figure style controls, and an **Export** button that writes into a folder you pick.
 - **Export all…** — batch export: exports every figure the stage produced into a single folder you pick via a folder-chooser dialog. Progress is shown per-figure in a banner; one bad figure never aborts the rest. The banner and a warning dialog report how many figures succeeded and what went wrong with any failures.
@@ -1608,6 +1680,27 @@ Clicking it opens a scrollable style editor (the same control set as the per-fig
 > style **as it is at the moment you press Run**. Edit the style, re-run, and
 > the new look is guaranteed to apply. Headless CLI runs (without the GUI) keep
 > the plain legacy look.
+>
+> The snapshot is taken **at launch**, so editing the style afterwards does *not*
+> retro-apply to a run that has already finished. Two places say so:
+> - the **Results** tab of a finished run ends with the style that run rendered
+>   with — `Rendered with publication style (colormaps / font): Mosa
+>   misorientation=…, Mosa FWHM=…, Strain=…, Raw intensity=…, font ×…`. The four
+>   groups are named exactly as the **Colormaps** rows in the style editor name
+>   them, so the line reads as instructions for where to go and change it. It
+>   names those four colormaps and the font scale only, not the other style
+>   settings (axes mode, title scale, scale bar, µm-per-cm …), so two runs that
+>   differ only in those stamp the same line;
+> - the **Publication style…** dialog states the rule at its foot and points at
+>   **Replot…** (available on strain, mosaicity, rocking, slices and profiles),
+>   which re-renders finished results from the saved `.h5` using the **current**
+>   style.
+>
+> The stamp describes **the run**, and it keeps describing the run after you
+> replot: a **Replot…** writes into its own timestamped `replots/<stamp>/`
+> folder rather than overwriting the run's PNGs, and does not rewrite the
+> Results text. So a replotted figure carries the style you replotted with, not
+> the one the Results tab names.
 
 ### Style controls
 
@@ -1621,11 +1714,45 @@ plots that quantity (runs, previews, exports and the 3-D viewers alike):
 | Mosa misorientation | χ/μ centre-of-mass maps & slices | `fast` (ParaView's default map, registered with matplotlib) |
 | Mosa FWHM | χ/μ peak-broadening maps & slices | `magma` |
 | Strain | strain maps, detrend diagnostics, strain slices | `RdBu_r` |
-| Raw intensity | rocking volumes, raw slices | `gray` |
+| Raw intensity | rocking volumes, raw slices, matched rocking-frame layers | `gray` |
 
-The choices persist across sessions together with the rest of the style. The
-matched stage keeps its own per-stage `colormap` dropdown in its parameter
-form.
+The choices persist across sessions together with the rest of the style.
+
+> [!tip] The stage forms point here
+> Colormaps are **not** on the stage forms, which is where people look for
+> them first. Every figure-producing stage — strain, mosaicity, rocking,
+> visualize, slices, profiles and matched — therefore shows a *See also* line
+> at the top of its parameter panel saying that colormaps are set per quantity
+> group in **Publication style…** in the left panel. The same line is appended
+> to the stage's description in the help panel below the form. Stages that
+> produce no figures (concat, and paraview — whose `.vti` output is coloured
+> inside ParaView itself) carry no such line.
+>
+> On the stages that *do* own colour settings of their own the line names them
+> instead of ending in "not here", so the pointer explains the split rather than
+> appearing to contradict the form a few rows further down:
+>
+> | Stage | What the line adds | What it points at |
+> |---|---|---|
+> | strain, rocking, matched | "the range fields in Advanced below are this stage's own" | strain's `vmin`/`vmax`, rocking's colourbar percentiles, matched's `vmin`/`vmax` and auto percentiles |
+> | profiles | "the trace and line colours in Advanced below are this stage's own" | `line_color` (the profile line drawn on the overview images) and `trace_color` (the trace curves) |
+>
+> Each of those lines names *Advanced* explicitly, because every one of those
+> fields lives inside the collapsed **Advanced** expander while the pointer
+> itself sits above it. mosaicity, visualize and slices own no colour setting at
+> all and so keep the short "…, not here." wording.
+
+The matched stage additionally keeps its own per-stage `colormap` dropdown in
+its parameter form (under **Advanced → Appearance**). **In the app it does
+nothing**: matched draws a single quantity, raw intensity, so the **Raw
+intensity** row above is what colours its layers. The dropdown is the fallback
+for a run with no publication style at all — that is, a headless CLI run, where
+it (and the `--colormap` flag behind it) still decides. A *See also* line under
+that dropdown (inside **Advanced**) says exactly that; the same text is appended
+to the dropdown's entry in the help panel when you click into it, and to the
+dropdown's own hover tooltip. See
+[[#9. Rocking-matched layers (`matched`)|the matched stage]] for what changed
+and why your next matched run will not look like your last one.
 
 **Scale bar**
 

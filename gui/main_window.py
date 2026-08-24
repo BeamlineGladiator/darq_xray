@@ -117,6 +117,9 @@ class MainWindow(QMainWindow):
 
         # "Publication style…" button — lives in the left column below the rail.
         self._pub_style_btn = QPushButton("Publication style…")
+        self._pub_style_btn.setToolTip(
+            "Fonts, scale bars and the per-quantity colormaps used by every stage's figures."
+        )
         self._pub_style_btn.clicked.connect(self._on_pub_style)
 
         # "Figure builder…" button — non-modal multi-panel composer window,
@@ -124,11 +127,16 @@ class MainWindow(QMainWindow):
         # module never pulls in the compose/matplotlib machinery).
         self._figure_builder = None
         self._figure_builder_btn = QPushButton("Figure builder…")
+        self._figure_builder_btn.setToolTip("Compose multi-panel figures from any stage's outputs.")
         self._figure_builder_btn.clicked.connect(self._on_figure_builder)
 
         # "System check…" — what this machine is and what it implies for
         # settings. The only surface that pays for a GL probe on demand.
         self._system_check_btn = QPushButton("System check…")
+        self._system_check_btn.setToolTip(
+            "Measure this machine — CPU, RAM, free disk and OpenGL — and what "
+            "each means for stage settings."
+        )
         self._system_check_btn.clicked.connect(self._on_system_check)
 
         # Light/dark theme toggle.
@@ -247,8 +255,21 @@ class MainWindow(QMainWindow):
         btn_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
         btn_box.rejected.connect(dlg.reject)
 
+        # The timing rule, stated where it bites: a run snapshots this style when
+        # Run is pressed, so editing it afterwards does not retro-apply. The
+        # Results tab of a finished run stamps the style it actually used.
+        note = QLabel(
+            "These settings apply to runs started from now on — a finished run "
+            "keeps the style it was launched with, and its Results tab says which. "
+            "Use “Replot…” (strain, mosaicity, rocking, slices, profiles) to "
+            "re-render finished results with the current style."
+        )
+        note.setWordWrap(True)
+        note.setProperty("role", "hint")
+
         layout = QVBoxLayout(dlg)
         layout.addWidget(scroll, 1)
+        layout.addWidget(note)
         layout.addWidget(btn_box)
 
         dlg.exec()

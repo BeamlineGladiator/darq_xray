@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
 from dfxm.common.advisory import HINT_3D_TEXTURE
 from dfxm.common.eta import EtaEstimator
 from dfxm.common.figures import FigureSpec, figures_for
+from dfxm.common.plotting import PlotStyle
 from dfxm.config.models import Experiment, StageSpec
 from dfxm.runner import Done, Failed, Log, Progress, StageRunner
 from dfxm.stages.registry import STAGE_TARGETS
@@ -70,6 +71,11 @@ _SAVE_DEBOUNCE_MS = 400  # coalesce rapid form edits into one QSettings write
 # Stages whose run yields an aligned 3-D volume worth viewing interactively.
 _VOLUME_STAGES = ("visualize", "rocking")
 
+# Hover help for the export buttons. Two constants rather than two literals so
+# the wording and the enabled state are switched together in _enable_exports().
+EXPORT_TIP_DISABLED = "Available once a run has produced figures."
+EXPORT_TIP_ENABLED = "Save figures from the last run as PNG/PDF/SVG."
+
 
 class ExportResult(NamedTuple):
     """Outcome of one figure in an :meth:`StageView.export_all` batch."""
@@ -102,6 +108,10 @@ class StageView(QWidget):
         self._runner: StageRunner | None = None
         self._last_params: dict = {}
         self._last_result = None
+        # The publication style the last run was LAUNCHED with (snapshotted in
+        # _on_run). Editing the style afterwards must not change what a finished
+        # run reports it rendered with — see style_stamp().
+        self._last_style: PlotStyle | None = None
         # Persistence bookkeeping: only a genuine *user* edit dirties a stage, so
         # untouched stages never freeze a snapshot (they keep following the
         # experiment). ``_loading`` suppresses the dirty flag during our own
@@ -121,7 +131,7 @@ class StageView(QWidget):
         self._save_timer.timeout.connect(self._persist_now)
 
         # --- left: parameter form + run/cancel ---
-        self._form = ParamForm(spec.params, self._initial_values())
+        self._form = ParamForm(spec.params, self._initial_values(), see_also=spec.see_also)
         if self._store is not None:
             self._restore_state()  # overlay saved values before wiring save-on-edit
             self._form.changed.connect(self._on_form_changed)
@@ -140,27 +150,40 @@ class StageView(QWidget):
         self._jobs_marks_btn: QPushButton | None = None
         if stage_name == "profiles":
             self._pick_btn = QPushButton("Pick line…")
+            self._pick_btn.setToolTip(
+                "Draw a profile line on a slice; writes it into the job list."
+            )
             self._pick_btn.clicked.connect(self._on_pick_line)
             btn_row.addWidget(self._pick_btn)
             self._jobs_marks_btn = QPushButton("Jobs from marks…")
+            self._jobs_marks_btn.setToolTip(
+                "Build profile jobs from the planes starred in the slices stage."
+            )
             self._jobs_marks_btn.clicked.connect(self._on_jobs_from_marks)
             btn_row.addWidget(self._jobs_marks_btn)
         # slices/strain/mosaicity/rocking/profiles: re-render layers from an existing h5
         self._replot_btn: QPushButton | None = None
         if stage_name in ("slices", "strain", "mosaicity", "rocking", "profiles"):
             self._replot_btn = QPushButton("Replot…")
+            self._replot_btn.setToolTip(
+                "Re-render figures from an existing .h5 without re-running the stage."
+            )
             self._replot_btn.clicked.connect(self._on_replot)
             btn_row.addWidget(self._replot_btn)
         # slices: pin sweep planes into pinned_slices_json (built lazily on click)
         self._pin_btn: QPushButton | None = None
         if stage_name == "slices":
             self._pin_btn = QPushButton("Pin planes…")
+            self._pin_btn.setToolTip("Pin sweep planes so later runs re-render only those.")
             self._pin_btn.clicked.connect(self._on_pin_planes)
             btn_row.addWidget(self._pin_btn)
         # slices: star interesting planes into /marks (built lazily on click)
         self._mark_btn: QPushButton | None = None
         if stage_name == "slices":
             self._mark_btn = QPushButton("Mark planes…")
+            self._mark_btn.setToolTip(
+                "Star interesting planes; other stages can pick them up from /marks."
+            )
             self._mark_btn.clicked.connect(self._on_mark_planes)
             btn_row.addWidget(self._mark_btn)
         # ROI-grouped stages: one "Pick ROI…" button per distinct roi_group
@@ -171,6 +194,9 @@ class StageView(QWidget):
                 _seen_groups.append(p.roi_group)
         for _grp in _seen_groups:
             _btn = QPushButton("Pick ROI…")
+            _btn.setToolTip(
+                "Draw the region of interest on a preview instead of typing pixel bounds."
+            )
             _btn.clicked.connect(lambda _checked=False, g=_grp: self._on_pick_roi_group(g))
             btn_row.addWidget(_btn)
             self._roi_buttons[_grp] = _btn
@@ -210,7 +236,9 @@ class StageView(QWidget):
         progress_row.addWidget(self._progress_text, 2)
 
         self._help = HelpPanel()
-        self._help.set_idle(spec.label, spec.description)
+        _stage_ptr = " ".join(s.text for s in spec.see_also if not s.param_name)
+        self._help.set_idle(spec.label, spec.description, see_also=_stage_ptr)
+        self._help.set_see_also({s.param_name: s.text for s in spec.see_also if s.param_name})
         self._form.focusedParamChanged.connect(self._help.show_param)
         self._form.focusCleared.connect(self._help.show_idle)
 
@@ -236,9 +264,11 @@ class StageView(QWidget):
         # Export buttons — disabled until a successful run populates _last_result.
         self._export_btn = QPushButton("Export…")
         self._export_btn.setEnabled(False)
+        self._export_btn.setToolTip(EXPORT_TIP_DISABLED)
         self._export_btn.clicked.connect(self._on_export_clicked)
         self._export_all_btn = QPushButton("Export all…")
         self._export_all_btn.setEnabled(False)
+        self._export_all_btn.setToolTip(EXPORT_TIP_DISABLED)
         self._export_all_btn.clicked.connect(self._on_export_all_clicked)
         export_row = QHBoxLayout()
         export_row.addStretch(1)
@@ -259,7 +289,12 @@ class StageView(QWidget):
         self._vol3d: Volume3DPanel | None = None
         if stage_name in _VOLUME_STAGES:
             self._vol3d = Volume3DPanel()
-            self._tabs.addTab(self._vol3d, "3D")
+            idx = self._tabs.addTab(self._vol3d, "3D")
+            self._tabs.setTabToolTip(
+                idx,
+                "Interactive 3-D view of this stage's volumes — run the stage, "
+                "then pick a volume and click “Open 3D viewer…”.",
+            )
 
         self._banner = QLabel("")
         self._banner.setWordWrap(True)
@@ -430,11 +465,22 @@ class StageView(QWidget):
         run_params = dict(params)
         window = self.window()
         if hasattr(window, "global_plot_style"):
-            from dataclasses import asdict
+            from dataclasses import asdict, replace
 
             # Snapshot the CURRENT session publication style so every new run
-            # renders with whatever the style dialog says right now.
-            run_params["plot_style"] = asdict(window.global_plot_style())
+            # renders with whatever the style dialog says right now. Keep the
+            # snapshot: the Results tab stamps the style THIS run used, which a
+            # later style edit must not rewrite.
+            #
+            # `replace(...)` with no overrides is a COPY, and it is load-bearing:
+            # `global_plot_style()` hands back MainWindow's own `_plot_style`
+            # object, which "Publication style…" mutates in place (StyleControls)
+            # — and that button stays live while a run is in flight. Aliasing it
+            # would let a mid-run style edit rewrite the stamp of a run that had
+            # already rendered from the asdict() below: a stamp that lies.
+            # Both lines read the same snapshot, so they can never disagree.
+            self._last_style = replace(window.global_plot_style())
+            run_params["plot_style"] = asdict(self._last_style)
         # Pre-flight: what will this cost, and can the disk take it? Computed
         # fresh on the click (cheap, and never stale). Advisory only — it never
         # changes what the stage does, and only the disk question can stop it.
@@ -464,8 +510,7 @@ class StageView(QWidget):
         self._progress_plain = ""
         self._eta.reset()
         self._log.append(f"Running stage '{self._stage_name}'…")
-        self._export_btn.setEnabled(False)
-        self._export_all_btn.setEnabled(False)
+        self._enable_exports(False)
         self._set_running(True)
         self.runStarted.emit(self._stage_name)
         self._runner = StageRunner(target, run_params, start_method="spawn")
@@ -890,7 +935,10 @@ class StageView(QWidget):
         summary = _summarize(self._stage_name, result)
         first_line = summary.splitlines()[0] if summary else "done"
         self._show_banner(f"✓ {html.escape(first_line)}", error=False)
-        self._results.setPlainText(summary)
+        # The banner keeps to first_line — the style stamp belongs in Results,
+        # not in the one-line banner.
+        stamp = style_stamp(self._last_style)
+        self._results.setPlainText(f"{summary}\n\n{stamp}" if stamp else summary)
         img = _representative_image(self._stage_name, result)
         shown = False
         if img and os.path.exists(img):
@@ -911,18 +959,34 @@ class StageView(QWidget):
             if hasattr(window, "global_plot_style"):
                 from dfxm.common.plotting import style_to_json
 
-                style_json = style_to_json(window.global_plot_style())
+                # The style this run RENDERED with, exactly like the stamp two
+                # dozen lines up — the 3-D windows opened from a finished run
+                # must not disagree with the Results tab about which style that
+                # was. Falls back to the live one only when nothing was
+                # captured (a view whose window gained global_plot_style after
+                # the run, and the direct-_finish_ok path in tests/smoke).
+                style_json = style_to_json(self._last_style or window.global_plot_style())
             self._vol3d.set_sources(
                 volume_sources(self._stage_name, result, self._last_params),
                 self._stage_name,
                 style_json=style_json,
             )
-        self._export_btn.setEnabled(True)
-        self._export_all_btn.setEnabled(True)
+        self._enable_exports()
         self._set_running(False)
         self.runFinished.emit(self._stage_name, True)
 
     # -- export ---------------------------------------------------------------
+
+    def _enable_exports(self, on: bool = True) -> None:
+        """Enable (or disable) the export buttons and set the matching wording.
+
+        The enabled state and the hover help are switched in one place so they
+        cannot drift: a disabled button always says what would enable it, and an
+        enabled one always says what it saves.
+        """
+        for btn in (self._export_btn, self._export_all_btn):
+            btn.setEnabled(on)
+            btn.setToolTip(EXPORT_TIP_ENABLED if on else EXPORT_TIP_DISABLED)
 
     def _figures(self) -> list[FigureSpec]:
         """Return the list of FigureSpecs for the last successful run (or [] if none)."""
@@ -1037,6 +1101,38 @@ class StageView(QWidget):
         self._run_btn.setEnabled(not running)
         self._cancel_btn.setEnabled(running)
         self._form.setEnabled(not running)
+
+
+def style_stamp(style: PlotStyle | None) -> str:
+    """One line naming the publication style a run rendered with.
+
+    Runs snapshot the style at launch (:meth:`StageView._on_run`), so a style
+    edited afterwards does not retro-apply to a finished run — a fact users
+    reasonably expect to work the other way. Recording it on the result is how
+    they can tell.
+
+    Only the four group colormaps and the font scale are named, so the headline
+    says "(colormaps / font)" rather than claiming to pin the whole style: two
+    runs differing only in, say, ``axes_mode`` or ``um_per_cm`` stamp
+    identically, and the line must not promise otherwise.
+
+    The groups are named with the SAME labels the style editor puts on its
+    dropdowns (``export_dialog.CMAP_GROUP_LABELS``), not their field suffixes:
+    a reader who is told ``raw=gray`` has to translate that back to the "Raw
+    intensity" row they would go and change. Imported lazily because
+    ``export_dialog`` drags in the matplotlib Qt canvas, which has no business
+    loading at GUI startup.
+    """
+    if style is None:
+        return ""
+    from .widgets.export_dialog import CMAP_GROUP_LABELS
+
+    groups = ", ".join(
+        f"{label}={getattr(style, f'cmap_{group}')}" for group, label in CMAP_GROUP_LABELS.items()
+    )
+    return (
+        f"Rendered with publication style (colormaps / font): {groups}, font ×{style.font_scale:g}"
+    )
 
 
 def _summarize(stage_name: str, result) -> str:

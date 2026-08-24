@@ -45,7 +45,7 @@ from ..common.h5io import resolve_input_file
 from ..common.plotting import apply_round_clim, resolve_cmap, style_from_params
 from ..common.raster import extract_motor_positions, find_h5_file
 from ..common.sort import find_matching_folders
-from ..config.models import CostEstimate, Param, ParamType, StageSpec
+from ..config.models import CostEstimate, Param, ParamType, SeeAlso, StageSpec
 
 ProgressFn = Callable[[float, str], None]
 
@@ -383,6 +383,13 @@ STAGE = StageSpec(
             advanced=True,
             group="Appearance",
             help="Upper intensity percentile for the colour scale of the rendered images.",
+        ),
+    ),
+    see_also=(
+        SeeAlso(
+            "",
+            "Colormaps are set per quantity group in “Publication style…” "
+            "(left panel); the range fields in Advanced below are this stage's own.",
         ),
     ),
     estimate="dfxm.stages.rocking:estimate",

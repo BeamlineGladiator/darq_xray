@@ -51,6 +51,10 @@ class Param:
     ``Advisory.hints`` has that key, the form renders its text as a note under
     the field. Declaring it here rather than in the GUI keeps the form
     schema-driven.
+    ``editor`` names a non-default editor for a param whose normal widget is a
+    poor fit — ``"summary_json"`` renders a TEXT param holding a JSON list as a
+    one-line summary with the raw text behind a button. An unknown value falls
+    back to the type's normal editor.
     """
 
     name: str
@@ -68,6 +72,7 @@ class Param:
     roi_axis: str = ""  # "" | "x" | "y" | "both" ("both" = one 4-int "r0,r1,c0,c1" field)
     roi_frame: str = ""  # "" | "detector" | "map" — the coordinate frame of a ROI param
     advice_key: str = ""  # key into Advisory.hints -> a note under this field
+    editor: str = ""  # render hint: "" = by type; "summary_json" = summary + raw dialog
 
     def __post_init__(self) -> None:
         if self.type is ParamType.ENUM and not self.choices:
@@ -164,6 +169,37 @@ class CostEstimate:
 
 
 @dataclass(frozen=True)
+class SeeAlso:
+    """A pointer from where a user looks to where the feature actually lives.
+
+    ``anchor`` is ``""`` (rendered once at the top of the stage form and
+    appended to the help panel's idle text) or ``"param:<name>"`` (rendered
+    under that parameter's editor and appended to its help text).
+
+    There is deliberately no group-level anchor: every ``Appearance`` /
+    ``Quantities`` param is ``advanced=True``, and the form builds group
+    headers only inside the collapsed "Advanced" expander — a group-anchored
+    pointer would be invisible to exactly the newcomer it targets.
+    """
+
+    anchor: str
+    text: str
+
+    def __post_init__(self) -> None:
+        if self.anchor != "" and not self.anchor.startswith("param:"):
+            raise ValueError(f"see-also anchor {self.anchor!r} must be '' or 'param:<name>'")
+        if self.anchor.startswith("param:") and not self.anchor[len("param:") :]:
+            raise ValueError("see-also anchor 'param:' names no parameter")
+        if not self.text.strip():
+            raise ValueError("see-also text must not be empty")
+
+    @property
+    def param_name(self) -> str:
+        """The parameter this points at, or ``""`` for a stage-level pointer."""
+        return self.anchor[len("param:") :] if self.anchor.startswith("param:") else ""
+
+
+@dataclass(frozen=True)
 class StageSpec:
     """A stage's identity plus the list of parameters it accepts."""
 
@@ -172,6 +208,7 @@ class StageSpec:
     description: str
     params: tuple[Param, ...]
     estimate: str | None = None  # "module:function" target, resolved lazily
+    see_also: tuple[SeeAlso, ...] = ()
 
     def estimator(self):
         """Resolve :attr:`estimate` to a callable, or None when unset.
@@ -195,6 +232,39 @@ class StageSpec:
             if p.name == name:
                 return p
         raise KeyError(f"no param named {name!r} in stage {self.name!r}")
+
+    def see_also_problems(self) -> list[str]:
+        """Anchors that are unusable on this spec (empty list = all valid).
+
+        Two cross-references :class:`SeeAlso` cannot do on its own (it sees one
+        pointer, never the spec around it); prefix validity is already enforced
+        at construction.
+
+        1. An anchor naming a parameter this spec does not have — it would
+           render nowhere.
+        2. The *same* anchor declared twice. ``ParamForm`` keys its pointer rows
+           by anchor in one dict, so duplicates disagree with each other about
+           what happens: two ``"param:x"`` entries render only the LAST one's
+           text (the row builder looks that param up once, and the dict has
+           kept the last), so the first pointer silently disappears, while two
+           ``""`` entries render BOTH rows and collide only in the test hook,
+           which likewise keeps the last. Neither is a thing anyone means, so
+           both are reported here.
+        """
+        names = {p.name for p in self.params}
+        problems = [
+            f"stage {self.name!r}: see-also anchor names unknown param {s.param_name!r}"
+            for s in self.see_also
+            if s.param_name and s.param_name not in names
+        ]
+        seen: set[str] = set()
+        for s in self.see_also:
+            if s.anchor in seen:
+                problems.append(
+                    f"stage {self.name!r}: see-also anchor {s.anchor!r} is declared twice"
+                )
+            seen.add(s.anchor)
+        return problems
 
     def coerce_all(self, values: dict[str, Any]) -> dict[str, Any]:
         """Coerce a dict of raw values, filling in defaults for missing keys."""
