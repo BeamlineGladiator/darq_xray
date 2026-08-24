@@ -50,7 +50,7 @@ from ..common.plotting import (
     symmetric_limits,
 )
 from ..common.sort import find_matching_folders, resolve_layer_work
-from ..config.models import CostEstimate, Param, ParamType, StageSpec
+from ..config.models import CostEstimate, Param, ParamType, SeeAlso, StageSpec
 
 ProgressFn = Callable[[float, str], None]
 
@@ -244,6 +244,13 @@ STAGE = StageSpec(
                 "Write the per-layer diagnostic PNGs (raw, detrended, strain). Turn off for a "
                 "faster volume-only run."
             ),
+        ),
+    ),
+    see_also=(
+        SeeAlso(
+            "",
+            "Colormaps are set per quantity group in “Publication style…” "
+            "(left panel); the range fields below are this stage's own.",
         ),
     ),
     estimate="dfxm.stages.strain:estimate",

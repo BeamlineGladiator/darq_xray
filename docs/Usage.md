@@ -1623,9 +1623,30 @@ plots that quantity (runs, previews, exports and the 3-D viewers alike):
 | Strain | strain maps, detrend diagnostics, strain slices | `RdBu_r` |
 | Raw intensity | rocking volumes, raw slices | `gray` |
 
-The choices persist across sessions together with the rest of the style. The
-matched stage keeps its own per-stage `colormap` dropdown in its parameter
-form.
+The choices persist across sessions together with the rest of the style.
+
+> [!tip] The stage forms point here
+> Colormaps are **not** on the stage forms, which is where people look for
+> them first. Every figure-producing stage — strain, mosaicity, rocking,
+> visualize, slices, profiles and matched — therefore shows a *See also* line
+> at the top of its parameter panel saying that colormaps are set per quantity
+> group in **Publication style…** in the left panel. The same line is appended
+> to the stage's description in the help panel below the form. Stages that
+> produce no figures (concat, and paraview — whose `.vti` output is coloured
+> inside ParaView itself) carry no such line.
+>
+> On the stages that *do* have colour-**range** fields of their own (strain's
+> `vmin`/`vmax`, rocking's colorbar percentiles, matched's `vmin`/`vmax` and
+> auto percentiles) the line adds "the range fields below are this stage's
+> own", so the pointer explains the split instead of appearing to contradict
+> the form.
+
+The matched stage additionally keeps its own per-stage `colormap` dropdown in
+its parameter form (under **Advanced → Appearance**). It is the **fallback**,
+used for any quantity that has no group in the table above; the **Raw
+intensity** group is what drives matched's raw-intensity layers. A *See also*
+line under that dropdown (inside **Advanced**) says so, and it repeats in the
+help panel and the field's tooltip when you focus it.
 
 **Scale bar**
 

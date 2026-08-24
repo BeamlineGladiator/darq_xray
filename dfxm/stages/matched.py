@@ -25,7 +25,7 @@ from ..common.h5io import resolve_input_file
 from ..common.plotting import CMAP_CHOICES, apply_round_clim, style_from_params
 from ..common.raster import extract_motor_positions, find_h5_file
 from ..common.sort import find_matching_folders
-from ..config.models import CostEstimate, Param, ParamType, StageSpec
+from ..config.models import CostEstimate, Param, ParamType, SeeAlso, StageSpec
 
 ProgressFn = Callable[[float, str], None]
 
@@ -214,6 +214,18 @@ STAGE = StageSpec(
             ParamType.DIR,
             "Output dir",
             help="Where the matched layer PNGs are written.",
+        ),
+    ),
+    see_also=(
+        SeeAlso(
+            "",
+            "Colormaps are set per quantity group in “Publication style…” "
+            "(left panel); the range fields below are this stage's own.",
+        ),
+        SeeAlso(
+            "param:colormap",
+            "“Publication style…” drives the raw-intensity colormap; this is "
+            "the fallback for anything without a quantity group.",
         ),
     ),
     estimate="dfxm.stages.matched:estimate",

@@ -56,7 +56,7 @@ from ..common.plotting import (
     trace_fixed_scale,
     trace_height_cm,
 )
-from ..config.models import Param, ParamType, StageSpec
+from ..config.models import Param, ParamType, SeeAlso, StageSpec
 from .slices import MARKS_GROUP, nearest_plane_index
 
 ProgressFn = Callable[[float, str], None]
@@ -306,6 +306,12 @@ STAGE = StageSpec(
             ParamType.DIR,
             "Output dir",
             help="Where the figures and CSVs are written (blank = next to the slices file).",
+        ),
+    ),
+    see_also=(
+        SeeAlso(
+            "",
+            "Colormaps are set per quantity group in “Publication style…” (left panel), not here.",
         ),
     ),
 )

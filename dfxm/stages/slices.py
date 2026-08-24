@@ -59,7 +59,7 @@ from ..common.plotting import (
 )
 from ..common.raster import extract_motor_positions
 from ..common.sort import find_matching_folders
-from ..config.models import CostEstimate, Param, ParamType, StageSpec
+from ..config.models import CostEstimate, Param, ParamType, SeeAlso, StageSpec
 
 ProgressFn = Callable[[float, str], None]
 
@@ -534,6 +534,12 @@ STAGE = StageSpec(
             advanced=True,
             group="Output",
             help="Write a PNG per plane in addition to the HDF5.",
+        ),
+    ),
+    see_also=(
+        SeeAlso(
+            "",
+            "Colormaps are set per quantity group in “Publication style…” (left panel), not here.",
         ),
     ),
     estimate="dfxm.stages.slices:estimate",

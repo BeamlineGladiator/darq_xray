@@ -3,6 +3,7 @@
 import pytest
 
 from dfxm.config.models import Param, ParamType, SeeAlso, StageSpec
+from gui.bindings import STAGE_ORDER, STAGE_SPECS
 
 
 def _spec(*see_also):
@@ -39,6 +40,9 @@ def test_a_param_pointer_naming_a_missing_param_is_reported():
     problems = spec.see_also_problems()
     assert len(problems) == 1
     assert "nope" in problems[0]
+    # The registry-wide sweep below reports every stage at once, so the
+    # message has to say WHICH stage carries the bad anchor.
+    assert "demo" in problems[0]
 
 
 def test_every_bad_pointer_is_reported_not_just_the_first():
@@ -59,3 +63,33 @@ def test_an_anchor_naming_no_parameter_is_rejected_at_construction():
 def test_an_empty_text_is_rejected_at_construction():
     with pytest.raises(ValueError, match="text"):
         SeeAlso("", "   ")
+
+
+_FIGURE_STAGES = ("strain", "mosaicity", "rocking", "visualize", "slices", "profiles", "matched")
+
+
+def test_every_real_stage_spec_has_valid_see_also_anchors():
+    # Precondition: this walk is worthless if no stage declares a pointer.
+    assert sum(len(STAGE_SPECS[n].see_also) for n in STAGE_ORDER) > 0
+    for name in STAGE_ORDER:
+        assert STAGE_SPECS[name].see_also_problems() == []
+
+
+def test_every_figure_producing_stage_points_at_the_style_dialog():
+    for name in _FIGURE_STAGES:
+        texts = [s.text for s in STAGE_SPECS[name].see_also if not s.param_name]
+        assert texts, f"{name} has no stage-level pointer"
+        assert any("Publication style" in t for t in texts), name
+
+
+def test_stages_that_produce_no_figures_have_no_pointer():
+    # concat writes .h5 only; paraview writes VTI whose colormap is chosen in
+    # ParaView itself. A pointer there would be a lie.
+    for name in ("concat", "paraview"):
+        assert STAGE_SPECS[name].see_also == ()
+
+
+def test_matched_additionally_annotates_its_colormap_dropdown():
+    entries = {s.param_name: s.text for s in STAGE_SPECS["matched"].see_also if s.param_name}
+    assert "colormap" in entries
+    assert "Publication style" in entries["colormap"]

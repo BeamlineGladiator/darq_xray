@@ -35,7 +35,7 @@ from ..common.figures import (
 from ..common.h5io import StackedVolumeFile
 from ..common.plotting import build_histogram
 from ..common.sort import find_matching_folders, resolve_layer_work
-from ..config.models import CostEstimate, Param, ParamType, StageSpec
+from ..config.models import CostEstimate, Param, ParamType, SeeAlso, StageSpec
 
 ProgressFn = Callable[[float, str], None]
 
@@ -180,6 +180,12 @@ STAGE = StageSpec(
             advanced=True,
             group="Output",
             help="HDF5 compression for the volume: gzip (small, slower), lzf (fast, larger), none.",
+        ),
+    ),
+    see_also=(
+        SeeAlso(
+            "",
+            "Colormaps are set per quantity group in “Publication style…” (left panel), not here.",
         ),
     ),
     estimate="dfxm.stages.mosaicity:estimate",
