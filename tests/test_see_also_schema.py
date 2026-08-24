@@ -51,6 +51,11 @@ def test_an_unknown_anchor_prefix_is_rejected_at_construction():
         SeeAlso("group:Appearance", "text")
 
 
+def test_an_anchor_naming_no_parameter_is_rejected_at_construction():
+    with pytest.raises(ValueError, match="anchor"):
+        SeeAlso("param:", "text")
+
+
 def test_an_empty_text_is_rejected_at_construction():
     with pytest.raises(ValueError, match="text"):
         SeeAlso("", "   ")

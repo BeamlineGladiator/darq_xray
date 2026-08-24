@@ -128,7 +128,7 @@ to build forms.
 
 `tests/test_see_also_schema.py` covers the `SeeAlso` carrier: the default-empty
 `see_also`, both valid anchor kinds, every bad anchor reported (not just the
-first), and the two construction-time rejections.
+first), and all three construction-time rejections.
 
 #### `presets.py`
 
