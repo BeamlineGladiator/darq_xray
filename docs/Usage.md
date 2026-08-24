@@ -1637,16 +1637,19 @@ The choices persist across sessions together with the rest of the style.
 >
 > On the stages that *do* have colour-**range** fields of their own (strain's
 > `vmin`/`vmax`, rocking's colorbar percentiles, matched's `vmin`/`vmax` and
-> auto percentiles) the line adds "the range fields below are this stage's
-> own", so the pointer explains the split instead of appearing to contradict
-> the form.
+> auto percentiles) the line adds "the range fields in Advanced below are this
+> stage's own", so the pointer explains the split instead of appearing to
+> contradict the form. It names *Advanced* explicitly because every one of
+> those range fields lives inside the collapsed **Advanced** expander, while
+> the pointer itself sits above it.
 
 The matched stage additionally keeps its own per-stage `colormap` dropdown in
 its parameter form (under **Advanced → Appearance**). It is the **fallback**,
 used for any quantity that has no group in the table above; the **Raw
 intensity** group is what drives matched's raw-intensity layers. A *See also*
-line under that dropdown (inside **Advanced**) says so, and it repeats in the
-help panel and the field's tooltip when you focus it.
+line under that dropdown (inside **Advanced**) says so; the same text is
+appended to the dropdown's entry in the help panel when you click into it, and
+to the dropdown's own hover tooltip.
 
 **Scale bar**
 

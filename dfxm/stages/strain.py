@@ -250,7 +250,7 @@ STAGE = StageSpec(
         SeeAlso(
             "",
             "Colormaps are set per quantity group in “Publication style…” "
-            "(left panel); the range fields below are this stage's own.",
+            "(left panel); the range fields in Advanced below are this stage's own.",
         ),
     ),
     estimate="dfxm.stages.strain:estimate",

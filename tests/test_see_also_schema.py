@@ -3,7 +3,7 @@
 import pytest
 
 from dfxm.config.models import Param, ParamType, SeeAlso, StageSpec
-from gui.bindings import STAGE_ORDER, STAGE_SPECS
+from gui.bindings import STAGE_SPECS
 
 
 def _spec(*see_also):
@@ -41,8 +41,8 @@ def test_a_param_pointer_naming_a_missing_param_is_reported():
     assert len(problems) == 1
     assert "nope" in problems[0]
     # The registry-wide sweep below reports every stage at once, so the
-    # message has to say WHICH stage carries the bad anchor.
-    assert "demo" in problems[0]
+    # message has to open by saying WHICH stage carries the bad anchor.
+    assert problems[0].startswith("stage 'demo':")
 
 
 def test_every_bad_pointer_is_reported_not_just_the_first():
@@ -70,9 +70,17 @@ _FIGURE_STAGES = ("strain", "mosaicity", "rocking", "visualize", "slices", "prof
 
 def test_every_real_stage_spec_has_valid_see_also_anchors():
     # Precondition: this walk is worthless if no stage declares a pointer.
-    assert sum(len(STAGE_SPECS[n].see_also) for n in STAGE_ORDER) > 0
-    for name in STAGE_ORDER:
-        assert STAGE_SPECS[name].see_also_problems() == []
+    assert sum(len(spec.see_also) for spec in STAGE_SPECS.values()) > 0
+    for name, spec in STAGE_SPECS.items():
+        assert spec.see_also_problems() == [], name
+
+
+def test_no_spec_declares_two_stage_level_pointers():
+    # ParamForm keys stage-level rows under "" in a single dict, so a second
+    # anchor="" entry would overwrite the first in `_see_also_labels` — both
+    # rows render, but only the last is findable. One per spec, by design.
+    for name, spec in STAGE_SPECS.items():
+        assert len([s for s in spec.see_also if not s.param_name]) <= 1, name
 
 
 def test_every_figure_producing_stage_points_at_the_style_dialog():
@@ -80,6 +88,37 @@ def test_every_figure_producing_stage_points_at_the_style_dialog():
         texts = [s.text for s in STAGE_SPECS[name].see_also if not s.param_name]
         assert texts, f"{name} has no stage-level pointer"
         assert any("Publication style" in t for t in texts), name
+
+
+_RANGE_TOKENS = ("vmin", "vmax", "pct")
+_EXTENDED = "this stage's own"
+
+
+def _owns_appearance_range_field(spec) -> bool:
+    """True when the stage has a colour-RANGE field in the same Advanced group
+    the colormap discussion belongs to.
+
+    This is the invariant behind the two wordings: `visualize`/`slices` also
+    have a `range_pct`, but theirs sits in "Alignment", where it does not read
+    as competing with the pointer.
+    """
+    return any(
+        p.group == "Appearance" and any(t in p.name for t in _RANGE_TOKENS) for p in spec.params
+    )
+
+
+def test_the_extended_wording_is_used_exactly_where_the_stage_owns_a_range_field():
+    # Precondition: the split is only meaningful if the registry has both kinds.
+    assert {_owns_appearance_range_field(STAGE_SPECS[n]) for n in _FIGURE_STAGES} == {True, False}
+    for name in _FIGURE_STAGES:
+        spec = STAGE_SPECS[name]
+        text = " ".join(s.text for s in spec.see_also if not s.param_name)
+        assert (_EXTENDED in text) == _owns_appearance_range_field(spec), name
+        if _EXTENDED in text:
+            # Those range fields are all advanced=True while the stage-level
+            # row renders ABOVE the collapsed expander, so a bare "below"
+            # points at nothing the newcomer can see.
+            assert "Advanced" in text, name
 
 
 def test_stages_that_produce_no_figures_have_no_pointer():
