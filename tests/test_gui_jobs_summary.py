@@ -31,7 +31,9 @@ def test_a_summary_names_each_job_and_its_offset():
 
 
 def test_one_job_is_singular():
-    assert summarize_jobs('[{"name": "only", "offset_um": 0.0}]').startswith("1 job")
+    # The colon is load-bearing: "1 job" alone is a prefix of "1 jobs: …", so
+    # dropping it would leave the plural rule unchecked.
+    assert summarize_jobs('[{"name": "only", "offset_um": 0.0}]').startswith("1 job:")
 
 
 def test_an_empty_list_says_so():
@@ -44,8 +46,27 @@ def test_a_list_without_names_falls_back_to_a_count():
     assert summarize_jobs("[1, 2, 3]") == "3 entries"
 
 
+def test_an_object_with_no_name_falls_back_instead_of_raising():
+    # A plausible thing to type into the raw dialog. Two entries, so the count
+    # noun is not what this test is about.
+    assert summarize_jobs('[{"offset_um": 1}, {"offset_um": 2}]') == "2 entries"
+
+
+def test_a_one_item_fallback_is_singular_too():
+    assert summarize_jobs("[1]") == "1 entry"
+
+
 def test_malformed_json_reports_rather_than_raising():
     assert "unreadable" in summarize_jobs("{not json").lower()
+
+
+def test_a_name_with_angle_brackets_is_not_rendered_as_markup():
+    from PySide6.QtGui import Qt
+
+    editor = JobsSummaryEditor('[{"name": "a<b>c", "offset_um": 1.0}]', "Jobs (JSON)")
+    # Precondition: this really is the case AutoText would eat.
+    assert Qt.mightBeRichText(editor._summary.text())
+    assert editor._summary.textFormat() == Qt.TextFormat.PlainText
 
 
 def test_the_editor_round_trips_the_raw_string_unchanged():

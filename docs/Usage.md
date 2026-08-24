@@ -1377,9 +1377,12 @@ strain and misorientation line up.
 quiet summary line naming each job and its plane offset —
 `2 jobs: oblique_full @ +0 µm, ridge @ +12.5 µm` — with an **Edit raw JSON…**
 button beside it that opens the full text in a dialog (**OK** applies the
-edit, **Cancel** leaves the field untouched). An empty list reads `no jobs`,
-and text that is not valid JSON reads `unreadable JSON — open the editor to
-fix it` rather than silently looking fine.
+edit, **Cancel** leaves the field untouched). An empty list reads `no jobs`;
+text that is not valid JSON reads `unreadable JSON — open the editor to fix
+it` rather than silently looking fine; and a list that is valid JSON but not
+shaped like jobs (no `name` on an entry) falls back to a plain count —
+`3 entries` — rather than guessing. Job names are shown literally, so a name
+containing `<` or `>` reads back exactly as you typed it.
 
 **Pick line…** and **Jobs from marks…** write into exactly the same field, so
 the summary updates the moment they finish; the raw JSON they produced is
