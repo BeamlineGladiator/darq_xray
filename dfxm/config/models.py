@@ -164,6 +164,37 @@ class CostEstimate:
 
 
 @dataclass(frozen=True)
+class SeeAlso:
+    """A pointer from where a user looks to where the feature actually lives.
+
+    ``anchor`` is ``""`` (rendered once at the top of the stage form and
+    appended to the help panel's idle text) or ``"param:<name>"`` (rendered
+    under that parameter's editor and appended to its help text).
+
+    There is deliberately no group-level anchor: every ``Appearance`` /
+    ``Quantities`` param is ``advanced=True``, and the form builds group
+    headers only inside the collapsed "Advanced" expander — a group-anchored
+    pointer would be invisible to exactly the newcomer it targets.
+    """
+
+    anchor: str
+    text: str
+
+    def __post_init__(self) -> None:
+        if self.anchor != "" and not self.anchor.startswith("param:"):
+            raise ValueError(f"see-also anchor {self.anchor!r} must be '' or 'param:<name>'")
+        if self.anchor.startswith("param:") and not self.anchor[len("param:") :]:
+            raise ValueError("see-also anchor 'param:' names no parameter")
+        if not self.text.strip():
+            raise ValueError("see-also text must not be empty")
+
+    @property
+    def param_name(self) -> str:
+        """The parameter this points at, or ``""`` for a stage-level pointer."""
+        return self.anchor[len("param:") :] if self.anchor.startswith("param:") else ""
+
+
+@dataclass(frozen=True)
 class StageSpec:
     """A stage's identity plus the list of parameters it accepts."""
 
@@ -172,6 +203,7 @@ class StageSpec:
     description: str
     params: tuple[Param, ...]
     estimate: str | None = None  # "module:function" target, resolved lazily
+    see_also: tuple[SeeAlso, ...] = ()
 
     def estimator(self):
         """Resolve :attr:`estimate` to a callable, or None when unset.
@@ -195,6 +227,19 @@ class StageSpec:
             if p.name == name:
                 return p
         raise KeyError(f"no param named {name!r} in stage {self.name!r}")
+
+    def see_also_problems(self) -> list[str]:
+        """Anchors that name no existing parameter (empty list = all valid).
+
+        Prefix validity is enforced by :class:`SeeAlso` itself; this is the
+        cross-reference the dataclass cannot do on its own.
+        """
+        names = {p.name for p in self.params}
+        return [
+            f"stage {self.name!r}: see-also anchor names unknown param {s.param_name!r}"
+            for s in self.see_also
+            if s.param_name and s.param_name not in names
+        ]
 
     def coerce_all(self, values: dict[str, Any]) -> dict[str, Any]:
         """Coerce a dict of raw values, filling in defaults for missing keys."""
