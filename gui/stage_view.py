@@ -1059,11 +1059,16 @@ def style_stamp(style: PlotStyle | None) -> str:
     edited afterwards does not retro-apply to a finished run — a fact users
     reasonably expect to work the other way. Recording it on the result is how
     they can tell.
+
+    Only the four group colormaps and the font scale are named, so the headline
+    says "(colormaps / font)" rather than claiming to pin the whole style: two
+    runs differing only in, say, ``axes_mode`` or ``um_per_cm`` stamp
+    identically, and the line must not promise otherwise.
     """
     if style is None:
         return ""
     return (
-        "Rendered with publication style: "
+        "Rendered with publication style (colormaps / font): "
         f"mosa_com={style.cmap_mosa_com}, mosa_fwhm={style.cmap_mosa_fwhm}, "
         f"strain={style.cmap_strain}, raw={style.cmap_raw}, "
         f"font ×{style.font_scale:g}"

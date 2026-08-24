@@ -42,7 +42,27 @@ def test_the_stamp_says_it_is_the_style_the_run_used():
     assert "rendered with" in stamp.lower()
 
 
-def test_the_stamp_reflects_the_captured_style_not_the_current_one():
+def test_the_stamp_scopes_its_claim_to_what_it_actually_names():
+    """PlotStyle carries ~30 fields; the stamp names five.
+
+    Two runs differing only in axes_mode / title_scale / the scale bar / the
+    µm-per-cm scale stamp identically, so the headline must not read as "this
+    is the whole style".
+    """
+    # precondition: a field the stamp does NOT name really can differ silently
+    assert style_stamp(PlotStyle(axes_mode="none")) == style_stamp(PlotStyle())
+    assert "colormaps" in style_stamp(PlotStyle()).lower()
+
+
+def test_the_stamp_is_a_pure_function_of_the_style_it_is_given():
+    """Nothing is hard-coded: a different style in, a different line out.
+
+    (Renamed from test_the_stamp_reflects_the_captured_style_not_the_current_one
+    — `style_stamp` has no access to a "current" style, so its body could never
+    have told captured from current. That distinction is pinned by
+    test_finished_run_records_the_style_it_was_launched_with_not_the_current_one
+    below, which is what M6/M7 actually break.)
+    """
     at_launch = PlotStyle(cmap_strain="turbo")
     edited_since = PlotStyle(cmap_strain="seismic")
     assert "turbo" in style_stamp(at_launch)
