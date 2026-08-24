@@ -343,10 +343,10 @@ hover tooltip on each field and its label.
 
 Every action button in the button row carries a tooltip saying what it *does*,
 not just what it is called — hover **Pick line…**, **Jobs from marks…**,
-**Replot…**, **Pin planes…**, **Mark planes…** or **Pick ROI…** to see which
-file it reads, what it writes back into the form, and whether it re-runs the
-stage (**Replot…** does not). The **3D** tab has one too, naming the
-**Open 3D viewer…** button you have to press inside it after a run.
+**Replot…**, **Pin planes…**, **Mark planes…** or **Pick ROI…** to see what it
+writes back into the form and whether it re-runs the stage (**Replot…** does
+not). The **3D** tab has one too, naming the **Open 3D viewer…** button you
+have to press inside it after a run.
 
 The two export buttons at the bottom of the **Output** tab explain their own
 greyed-out state: before a run they read *"Available once a run has produced

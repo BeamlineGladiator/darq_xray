@@ -58,7 +58,9 @@ def test_the_export_buttons_explain_why_they_are_disabled():
     assert view._export_btn.isEnabled() is False  # precondition
     assert view._export_btn.toolTip() == EXPORT_TIP_DISABLED
     assert view._export_all_btn.toolTip() == EXPORT_TIP_DISABLED
-    assert "run" in EXPORT_TIP_DISABLED.lower()
+    # "run" alone is satisfied by any string containing "rerun"/"running";
+    # pin the actual promise the disabled wording makes.
+    assert "once a run" in EXPORT_TIP_DISABLED.lower()
 
 
 def test_the_export_tooltip_changes_once_a_run_has_produced_figures():
@@ -70,6 +72,10 @@ def test_the_export_tooltip_changes_once_a_run_has_produced_figures():
     assert view._export_btn.toolTip() == EXPORT_TIP_ENABLED
     assert view._export_all_btn.toolTip() == EXPORT_TIP_ENABLED
     assert EXPORT_TIP_ENABLED != EXPORT_TIP_DISABLED
+    # The comparisons above are tautological — they pass for
+    # EXPORT_TIP_ENABLED = "TODO". Pin what the enabled wording must say.
+    assert "Save" in EXPORT_TIP_ENABLED
+    assert "PNG" in EXPORT_TIP_ENABLED
 
 
 def test_starting_a_new_run_puts_the_exports_back_on_the_disabled_wording(monkeypatch):
@@ -125,3 +131,4 @@ def test_the_left_panel_buttons_explain_themselves():
     assert win._system_check_btn.toolTip().strip()
     assert "colormap" in win._pub_style_btn.toolTip().lower()
     assert "multi-panel" in win._figure_builder_btn.toolTip().lower()
+    assert "RAM" in win._system_check_btn.toolTip()
