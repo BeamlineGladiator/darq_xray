@@ -73,7 +73,7 @@ One new carrier on the stage schema, rather than five ad-hoc widgets:
 @dataclass(frozen=True)
 class SeeAlso:
     """A pointer from where a user looks to where the feature actually lives."""
-    anchor: str   # "" = stage-level | "group:Appearance" | "param:colormap"
+    anchor: str   # "" = stage-level | "param:colormap"
     text: str     # one terse sentence
 
 @dataclass(frozen=True)
@@ -106,8 +106,15 @@ and carry cost warnings. Placement by anchor:
 | anchor | placed |
 |---|---|
 | `""` | at the top of the form, above the first section |
-| `"group:X"` | directly under group `X`'s header label (`param_form.py:107`) |
 | `"param:p"` | directly under `p`'s editor row |
+
+**There is deliberately no group-level anchor.** Every `Appearance` and
+`Quantities` param is `advanced=True`, and `ParamForm` builds group headers
+*only* inside the collapsed "Advanced (N settings)" expander
+(`param_form.py:94-118`; essentials ignore `p.group` entirely). A
+group-anchored pointer would therefore be invisible to exactly the newcomer it
+targets. Stage-level is the only always-visible anchor, so the colormap
+pointers use it.
 
 The editor widget itself is **not** wrapped — `self._editors[name]` must stay
 the real widget, which `gui_smoke` and the wheel-guard tests reach into
@@ -130,8 +137,7 @@ explanations.
 
 A typo'd anchor must fail the suite, not silently render nothing. A Qt-free
 enforcement test walks every `StageSpec` in `gui/bindings.STAGE_SPECS` and
-asserts each anchor is `""`, names a group that at least one param declares, or
-names a param that exists. This mirrors the existing spec-enforcement tests.
+asserts each anchor is `""` or names a param that exists. This mirrors the existing spec-enforcement tests.
 
 ## §2 — The surfaces
 
@@ -141,11 +147,14 @@ names a param that exists. This mirrors the existing spec-enforcement tests.
 
 | stage | anchor |
 |---|---|
-| strain, rocking, visualize, profiles | `group:Appearance` |
-| slices | `group:Quantities` |
-| matched | `param:colormap` |
-| mosaicity | `""` (stage-level) |
+| strain, mosaicity, rocking, visualize, slices, profiles | `""` (stage-level) |
+| matched | `""` **and** `param:colormap` |
 | concat, paraview | none |
+
+matched carries both: the stage-level pointer for consistency with its
+siblings, and a `param:colormap` note on the dropdown itself, which is exactly
+where a user needs to learn that Publication style wins for standard
+quantities.
 
 Wording is per-stage but built from one sentence: colormaps are set per
 quantity group in *Publication style…* in the left panel; the vmin/vmax and
@@ -156,11 +165,19 @@ fallback for anything without a quantity group (see 2.2).
 ### 2.2 `matched` group-wiring
 
 `dfxm/stages/matched.py` currently passes `p["colormap"]` straight through
-(`:588`, `:615`, `:650`, `:669`) and never supplies a `cmap_group`. It changes
-to resolve the quantity group like every other stage and call
-`resolve_cmap(style, group, fallback=p["colormap"])`
-(`dfxm/common/figures.py:274` is the existing pattern), using the shared
-`GROUP_BY_KIND` map (`dfxm/common/plotting.py:54`).
+(`:588`, `:615`, `:650`, `:669`) and never supplies a `cmap_group`.
+
+matched renders rocking-curve detector frames — one quantity, colourbar label
+"Intensity − background (a.u.)". Its group is therefore the **constant**
+`"raw"`, the same pattern `dfxm/stages/rocking.py:1074` already uses
+(`cmap="gray", cmap_group="raw"`). No `GROUP_BY_KIND` lookup is needed.
+
+Both call sites change to `resolve_cmap(style, "raw", fallback=<colormap>)` and
+pass `group="raw"` to `render.layer_figure` — `run()` at `:584-594` and the
+export rebuild's `build(style)` at `:665-675`, which must resolve identically so
+an exported figure still matches its saved PNG. Passing `group` additionally
+brings matched's colourbar tick format in line with the other stages, a second
+and desirable behaviour change.
 
 **This is a real behaviour change: matched figures for standard quantities will
 follow the publication style on the next run instead of the per-stage
