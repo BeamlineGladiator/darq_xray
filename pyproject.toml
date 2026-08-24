@@ -1,3 +1,7 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "dfxm-pipeline"
 version = "0.1.0"
@@ -19,6 +23,15 @@ dependencies = [
 
 [project.optional-dependencies]
 test = ["pytest>=7.0"]
+
+# Named explicitly, because this is a flat layout (dfxm/, gui/, tests/,
+# experiments/, tools/, docs/ all sit side by side at the root). Setuptools'
+# auto-discovery refuses to guess here — "Multiple top-level packages
+# discovered in a flat-layout: ['gui', 'dfxm', 'experiments']" — and without
+# this table `pip install -e .` fails outright on a fresh clone. `tests` is a
+# package too but is deliberately not shipped.
+[tool.setuptools.packages.find]
+include = ["dfxm*", "gui*"]
 
 # Ruff conventions inherited from the parent repository: line length 100,
 # target py310, lint rules E (pycodestyle) / F (pyflakes) / I (isort).

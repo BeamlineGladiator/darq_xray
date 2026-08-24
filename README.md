@@ -43,10 +43,47 @@ dfxm_pipeline/
   tests/                    # synthetic-fixture unit tests + golden reproduction tests
 ```
 
+## Install
+
+One command, from a clone:
+
+```bash
+git clone <this repo> && cd dfxm_pipeline
+python3 -m venv .venv && source .venv/bin/activate
+pip install -e ".[test]"
+```
+
+That reads `pyproject.toml`, which is the **single source of truth** for what
+this program needs — there is no separate list to keep in sync. `-e` installs
+in *editable* mode, so the app still runs from the checkout exactly as before
+and edits take effect without reinstalling.
+
+Drop `[test]` if you don't intend to run the suite; it adds only `pytest`.
+
+> **Why the venv.** On a Debian/Ubuntu system Python, pip refuses to install
+> into the system environment at all — `error: externally-managed-environment`
+> (PEP 668) — and tells you to add `--break-system-packages`. A venv sidesteps
+> that, keeps this project's fairly heavy Qt/VTK stack off your system Python,
+> and is what CI would use.
+
+**One non-Python dependency, optional:** `ffmpeg` on `PATH` enables MP4 export.
+Without it, animations fall back to GIF — nothing else changes.
+
+### Dependencies
+
+Installed for you by the command above; listed here only so you can see what
+you are pulling in. `tests/test_docs_dependencies.py` fails if this list and
+`pyproject.toml` ever disagree.
+
+<!-- deps:start -->
+`numpy`, `h5py`, `scipy`, `matplotlib`, `pyyaml`, `psutil`, `PySide6`,
+`pyvista`, `pyvistaqt`, `vtk`
+<!-- deps:end -->
+
 ## Running
 
-The app is designed to **run in place** — no `pip install` step, matching the
-parent repo's `python3 script.py` workflow.
+The app **runs in place** from the checkout — the editable install above adds
+its dependencies, not a launcher.
 
 ```bash
 cd dfxm_pipeline
@@ -60,14 +97,11 @@ cd dfxm_pipeline
 python3 -m dfxm.stages.concat --help
 ```
 
-### Dependencies
+And the test suite:
 
 ```bash
-pip install --user numpy h5py scipy matplotlib pyyaml psutil PySide6 pyvista pyvistaqt vtk
-# plus: pytest (to run the test suite); ffmpeg on PATH for MP4 export
+python3 -m pytest -q
 ```
-
-(On an externally-managed/PEP 668 Python, add `--break-system-packages`.)
 
 ## Pipeline / stage map
 

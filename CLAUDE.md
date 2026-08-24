@@ -61,6 +61,7 @@ the app, between `concat` and the map stages.
 ## Running
 
 ```bash
+pip install -e ".[test]"            # install deps (once; editable, run-in-place kept)
 python3 -m gui.app                  # launch the GUI
 python3 -m dfxm.stages.strain -h    # run any stage headless (each has a CLI)
 python3 -m pytest -q                # tests
@@ -70,8 +71,13 @@ ruff check . && ruff format .       # lint + format (config in pyproject.toml)
 `ruff format` runs automatically on Write/Edit via the `.claude/settings.json`
 hook.
 
-Dependencies are listed in `pyproject.toml`; `ffmpeg` on PATH enables MP4
-export (GIF fallback without it).
+`pyproject.toml` is the **single source of truth** for dependencies. The prose
+lists in `README.md` and `docs/Usage.md` are checked against it by
+`tests/test_docs_dependencies.py`, so a new dependency goes in `pyproject.toml`
+*and* both marked (`<!-- deps:start -->`) blocks in the same change. That test
+also guards `[build-system]` and `[tool.setuptools.packages.find]`, without
+which `pip install -e .` fails outright on this flat layout. `ffmpeg` on PATH
+enables MP4 export (GIF fallback without it).
 
 ## Conventions & gotchas
 

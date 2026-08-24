@@ -42,12 +42,35 @@ aliases: [DFXM Pipeline Usage, Pipeline Guide, How to use the pipeline]
 > python3 -m gui.app
 > ```
 
-**Dependencies** (no virtualenv needed; install once):
+**Install** — one command, run once from the project folder:
 
 ```bash
-pip install numpy h5py scipy matplotlib PySide6 pyvista pyvistaqt vtk
-# optional: ffmpeg on PATH for MP4 export (otherwise animations fall back to GIF)
+python3 -m venv .venv && source .venv/bin/activate
+pip install -e ".[test]"
 ```
+
+It reads `pyproject.toml`, so it always installs *everything* the app needs;
+there is no hand-typed list to fall behind. `-e` is editable mode — the app
+still runs from this folder and your edits take effect immediately. On a
+Debian/Ubuntu system Python without a venv, pip refuses to install (PEP 668)
+unless you add `--break-system-packages`.
+
+For reference, that pulls in:
+
+<!-- deps:start -->
+`numpy`, `h5py`, `scipy`, `matplotlib`, `pyyaml`, `psutil`, `PySide6`,
+`pyvista`, `pyvistaqt`, `vtk`
+<!-- deps:end -->
+
+plus `pytest` from the `[test]` extra. One optional non-Python dependency:
+`ffmpeg` on `PATH` enables MP4 export (otherwise animations fall back to GIF).
+
+> [!warning] Don't skip `psutil` or `pyyaml`
+> This list used to omit both, and installing by hand from it left the app
+> without `psutil` — which silently made the status bar report **8 GB free on a
+> machine with 467 GB free**, and made every stage plan to stream when it could
+> have run in memory. Use the command above rather than picking packages off
+> the list.
 
 **Typical first run:**
 
