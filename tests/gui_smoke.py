@@ -1275,6 +1275,8 @@ def main() -> int:
     # Without this reset the wait loop below exits on iteration zero and both
     # assertions pass without the debounce timer, the _AdvisoryWorker thread,
     # or advisoryReady ever running.
+    _stashed_latest42 = strain_view42._advisor.latest
+    _stashed_label42 = strain_view42._advice_label.text()
     strain_view42._advisor.latest = None
     strain_view42._advice_label.setText("")
     strain_view42._advisor.request()  # force a fresh debounced request
@@ -1285,6 +1287,11 @@ def main() -> int:
     assert strain_view42._advisor.latest is not None, "advisor never produced an Advisory"
     assert strain_view42._advice_label.text(), "cost line text is empty"
     print(f"[42] live cost line populated: {strain_view42._advice_label.text()!r}")
+    # Put the shared strain view back the way step [4] left it — this step
+    # borrows a view that later steps also use.
+    strain_view42._advisor.latest = _stashed_latest42
+    strain_view42._advice_label.setText(_stashed_label42)
+    assert strain_view42._advisor.latest is _stashed_latest42, "[42] leaked its reset advisor"
 
     # [43] System check dialog: rows()/as_text() are populated from a real
     # machine measurement; the dialog closes cleanly.

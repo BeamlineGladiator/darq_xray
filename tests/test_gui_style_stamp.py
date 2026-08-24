@@ -1,6 +1,7 @@
 """The publication style a finished run actually used (offscreen Qt)."""
 
 import os
+from dataclasses import asdict, fields
 from types import SimpleNamespace
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -43,12 +44,16 @@ def test_the_stamp_says_it_is_the_style_the_run_used():
 
 
 def test_the_stamp_scopes_its_claim_to_what_it_actually_names():
-    """PlotStyle carries ~30 fields; the stamp names five.
+    """The stamp names five of PlotStyle's fields — far from all of them.
 
     Two runs differing only in axes_mode / title_scale / the scale bar / the
     µm-per-cm scale stamp identically, so the headline must not read as "this
-    is the whole style".
+    is the whole style". The count is computed, never written down, so this
+    cannot go stale when PlotStyle grows a field.
     """
+    named = ("cmap_mosa_com", "cmap_mosa_fwhm", "cmap_strain", "cmap_raw", "font_scale")
+    unnamed = [f.name for f in fields(PlotStyle) if f.name not in named]
+    assert len(unnamed) > len(named)  # precondition: most of the style is unnamed
     # precondition: a field the stamp does NOT name really can differ silently
     assert style_stamp(PlotStyle(axes_mode="none")) == style_stamp(PlotStyle())
     assert "colormaps" in style_stamp(PlotStyle()).lower()
@@ -85,6 +90,41 @@ def test_finished_run_records_the_style_it_was_launched_with_not_the_current_one
     view._last_style = PlotStyle(cmap_strain="turbo")  # what the run launched with
     assert view.global_plot_style().cmap_strain != "turbo"  # precondition: they differ
 
+    view._finish_ok(SimpleNamespace(layers=[], skipped=[]))
+
+    text = view._results.toPlainText()
+    assert "strain=turbo" in text
+    assert "seismic" not in text
+
+
+def test_the_capture_survives_the_style_being_edited_mid_run(monkeypatch):
+    """`_on_run` must SNAPSHOT the session style, not alias it.
+
+    `MainWindow.global_plot_style()` returns its own `_plot_style` object, and
+    "Publication style…" (`StyleControls`) mutates that object **in place** while
+    a run is in flight — the button is never disabled. An aliasing capture would
+    let such an edit rewrite the stamp of a run that had already rendered from
+    the `asdict()` taken at launch, i.e. the stamp would name a style the run
+    never used. Unlike the test above this drives the real `_on_run`, so it is
+    the only thing that can see the difference.
+    """
+    view = StageView("strain", STAGE_SPECS["strain"], Experiment())
+    live = PlotStyle(cmap_strain="turbo")  # the session's own mutable object
+    view.global_plot_style = lambda: live
+    started: list[dict] = []
+    monkeypatch.setattr(view, "_start_runner", lambda params: started.append(params))
+    # never let the pre-flight open a modal (it would hang the suite, not fail it)
+    monkeypatch.setattr(view, "_confirm_blocked", lambda reason: True)
+
+    view._on_run()
+    assert started, "precondition: the run must actually have launched"
+    assert started[0]["plot_style"]["cmap_strain"] == "turbo"  # what the child renders with
+    # the child's params and the stamped snapshot must describe the SAME style —
+    # a stamp that disagreed with what was rendered would be worse than none
+    assert started[0]["plot_style"] == asdict(view._last_style)
+
+    live.cmap_strain = "seismic"  # exactly what StyleControls does, mid-run
+    assert view.global_plot_style().cmap_strain == "seismic"  # precondition: it took
     view._finish_ok(SimpleNamespace(layers=[], skipped=[]))
 
     text = view._results.toPlainText()

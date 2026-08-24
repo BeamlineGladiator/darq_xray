@@ -437,13 +437,21 @@ class StageView(QWidget):
         run_params = dict(params)
         window = self.window()
         if hasattr(window, "global_plot_style"):
-            from dataclasses import asdict
+            from dataclasses import asdict, replace
 
             # Snapshot the CURRENT session publication style so every new run
             # renders with whatever the style dialog says right now. Keep the
             # snapshot: the Results tab stamps the style THIS run used, which a
             # later style edit must not rewrite.
-            self._last_style = window.global_plot_style()
+            #
+            # `replace(...)` with no overrides is a COPY, and it is load-bearing:
+            # `global_plot_style()` hands back MainWindow's own `_plot_style`
+            # object, which "Publication style…" mutates in place (StyleControls)
+            # — and that button stays live while a run is in flight. Aliasing it
+            # would let a mid-run style edit rewrite the stamp of a run that had
+            # already rendered from the asdict() below: a stamp that lies.
+            # Both lines read the same snapshot, so they can never disagree.
+            self._last_style = replace(window.global_plot_style())
             run_params["plot_style"] = asdict(self._last_style)
         # Pre-flight: what will this cost, and can the disk take it? Computed
         # fresh on the click (cheap, and never stale). Advisory only — it never
