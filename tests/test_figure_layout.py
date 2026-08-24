@@ -61,11 +61,41 @@ def test_slice_figure_texts_do_not_overlap_at_publication_scale():
     ax, cax = fig.axes[0], fig.axes[1]
 
     title_bb = ax.title.get_window_extent(renderer)
-    cbar_bb = cax.get_tightbbox(renderer)  # includes ticks, label AND the ×10ⁿ offset text
     image_bb = ax.bbox
 
-    # The three failures visible in the bug report:
-    assert not title_bb.overlaps(cbar_bb), "title collides with colorbar"
+    # Checked against the colorbar's ACTUAL artists, one at a time, rather than
+    # against `cax.get_tightbbox(renderer)`.
+    #
+    # That union bbox is a coarse over-approximation of a very non-convex set:
+    # it spans from the narrow bar, across the tick labels, out to the rotated
+    # axis label — and matplotlib 3.11 began folding that full-height rotated
+    # label into it, where 3.6 did not. Measured on this exact fixture, from a
+    # figure whose two renders are pixel-wise the same: the union bbox is
+    # y[113.71, 176.96] (63 px tall) on 3.6.3 and y[18.50, 291.50] (273 px, i.e.
+    # the whole figure) on 3.11.1. A centred title is wide, so it intersects
+    # that rectangle while touching none of the artists inside it — on 3.11 the
+    # title overlapped the union box and, verified individually, neither the
+    # bar, nor any tick label, nor the label, nor the map. The product was never
+    # wrong; the oracle stopped being precise. Per-artist is also what the
+    # assertion message should name, so a real collision says which thing.
+    cbar_parts = [("bar", cax.bbox), ("label", cax.yaxis.label.get_window_extent(renderer))]
+    cbar_parts += [
+        (f"tick label {i}", tick.get_window_extent(renderer))
+        for i, tick in enumerate(cax.yaxis.get_ticklabels())
+    ]
+    offset = cax.yaxis.get_offset_text()
+    if offset.get_text():  # absent on this fixture; a degenerate bbox proves nothing
+        cbar_parts.append(("×10ⁿ offset text", offset.get_window_extent(renderer)))
+    assert len(cbar_parts) > 2, "no colorbar tick labels to check — the fixture is not decorated"
+    # A zero-area box overlaps nothing, so it would pass every check below
+    # without proving a thing — which is exactly why the ×10ⁿ offset text is
+    # skipped above rather than compared as its degenerate 1×1 placeholder.
+    assert all(bb.width > 0 and bb.height > 0 for _name, bb in cbar_parts), (
+        f"degenerate colorbar bboxes: {[n for n, b in cbar_parts if not (b.width and b.height)]}"
+    )
+
+    for name, part_bb in cbar_parts:
+        assert not title_bb.overlaps(part_bb), f"title collides with the colorbar {name}"
     assert not title_bb.overlaps(image_bb), "title collides with the map"
     cb_label_bb = cax.yaxis.label.get_window_extent(renderer)
     for tick in cax.yaxis.get_ticklabels():

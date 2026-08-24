@@ -94,12 +94,29 @@ MARKS_GROUP = "marks"
 # pyvista/VTK; this stage never does, so it sits below both, and pasting either
 # number fails the assertion rather than silently mis-sizing the budget.
 #
-# The declared value carries ~1.3x slack over the measurement, the same ratio the
-# other two carry, because the additive RSS model is not an envelope (see
-# `advice.MARGINAL_RSS_PER_TRACED_BYTE`) and the floor is the term with room to
-# absorb that: over-stating it only shrinks the budget, under-stating it invites
-# an OOM.
-RSS_FLOOR_BYTES = 256 * 1024 * 1024
+# **Re-measured 2026-08-24, and the process image had grown under everyone's
+# feet.** PNGs-on, same 4x6x8 fixture, three samples:
+#
+#     numpy 1.26.4 / matplotlib 3.6.3   253.4 MiB
+#     numpy 2.5.2  / matplotlib 3.11.1  272.2 MiB
+#
+# The old constant was 256 MiB against the 193.5 MiB originally measured — a
+# claimed ~1.3x slack that had silently eroded to **1.01x** on the development
+# machine's own dependencies, and was breached outright by a matplotlib upgrade
+# that added ~19 MiB. That is the failure this constant exists to make loud, and
+# it did go loud, but only because a fresh install was tried; on the older set it
+# was 2.6 MiB from failing and nobody would have known.
+#
+# So the value is now set from the LARGER measurement with real room, not fitted
+# to the smaller one: 384 MiB is 1.41x the numpy-2 image and 1.52x the numpy-1
+# one, against `tests/peak_rss.py::_FLOOR_SLACK_LIMIT` of 2.5x, so it stays
+# comfortably inside the "this was copied from another stage" check while
+# absorbing several more dependency bumps. The cost of over-stating is only a
+# slightly smaller derived budget — on any machine with GB-scale headroom the
+# extra 128 MiB moves `working_set_budget_bytes` by a few percent — while
+# under-stating invites an OOM, and the additive RSS model is not an envelope
+# (see `advice.MARGINAL_RSS_PER_TRACED_BYTE`).
+RSS_FLOOR_BYTES = 384 * 1024 * 1024
 
 # The whole run's working-set budget divided among the things that hold a block
 # at once. `align_volume_streamed`'s model prices the alignment chain and
