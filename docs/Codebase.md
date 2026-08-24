@@ -276,9 +276,17 @@ Qt-free ETA estimation for progress readouts. Pure module — no Qt, no I/O.
 | Symbol | What it does |
 |---|---|
 | `format_eta(elapsed_s, frac)` | One-shot human remaining-time estimate from a single `(elapsed_s, frac)` sample: `""` when `frac < 0.05`, `elapsed_s < 2.0`, or `frac >= 1.0` (too early/noisy/finished to say anything); else `"~{s} s left"` under 90 s remaining, else `"~{m} min left"`. |
-| `EtaEstimator(clock=time.monotonic)` | Smoothed estimator for a running progress reporter. `reset()` starts a new `t0` and forgets prior samples; `update(frac)` clamps `frac` to `[0, 1]`, ignores a regressing fraction (never poisons the estimate), and EMA-smooths the raw remaining-time extrapolation (`0.7` weight on the previous smoothed value); `eta_text()` returns `""` until the same 5 %-done / 2 s-elapsed thresholds as `format_eta` are met, else the formatted remaining time. |
+| `EtaEstimator(clock=time.monotonic)` | Smoothed estimator for a running progress reporter. `reset()` starts a new `t0`, forgets prior samples and re-seeds the sample list with `(now, 0.0)`; `update(frac)` clamps `frac` to `[0, 1]` and ignores any fraction that did not **advance** (`frac <= self._frac`), records `(t, frac)`, prunes that list to the trailing `_RATE_WINDOW_S` window, and EMA-smooths the remaining-time extrapolation `(1 - frac) * dt / dfrac` taken over the window (`0.7` weight on the previous smoothed value); `eta_text()` returns `""` until the same 5 %-done / 2 s-elapsed thresholds as `format_eta` are met, then the smoothed estimate **minus the wall-clock since it was computed**, and `""` again once that countdown reaches zero. |
+| `_RATE_WINDOW_S` (30 s) | The trailing window the rate is measured over. Not the whole run: pipeline stages are built of phases with very different per-unit costs (a fast per-layer loop, then one slow whole-volume alignment), and a whole-run average keeps quoting the fast phase's rate long after it ended. |
 
 Consumed by the GUI's busy overlay/progress text (`gui/widgets/busy.py`, `gui/stage_view.py`) but importable and testable without Qt.
+
+**Three defects fixed after a real run reported inaccurate times**, each pinned in `tests/test_common_eta.py` and each mutation-checked:
+1. *A repeated fraction counted as progress.* Stages re-emit the same `frac` with a new message (`visualize` reports `progress(0.6, …)` again for a clim note while the whole strain half runs), and recomputing `elapsed * (1 - frac) / frac` against a growing `elapsed` made the displayed ETA **count up**. `update` now ignores a non-advancing fraction.
+2. *The readout was frozen between samples.* `eta_text()` replayed the last computed number regardless of how much wall-clock had passed, so a stage silent for four minutes showed a stale `~30 s left` the whole time. It now counts down, and reports nothing once it has overrun its own estimate — a floored `~1 s left` would be a claim it cannot support.
+3. *The rate was the whole-run average.* Now windowed; see `_RATE_WINDOW_S`.
+
+**What this module cannot fix:** `frac` itself. Stages assign it by *milestone* (`0.05` loading, `0.6` halfway, `1.0` done) rather than in proportion to work — `visualize` in particular pins `frac` at `0.6` across its entire strain half (`dfxm/stages/visualize.py:1315` and `:1335`, with `_align_streamed` and `_process_dataset` in between reporting nothing), and `paraview` emits four fractions for its whole run. No estimator can extrapolate accurately from a signal that stands still for 40 % of the wall-clock; that is a stage-side defect and is fixed stage by stage.
 
 #### `_glprobe.py` (new)
 Out-of-process OpenGL capability probe, run as `python -m dfxm.common._glprobe`.
