@@ -170,11 +170,10 @@ STAGE = StageSpec(
             advanced=True,
             group="Appearance",
             help=(
-                "Recorded with each layer, and kept so saved forms, presets and CLI "
-                "invocations stay valid — but it no longer decides how the figures "
-                "look. matched draws a single quantity, raw intensity, and takes both "
-                "its colormap and its colourbar number format from that quantity's "
-                "group."
+                "Colormap for the saved PNGs on a headless run — the CLI, which has no "
+                "publication style. In the app the style wins instead: matched draws a "
+                "single quantity, raw intensity, and takes that group's colormap and "
+                "colourbar number format."
             ),
         ),
         Param(
@@ -230,8 +229,9 @@ STAGE = StageSpec(
         ),
         SeeAlso(
             "param:colormap",
-            "The Raw intensity group in “Publication style…” (left panel) is what "
-            "colours these layers; this dropdown no longer does.",
+            "In the app the Raw intensity group in “Publication style…” (left panel) "
+            "colours these layers, not this dropdown — which applies only to headless "
+            "CLI runs, where there is no style.",
         ),
     ),
     estimate="dfxm.stages.matched:estimate",
@@ -599,17 +599,21 @@ def run(params: dict, progress: ProgressFn | None = None) -> MatchedResult:
             f"Rocking Curve (frame {frame_index}, median-subtracted)\n"
             f"Z = {z_um[i]:.2f} µm (Layer {i}/{result.n_strain - 1})\n{rock_names[m]}"
         )
+        # matched draws one quantity — rocking-curve detector frames — so the
+        # publication style's "raw" group is what should colour it. A headless
+        # run has no style at all, and there the stage's own dropdown decides.
+        cmap_group = "raw" if style is not None else None
         fig, _, _ = Rnd.layer_figure(
             shifted,
             vmin,
             vmax,
-            resolve_cmap(style, "raw", fallback=p["colormap"]),
+            resolve_cmap(style, cmap_group, fallback=p["colormap"]),
             ext_x,
             ext_y,
             title,
             "Intensity − background (a.u.)",
             style=style,
-            group="raw",
+            group=cmap_group,
         )
         png = os.path.join(layers_dir, f"layer_{i:04d}.png")
         fig.savefig(png, dpi=150, facecolor="white", bbox_inches="tight")
@@ -618,12 +622,11 @@ def run(params: dict, progress: ProgressFn | None = None) -> MatchedResult:
         # NOTE: figures().build() in this module mirrors this exact recompute
         # (load_pco_ff_frame → _apply_shift_single → layer_figure) to rebuild
         # the figure at export time; keep the two in sync. That includes the
-        # colour resolution: both pass group="raw" and both resolve the cmap
-        # through resolve_cmap(style, "raw", ...), so an exported figure keeps
-        # the saved PNG's colormap and colourbar tick format. The recorded
-        # `colormap` below is only the fallback for a group-less resolve, which
-        # a literal "raw" never reaches — it is kept so the record still says
-        # what the stage form asked for.
+        # colour resolution: both derive the same `cmap_group` from whether a
+        # style is present and feed it to both resolve_cmap and layer_figure,
+        # so an exported figure keeps the saved PNG's colormap and colourbar
+        # tick format. The `colormap` recorded below is the live fallback for
+        # the no-style (headless) branch — not dead weight.
         result.recorded.append(
             MatchedLayer(
                 raw_h5=_rock_h5(raw_root, rock_names[m]),
@@ -687,17 +690,20 @@ def figures(result: MatchedResult, params: dict) -> list[FigureSpec]:
                     f"(path={pco_ff_path!r}, frame={frame_index})"
                 )
             shifted = _apply_shift_single(img, shift_px, pad_left, nx_new)
+            # The same rule as run(): the style's "raw" group when there is a
+            # style, the recorded stage colormap when there is not.
+            cmap_group = "raw" if style is not None else None
             fig, _, _ = Rnd.layer_figure(
                 shifted,
                 vmin,
                 vmax,
-                resolve_cmap(style, "raw", fallback=colormap),
+                resolve_cmap(style, cmap_group, fallback=colormap),
                 ext_x,
                 ext_y,
                 title,
                 "Intensity − background (a.u.)",
                 style=style,
-                group="raw",
+                group=cmap_group,
             )
             return fig
 

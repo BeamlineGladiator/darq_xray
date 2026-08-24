@@ -429,13 +429,12 @@ def test_the_stage_colormap_is_still_the_fallback_without_a_group():
     assert resolve_cmap(PlotStyle(cmap_raw="turbo"), None, fallback="magma") == "magma"
 
 
-def test_a_headless_run_ignores_the_stage_colormap_too(tmp_path, monkeypatch):
-    """No injected style is where a fallback could plausibly fire — it does not.
+def test_a_headless_run_falls_back_to_the_stage_colormap(tmp_path, monkeypatch):
+    """No injected style (the CLI) ⇒ the stage's own dropdown decides.
 
-    `resolve_cmap` returns its fallback only for ``group=None``; a literal
-    "raw" resolves against a bare ``PlotStyle()`` instead. So the stage's own
-    dropdown colours nothing on any path, which is what the help text and
-    docs/Usage.md now say.
+    `resolve_cmap` returns its fallback only for ``group=None``, so the group
+    must be withheld on this branch or the dropdown — and the `--colormap` CLI
+    flag behind it — would silently stop working.
     """
     from dfxm.common.plotting import style_from_params
 
@@ -443,9 +442,25 @@ def test_a_headless_run_ignores_the_stage_colormap_too(tmp_path, monkeypatch):
     params.pop("plot_style")
     params["colormap"] = "turbo"
     assert style_from_params(params) is None  # precondition: the headless path
-    assert PlotStyle().cmap_raw == "gray"  # precondition: distinguishable from "turbo"
+    assert PlotStyle().cmap_raw == "gray"  # precondition: "turbo" is distinguishable
     seen = _capture_layer_figure(monkeypatch)
     res = M.run(params)
     assert res.n_saved == 1  # precondition: a layer was actually drawn
-    assert seen["group"] == "raw"
-    assert seen["cmap"] == "gray"  # the raw group's default, not the param
+    assert seen["group"] is None
+    assert seen["cmap"] == "turbo"  # the stage param, not the raw group's default
+
+
+def test_a_styleless_export_rebuild_falls_back_the_same_way_the_run_does(tmp_path, monkeypatch):
+    """The rebuild mirrors run() on the no-style branch too, not just with one."""
+    params = _one_layer_setup(tmp_path)
+    params.pop("plot_style")
+    params["colormap"] = "turbo"
+    res = M.run(params)
+    assert res.recorded and res.recorded[0].colormap == "turbo"  # precondition
+    assert PlotStyle().cmap_raw == "gray"  # precondition: "turbo" is distinguishable
+    specs = M.figures(res, params)
+    assert specs  # precondition: there is something to rebuild
+    seen = _capture_layer_figure(monkeypatch)
+    specs[0].build(None)
+    assert seen["group"] is None
+    assert seen["cmap"] == "turbo"  # the recorded stage colormap
