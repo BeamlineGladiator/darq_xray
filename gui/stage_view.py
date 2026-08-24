@@ -121,7 +121,7 @@ class StageView(QWidget):
         self._save_timer.timeout.connect(self._persist_now)
 
         # --- left: parameter form + run/cancel ---
-        self._form = ParamForm(spec.params, self._initial_values())
+        self._form = ParamForm(spec.params, self._initial_values(), see_also=spec.see_also)
         if self._store is not None:
             self._restore_state()  # overlay saved values before wiring save-on-edit
             self._form.changed.connect(self._on_form_changed)
@@ -210,7 +210,9 @@ class StageView(QWidget):
         progress_row.addWidget(self._progress_text, 2)
 
         self._help = HelpPanel()
-        self._help.set_idle(spec.label, spec.description)
+        _stage_ptr = " ".join(s.text for s in spec.see_also if not s.param_name)
+        self._help.set_idle(spec.label, spec.description, see_also=_stage_ptr)
+        self._help.set_see_also({s.param_name: s.text for s in spec.see_also if s.param_name})
         self._form.focusedParamChanged.connect(self._help.show_param)
         self._form.focusCleared.connect(self._help.show_idle)
 
