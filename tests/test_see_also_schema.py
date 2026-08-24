@@ -52,8 +52,9 @@ def test_every_bad_pointer_is_reported_not_just_the_first():
 
 def test_two_pointers_on_the_same_param_are_reported():
     # ParamForm keys its pointer rows by param name in one dict, so a second
-    # "param:colormap" entry makes BOTH render nowhere — the quietest possible
-    # failure. Nobody means it, so the sweep must catch it.
+    # "param:colormap" entry renders only the LAST one's text and the first
+    # silently disappears — the quietest possible failure. Nobody means it, so
+    # the sweep must catch it.
     spec = _spec(SeeAlso("param:colormap", "a"), SeeAlso("param:colormap", "b"))
     problems = spec.see_also_problems()
     assert len(problems) == 1

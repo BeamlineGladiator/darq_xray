@@ -244,10 +244,12 @@ class StageSpec:
            render nowhere.
         2. The *same* anchor declared twice. ``ParamForm`` keys its pointer rows
            by anchor in one dict, so duplicates disagree with each other about
-           what happens: two ``"param:x"`` entries render neither row (last
-           wins in the lookup the row builder consults), while two ``""``
-           entries render both rows and collide only in the test hook. Neither
-           is a thing anyone means, so both are reported here.
+           what happens: two ``"param:x"`` entries render only the LAST one's
+           text (the row builder looks that param up once, and the dict has
+           kept the last), so the first pointer silently disappears, while two
+           ``""`` entries render BOTH rows and collide only in the test hook,
+           which likewise keeps the last. Neither is a thing anyone means, so
+           both are reported here.
         """
         names = {p.name for p in self.params}
         problems = [
