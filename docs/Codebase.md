@@ -294,7 +294,19 @@ renderer string only — classifying it as software vs. hardware belongs to
 `probe_memory`, `probe_disk`, `probe_ffmpeg`, `is_software_renderer`,
 `profile`). Every probe is individually wrapped: `profile()` never raises, and
 unmeasured fields report `None`/`0` with the reason in `probe_errors`. `psutil`
-is used when importable, with `os.sysconf` / `GlobalMemoryStatusEx` fallbacks.
+is used when importable; without it `_memory_stdlib` reads **`MemAvailable`**
+from `/proc/meminfo` (`_read_meminfo` / `_parse_meminfo`) on Linux and
+`GlobalMemoryStatusEx` on Windows, dropping to `os.sysconf` only where neither
+can answer. That order matters and is pinned by
+`test_stdlib_fallback_agrees_with_psutil`: `SC_AVPHYS_PAGES` is `MemFree`, which
+excludes the reclaimable page cache, so the first version reported **8.4 GB free
+of a real 467.7 GB** on this machine whenever the app was launched from an
+environment without psutil (the darfix venv, which carries PySide6/h5py/numpy
+but not psutil). Nothing crashed — the status bar simply lied, and
+`advice.headroom_bytes` sized every run off the lie, pushing stages into
+streaming that could have run in-core. `_parse_meminfo` returns `(0, 0)` rather
+than substituting `MemFree` when `MemAvailable` is absent (kernels before 3.14),
+so the caller falls back instead of inheriting the same error.
 GL is probed out of process (`_glprobe.py`) via `probe_gl()`, memoised and
 cached to `~/.cache/dfxm/gl_probe.json` (`%LOCALAPPDATA%\dfxm\cache` on
 Windows) keyed on OS/host/python/vtk. A child that segfaults, hangs or emits

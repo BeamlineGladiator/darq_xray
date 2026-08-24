@@ -6,6 +6,8 @@ import json
 import subprocess
 import sys
 
+import pytest
+
 from dfxm.common import machine
 
 
@@ -241,3 +243,68 @@ def test_profile_does_not_probe_gl_unless_asked(monkeypatch, tmp_path):
     monkeypatch.setattr(machine, "probe_gl", lambda **k: called.append(1) or (None, "ok"))
     machine.profile(output_dir=str(tmp_path))
     assert called == []
+
+
+# -- the psutil-free fallback must agree with psutil ---------------------------
+# The bug this pins: `_memory_stdlib` read `SC_AVPHYS_PAGES`, which is `MemFree`
+# — it excludes the reclaimable page cache, so on a machine with a large cache
+# it understates obtainable memory by orders of magnitude (measured here:
+# 8.4 GB reported against 467.7 GB actually available). Nothing crashed; the
+# status bar simply lied, and `advice.headroom_bytes` sized every run off the
+# lie. The fallback is not a rare path — it is what runs in any environment
+# without psutil, e.g. the darfix venv the GUI is often launched from.
+
+
+def _stdlib_only_probe(monkeypatch):
+    """`probe_memory()` with psutil forced out of reach."""
+    import builtins
+
+    real_import = builtins.__import__
+
+    def no_psutil(name, *args, **kwargs):
+        if name == "psutil":
+            raise ImportError("simulated: psutil not installed")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", no_psutil)
+    return machine.probe_memory()
+
+
+def test_stdlib_fallback_agrees_with_psutil(monkeypatch):
+    """Same machine, same instant: dropping psutil must not change the answer."""
+    psutil = pytest.importorskip("psutil")
+    expected = psutil.virtual_memory().available
+    _, available = _stdlib_only_probe(monkeypatch)
+    # Generous: the two are sampled microseconds apart and psutil's Linux
+    # `available` is /proc/meminfo's MemAvailable, the same number we read.
+    assert available == pytest.approx(expected, rel=0.05), (
+        f"stdlib fallback says {available} but psutil says {expected} — "
+        "the fallback is reading MemFree, not MemAvailable"
+    )
+
+
+def test_parse_meminfo_reads_memavailable_not_memfree():
+    """The parse is the whole fix: MemAvailable, in bytes, ignoring MemFree."""
+    text = (
+        "MemTotal:       526816972 kB\n"
+        "MemFree:          8933492 kB\n"
+        "MemAvailable:   490585992 kB\n"
+        "Buffers:          8264484 kB\n"
+    )
+    total, available = machine._parse_meminfo(text)
+    assert total == 526816972 * 1024
+    assert available == 490585992 * 1024
+
+
+def test_parse_meminfo_declines_when_memavailable_is_absent():
+    """Pre-3.14 kernels have no MemAvailable; say so rather than invent one."""
+    text = "MemTotal:       526816972 kB\nMemFree:          8933492 kB\n"
+    assert machine._parse_meminfo(text) == (0, 0)
+
+
+def test_memory_stdlib_still_answers_when_meminfo_is_unreadable(monkeypatch):
+    """No /proc/meminfo (a non-Linux POSIX, a locked-down container) still probes."""
+    monkeypatch.setattr(machine, "_read_meminfo", lambda: "")
+    total, available = machine._memory_stdlib()
+    assert total > 0
+    assert 0 < available <= total

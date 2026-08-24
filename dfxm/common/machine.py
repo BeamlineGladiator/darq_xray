@@ -81,6 +81,47 @@ def probe_cpu() -> tuple[int, int | None]:
     return logical, physical
 
 
+def _read_meminfo() -> str:
+    """``/proc/meminfo``'s text, or "" where there is no such file."""
+    try:
+        with open("/proc/meminfo", encoding="ascii", errors="replace") as fh:
+            return fh.read()
+    except OSError:  # not Linux, or /proc is not mounted
+        return ""
+
+
+def _parse_meminfo(text: str) -> tuple[int, int]:
+    """(total, available) bytes from ``/proc/meminfo`` *text*; (0, 0) if unusable.
+
+    ``MemAvailable`` is the kernel's own estimate of what a new allocation can
+    obtain without swapping — it counts the reclaimable page cache, which
+    ``MemFree`` does not. It is the number ``free``, ``btop`` and
+    ``psutil.virtual_memory().available`` all report, so reading it here is what
+    makes the psutil-free path agree with the psutil one.
+
+    Absent (kernels before 3.14) means "this file cannot answer", reported as
+    (0, 0) so the caller falls back rather than substituting ``MemFree`` — the
+    substitution is the whole bug this replaces.
+    """
+    fields: dict[str, int] = {}
+    for line in text.splitlines():
+        key, sep, rest = line.partition(":")
+        if not sep:
+            continue
+        parts = rest.split()
+        if not parts:
+            continue
+        try:
+            value = int(parts[0])
+        except ValueError:
+            continue
+        # Every size line is "kB"; the handful of count lines (HugePages_*)
+        # carry no unit and are not ones we read.
+        fields[key.strip()] = value * 1024 if len(parts) > 1 else value
+    total, available = fields.get("MemTotal", 0), fields.get("MemAvailable", 0)
+    return (total, available) if total > 0 and available > 0 else (0, 0)
+
+
 def _memory_stdlib() -> tuple[int, int]:
     """(total, available) bytes without psutil. Returns (0, 0) when unknown."""
     if os.name == "nt":
@@ -103,10 +144,16 @@ def _memory_stdlib() -> tuple[int, int]:
         stat.dwLength = ctypes.sizeof(_MemoryStatusEx)
         ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(stat))
         return int(stat.ullTotalPhys), int(stat.ullAvailPhys)
+    from_meminfo = _parse_meminfo(_read_meminfo())
+    if from_meminfo != (0, 0):
+        return from_meminfo
     page = os.sysconf("SC_PAGE_SIZE")
     total = page * os.sysconf("SC_PHYS_PAGES")
-    # SC_AVPHYS_PAGES excludes reclaimable page cache, so it badly understates
-    # what is actually obtainable; it is the only stdlib number available.
+    # Last resort only. SC_AVPHYS_PAGES is MemFree: it excludes the reclaimable
+    # page cache, so on a machine that has been reading large volumes it
+    # understates what is obtainable by orders of magnitude (8.4 GB against a
+    # real 467.7 GB, measured). Reached only where /proc/meminfo cannot answer,
+    # where a pessimistic number still beats no number.
     available = page * os.sysconf("SC_AVPHYS_PAGES")
     return int(total), int(available)
 

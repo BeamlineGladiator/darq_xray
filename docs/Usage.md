@@ -111,6 +111,13 @@ which would misleadingly read as a full disk. The GL renderer (`software GL` /
 `hardware GL`) appears only once something else has already probed it — this
 readout itself never triggers a GL probe, since that costs a child process.
 
+The **free-RAM figure is the same number `btop` and `free` call *available***, not
+the much smaller "free" column: it counts the page cache the kernel would
+reclaim on demand, which on a machine that has been reading large volumes is
+most of the RAM. If the app ever reports far less free RAM than your system
+monitor does, that is a bug, not a different convention — it means the probe
+fell back to a cruder source; report it.
+
 ### System check
 
 The status bar gives an ambient read of the machine; **System check…** (left
