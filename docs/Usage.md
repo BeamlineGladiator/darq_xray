@@ -38,7 +38,8 @@ aliases: [DFXM Pipeline Usage, Pipeline Guide, How to use the pipeline]
 
 > [!example] Launch the app
 > ```bash
-> cd /home/albert/Desktop/dfxm_pipeline
+> cd dfxm_pipeline
+> source .venv/bin/activate    # only if you installed into a venv (see below)
 > python3 -m gui.app
 > ```
 
