@@ -11,6 +11,7 @@ from dfxm.common.advice import (
     TOTAL_FRACTION,
     advise_3d,
     headroom_bytes,
+    human_bytes,
     plan_run,
     working_set_budget_bytes,
 )
@@ -297,3 +298,24 @@ def test_the_chunking_reason_starts_with_the_pinned_prefix():
     plan = advice.plan_run(prof, est)
     assert plan.strategy == "chunked"  # precondition for the reason to exist
     assert any(r.startswith(advice.CHUNK_REASON_PREFIX) for r in plan.reasons)
+
+
+def test_human_bytes_labels_the_binary_units_it_actually_divides_by():
+    """The divisor is 1024, so the label has to be the binary one.
+
+    The units read "KB"/"MB"/"GB" while the arithmetic divided by 1024 — every
+    figure the app displayed was understated by its own label, by 7% at GiB
+    scale, enough that a machine sold as 539 GB read as "502.4 GB RAM" in the
+    status bar. The numbers were right; only the unit was wrong. Relabelled
+    2026-08-25. Restoring any SI spelling is the mutation.
+    """
+    assert human_bytes(512) == "512.0 B"
+    assert human_bytes(1024) == "1.0 KiB"
+    assert human_bytes(1024**2) == "1.0 MiB"
+    assert human_bytes(1024**3) == "1.0 GiB"
+    assert human_bytes(1024**4) == "1.0 TiB"
+    # The arithmetic really is binary, which is what those labels now claim: an
+    # SI gigabyte is not one GiB and must not print as one.
+    assert human_bytes(1000**3) != "1.0 GiB"
+    # Past the end of the table it saturates rather than inventing a unit.
+    assert human_bytes(5 * 1024**5).endswith(" TiB")

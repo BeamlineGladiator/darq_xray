@@ -23,11 +23,11 @@ from tests.machine_fixtures import workstation_sw_gl  # noqa: E402
 # The real headline from the first STO2 `visualize` run (in the wording that
 # replaced "safely available") — long enough to wrap in the banner at the width
 # this view gives it, which is the precondition the banner test asserts.
-_WRAPPING_HEADLINE = "needs ~10.5 GB RAM, 326.3 GB budget — expected to run in memory"
+_WRAPPING_HEADLINE = "needs ~10.5 GiB RAM, 326.3 GiB budget — expected to run in memory"
 
 
 def _advisory(
-    headline="needs ~1.0 GB RAM, 4.0 GB budget — expected to run in memory",
+    headline="needs ~1.0 GiB RAM, 4.0 GiB budget — expected to run in memory",
     details=("a reason",),
 ):
     return Advisory(workstation_sw_gl(), None, None, headline, details)
@@ -81,13 +81,13 @@ def _blocked_advisory():
         1,
         "/scratch",
         ("a reason",),
-        "needs 100.0 GB of scratch disk but only 40.0 GB is free",
+        "needs 100.0 GiB of scratch disk but only 40.0 GiB is free",
     )
     return Advisory(
         workstation_sw_gl(),
         CostEstimate(200 * GB, 100 * GB, (76, 1200, 1800), True, scratch_bytes=100 * GB),
         plan,
-        "needs ~200.0 GB RAM, 4.0 GB budget — expected to stream",
+        "needs ~200.0 GiB RAM, 4.0 GiB budget — expected to stream",
         ("a reason",),
         plan.blocked,
     )

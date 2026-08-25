@@ -99,8 +99,8 @@ def _headline(estimate: CostEstimate, plan: RunPlan, conservative: bool) -> str:
     it is `advice.headroom_bytes` — a self-imposed cap (a share of total and of
     available RAM, see the constants there), not a measurement of free memory.
     Worded as "available" it contradicted the status bar, which reports the real
-    figure: on the development box this line said 251.2 GB while the status bar
-    truthfully said 466.7 GB free, and the honest reading of that pair is not
+    figure: on the development box this line said 251.2 GiB while the status bar
+    truthfully said 466.7 GiB free, and the honest reading of that pair is not
     that one of them is wrong. Named as a budget, the smaller number explains
     itself. Pinned by `tests/test_common_advisory.py`
     ::test_the_headline_calls_its_second_figure_a_budget.

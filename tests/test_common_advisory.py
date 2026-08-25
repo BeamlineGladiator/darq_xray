@@ -75,7 +75,7 @@ def test_in_core_headline_names_cost_and_headroom(monkeypatch):
     adv = advise_stage(spec, {}, profile=workstation_sw_gl())
     assert adv.plan.strategy == "in-core"
     assert "expected to run in memory" in adv.headline
-    assert "1.0 GB" in adv.headline
+    assert "1.0 GiB" in adv.headline
 
 
 def test_the_in_core_detail_does_not_restate_the_headline():
@@ -366,8 +366,8 @@ def test_the_headline_calls_its_second_figure_a_budget():
     `advice.headroom_bytes` is a share of total and of available RAM, so it is
     always *smaller* than what the machine reports free — and the status bar
     reports exactly that. Worded "safely available" the pair contradicted
-    itself on screen: the cost line said 251.2 GB while the status bar said
-    466.7 GB free, which is what Albert hit on the first real STO2 `visualize`
+    itself on screen: the cost line said 251.2 GiB while the status bar said
+    466.7 GiB free, which is what Albert hit on the first real STO2 `visualize`
     run. Naming it a budget is what makes the smaller number self-explaining,
     so the word is behaviour, not decoration.
 

@@ -25,8 +25,8 @@ from dataclasses import dataclass
 #
 # These are a *budget cap*, not a measurement, and that distinction is the whole
 # reason the surfaces call the result a "budget" rather than what is "available"
-# — on the 502 GB development box the cap sat at 251 GB while the status bar
-# truthfully read 467 GB free, and the two numbers side by side read as a
+# — on the 502 GiB development box the cap sat at 251 GiB while the status bar
+# truthfully read 467 GiB free, and the two numbers side by side read as a
 # contradiction rather than as a policy.
 #
 # Raised from 0.6/0.5 on 2026-08-25 at Albert's request, for more leeway on a
@@ -175,11 +175,26 @@ class Advice:
 
 
 def human_bytes(nbytes: float) -> str:
-    for unit in ("B", "KB", "MB", "GB", "TB"):
-        if abs(nbytes) < 1024 or unit == "TB":
+    """Format a byte count in **binary** units, labelled as such.
+
+    The divisor was always 1024 while the labels read "KB"/"GB", which name the
+    SI powers of 1000 — so every figure the app showed was understated by its
+    own label: 7% at GiB scale, and enough that the status bar's "502.4 GB RAM"
+    did not match the 539 GB a machine with 502.4 **GiB** is sold as. The
+    numbers were right; only the unit was. Changed on 2026-08-25 at Albert's
+    request, and this is the **one** formatter for byte counts in the app — the
+    cost line, the pre-flight banner, every `plan_run` reason, and the status
+    bar (`gui/main_window.py::_refresh_machine_status`) all route through it, so
+    the units cannot drift apart between surfaces.
+
+    Anything comparing against this output should call it rather than hardcode a
+    unit, the way `tests/test_gui_status_bar.py` does.
+    """
+    for unit in ("B", "KiB", "MiB", "GiB", "TiB"):
+        if abs(nbytes) < 1024 or unit == "TiB":
             return f"{nbytes:.1f} {unit}"
         nbytes /= 1024
-    return f"{nbytes:.1f} TB"
+    return f"{nbytes:.1f} TiB"
 
 
 def headroom_bytes(profile) -> int:
