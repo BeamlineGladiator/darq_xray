@@ -23,6 +23,7 @@ import h5py
 import numpy as np
 
 from ..common import alignment as A
+from ..common import progress as _progress_mod
 from ..common.h5io import sum_dataset_bytes
 from ..common.raster import extract_motor_positions
 from ..common.sort import find_matching_folders
@@ -533,6 +534,7 @@ def _write_partitioned_vti(
     write_valid_mask: bool,
     sentinel: float | None,
     nan_fraction_overall: float,
+    progress=None,
 ) -> dict:
     """Write the pieces and the ``.pvti`` manifest, and describe what was written.
 
@@ -562,12 +564,20 @@ def _write_partitioned_vti(
     n_pad = max(3, len(str(len(extents) - 1)))
     piece_specs = []
     total_size_bytes = 0
+    report = progress or _progress_mod.noop
 
     for k, (z0, z1) in enumerate(extents):
         piece_basename = f"{base_no_ext}_piece_{k:0{n_pad}d}.vti"
         piece_path = os.path.join(pieces_dir, piece_basename)
         piece_rel = f"{pieces_subdir_name}/{piece_basename}"
         field_slices = piece_fields(z0, z1)
+        # Building a piece (read + align + clean) and writing it are both slow
+        # on a real volume, and a run with few, large pieces would otherwise
+        # still go quiet for a long stretch inside each one. Two reports per
+        # piece halve that worst case at no cost.
+        report(
+            (k + 0.5) / max(1, len(extents)), f"{base_no_ext}: writing piece {k + 1}/{len(extents)}"
+        )
         write_piece_vti(
             field_slices, (z0, z1), whole_dims, spacing_tuple, origin_tuple, piece_path, compression
         )
@@ -576,6 +586,10 @@ def _write_partitioned_vti(
         del field_slices
         total_size_bytes += os.path.getsize(piece_path)
         piece_specs.append((piece_rel, (z0, z1)))
+        # Per piece, after the write. This loop IS the export, and it was the
+        # whole of the silence between one fixed fraction and the next: the
+        # stage used to report 0.1, then nothing until 0.55.
+        report((k + 1) / max(1, len(extents)), f"{base_no_ext}: piece {k + 1}/{len(extents)}")
 
     field_specs = [(name, _numpy_to_vtk_type_str(SAVE_DTYPE)) for name in field_names]
     write_pvti_master(
@@ -612,6 +626,7 @@ def save_volumes_as_pvti(
     replace_nan: bool = True,
     write_valid_mask: bool = True,
     nan_sentinel: float | None = None,
+    progress=None,
 ) -> dict:
     """Write one or more co-registered (Z, Y, X) volumes to a partitioned VTI dataset."""
     if not volumes:
@@ -664,6 +679,7 @@ def save_volumes_as_pvti(
         write_valid_mask=write_valid_mask,
         sentinel=sentinel,
         nan_fraction_overall=nan_fraction_overall,
+        progress=progress,
     )
 
 
@@ -896,6 +912,7 @@ def save_volumes_streamed(
     replace_nan: bool = True,
     write_valid_mask: bool = True,
     nan_sentinel: float | None = None,
+    progress=None,
 ) -> dict:
     """Write a partitioned VTI dataset from streamed fields, one piece at a time.
 
@@ -1003,6 +1020,7 @@ def save_volumes_streamed(
         write_valid_mask=write_valid_mask,
         sentinel=sentinel,
         nan_fraction_overall=nan_fraction_overall,
+        progress=progress,
     )
 
 
@@ -1436,7 +1454,7 @@ def _unaligned_field(dset, *, roi_x, roi_y, take_abs: bool, center_method: str |
 # Per-volume processing
 # -----------------------------------------------------------------------------
 def _process_mosaicity(
-    p, out_dir, scale_x, scale_y, samy_dir, roi_x, roi_y, *, budget_bytes, notes
+    p, out_dir, scale_x, scale_y, samy_dir, roi_x, roi_y, *, budget_bytes, notes, progress=None
 ) -> ExportInfo | None:
     names = mosa_field_names(p["mosa_volume_file"])
     if not names:
@@ -1511,7 +1529,9 @@ def _process_mosaicity(
             label="mosaicity",
             notes=notes,
         )
-        info = save_volumes_streamed(providers, spacing, out_path, origin=origin, **pvti)
+        info = save_volumes_streamed(
+            providers, spacing, out_path, origin=origin, progress=progress, **pvti
+        )
     return ExportInfo(
         "mosaicity",
         out_path,
@@ -1524,7 +1544,7 @@ def _process_mosaicity(
 
 
 def _process_strain(
-    p, out_dir, scale_x, scale_y, samy_dir, roi_x, roi_y, *, budget_bytes, notes
+    p, out_dir, scale_x, scale_y, samy_dir, roi_x, roi_y, *, budget_bytes, notes, progress=None
 ) -> ExportInfo | None:
     samy, samz = _motors(p["raw_root"], p["strain_pattern"], p["samy_path"], p["samz_path"])
     with h5py.File(p["strain_volume_file"], "r") as f:
@@ -1575,7 +1595,9 @@ def _process_strain(
             label="strain",
             notes=notes,
         )
-        info = save_volumes_streamed(providers, spacing, out_path, origin=origin, **pvti)
+        info = save_volumes_streamed(
+            providers, spacing, out_path, origin=origin, progress=progress, **pvti
+        )
     return ExportInfo(
         "strain",
         out_path,
@@ -1634,10 +1656,18 @@ def run(params: dict, progress: ProgressFn | None = None) -> ParaviewResult:
     budget_bytes = _run_budget_bytes(p, out_dir)
     result = ParaviewResult(output_dir=out_dir)
 
+    # Two exports share the working range; whichever runs gets its half and
+    # reports per .vti piece inside it. The old fixed 0.1 / 0.55 / 0.98 said
+    # nothing at all across either export, which on a 17 GB volume is the
+    # entire run.
+    EXPORT_LO, EXPORT_HI = 0.02, 0.97
+    n_exports = int(bool(p["export_mosaicity"])) + int(bool(p["export_strain"]))
+    mid = EXPORT_LO + (EXPORT_HI - EXPORT_LO) / max(1, n_exports)
+
     if bool(p["export_mosaicity"]):
         mosa_file = p["mosa_volume_file"]
         if mosa_file and os.path.exists(mosa_file):
-            progress(0.1, "exporting mosaicity volume")
+            progress(EXPORT_LO, "exporting mosaicity volume")
             info = _process_mosaicity(
                 p,
                 out_dir,
@@ -1648,6 +1678,7 @@ def run(params: dict, progress: ProgressFn | None = None) -> ParaviewResult:
                 roi_y,
                 budget_bytes=budget_bytes,
                 notes=result.notes,
+                progress=_progress_mod.sub_progress(progress, EXPORT_LO, mid),
             )
             if info:
                 result.exports.append(info)
@@ -1659,7 +1690,7 @@ def run(params: dict, progress: ProgressFn | None = None) -> ParaviewResult:
     if bool(p["export_strain"]):
         strain_file = p["strain_volume_file"]
         if strain_file and os.path.exists(strain_file):
-            progress(0.55, "exporting strain volume")
+            progress(mid, "exporting strain volume")
             info = _process_strain(
                 p,
                 out_dir,
@@ -1670,6 +1701,7 @@ def run(params: dict, progress: ProgressFn | None = None) -> ParaviewResult:
                 roi_y,
                 budget_bytes=budget_bytes,
                 notes=result.notes,
+                progress=_progress_mod.sub_progress(progress, mid, EXPORT_HI),
             )
             if info:
                 result.exports.append(info)

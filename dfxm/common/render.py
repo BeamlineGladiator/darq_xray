@@ -18,6 +18,7 @@ import os
 import matplotlib.colors as mcolors
 from matplotlib.animation import FFMpegWriter, FuncAnimation, PillowWriter
 
+from . import progress as _progress
 from .plotting import (
     PlotStyle,
     add_colorbar,
@@ -138,11 +139,33 @@ def layer_figure(
 
 
 def save_layer_pngs(
-    volume, z_um, out_dir, name, vmin, vmax, cmap, title, cbar, sx, sy, *, style=None, group=None
+    volume,
+    z_um,
+    out_dir,
+    name,
+    vmin,
+    vmax,
+    cmap,
+    title,
+    cbar,
+    sx,
+    sy,
+    *,
+    style=None,
+    group=None,
+    progress=None,
 ):
-    """Write one PNG per Z layer into ``<out_dir>/<name>_layers/``; return the dir."""
+    """Write one PNG per Z layer into ``<out_dir>/<name>_layers/``; return the dir.
+
+    *progress* takes a **local** 0..1 fraction — wrap it with
+    `dfxm.common.progress.sub_progress` to place it in a caller's range. This is
+    the longest inner loop either of its callers has (a real `visualize` run
+    writes ~78 files per dataset), so it is where a run otherwise goes quiet for
+    minutes at a time.
+    """
     layers_dir = os.path.join(out_dir, f"{name}_layers")
     os.makedirs(layers_dir, exist_ok=True)
+    report = progress or _progress.noop
     ext_x, ext_y = volume.shape[2] * sx, volume.shape[1] * sy
     z_size = volume.shape[0]
     for z in range(z_size):
@@ -156,6 +179,9 @@ def save_layer_pngs(
             facecolor="white",
             bbox_inches="tight",
         )
+        # After the write, not before: the fraction reports work *done*, so a
+        # cancelled run's last report is never one layer ahead of the disk.
+        report((z + 1) / max(1, z_size), f"{name}: layer {z + 1}/{z_size}")
     return layers_dir
 
 

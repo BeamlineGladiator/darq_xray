@@ -30,6 +30,7 @@ import h5py
 import numpy as np
 
 from ..common import alignment as A
+from ..common import progress as _progress_mod
 from ..common import render as Rnd
 from ..common import render3d as R3
 from ..common.errors import StageUserError
@@ -435,6 +436,7 @@ def process_raw_scan(
     specific_frame_idx: int | None,
     normalize_sum: bool,
     subtract_background: bool = True,
+    progress=None,
 ) -> tuple[np.ndarray, np.ndarray, int, int]:
     """Read one scan; return (sum_2d, specific_2d, n_frames, idx).
 
@@ -442,6 +444,7 @@ def process_raw_scan(
     frames is removed before summing (rocking behaviour); otherwise a plain sum
     and the raw specific frame are returned (mosa-topograph behaviour).
     """
+    report = progress or _progress_mod.noop
     with h5py.File(h5_path, "r") as f:
         det = f[detector_path]
         n_frames = det.shape[0]
@@ -451,6 +454,11 @@ def process_raw_scan(
         xs = roi_x[0] if roi_x else 0
         xe = roi_x[1] if roi_x else w_full
         frames = det[:, ys:ye, xs:xe].astype(np.float32)
+    # There is no frame loop to report from — the read, the median and the sum
+    # are each one vectorised whole-scan operation — so the boundaries between
+    # them are the only honest places to speak, and they are also where the
+    # time actually goes.
+    report(0.4, "read frames")
 
     if specific_frame_idx is None:
         idx = n_frames // 2
@@ -466,12 +474,14 @@ def process_raw_scan(
         specific_2d = raw_specific - background
     else:
         specific_2d = raw_specific
+    report(0.75, "background subtracted" if subtract_background else "frames prepared")
 
     sum_2d = frames.sum(axis=0)
     if normalize_sum:
         sum_2d = sum_2d / max(1, n_frames)
 
     del frames, raw_specific
+    report(1.0, "summed")
     return sum_2d, specific_2d, n_frames, idx
 
 
@@ -503,6 +513,7 @@ def build_raw_volumes(
         if h5p is None:
             continue
         try:
+            scan_lo, scan_hi = _progress_mod.slice_for(i, n, 0.0, 1.0)
             sum_2d, spec_2d, _nf, spec_idx = process_raw_scan(
                 h5p,
                 detector_path,
@@ -511,6 +522,11 @@ def build_raw_volumes(
                 specific_frame_idx,
                 normalize_sum,
                 subtract_background,
+                progress=_progress_mod.sub_progress(
+                    lambda fr, m: progress(fr, f"{os.path.basename(folder)}: {m}"),
+                    scan_lo,
+                    scan_hi,
+                ),
             )
         except (KeyError, OSError, ValueError):
             continue
@@ -760,7 +776,9 @@ def _render(
     cbar,
     style=None,
     group=None,
+    progress=None,
 ):
+    report = progress or _progress_mod.noop
     sx, sy = float(p["pixel_size_x_um"]), float(p["pixel_size_y_um"])
     vmin, vmax = _colorbar_range(vol, float(p["cbar_pct_lo"]), float(p["cbar_pct_hi"]))
     vmin, vmax, clim_note = apply_round_clim(vmin, vmax, style)
@@ -770,6 +788,7 @@ def _render(
     if clim_note:
         prod.notes.append(clim_note)
     if p["save_layers"]:
+        report(0.0, f"{name}: rendering layers")
         prod.layers_dir = Rnd.save_layer_pngs(
             vol, z_um, ds_dir, name, vmin, vmax, cmap, title, cbar, sx, sy, style=style, group=group
         )
@@ -918,19 +937,24 @@ def run(params: dict, progress: ProgressFn | None = None) -> RockingResult:
     result.n_layers_used = len(names_used)
 
     # 5. align (mosa-anchored samy shift + Z interpolation)
-    progress(0.65, "aligning (samy shift + Z interpolation)")
+    # Four whole-volume operations, each slow on a real dataset and none of them
+    # previously reporting: the bar sat at 0.65 through all of them.
+    progress(0.60, "aligning: samy shift (sum)")
     sum_aligned = A.apply_samy_shifts_to_volume(
         sum_vol, samy_used, scale_x, samy_dir, ref_samy=samy_ref
     )
+    progress(0.64, "aligning: samy shift (specific frame)")
     spec_aligned = A.apply_samy_shifts_to_volume(
         spec_vol, samy_used, scale_x, samy_dir, ref_samy=samy_ref
     )
     pad_left = A.compute_pad_left(samy_used, scale_x, samy_dir, ref_samy=samy_ref)
     pad_right = A.compute_pad_right(samy_used, scale_x, samy_dir, ref_samy=samy_ref)
     del sum_vol, spec_vol
+    progress(0.68, "aligning: Z interpolation (sum)")
     sum_aligned, z_uniform, scale_z = A.interpolate_to_uniform_z(
         sum_aligned, samz_used, ref_samz=samz_ref
     )
+    progress(0.72, "aligning: Z interpolation (specific frame)")
     spec_aligned, _, _ = A.interpolate_to_uniform_z(spec_aligned, samz_used, ref_samz=samz_ref)
     result.volume_shape = tuple(sum_aligned.shape)
     result.z_span_um = float(z_uniform[-1] - z_uniform[0]) if len(z_uniform) else 0.0
@@ -941,6 +965,7 @@ def run(params: dict, progress: ProgressFn | None = None) -> RockingResult:
         if source == "mosaicity" and aligned_name == STAGE.defaults()["aligned_h5_name"]:
             aligned_name = "aligned_raw_mosa_volumes.h5"
         aligned_path = os.path.join(out_dir, aligned_name)
+        progress(0.76, f"writing {aligned_name}")
         save_aligned_raw_volumes(
             aligned_path,
             sum_aligned,
@@ -964,8 +989,9 @@ def run(params: dict, progress: ProgressFn | None = None) -> RockingResult:
         )
         result.aligned_path = aligned_path
 
-    # 7. render
-    progress(0.8, "rendering volumes")
+    # 7. render — two volumes, each owning half of the tail
+    progress(0.80, "rendering volumes")
+    RENDER_LO, RENDER_HI = 0.80, 0.99
     sum_tag = "(a.u., normalized)" if p["normalize_sum"] else "(a.u.)"
     style = style_from_params(p)
     raw_cmap = resolve_cmap(style, "raw")
@@ -982,6 +1008,9 @@ def run(params: dict, progress: ProgressFn | None = None) -> RockingResult:
         f"Sum intensity {sum_tag}",
         style=style,
         group="raw",
+        progress=_progress_mod.sub_progress(
+            progress, *_progress_mod.slice_for(0, 2, RENDER_LO, RENDER_HI)
+        ),
     )
     _render(
         result,
@@ -996,6 +1025,9 @@ def run(params: dict, progress: ProgressFn | None = None) -> RockingResult:
         "Intensity (a.u.)",
         style=style,
         group="raw",
+        progress=_progress_mod.sub_progress(
+            progress, *_progress_mod.slice_for(1, 2, RENDER_LO, RENDER_HI)
+        ),
     )
 
     progress(1.0, f"aligned {result.n_layers_used} {source} layers -> {out_dir}")

@@ -23,6 +23,7 @@ from dataclasses import dataclass, field
 import h5py
 import numpy as np
 
+from ..common import progress as _progress_mod
 from ..common.errors import StageUserError
 from ..common.figures import (
     FigureSpec,
@@ -520,17 +521,32 @@ def run(params: dict, progress: ProgressFn | None = None) -> MosaicityResult:
 
     compression = None if p["compression"] == "none" else p["compression"]
     stacked_path = os.path.join(default_out_root, p["stacked_filename"])
+    LAYERS_HI = 0.95
     result = MosaicityResult()
 
     with StackedVolumeFile(stacked_path, compression=compression) as out:
+        # Entry AND completion per layer, plus a report before the stacked
+        # file's attrs/close: reporting only on entry left the last layer's read
+        # and the whole write tail as one jump to 1.0.
         for i, (name, maps_path) in enumerate(work):
-            progress(i / len(work), f"mosaicity: {name}")
+            lay_lo, lay_hi = _progress_mod.slice_for(i, len(work), 0.0, LAYERS_HI)
+            progress(lay_lo, f"mosaicity: {name}")
             if not os.path.exists(maps_path):
                 result.skipped.append(f"{name}: {maps_filename} not found")
                 continue
             try:
                 with h5py.File(maps_path, "r") as f:
-                    data = {key: _read_dataset(f, path) for key, path in config.items()}
+                    # An explicit loop rather than a dict comprehension so each
+                    # dataset read reports: four maps per layer is the only
+                    # inner loop this stage has, and on a real layer each read
+                    # is a whole 2-D map off disk.
+                    data = {}
+                    for di, (key, path) in enumerate(config.items()):
+                        data[key] = _read_dataset(f, path)
+                        progress(
+                            lay_lo + (lay_hi - lay_lo) * 0.8 * (di + 1) / max(1, len(config)),
+                            f"mosaicity: {name} {key}",
+                        )
             except OSError as exc:
                 result.skipped.append(f"{name}: {exc}")
                 continue
@@ -543,6 +559,7 @@ def run(params: dict, progress: ProgressFn | None = None) -> MosaicityResult:
                     out.append(f"{group_name}/{ds_name}", arr)
             del data
             result.layers.append(name)
+            progress(lay_hi, f"mosaicity: {name} done")
 
         if not result.layers:
             out.abort()
@@ -551,6 +568,7 @@ def run(params: dict, progress: ProgressFn | None = None) -> MosaicityResult:
 
         for ds_path in out.datasets():
             result.datasets[f"/{ds_path}"] = out.shape(ds_path)
+        progress(LAYERS_HI, "writing stacked volume")
         out.set_attrs(
             num_layers=len(result.layers),
             source_folders="\n".join(result.layers),

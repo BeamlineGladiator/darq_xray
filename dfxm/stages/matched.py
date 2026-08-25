@@ -18,6 +18,7 @@ import numpy as np
 from scipy.ndimage import shift as ndi_shift
 
 from ..common import alignment as A
+from ..common import progress as _progress_mod
 from ..common import render as Rnd
 from ..common.errors import StageUserError
 from ..common.figures import FigureSpec, register
@@ -579,8 +580,13 @@ def run(params: dict, progress: ProgressFn | None = None) -> MatchedResult:
     os.makedirs(layers_dir, exist_ok=True)
     result.layers_dir = layers_dir
 
+    # Entry, mid-layer and completion. Only the entry report existed, so the
+    # last layer's frame load and render, plus everything after the loop, was
+    # one jump to 1.0.
+    LAYERS_LO, LAYERS_HI = 0.2, 0.98
     for i in range(result.n_strain):
-        progress(0.2 + 0.78 * i / result.n_strain, f"matched layer {i}")
+        lay_lo, lay_hi = _progress_mod.slice_for(i, result.n_strain, LAYERS_LO, LAYERS_HI)
+        progress(lay_lo, f"matched layer {i}")
         m = matches[i]
         if m is None:
             continue
@@ -592,6 +598,7 @@ def run(params: dict, progress: ProgressFn | None = None) -> MatchedResult:
             # a scan with a different detector ROI/shape can't share the canvas
             result.skipped.append(f"layer {i}: frame shape {img.shape} != {(ny, nx_orig)}")
             continue
+        progress(lay_lo + (lay_hi - lay_lo) * 0.5, f"matched layer {i}: frame loaded")
         shifted = _apply_shift_single(img, shifts_px[i], pad_left, nx_new)
         title = (
             f"Rocking Curve (frame {frame_index}, median-subtracted)\n"
@@ -617,6 +624,7 @@ def run(params: dict, progress: ProgressFn | None = None) -> MatchedResult:
         fig.savefig(png, dpi=150, facecolor="white", bbox_inches="tight")
         result.pngs.append(png)
         result.n_saved += 1
+        progress(lay_hi, f"matched layer {i} done")
         # NOTE: figures().build() in this module mirrors this exact recompute
         # (load_pco_ff_frame → _apply_shift_single → layer_figure) to rebuild
         # the figure at export time; keep the two in sync. That includes the

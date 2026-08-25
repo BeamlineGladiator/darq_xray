@@ -37,6 +37,7 @@ from matplotlib.figure import Figure
 from scipy.ndimage import map_coordinates
 
 from ..common import alignment as A
+from ..common import progress as _progress_mod
 from ..common import render as Rnd
 from ..common import volumeio as V
 from ..common.errors import StageUserError
@@ -2244,6 +2245,9 @@ def run(params: dict, progress: ProgressFn | None = None) -> SlicesResult:
     out_h5 = os.path.join(out_dir, h5_name)
     budget_bytes = _run_budget_bytes(p, out_dir)
     save_png = bool(p["save_png"])
+    # The slicing sweep's share of the bar; what is left at the top is the
+    # consolidation and the summary the run still has to do.
+    VOL_LO, VOL_HI = 0.1, 0.95
     grids_by_slice: dict[str, list[tuple[str, tuple[int, int]]]] = {}
     fh = h5py.File(out_h5, "w")
     fh.attrs["created_by"] = "dfxm.stages.slices"
@@ -2253,7 +2257,12 @@ def run(params: dict, progress: ProgressFn | None = None) -> SlicesResult:
     prep = None
     try:
         for vi, cfg in enumerate(volumes):
-            progress(0.1 + 0.85 * vi / len(volumes), f"slicing {cfg['kind']} {cfg['dataset_path']}")
+            # This volume's share of the bar. The sweep inside it reports per
+            # plane, so a run of few, large volumes still advances: before, the
+            # only reports were one per volume and the last one landed at 0.83,
+            # leaving the whole consolidation tail silent.
+            vol_lo, vol_hi = _progress_mod.slice_for(vi, len(volumes), VOL_LO, VOL_HI)
+            progress(vol_lo, f"slicing {cfg['kind']} {cfg['dataset_path']}")
             # Before the ExitStack, not inside it: `prep` is a function-local that
             # the next iteration only rebinds *after* `prepare_volume` returns, so
             # without this the previous volume is alive while the next is built.
@@ -2276,10 +2285,11 @@ def run(params: dict, progress: ProgressFn | None = None) -> SlicesResult:
                     continue
                 if prep["clim_note"]:
                     msg = f"{prep['volume_id']}: {prep['clim_note']}"
-                    progress(0.1 + 0.85 * vi / len(volumes), msg)
+                    progress(vol_lo, msg)
                     result.notes.append(msg)
                 vg = open_volume_group(fh, prep)
-                for sl in slices:
+                for si, sl in enumerate(slices):
+                    sl_lo, sl_hi = _progress_mod.slice_for(si, len(slices), vol_lo, vol_hi)
                     du = float(sl.get("du", prep["scale_x"]))
                     dv = float(sl.get("dv", prep["scale_x"]))
                     half_u, half_v = float(sl["half_u"]), float(sl["half_v"])
@@ -2339,6 +2349,10 @@ def run(params: dict, progress: ProgressFn | None = None) -> SlicesResult:
                     # frame past the end of the loop.
                     for pi, s2d in enumerate(planes):
                         off = float(offsets[pi])
+                        progress(
+                            sl_lo + (sl_hi - sl_lo) * (pi + 1) / max(1, len(offsets)),
+                            f"{prep['volume_id']}: plane {pi + 1}/{len(offsets)}",
+                        )
                         if save_png:
                             if len(offsets) == 1:
                                 png = os.path.join(slice_dir, f"{prep['volume_id']}.png")

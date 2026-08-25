@@ -31,6 +31,7 @@ from matplotlib.figure import Figure
 from matplotlib.patches import Rectangle
 from scipy.ndimage import map_coordinates
 
+from ..common import progress as _progress_mod
 from ..common import render as Rnd
 from ..common.errors import StageUserError
 from ..common.figures import FigureSpec, register, resolve_clim
@@ -1134,7 +1135,7 @@ def _clim_attrs(attrs, vid, clim):
     return attrs
 
 
-def _collect(f, job, p, ref_pref, restrict, clim=None):
+def _collect(f, job, p, ref_pref, restrict, clim=None, progress=None):
     name = job["name"]
     present = volume_ids_with_slice(f, name)
     if not present:
@@ -1159,7 +1160,12 @@ def _collect(f, job, p, ref_pref, restrict, clim=None):
     geom_tol, off_tol = float(p["geom_tol_um"]), float(p["offset_tol_um"])
     fields = []
     dropped = []
-    for vid in _ordered_field_ids(present, ref_id, job_fields):
+    # Per field: reading and sampling each one is the only loop this job has,
+    # and on a real consolidated file each field is a plane off disk.
+    report = _progress_mod.noop if progress is None else progress
+    _ids = list(_ordered_field_ids(present, ref_id, job_fields))
+    for _fi, vid in enumerate(_ids):
+        report((_fi + 1) / max(1, len(_ids)), f"field {vid}")
         sg = f[f"{vid}/{name}"]
         cu, cv, coff = read_axes(sg)
         # A field on a different grid/sweep than the reference (e.g. a raw_mosa
@@ -1345,6 +1351,9 @@ def _render_parameter_job(
     clim=None,
     trace_deferred=None,
 ):
+    # NOTE: *progress* is a **local** 0..1 reporter over this job's own share of
+    # the bar (wrap with `progress.sub_progress`), not the run-wide callback.
+    # *frac* remains the absolute number the replot path passes for its notes.
     """Render one parameter-mode job into *out_dir* (companion/traces/CSVs/
     overviews per the p-flags), appending to *result*. Shared verbatim by
     run() and render_replot() so the two paths cannot drift; *frac* is the
@@ -1366,14 +1375,23 @@ def _render_parameter_job(
     trace_font_scale = float(p["trace_font_scale"])
     name = job["name"]
     try:
-        ref, fields, geom, off_used, dropped = _collect(f, job, p, ref_pref, restrict, clim=clim)
+        ref, fields, geom, off_used, dropped = _collect(
+            f,
+            job,
+            p,
+            ref_pref,
+            restrict,
+            clim=clim,
+            progress=_progress_mod.sub_progress(progress, 0.0, 0.3),
+        )
     except (KeyError, ValueError) as exc:
         result.skipped.append(f"{name}: {exc}")
         return
     for reason in dropped:
         msg = f"{name}: {reason}"
         result.notes.append(msg)
-        progress(frac, msg)
+        progress(0.0, msg)
+    progress(0.3, f"{name}: fields collected")
     color = auto_line_color(ref[3]["cmap"], line_override)
     stem = _unique_name(
         used_stems,
@@ -1387,6 +1405,7 @@ def _render_parameter_job(
         job_index=ji,
     )
     if save_companion:
+        progress(0.35, f"{name}: companion figure")
         out_png = os.path.join(out_dir, f"{stem}.png")
         save_companion_figure(
             ref,
@@ -1404,7 +1423,12 @@ def _render_parameter_job(
             notes=result.notes,
         )
         jr.figure = out_png
+        # After the render, not only before it: the companion figure is one
+        # slow matplotlib call and was the last stretch of this job with
+        # nothing to say.
+        progress(0.55, f"{name}: companion saved")
     if save_traces:
+        progress(0.7, f"{name}: trace figures")
         jr.traces = _save_traces(
             out_dir,
             stem,
@@ -1421,6 +1445,7 @@ def _render_parameter_job(
             notes=result.notes,
         )
     if bool(p["save_csv"]):
+        progress(0.9, f"{name}: CSVs")
         jr.csvs = _write_csvs(out_dir, stem, geom["distance"], fields)
     if bool(p["save_overview"]):
         jr.overviews = _save_overviews(
@@ -1493,8 +1518,12 @@ def run(params: dict, progress: ProgressFn | None = None) -> ProfilesResult:
 
     try:
         with h5py.File(h5_path, "r") as f:
+            # A job's slot, reported at its real internal boundaries. Before,
+            # a one-job run reported exactly twice — 0.5 then 1.0 — so the bar
+            # sat at half through the whole of the only work there was.
             for ji, job in enumerate(jobs):
-                progress((ji + 0.5) / len(jobs), f"{mode}: {job.get('name')}")
+                job_lo, job_hi = _progress_mod.slice_for(ji, len(jobs), 0.02, 0.97)
+                progress(job_lo, f"{mode}: {job.get('name')}")
                 name, pin_note = resolve_job_slice_name(f, job["name"], job.get("offset_um", 0.0))
                 if pin_note:
                     result.notes.append(pin_note)
@@ -1503,6 +1532,7 @@ def run(params: dict, progress: ProgressFn | None = None) -> ProfilesResult:
                 if not present:
                     result.skipped.append(f"slice {name!r} not present")
                     continue
+                progress(job_lo + (job_hi - job_lo) * 0.12, f"{mode}: {name} resolved")
                 if mode == "preview":
                     ref_id = _pick_reference_id(present, ref_pref)
                     u_um, v_um, offsets = read_axes(f[f"{ref_id}/{name}"])
@@ -1538,19 +1568,22 @@ def run(params: dict, progress: ProgressFn | None = None) -> ProfilesResult:
                     continue
 
                 # parameter mode
+                progress(job_lo + (job_hi - job_lo) * 0.25, f"{mode}: {job.get('name')} reading")
                 _render_parameter_job(
                     f,
                     job,
                     ji,
-                    (ji + 0.5) / len(jobs),
+                    job_lo + (job_hi - job_lo) * 0.5,
                     p,
                     result,
                     used_stems,
                     out_dir,
                     style,
-                    progress,
+                    _progress_mod.sub_progress(progress, job_lo + (job_hi - job_lo) * 0.25, job_hi),
                     trace_deferred=trace_deferred,
                 )
+                progress(job_hi, f"{mode}: {job.get('name')} done")
+        progress(0.97, f"{mode}: placing trace figures")
     finally:
         # Runs even on a hard mid-loop failure (e.g. a corrupt h5 raising
         # partway through) so earlier jobs' already-built fixed-scale trace
