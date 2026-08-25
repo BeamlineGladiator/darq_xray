@@ -75,7 +75,7 @@ def test_in_core_headline_names_cost_and_headroom(monkeypatch):
     adv = advise_stage(spec, {}, profile=workstation_sw_gl())
     assert adv.plan.strategy == "in-core"
     assert "expected to run in memory" in adv.headline
-    assert "1.0 GB" in adv.headline
+    assert "1.0 GiB" in adv.headline
 
 
 def test_the_in_core_detail_does_not_restate_the_headline():
@@ -111,7 +111,7 @@ def test_the_headline_says_its_figures_are_ram():
     """The cost line's two byte counts are memory, and must say so.
 
     They can sit in the same banner as `plan.reasons` lines measured in
-    scratch *disk*; an unlabelled "N safely available" beside those reads as
+    scratch *disk*; an unlabelled second figure beside those reads as
     whichever resource the eye reached for last.
     """
     spec = _spec_with("tests.test_common_advisory:_cheap_estimate")
@@ -358,3 +358,30 @@ def test_advise_stage_never_raises_when_hint_computation_blows_up(monkeypatch):
     adv = advise_stage(spec, {"render_mode": "volume"}, profile=workstation_sw_gl())
     assert adv.estimate is not None and adv.plan is not None
     assert adv.hints == {}
+
+
+def test_the_headline_calls_its_second_figure_a_budget():
+    """The second figure is a self-imposed cap, and must not read as free RAM.
+
+    `advice.headroom_bytes` is a share of total and of available RAM, so it is
+    always *smaller* than what the machine reports free — and the status bar
+    reports exactly that. Worded "safely available" the pair contradicted
+    itself on screen: the cost line said 251.2 GiB while the status bar said
+    466.7 GiB free, which is what Albert hit on the first real STO2 `visualize`
+    run. Naming it a budget is what makes the smaller number self-explaining,
+    so the word is behaviour, not decoration.
+
+    Restoring "safely available" is the mutation; it fails the last assertion.
+    """
+    profile = workstation_sw_gl()
+    adv = advise_stage(
+        _spec_with("tests.test_common_advisory:_cheap_estimate"), {}, profile=profile
+    )
+
+    # precondition: the two figures really do disagree, which is the whole
+    # reason the wording has to explain itself.
+    assert adv.plan is not None
+    assert adv.plan.budget_bytes < profile.ram_available
+
+    assert "budget" in adv.headline, adv.headline
+    assert "available" not in adv.headline, adv.headline

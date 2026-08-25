@@ -5,10 +5,13 @@ from __future__ import annotations
 import dataclasses
 
 from dfxm.common.advice import (
+    AVAILABLE_FRACTION,
     MARGINAL_RSS_PER_TRACED_BYTE,
     MIN_STREAM_BUDGET_BYTES,
+    TOTAL_FRACTION,
     advise_3d,
     headroom_bytes,
+    human_bytes,
     plan_run,
     working_set_budget_bytes,
 )
@@ -29,10 +32,18 @@ def _est(peak_gb, *, chunkable=True, shape=(100, 700, 2891)):
 
 
 def test_headroom_is_the_tighter_of_the_two_limits():
-    # workstation: 0.6*460 = 276 GB vs 0.5*502 = 251 GB -> total-based wins
-    assert headroom_bytes(workstation_sw_gl()) == int(0.5 * 502 * GB)
-    # tiny_ram: 0.6*1 = 0.6 GB vs 0.5*8 = 4 GB -> available-based wins
-    assert headroom_bytes(tiny_ram()) == int(0.6 * 1 * GB)
+    """Each fixture is chosen so a *different* one of the two limits binds.
+
+    Asserted against the constants rather than their literal values, so tuning
+    the fractions (0.6/0.5 -> 0.75/0.65 on 2026-08-25) does not turn this into a
+    busywork edit — while still failing loudly if a change ever flips which
+    limit binds, which is the property the test actually names. Substituting one
+    fraction for the other in either line is the mutation: both fail.
+    """
+    # workstation: 0.75*460 = 345 GB (available) vs 0.65*502 = 326 GB (total)
+    assert headroom_bytes(workstation_sw_gl()) == int(TOTAL_FRACTION * 502 * GB)
+    # tiny_ram: 0.75*1 = 0.75 GB (available) vs 0.65*8 = 5.2 GB (total)
+    assert headroom_bytes(tiny_ram()) == int(AVAILABLE_FRACTION * 1 * GB)
 
 
 FLOOR = 250 * 1024 * 1024  # a VTK-importing stage's process image
@@ -287,3 +298,24 @@ def test_the_chunking_reason_starts_with_the_pinned_prefix():
     plan = advice.plan_run(prof, est)
     assert plan.strategy == "chunked"  # precondition for the reason to exist
     assert any(r.startswith(advice.CHUNK_REASON_PREFIX) for r in plan.reasons)
+
+
+def test_human_bytes_labels_the_binary_units_it_actually_divides_by():
+    """The divisor is 1024, so the label has to be the binary one.
+
+    The units read "KB"/"MB"/"GB" while the arithmetic divided by 1024 — every
+    figure the app displayed was understated by its own label, by 7% at GiB
+    scale, enough that a machine sold as 539 GB read as "502.4 GB RAM" in the
+    status bar. The numbers were right; only the unit was wrong. Relabelled
+    2026-08-25. Restoring any SI spelling is the mutation.
+    """
+    assert human_bytes(512) == "512.0 B"
+    assert human_bytes(1024) == "1.0 KiB"
+    assert human_bytes(1024**2) == "1.0 MiB"
+    assert human_bytes(1024**3) == "1.0 GiB"
+    assert human_bytes(1024**4) == "1.0 TiB"
+    # The arithmetic really is binary, which is what those labels now claim: an
+    # SI gigabyte is not one GiB and must not print as one.
+    assert human_bytes(1000**3) != "1.0 GiB"
+    # Past the end of the table it saturates rather than inventing a unit.
+    assert human_bytes(5 * 1024**5).endswith(" TiB")

@@ -126,9 +126,12 @@ applies to every stage and is remembered.
 
 **The status bar** always shows a compact read of this machine — logical CPU
 cores, free disk, and total/available RAM — refreshed every few seconds, e.g.
-`36 cores · 2000.0 GB free disk · 460.0 GB free of 502.0 GB RAM`. Every byte
+`36 cores · 2000.0 GiB free disk · 460.0 GiB free of 502.0 GiB RAM`. Every byte
 count names the resource it measures, so the disk figure and the memory figure
-can never be mistaken for each other. It only ever shows what has
+can never be mistaken for each other. Byte counts everywhere in the app are
+**binary** units — 1 GiB is 1024³ bytes, so a machine sold as "539 GB" reads
+here as 502.4 GiB. (Before 2026-08-25 the same figures were labelled "GB",
+which understated them by 7% against their own unit.) It only ever shows what has
 already been measured: an unmeasured field (a failed probe, or on a machine
 where a value could not be read) is left out rather than shown as `0.0 B`,
 which would misleadingly read as a full disk. The GL renderer (`software GL` /
@@ -390,12 +393,22 @@ cannot do.
 
 Under the button row, a one-line advisory shows what this run is expected to
 cost **on this machine** — it recomputes shortly after you stop typing, and
-again as soon as the stage opens. It reads like `needs ~1.2 GB RAM, 9.0 GB safely
-available — expected to run in memory`, or `at most ~4.1 GB RAM (conservative estimate), 3.6
-GB safely available — expected to stream`. Both figures are **memory**, and the
+again as soon as the stage opens. It reads like `needs ~1.2 GiB RAM, 9.0 GiB
+budget — expected to run in memory`, or `at most ~4.1 GiB RAM (conservative estimate), 3.6
+GiB budget — expected to stream`. Both figures are **memory**, and the
 line says so — the reasoning behind it can also mention scratch **disk**
-(`caching aligned blocks to 12.0 GB of scratch disk`), which is a different
-resource with its own free-space check. `needs ~N` is a normal estimate;
+(`caching aligned blocks to 12.0 GiB of scratch disk`), which is a different
+resource with its own free-space check.
+
+The second figure is a **budget, not the free memory on your machine**, and it
+is deliberately smaller: the app never plans a run larger than a fixed share of
+total *and* of available RAM, leaving room for Qt, matplotlib, HDF5 buffers and
+everything else you have open. So this number being well below the "N GiB free of
+M GiB RAM" in the status bar is expected, not a contradiction — the status bar
+reports what the machine has, this line reports what a run is allowed to take.
+**System check…** shows the same figure on its own **Headroom** row. The budget
+only decides whether a run streams or stays in memory; it never blocks a run.
+`needs ~N` is a normal estimate;
 `at most ~N (conservative estimate)` means the stage's estimator has not been
 recalibrated since the last rewrite and tends to over-predict, so the real run
 may be lighter. Hover the line for the reasoning behind it (why that strategy,
@@ -413,8 +426,8 @@ banner is informative only, same as the cost line — it never stops a run.
 
 **The one thing that can stop a run: not enough scratch disk.** If the run
 would need to stream to a scratch folder and this machine does not have room
-for it, a "Not enough scratch disk" dialog appears — *"This run needs N GB of
-scratch disk but only M GB is free. It may fail part-way through. Run
+for it, a "Not enough scratch disk" dialog appears — *"This run needs N GiB of
+scratch disk but only M GiB is free. It may fail part-way through. Run
 anyway?"* — with **OK** / **Cancel** buttons, **Cancel** as the default, so
 pressing Enter by reflex does not launch a run that cannot finish. Choosing
 **Cancel** starts nothing and leaves the form exactly as it was — perfectly

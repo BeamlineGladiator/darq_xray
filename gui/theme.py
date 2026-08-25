@@ -87,6 +87,17 @@ _BANNER_ERROR = "#c62828"
 _BANNER_SUCCESS = "#2e7d32"
 _BANNER_INFO = "#37474f"
 
+# The banner geometry, shared by all three roles and mode-independent — only the
+# fill above distinguishes them. Public because `StageView` must apply it to the
+# banner *widget* as well: a role is a dynamic property, and `QStyleSheetStyle`
+# caches the geometry it resolves for a widget without one, which
+# `unpolish()`/`polish()` does not invalidate. Colours survive that (they are
+# resolved at paint time) but the padding never reached the size hint, so a
+# wrapped message was clipped to one unpadded line. Keep the two in step: this
+# constant is the single source, and `tests/test_gui_stage_advice.py`
+# ::test_the_banner_grows_to_fit_a_wrapped_message pins the result.
+BANNER_GEOMETRY_QSS = "border-radius: 7px; padding: 6px 10px;"
+
 
 def build_qss(p: Palette) -> str:
     """Return the global Qt Style Sheet for palette *p*."""
@@ -179,15 +190,15 @@ def build_qss(p: Palette) -> str:
     HelpPanel {{ background: {p.accent_soft}; border-left: 3px solid {p.accent}; }}
     QLabel[role="banner-error"] {{
         background: {_BANNER_ERROR}; color: #ffffff;
-        border-radius: 7px; padding: 6px 10px;
+        {BANNER_GEOMETRY_QSS}
     }}
     QLabel[role="banner-success"] {{
         background: {_BANNER_SUCCESS}; color: #ffffff;
-        border-radius: 7px; padding: 6px 10px;
+        {BANNER_GEOMETRY_QSS}
     }}
     QLabel[role="banner-info"] {{
         background: {_BANNER_INFO}; color: #ffffff;
-        border-radius: 7px; padding: 6px 10px;
+        {BANNER_GEOMETRY_QSS}
     }}
     QPushButton[role="chip"] {{
         background: {p.accent_soft};

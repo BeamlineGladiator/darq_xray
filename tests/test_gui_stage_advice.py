@@ -1,5 +1,6 @@
 """The live cost line under a stage form (offscreen Qt)."""
 
+import html
 import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -8,7 +9,7 @@ import pytest  # noqa: E402
 
 pytest.importorskip("PySide6")
 
-from PySide6.QtWidgets import QApplication  # noqa: E402
+from PySide6.QtWidgets import QApplication, QLabel  # noqa: E402
 
 _app = QApplication.instance() or QApplication([])
 
@@ -16,11 +17,17 @@ from dfxm.common.advisory import Advisory  # noqa: E402
 from dfxm.config.models import Experiment  # noqa: E402
 from gui.bindings import STAGE_SPECS  # noqa: E402
 from gui.stage_view import StageView  # noqa: E402
+from gui.theme import apply_theme  # noqa: E402
 from tests.machine_fixtures import workstation_sw_gl  # noqa: E402
+
+# The real headline from the first STO2 `visualize` run (in the wording that
+# replaced "safely available") — long enough to wrap in the banner at the width
+# this view gives it, which is the precondition the banner test asserts.
+_WRAPPING_HEADLINE = "needs ~10.5 GiB RAM, 326.3 GiB budget — expected to run in memory"
 
 
 def _advisory(
-    headline="needs ~1.0 GB, 4.0 GB safely available — expected to run in memory",
+    headline="needs ~1.0 GiB RAM, 4.0 GiB budget — expected to run in memory",
     details=("a reason",),
 ):
     return Advisory(workstation_sw_gl(), None, None, headline, details)
@@ -74,13 +81,13 @@ def _blocked_advisory():
         1,
         "/scratch",
         ("a reason",),
-        "needs 100.0 GB of scratch disk but only 40.0 GB is free",
+        "needs 100.0 GiB of scratch disk but only 40.0 GiB is free",
     )
     return Advisory(
         workstation_sw_gl(),
         CostEstimate(200 * GB, 100 * GB, (76, 1200, 1800), True, scratch_bytes=100 * GB),
         plan,
-        "needs ~200.0 GB, 4.0 GB safely available — expected to stream",
+        "needs ~200.0 GiB RAM, 4.0 GiB budget — expected to stream",
         ("a reason",),
         plan.blocked,
     )
@@ -150,3 +157,51 @@ def test_hints_reach_the_form():
     assert "renders blank" in view._form._notes["render_mode"].text()
     view._show_advisory(Advisory(workstation_sw_gl(), None, None, "a headline", ()))
     assert view._form._notes["render_mode"].text() == ""
+
+
+def test_the_banner_grows_to_fit_a_wrapped_message():
+    """A pre-flight message that wraps must not be clipped to one line's height.
+
+    `role` is a dynamic property, and `QStyleSheetStyle` caches the geometry it
+    resolved for the banner back when it had no role — a cache that
+    `style().unpolish()`/`polish()`, the documented way to re-evaluate such a
+    selector, does not invalidate. Colours came through anyway (they resolve at
+    paint time), so the banner painted its themed fill at a padding-free
+    one-line height: on the first real STO2 `visualize` run the two-line cost
+    message sat cut off in its box, and switching theme — which re-applies the
+    sheet globally — was what made it right.
+
+    The oracle is a label built fresh under the same sheet, which resolves the
+    themed padding correctly by construction; asserting against it rather than
+    a pixel count keeps this honest across fonts and DPI.
+    """
+    app = QApplication.instance()
+    previous = app.styleSheet()
+    apply_theme(app, "light")
+    try:
+        view = StageView("visualize", STAGE_SPECS["visualize"], Experiment())
+        view.resize(1000, 800)
+        view.show()
+        app.processEvents()
+        view._show_banner(html.escape(_WRAPPING_HEADLINE), role="banner-info")
+        app.processEvents()
+        width = view._banner.width()
+
+        parent_layout = view._banner.parentWidget().layout()
+        styled = QLabel(html.escape(_WRAPPING_HEADLINE))
+        styled.setWordWrap(True)
+        styled.setTextFormat(view._banner.textFormat())
+        styled.setProperty("role", "banner-info")
+        parent_layout.addWidget(styled)
+        plain = QLabel(html.escape(_WRAPPING_HEADLINE))
+        plain.setWordWrap(True)
+        plain.setTextFormat(view._banner.textFormat())
+        parent_layout.addWidget(plain)
+        app.processEvents()
+
+        # precondition: at this width the role really does add padding, so a
+        # banner that ignored it would measure short and this test could fail.
+        assert styled.heightForWidth(width) > plain.heightForWidth(width)
+        assert view._banner.heightForWidth(width) == styled.heightForWidth(width)
+    finally:
+        app.setStyleSheet(previous)

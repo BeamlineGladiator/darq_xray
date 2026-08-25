@@ -40,6 +40,7 @@ from dfxm.stages.registry import STAGE_TARGETS
 from .advisor import StageAdvisor, probe_gl_async
 from .bindings import experiment_overrides
 from .form_state import FormStateStore
+from .theme import BANNER_GEOMETRY_QSS
 from .viewers import append_line_job, inject_line_into_jobs, volume_sources
 from .widgets.busy import busy_cursor
 from .widgets.help_panel import HelpPanel
@@ -299,6 +300,10 @@ class StageView(QWidget):
         self._banner = QLabel("")
         self._banner.setWordWrap(True)
         self._banner.setTextFormat(Qt.TextFormat.RichText)
+        # The role-specific fill comes from the global sheet, but the geometry is
+        # applied to the widget itself — see `theme.BANNER_GEOMETRY_QSS` for why
+        # a dynamic-property selector cannot carry it here.
+        self._banner.setStyleSheet(BANNER_GEOMETRY_QSS)
         self._banner.setVisible(False)
 
         right = QWidget()
