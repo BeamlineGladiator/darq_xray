@@ -29,6 +29,7 @@ import numpy as np
 from matplotlib.figure import Figure
 from scipy.optimize import curve_fit
 
+from ..common import progress as _progress_mod
 from ..common.errors import StageUserError
 from ..common.figures import FigureSpec, ReplotGroup, crop_roi_2d, register, resolve_clim
 from ..common.h5io import StackedVolumeFile
@@ -783,15 +784,26 @@ def process_maps_file(
     vlim: tuple[float | None, float | None],
     out_dir: str | None,
     save_plots: bool,
+    progress=None,
     style: PlotStyle | None = None,
 ) -> tuple[np.ndarray, LayerResult]:
-    """Compute the 2-D strain map for one maps.h5 and (optionally) save plots."""
+    """Compute the 2-D strain map for one maps.h5 and (optionally) save plots.
+
+    *progress* takes a local 0..1 fraction over this layer's own work. There is
+    no loop here to report from — reading and detrending the map, and then
+    rendering each plot, are individually slow steps — so the boundaries between
+    them are where it speaks.
+    """
+    report = progress or _progress_mod.noop
     # detrend ccmth on the FULL map, THEN crop ROI (order matters)
     ccmth_original, ccmth_map, surface = _detrend_ccmth(maps_path, ccmth_com_path, roi)
+    report(0.45, f"{name}: detrended")
 
     strain = compute_strain(ccmth_map, ccmth_ref_deg)
+    report(0.6, f"{name}: strain computed")
 
     plots: list[str] = []
+    report(0.7, f"{name}: rendering plots")
     if save_plots and out_dir:
         os.makedirs(out_dir, exist_ok=True)
         p = os.path.join(out_dir, f"{name}_strain.png")
@@ -891,10 +903,17 @@ def run(params: dict, progress: ProgressFn | None = None) -> StrainResult:
     result = StrainResult(output_dir=out_dir)
 
     stacked_path = os.path.join(default_out_root, p["stacked_filename"])
+    LAYERS_HI = 0.95
     names: list[str] = []
     with StackedVolumeFile(stacked_path, compression="gzip") as out:
+        # The layer loop owns [0, LAYERS_HI]; what is left is the stacked
+        # file's attrs and close, which is real work on a large volume. Each
+        # layer reports on entry AND on completion — reporting only on entry
+        # left the last layer's own processing, and the whole write tail after
+        # it, as a single jump to 1.0.
         for i, (name, maps_path) in enumerate(work):
-            progress(i / len(work), f"strain: {name}")
+            lay_lo, lay_hi = _progress_mod.slice_for(i, len(work), 0.0, LAYERS_HI)
+            progress(lay_lo, f"strain: {name}")
             if not os.path.exists(maps_path):
                 result.skipped.append(f"{name}: {maps_filename} not found")
                 continue
@@ -911,6 +930,7 @@ def run(params: dict, progress: ProgressFn | None = None) -> StrainResult:
                     out_dir=out_dir,
                     save_plots=bool(p["save_plots"]),
                     style=style,
+                    progress=_progress_mod.sub_progress(progress, lay_lo, lay_hi),
                 )
             except StageUserError:
                 # Out-of-bounds ROI etc. is an input problem affecting every layer the
@@ -923,12 +943,14 @@ def run(params: dict, progress: ProgressFn | None = None) -> StrainResult:
             del strain
             names.append(name)
             result.layers.append(layer)
+            progress(lay_hi, f"strain: {name} done")
 
         if not names:
             out.abort()
             progress(1.0, "no strain layers produced")
             return result
 
+        progress(LAYERS_HI, "writing stacked volume")
         out.set_attrs(
             num_layers=len(names),
             source_folders="\n".join(names),

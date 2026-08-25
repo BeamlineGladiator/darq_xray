@@ -367,6 +367,7 @@ def concatenate_single_file(
         total_frames = int(sum(entries_n_frames))
 
         # --- positioners (uses the full filtered entry list, like the scripts) ---
+        progress(0.45, "reading positioners")
         positioners = collect_positioners(h5in, entries, entries_n_frames, positioners_path)
         n_varying = sum(
             1 for v in positioners.values() if isinstance(v, np.ndarray) and v.ndim >= 1
@@ -397,24 +398,35 @@ def concatenate_single_file(
                     idx += n
                     progress(0.5 + 0.4 * (j + 1) / len(valid_entries), f"copied {entry}")
             else:
-                progress(0.5, "building detector VDS")
-                sources = [
-                    h5io.make_virtual_source(
-                        h5in[f"{entry}/{detector_read_path}"], output_path, vds_policy
+                progress(0.55, "building detector VDS")
+                # An explicit loop rather than a comprehension so the VDS build
+                # reports per source: with `copy_data` off this is the whole of
+                # the write, and it used to be a single 0.5 -> 1.0 jump.
+                sources = []
+                for j, entry in enumerate(valid_entries):
+                    sources.append(
+                        h5io.make_virtual_source(
+                            h5in[f"{entry}/{detector_read_path}"], output_path, vds_policy
+                        )
                     )
-                    for entry in valid_entries
-                ]
+                    progress(
+                        0.55 + 0.3 * (j + 1) / max(1, len(valid_entries)),
+                        f"VDS source {j + 1}/{len(valid_entries)}",
+                    )
                 layout = h5io.build_virtual_layout(
                     sources, entries_n_frames, frame_shape, frame_dtype
                 )
+                progress(0.88, "writing virtual dataset")
                 h5out.create_virtual_dataset(out_det_path, layout)
 
             # positioners
+            progress(0.93, "writing positioners")
             pos_grp = entry_grp.create_group("instrument/positioners")
             for motor_name, value in sorted(positioners.items()):
                 pos_grp.create_dataset(motor_name, data=value)
 
             # metadata
+            progress(0.97, "writing metadata")
             n_entries = len(entries)
             entry_grp.attrs["num_scans"] = n_entries
             entry_grp.attrs["source_entries"] = ", ".join(entries)

@@ -27,6 +27,7 @@ import h5py
 import numpy as np
 
 from ..common import alignment as A
+from ..common import progress as _progress_mod
 from ..common import render as Rnd
 from ..common import render3d as R3
 from ..common import volumeio
@@ -1068,13 +1069,31 @@ def _source_and_clim(streamed, *, kind, center_method="", range_pct=99.5):
 
 
 def _process_dataset(
-    source, z_pos, scale_z, name, vmin, vmax, cmap, title, cbar, p, out_dir, style=None, group=None
+    source,
+    z_pos,
+    scale_z,
+    name,
+    vmin,
+    vmax,
+    cmap,
+    title,
+    cbar,
+    p,
+    out_dir,
+    style=None,
+    group=None,
+    progress=None,
 ):
     """Render one aligned dataset's products.
 
     *source* is the aligned volume: either a plain ``(Z, Y, X)`` array or a
     :class:`_LayerSource` presenting one as ascending per-layer reads. The
     products are identical either way.
+
+    *progress* takes a **local** 0..1 fraction covering this dataset's products;
+    `run` wraps it with `sub_progress` so each dataset owns a slice of the run's
+    bar. The internal split is by product, and the layer-PNG loop — much the
+    longest of them on a real volume — reports per layer inside its own share.
     """
     ds_dir = os.path.join(out_dir, name)
     os.makedirs(ds_dir, exist_ok=True)
@@ -1101,6 +1120,12 @@ def _process_dataset(
             "and 'Save rotation' to keep the run bounded"
         )
 
+    # Product shares of this dataset's slice. The layer PNGs get the bulk
+    # because they are per-layer work on a real volume while the rest are a
+    # fixed handful of renders; the exact split matters little, since
+    # `EtaEstimator` measures the recent rate rather than trusting these weights.
+    report = progress or _progress_mod.noop
+    report(0.0, f"{name}: rendering")
     if p["save_layers"]:
         prod.layers_dir = Rnd.save_layer_pngs(
             data,
@@ -1116,7 +1141,9 @@ def _process_dataset(
             sy,
             style=style,
             group=group,
+            progress=_progress_mod.sub_progress(progress, 0.0, 0.6),
         )
+    report(0.6, f"{name}: layers done")
     if p["save_animation"]:
         prod.animation = Rnd.save_layer_animation(
             data,
@@ -1134,6 +1161,7 @@ def _process_dataset(
             style=style,
             group=group,
         )
+    report(0.75, f"{name}: animation done")
     log_scale = bool(p["log_scale"])
     if log_scale and not R3.log_valid((vmin, vmax)):
         log_scale = False
@@ -1158,6 +1186,7 @@ def _process_dataset(
         note = R3.oversize_note(scene, R3.volume_texture_limit())
         if note:
             prod.notes.append(note)
+    report(0.85, f"{name}: 3-D scene ready")
     if p["save_topview"]:
         try:
             prod.top_view = R3.save_top_view(
@@ -1184,6 +1213,7 @@ def _process_dataset(
                 prod.notes.append("rotation video skipped: volume has no finite voxels")
         except Exception as exc:  # noqa: BLE001 - no GL / pyvista issue -> note + continue
             prod.notes.append(f"rotation video skipped: {exc}")
+    report(1.0, f"{name}: done")
     return prod
 
 
@@ -1234,14 +1264,27 @@ def run(params: dict, progress: ProgressFn | None = None) -> VisualizeResult:
     raw_root = (p["raw_root"] or "").rstrip("/")
     budget_bytes = _run_budget_bytes(p, out_dir)
 
-    # --- mosaicity ---
+    # --- how the bar is divided -------------------------------------------
+    # One equal slice per DATASET across both halves, rather than the old fixed
+    # breakpoints (0.1-0.5 for all of mosaicity, then a pinned 0.6 for the whole
+    # of strain). Strain is one dataset among N+1, not half the bar: with five
+    # mosaicity fields it used to get 40% of the bar for ~17% of the work, and
+    # reported nothing at all while doing it. Counted before either half runs so
+    # both share one denominator.
     mosa_file = p["mosa_volume_file"]
+    strain_file = p["strain_volume_file"]
+    mosa_names = mosa_field_names(mosa_file) if mosa_file and os.path.exists(mosa_file) else []
+    n_datasets = len(mosa_names) + (1 if strain_file and os.path.exists(strain_file) else 0)
+    WORK_LO, WORK_HI = 0.05, 0.99
+
+    # --- mosaicity ---
     if mosa_file and os.path.exists(mosa_file):
-        progress(0.05, "loading mosaicity volume")
-        names = mosa_field_names(mosa_file)
+        progress(0.02, "loading mosaicity volume")
+        names = mosa_names
         samy, samz = _read_motors(raw_root, p["mosa_pattern"], p["samy_path"], p["samz_path"])
         for i, name in enumerate(names):
-            progress(0.1 + 0.4 * i / max(1, len(names)), f"mosaicity: {name}")
+            ds_lo, ds_hi = _progress_mod.slice_for(i, n_datasets, WORK_LO, WORK_HI)
+            progress(ds_lo, f"mosaicity: {name}")
             # Release the PREVIOUS field's source before the next one is built.
             # `source` is only rebound by `_source_and_clim` below, i.e. *after*
             # the next field's alignment has allocated — and on the in-core rung
@@ -1280,7 +1323,7 @@ def run(params: dict, progress: ProgressFn | None = None) -> VisualizeResult:
                 )
                 vmin, vmax, clim_note = apply_round_clim(vmin, vmax, style)
                 if clim_note:
-                    progress(0.1 + 0.4 * i / max(1, len(names)), f"{name}: {clim_note}")
+                    progress(ds_lo, f"{name}: {clim_note}")
                 prod = _process_dataset(
                     source,
                     z_pos,
@@ -1295,6 +1338,7 @@ def run(params: dict, progress: ProgressFn | None = None) -> VisualizeResult:
                     out_dir,
                     style=style,
                     group=group,
+                    progress=_progress_mod.sub_progress(progress, ds_lo, ds_hi),
                 )
             if clim_note:
                 prod.notes.append(clim_note)
@@ -1309,10 +1353,10 @@ def run(params: dict, progress: ProgressFn | None = None) -> VisualizeResult:
     elif mosa_file:
         result.skipped.append(f"mosaicity volume not found: {mosa_file}")
 
-    # --- strain ---
-    strain_file = p["strain_volume_file"]
+    # --- strain --- (the last dataset slice, not half the bar)
     if strain_file and os.path.exists(strain_file):
-        progress(0.6, "loading strain volume")
+        st_lo, st_hi = _progress_mod.slice_for(n_datasets - 1, n_datasets, WORK_LO, WORK_HI)
+        progress(st_lo, "loading strain volume")
         samy, samz = _read_motors(raw_root, p["strain_pattern"], p["samy_path"], p["samz_path"])
         with h5py.File(strain_file, "r") as f:
             dset = f["strain"] if "strain" in f else None
@@ -1332,7 +1376,7 @@ def run(params: dict, progress: ProgressFn | None = None) -> VisualizeResult:
                 source, vmin, vmax = _source_and_clim(streamed, kind="strain")
                 vmin, vmax, clim_note = apply_round_clim(vmin, vmax, style)
                 if clim_note:
-                    progress(0.6, f"strain: {clim_note}")
+                    progress(st_lo, f"strain: {clim_note}")
                 prod = _process_dataset(
                     source,
                     z_pos,
@@ -1347,6 +1391,7 @@ def run(params: dict, progress: ProgressFn | None = None) -> VisualizeResult:
                     out_dir,
                     style=style,
                     group=group,
+                    progress=_progress_mod.sub_progress(progress, st_lo, st_hi),
                 )
                 if clim_note:
                     prod.notes.append(clim_note)
