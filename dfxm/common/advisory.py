@@ -88,17 +88,27 @@ class Advisory:
 
 
 def _headline(estimate: CostEstimate, plan: RunPlan, conservative: bool) -> str:
-    """One line naming the cost, the headroom, and the expected strategy.
+    """One line naming the cost, the budget, and the expected strategy.
 
     Both byte counts are RAM, and the lead says so: the same banner can also
     carry `plan.reasons` lines measured in scratch *disk*, and an unlabelled
-    "N safely available" beside them reads as whichever resource the eye
-    reached for last.
+    second figure beside them reads as whichever resource the eye reached for
+    last.
+
+    The second figure is called a **budget**, not what is "available", because
+    it is `advice.headroom_bytes` — a self-imposed cap (a share of total and of
+    available RAM, see the constants there), not a measurement of free memory.
+    Worded as "available" it contradicted the status bar, which reports the real
+    figure: on the development box this line said 251.2 GB while the status bar
+    truthfully said 466.7 GB free, and the honest reading of that pair is not
+    that one of them is wrong. Named as a budget, the smaller number explains
+    itself. Pinned by `tests/test_common_advisory.py`
+    ::test_the_headline_calls_its_second_figure_a_budget.
     """
     need = advice.human_bytes(estimate.peak_bytes)
     lead = f"at most ~{need} RAM (conservative estimate)" if conservative else f"needs ~{need} RAM"
     strategy = _STRATEGY_WORDS.get(plan.strategy, plan.strategy)
-    return f"{lead}, {advice.human_bytes(plan.budget_bytes)} safely available — {strategy}"
+    return f"{lead}, {advice.human_bytes(plan.budget_bytes)} budget — {strategy}"
 
 
 def _details(plan: RunPlan, conservative: bool) -> tuple[str, ...]:

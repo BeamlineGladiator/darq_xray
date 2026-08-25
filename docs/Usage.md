@@ -390,12 +390,22 @@ cannot do.
 
 Under the button row, a one-line advisory shows what this run is expected to
 cost **on this machine** — it recomputes shortly after you stop typing, and
-again as soon as the stage opens. It reads like `needs ~1.2 GB RAM, 9.0 GB safely
-available — expected to run in memory`, or `at most ~4.1 GB RAM (conservative estimate), 3.6
-GB safely available — expected to stream`. Both figures are **memory**, and the
+again as soon as the stage opens. It reads like `needs ~1.2 GB RAM, 9.0 GB
+budget — expected to run in memory`, or `at most ~4.1 GB RAM (conservative estimate), 3.6
+GB budget — expected to stream`. Both figures are **memory**, and the
 line says so — the reasoning behind it can also mention scratch **disk**
 (`caching aligned blocks to 12.0 GB of scratch disk`), which is a different
-resource with its own free-space check. `needs ~N` is a normal estimate;
+resource with its own free-space check.
+
+The second figure is a **budget, not the free memory on your machine**, and it
+is deliberately smaller: the app never plans a run larger than a fixed share of
+total *and* of available RAM, leaving room for Qt, matplotlib, HDF5 buffers and
+everything else you have open. So this number being well below the "N GB free of
+M GB RAM" in the status bar is expected, not a contradiction — the status bar
+reports what the machine has, this line reports what a run is allowed to take.
+**System check…** shows the same figure on its own **Headroom** row. The budget
+only decides whether a run streams or stays in memory; it never blocks a run.
+`needs ~N` is a normal estimate;
 `at most ~N (conservative estimate)` means the stage's estimator has not been
 recalibrated since the last rewrite and tends to over-predict, so the real run
 may be lighter. Hover the line for the reasoning behind it (why that strategy,

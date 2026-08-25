@@ -22,8 +22,23 @@ from dataclasses import dataclass
 # Qt, matplotlib, h5py buffers and the OS. Two limits, the tighter one wins:
 # available RAM guards against other processes, total RAM guards against a
 # misleadingly large "available" on a machine with a huge page cache.
-AVAILABLE_FRACTION = 0.6
-TOTAL_FRACTION = 0.5
+#
+# These are a *budget cap*, not a measurement, and that distinction is the whole
+# reason the surfaces call the result a "budget" rather than what is "available"
+# — on the 502 GB development box the cap sat at 251 GB while the status bar
+# truthfully read 467 GB free, and the two numbers side by side read as a
+# contradiction rather than as a policy.
+#
+# Raised from 0.6/0.5 on 2026-08-25 at Albert's request, for more leeway on a
+# machine with RAM to spare. What they trade: headroom only chooses in-core vs
+# streaming and never blocks a run, so a cap set too high lets a run go in-core
+# and OOM, while one set too low only makes it stream (slower, same result). The
+# asymmetry is why these stay well below 1.0 — and why raising them further
+# should wait for the estimator recalibration, since the alignment-chain
+# estimators still *under*-predict (visualize measured 1.67x under), and an
+# under-prediction judged against a looser cap is exactly the OOM direction.
+AVAILABLE_FRACTION = 0.75
+TOTAL_FRACTION = 0.65
 
 # Below this there is no point chunking — the bookkeeping costs more than the
 # memory it saves.
@@ -242,14 +257,13 @@ def plan_run(profile, estimate, *, allow_downsample: bool = False, scratch_dir=N
 
     if estimate.peak_bytes <= budget:
         reasons.append(
-            f"needs {human_bytes(estimate.peak_bytes)} RAM, {human_bytes(budget)} available"
+            f"needs {human_bytes(estimate.peak_bytes)} RAM of a {human_bytes(budget)} budget"
             f"{INCORE_REASON_SUFFIX}"
         )
         return RunPlan("in-core", budget, 0, 1, None, tuple(reasons), None)
 
     reasons.append(
-        f"needs {human_bytes(estimate.peak_bytes)} RAM but only {human_bytes(budget)}"
-        " is safely available"
+        f"needs {human_bytes(estimate.peak_bytes)} RAM but the budget is only {human_bytes(budget)}"
     )
 
     downsample = 1
