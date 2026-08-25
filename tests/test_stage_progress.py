@@ -61,6 +61,55 @@ def test_visualize_progress_is_smooth_with_a_product_switched_off(tmp_path):
     assert "3-D scene ready" not in text, text
 
 
+def test_visualize_progress_is_smooth_with_only_the_3d_products(tmp_path):
+    """The 3-D slots must report inside themselves, not just at their edges.
+
+    Normalising the shares over the enabled products makes each *remaining*
+    product's slot bigger, so switching the layer PNGs and the animation off
+    hands the scene build and the top view most of the dataset's bar. With no
+    reporting inside them, a four-field mosaicity volume — `chi/mu` x
+    `COM/FWHM`, no strain file, `Save layers` unticked, `Save topview` left at
+    its default — jumped 0.157 in one step.
+
+    `save_top_view` is faked rather than rendered: GL is not guaranteed here,
+    and what this test is about is the allocation, not the render. The fake
+    honours the reporting contract that `test_render3d_gl.py` pins against real
+    GL, so the two together cover it end to end.
+    """
+    import tests.test_stage_visualize as T
+    from dfxm.stages import visualize
+
+    def fake_top_view(scene, path, **kw):
+        report = kw.get("progress")
+        if report is not None:
+            report(0.6, "3-D top view rendered")
+            report(1.0, "3-D top view saved")
+        open(path, "wb").close()
+        return path
+
+    real = visualize.R3.save_top_view
+    visualize.R3.save_top_view = fake_top_view
+    try:
+        proc, raw = T._setup(tmp_path)
+        params = {
+            **T._stream_params(proc, raw, tmp_path / "viz_3d_only"),
+            "strain_volume_file": "",  # four mosaicity fields, no strain dataset
+            "save_layers": False,
+            "save_animation": False,
+            "save_topview": True,
+            "save_rotation": False,
+        }
+        seen = trace(visualize.run, params)
+    finally:
+        visualize.R3.save_top_view = real
+
+    assert_progress_wellformed(seen, label="visualize 3-D products only")
+    text = " ".join(t for _, t in seen)
+    assert "3-D scene built" in text, text
+    assert "top view done" in text, text
+    assert "layers done" not in text, text
+
+
 def test_paraview_progress_is_smooth(tmp_path):
     import tests.test_stage_paraview as T
     from dfxm.stages import paraview
@@ -88,11 +137,19 @@ def test_paraview_progress_is_smooth_with_a_single_export(tmp_path):
     export — worse than the milestone reporting the sweep replaced.
 
     The fixture is deeper than the other paraview ones (12 layers, the stage's
-    default `num_pieces_z`) because piece count is what sets the bar's
-    resolution once the slots are right, and a 4-layer volume yields three
-    pieces however the arithmetic goes. That is a property of the fixture, not
-    of the stage, so the assertion this test really exists for is the one below
-    — where the export's range starts and ends — which holds at any piece count.
+    default `num_pieces_z`) for a reason worth stating plainly rather than
+    hiding in a fixture: **a single export cannot meet `MAX_FRAC_GAP` below four
+    pieces.** The writer emits two reports per piece, so the worst gap is
+    `0.5 / n_pieces` of a 0.95-wide range — 0.475 at one piece, 0.158 at three —
+    and the write itself is one `write_piece_vti` call with nothing inside it to
+    report. `compute_piece_extents_z` also clamps to `nz - 1`, so a shallow
+    volume hits the same floor at the default `num_pieces_z=16`.
+
+    That is a real limit of the stage at low piece counts, not something this
+    test is entitled to assert away, and `num_pieces_z` is a memory and
+    pvserver-rank decision users legitimately set to small values. What holds at
+    *any* piece count is the assertion below — where the export's range starts
+    and ends — which is what the defect this test exists for actually broke.
     """
     import tests.test_stage_paraview as T
     from dfxm.stages import paraview
@@ -296,9 +353,15 @@ def test_strain_speaks_before_it_has_finished_reading(tmp_path):
     gap ceiling only because 0.45/3 happens to be 0.1425.
 
     The gap ceiling is not asserted for one layer: the read, the fit and each of
-    the three `savefig`s are single indivisible calls, so six atomic steps share
-    one bar and the best possible worst-gap is about 1/6. What is pinnable is
-    that the run speaks early and often, which is what was actually wrong.
+    the three `savefig`s are single indivisible calls, so a handful of atomic
+    steps share one bar. The measured worst gap is **0.235**, at the ccmth read
+    — `_detrend_ccmth` gives the read 0.55 of a slot that is itself 0.45 of the
+    layer — down from 0.4275 before this change but not to the ~1/6 that an even
+    split of six steps would give; re-weighting could close some of that, at the
+    cost of weights that no longer match where the time goes. A `save_plots=False`
+    run measures 0.38, but that jump covers the skipped plot branch and so covers
+    no work at all: a cosmetic step, not silence. What is pinnable, and what was
+    actually wrong, is that the run speaks early and often.
     """
     import tests.test_stage_strain as T
     from dfxm.stages import strain
@@ -334,7 +397,16 @@ def test_mosaicity_progress_is_smooth_with_one_layer(tmp_path):
 
     root = T._make_root(tmp_path, ("layer__1",))
     params = {"mode": "batch", "root_folder": str(root), "folder_pattern": "layer__*"}
-    assert_progress_wellformed(trace(mosaicity.run, params), label="mosaicity one layer")
+    seen = trace(mosaicity.run, params)
+    assert_progress_wellformed(seen, label="mosaicity one layer")
+
+    # A dataset this maps.h5 does not carry still reports — the bar's
+    # granularity cannot depend on which optional datasets a layer has — but it
+    # must say `skipped`, not `wrote`.
+    absent = {**params, "mu_fwhm_path": "no/such/dataset"}
+    seen = trace(mosaicity.run, {**absent, "stacked_filename": "absent.h5"})
+    assert any("skipped mu_fwhm_path" in t for _, t in seen), [t for _, t in seen]
+    assert not any("wrote mu_fwhm_path" in t for _, t in seen), [t for _, t in seen]
 
 
 def test_rocking_reports_per_layer_while_rendering(tmp_path):
@@ -367,6 +439,43 @@ def test_rocking_reports_per_layer_while_rendering(tmp_path):
     assert_progress_wellformed(seen, label="rocking")
     per_layer = [t for _, t in seen if "layer " in t and "/" in t]
     assert len(per_layer) >= 6, f"no per-layer render reports: {[t for _, t in seen]}"
+
+
+def test_matched_reports_every_step_of_a_single_layer(tmp_path):
+    """One layer must still report its four steps, not just its ends.
+
+    `matched` used to split a layer at an arbitrary 0.5, putting the frame read
+    and the array shift on one side and the whole render on the other. The
+    layers now report at four boundaries — frame read, shift, figure built, PNG
+    saved — but the gap ceiling is still not assertable at one layer: those four
+    are indivisible calls sharing a slot 0.78 wide, so 0.273 is the floor (0.137
+    at two layers, 0.100 at three, where the existing sweep test lives).
+    """
+    import numpy as np
+
+    import tests.test_stage_matched as T
+    from dfxm.stages import matched
+
+    raw = tmp_path / "raw"
+    T._write_strain(str(raw), "strain__1", 0.0, 0.0)
+    frames = np.random.default_rng(0).standard_normal((T.NF, T.H, T.W)) + 10.0
+    T._write_rocking(str(raw), "rock__1", 0.0, 0.0, frames)
+    params = {
+        "raw_root": str(raw),
+        "strain_pattern": "strain__*",
+        "rocking_pattern": "rock__*",
+        "frame_index": 0,
+        "match_threshold_mm": 0.001,
+        "output_dir": str(tmp_path / "matched_out"),
+    }
+    seen = trace(matched.run, params)
+
+    fracs = [f for f, _ in seen]
+    assert fracs[-1] == 1.0
+    assert all(b >= a for a, b in zip(fracs, fracs[1:])), fracs
+    text = " ".join(t for _, t in seen)
+    for step in ("frame loaded", "frame shifted", "figure built", "layer 0 done"):
+        assert step in text, f"{step!r} missing from {text!r}"
 
 
 def test_profiles_preview_reports_through_the_render(tmp_path):

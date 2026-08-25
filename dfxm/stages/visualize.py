@@ -1202,6 +1202,14 @@ def _process_dataset(
             opacity=float(p["volume_opacity"]),
             opacity_mapping=str(p["opacity_mapping"]),
         )
+        # Two steps, not one: building the scene reshapes and re-scales the
+        # whole volume, and `volume_texture_limit` runs an out-of-process GL
+        # probe. On a dataset whose other products are off, this slot is most of
+        # the bar, so the boundary between them is worth reporting.
+        report(
+            starts["scene"] + (ends["scene"] - starts["scene"]) * 0.5,
+            f"{name}: 3-D scene built",
+        )
         # A volume wider than the GL 3-D texture limit renders blank without any
         # error — say so instead of shipping empty products (no auto-downsample).
         note = R3.oversize_note(scene, R3.volume_texture_limit())
@@ -1216,6 +1224,7 @@ def _process_dataset(
                 cbar_label=cbar,
                 group=group,
                 style=style,
+                progress=_progress_mod.sub_progress(progress, starts["top_view"], ends["top_view"]),
             )
         except Exception as exc:  # noqa: BLE001 - no GL / pyvista issue -> note + continue
             prod.notes.append(f"3D top-view skipped: {exc}")

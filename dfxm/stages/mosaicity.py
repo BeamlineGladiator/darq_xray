@@ -562,7 +562,16 @@ def run(params: dict, progress: ProgressFn | None = None) -> MosaicityResult:
                 if arr is not None:
                     group_name, ds_name = routing[key]
                     out.append(f"{group_name}/{ds_name}", arr)
-                lp(0.6 + 0.4 * (wi + 1) / max(1, len(data)), f"mosaicity: {name} wrote {key}")
+                    what = "wrote"
+                else:
+                    # `_read_dataset` returns None for a path this maps.h5 does
+                    # not have. The report still fires — the bar's granularity
+                    # must not depend on which optional datasets a layer
+                    # happens to carry — but it must not claim a write that did
+                    # not happen, which is the same defect this change fixes in
+                    # `visualize`'s product boundaries.
+                    what = "skipped"
+                lp(0.6 + 0.4 * (wi + 1) / max(1, len(data)), f"mosaicity: {name} {what} {key}")
             del data
             result.layers.append(name)
             progress(lay_hi, f"mosaicity: {name} done")

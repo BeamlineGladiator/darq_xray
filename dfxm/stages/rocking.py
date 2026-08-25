@@ -856,6 +856,13 @@ def _render(
         note = R3.oversize_note(scene, R3.volume_texture_limit())
         if note:
             prod.notes.append(note)
+        # Half the slot for building the scene and probing the GL texture limit
+        # (an out-of-process probe), half for the render and save inside
+        # `save_top_view` — the same split `visualize` uses.
+        report(
+            starts["top_view"] + (ends["top_view"] - starts["top_view"]) * 0.5,
+            f"{name}: 3-D scene ready",
+        )
         try:
             prod.top_view = R3.save_top_view(
                 scene,
@@ -863,6 +870,11 @@ def _render(
                 cbar_label=cbar,
                 group=group,
                 style=style,
+                progress=_progress_mod.sub_progress(
+                    progress,
+                    starts["top_view"] + (ends["top_view"] - starts["top_view"]) * 0.5,
+                    ends["top_view"],
+                ),
             )
         except Exception as exc:  # noqa: BLE001 - no GL -> note + continue
             prod.notes.append(f"3D top-view skipped: {exc}")

@@ -585,8 +585,10 @@ def _write_partitioned_vti(
         field_slices = piece_fields(
             z0, z1, lambda f, t="", _b=build, _n=piece_note: _b(f, f"{_n}: {t}" if t else _n)
         )
+        # "built", not "writing": this fires before `write_piece_vti`, and the
+        # rule everywhere else here is that a report names work already done.
         report(
-            (k + 0.5) / max(1, len(extents)), f"{base_no_ext}: writing piece {k + 1}/{len(extents)}"
+            (k + 0.5) / max(1, len(extents)), f"{base_no_ext}: piece {k + 1}/{len(extents)} built"
         )
         write_piece_vti(
             field_slices, (z0, z1), whole_dims, spacing_tuple, origin_tuple, piece_path, compression
@@ -1695,6 +1697,13 @@ def run(params: dict, progress: ProgressFn | None = None) -> ParaviewResult:
     EXPORT_LO, EXPORT_HI = 0.02, 0.97
     mosa_file = p["mosa_volume_file"] if bool(p["export_mosaicity"]) else ""
     strain_file = p["strain_volume_file"] if bool(p["export_strain"]) else ""
+    # `os.path.exists` is as far as this can see without opening both files.
+    # `_process_mosaicity`/`_process_strain` can still return None for a volume
+    # that exists but carries no usable fields, and by then the slots are fixed,
+    # so that export's share is handed back in one jump. Left as is: the failing
+    # check is immediate, so the jump covers no silence — the thing the bar is
+    # for — and deciding runnability up front would mean a second copy of the
+    # field and shape checks, free to drift from the ones that matter.
     will_run = [bool(f) and os.path.exists(f) for f in (mosa_file, strain_file)]
     ranges = [
         _progress_mod.slice_for(sum(will_run[:i]), sum(will_run), EXPORT_LO, EXPORT_HI)

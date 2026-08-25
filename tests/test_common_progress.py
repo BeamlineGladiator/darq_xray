@@ -204,18 +204,23 @@ def test_save_layer_pngs_reports_once_per_layer(tmp_path):
     assert len(list(tmp_path.glob("field_layers/*.png"))) == n_layers
 
 
-def test_save_layer_animation_reports_the_frame_it_names(tmp_path):
-    """The fraction and the message must agree — and both must be monotonic.
+@pytest.mark.parametrize("fmt", ["gif", "mp4", "both"])
+@pytest.mark.parametrize("n_layers", [1, 4])
+def test_save_layer_animation_reports_the_frame_it_names(tmp_path, fmt, n_layers):
+    """The fraction and the message must agree, rise, and end at exactly 1.0.
 
-    `FuncAnimation` calls `update` once for the first frame while setting up and
-    then again when the save loop reaches it, so a call counter runs a whole
-    frame ahead of the frame its own message names. This is the other long inner
-    loop in a dataset (the animation renders every layer, same as the PNGs), and
-    with `save_layers` off it is the only thing between two product boundaries.
+    Every container and both ends of the layer count, because each combination
+    broke a different attempt at this. `FuncAnimation` composes the first frame
+    once while setting up and again when the save loop reaches it, so a raw call
+    counter runs a frame ahead of the frame it names. Suppressing that repeat by
+    comparing against the previous `z` then stalls a **single-layer** volume at
+    half, since every call there has `z == 0` and a second container can never
+    look like new work. `fmt="both"` is the only value that renders twice on
+    purpose — and `gif`, the value an earlier version of this test used alone,
+    is the one value where the naive arithmetic happens to come out right.
     """
     from dfxm.common import render as Rnd
 
-    n_layers = 4
     vol = np.random.default_rng(0).standard_normal((n_layers, 4, 6))
     seen: list[tuple[float, str]] = []
     Rnd.save_layer_animation(
@@ -228,15 +233,70 @@ def test_save_layer_animation_reports_the_frame_it_names(tmp_path):
         "viridis",
         "t",
         "c",
-        "gif",
+        fmt,
         0.1,
         0.2,
         progress=lambda f, t="": seen.append((f, t)),
     )
     assert seen, "the animation reported nothing"
     fracs = [f for f, _ in seen]
-    assert fracs[-1] == 1.0
+    assert fracs[-1] == 1.0, fracs
+    assert all(b >= a for a, b in zip(fracs, fracs[1:])), fracs
+    assert all(0.0 <= f <= 1.0 for f in fracs), fracs
+    for frac, text in seen:
+        done, total = text.rsplit("frame ", 1)[1].split("/")
+        assert frac == pytest.approx(int(done) / int(total)), f"{frac} reported for {text!r}"
+
+
+def test_save_layer_animation_survives_a_container_it_did_not_predict(tmp_path):
+    """An MP4 that dies mid-save replays the whole animation as a GIF.
+
+    `_save_animation` documents that fallback, but the frame budget cannot see
+    it coming — `fmt="mp4"` predicts one pass and gets two. Unclamped, the local
+    fraction reached 1.67; the parent `sub_progress` hid that from the bar, but
+    the log then counted frames from 1 again beside a fraction past its own end.
+    """
+    from matplotlib import animation as manim
+
+    from dfxm.common import render as Rnd
+
+    n_layers = 6
+    real_writer = manim.writers["ffmpeg"] if manim.writers.is_available("ffmpeg") else None
+    if real_writer is None:
+        pytest.skip("ffmpeg not on PATH: the MP4 pass never starts, so there is no fallback")
+
+    class _DiesPartway(real_writer):
+        def grab_frame(self, **kw):
+            self._grabbed = getattr(self, "_grabbed", 0) + 1
+            if self._grabbed > 3:
+                raise RuntimeError("ffmpeg died mid-save")
+            return super().grab_frame(**kw)
+
+    manim.writers.register("ffmpeg")(_DiesPartway)
+    try:
+        seen: list[tuple[float, str]] = []
+        Rnd.save_layer_animation(
+            np.random.default_rng(0).standard_normal((n_layers, 4, 6)),
+            np.arange(n_layers, dtype=float),
+            str(tmp_path / "anim"),
+            "field",
+            -1.0,
+            1.0,
+            "viridis",
+            "t",
+            "c",
+            "mp4",
+            0.1,
+            0.2,
+            progress=lambda f, t="": seen.append((f, t)),
+        )
+    finally:
+        manim.writers.register("ffmpeg")(real_writer)
+
+    fracs = [f for f, _ in seen]
+    assert fracs, "the animation reported nothing"
+    assert max(fracs) <= 1.0, fracs
     assert all(b >= a for a, b in zip(fracs, fracs[1:])), fracs
     for frac, text in seen:
-        named = int(text.rsplit("frame ", 1)[1].split("/")[0])
-        assert frac == pytest.approx(named / n_layers), f"{frac} reported for {text!r}"
+        done, total = text.rsplit("frame ", 1)[1].split("/")
+        assert frac == pytest.approx(int(done) / int(total)), f"{frac} reported for {text!r}"
