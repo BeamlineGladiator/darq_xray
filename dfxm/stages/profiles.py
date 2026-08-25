@@ -1041,7 +1041,25 @@ def build_trace_figure(
     return fig
 
 
-def render_single(ref, geom, line_color, out_png, header, dpi, style=None, notes=None):
+def render_single(
+    ref, geom, line_color, out_png, header, dpi, style=None, notes=None, progress=None
+):
+    """Draw and save the preview figure, reporting its own 0..1 progress.
+
+    *progress* is appended last on purpose: every caller passes `style` and
+    `notes` by keyword, and inserting a parameter ahead of them would silently
+    change what a positional argument means.
+
+    The weights follow where the time really goes, which is not where the code
+    is: `_draw_reference_image` only *adds artists*, since matplotlib defers
+    rasterising to render time, so it gets a small share and its report is there
+    to show the run is alive. `fit_axes_to_box`/`box_drift_note` force a real
+    draw when a fixed-scale box is set, and `savefig` rasterises the whole
+    figure at the run's dpi — that last call is most of a preview job and is
+    indivisible, which is why a one-job preview cannot report more finely than
+    this however the boundaries are placed.
+    """
+    report = progress or _progress_mod.noop
     plane, u_um, v_um, attrs, label = ref
     ext_u = float(u_um[-1] - u_um[0])
     ext_v = float(v_um[-1] - v_um[0])
@@ -1061,6 +1079,7 @@ def render_single(ref, geom, line_color, out_png, header, dpi, style=None, notes
         style=style,
         fixed_scale_um_per_cm=(box[2] if box is not None else None),
     )
+    report(0.15, "reference image drawn")
     if style is None:
         fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04).set_label(attrs["cbar_label"])
     else:
@@ -1076,7 +1095,9 @@ def render_single(ref, geom, line_color, out_png, header, dpi, style=None, notes
             note = box_drift_note(os.path.basename(out_png), fig, ax, box[0], box[1])
             if note:
                 notes.append(note)
+    report(0.5, "figure laid out")
     fig.savefig(out_png, dpi=dpi, facecolor="white", edgecolor="none", bbox_inches="tight")
+    report(1.0, f"saved {os.path.basename(out_png)}")
 
 
 # -----------------------------------------------------------------------------
@@ -1523,6 +1544,10 @@ def run(params: dict, progress: ProgressFn | None = None) -> ProfilesResult:
             # sat at half through the whole of the only work there was.
             for ji, job in enumerate(jobs):
                 job_lo, job_hi = _progress_mod.slice_for(ji, len(jobs), 0.02, 0.97)
+                # One reporter over this job's own share, so every fraction
+                # below reads as "how far through *this* job" and none of them
+                # re-derives the affine map into the run-wide bar.
+                jp = _progress_mod.sub_progress(progress, job_lo, job_hi)
                 progress(job_lo, f"{mode}: {job.get('name')}")
                 name, pin_note = resolve_job_slice_name(f, job["name"], job.get("offset_um", 0.0))
                 if pin_note:
@@ -1532,13 +1557,15 @@ def run(params: dict, progress: ProgressFn | None = None) -> ProfilesResult:
                 if not present:
                     result.skipped.append(f"slice {name!r} not present")
                     continue
-                progress(job_lo + (job_hi - job_lo) * 0.12, f"{mode}: {name} resolved")
+                jp(0.12, f"{mode}: {name} resolved")
                 if mode == "preview":
                     ref_id = _pick_reference_id(present, ref_pref)
                     u_um, v_um, offsets = read_axes(f[f"{ref_id}/{name}"])
                     idx, off_used = resolve_plane_index(offsets, job["offset_um"])
                     attrs = read_volume_attrs(f, ref_id)
+                    jp(0.22, f"{mode}: {name} reference {ref_id}")
                     ref_plane = f[f"{ref_id}/{name}"]["slices"][idx].astype(np.float64)
+                    jp(0.35, f"{mode}: {name} plane read")
                     geom = None
                     if job.get("start_uv") is not None and job.get("end_uv") is not None:
                         geom = line_geometry(
@@ -1558,17 +1585,30 @@ def run(params: dict, progress: ProgressFn | None = None) -> ProfilesResult:
                     out_png = os.path.join(out_dir, f"{stem}.png")
                     header = f"PREVIEW :: slice {name!r} offset {off_used:+.3f} µm"
                     render_single(
-                        ref, geom, color, out_png, header, dpi, style=style, notes=result.notes
+                        ref,
+                        geom,
+                        color,
+                        out_png,
+                        header,
+                        dpi,
+                        style=style,
+                        notes=result.notes,
+                        progress=_progress_mod.sub_progress(jp, 0.35, 0.95),
                     )
                     result.jobs.append(
                         ProfileJobResult(
                             name=name, offset_used_um=off_used, figure=out_png, job_index=ji
                         )
                     )
+                    # The `continue` below used to skip the job's closing report
+                    # as well as the parameter-mode body, so a preview job ended
+                    # wherever its second report left the bar and the whole
+                    # render — all of the work there is — passed in silence.
+                    jp(1.0, f"{mode}: {name} done")
                     continue
 
                 # parameter mode
-                progress(job_lo + (job_hi - job_lo) * 0.25, f"{mode}: {job.get('name')} reading")
+                jp(0.25, f"{mode}: {job.get('name')} reading")
                 _render_parameter_job(
                     f,
                     job,
@@ -1579,7 +1619,7 @@ def run(params: dict, progress: ProgressFn | None = None) -> ProfilesResult:
                     used_stems,
                     out_dir,
                     style,
-                    _progress_mod.sub_progress(progress, job_lo + (job_hi - job_lo) * 0.25, job_hi),
+                    _progress_mod.sub_progress(jp, 0.25, 1.0),
                     trace_deferred=trace_deferred,
                 )
                 progress(job_hi, f"{mode}: {job.get('name')} done")

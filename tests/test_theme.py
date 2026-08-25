@@ -66,16 +66,45 @@ def test_instance_returns_singleton():
     assert theme.ThemeController.instance() is theme.ThemeController.instance()
 
 
+def test_applied_theme_puts_all_three_process_wide_things_back():
+    """The helper must restore style, palette AND stylesheet, not just one.
+
+    `apply_theme` changes all three and pytest shares one QApplication, so a
+    partial restore leaves later Qt modules under a mixture no production path
+    produces — and the resulting failure lands on whichever test happens to be
+    collected next.
+    """
+    from PySide6.QtWidgets import QApplication
+
+    from tests.qt_helpers import applied_theme
+
+    app = QApplication.instance() or QApplication([])
+    before = (app.style().objectName(), app.palette(), app.styleSheet())
+    # Whichever theme this session already sits under, apply the other one —
+    # otherwise the precondition below is vacuous. Some earlier Qt test in a
+    # full run leaves the app themed, so "dark" is not a safe assumption.
+    other = "light" if before[2] == theme.build_qss(theme.DARK) else "dark"
+    with applied_theme(app, other):
+        assert app.styleSheet() != before[2]
+    assert app.style().objectName() == before[0]
+    assert app.palette() == before[1]
+    assert app.styleSheet() == before[2]
+
+
 def test_apply_theme_sets_palette_and_stylesheet():
     from PySide6.QtGui import QPalette
     from PySide6.QtWidgets import QApplication
 
+    from tests.qt_helpers import applied_theme
+
     app = QApplication.instance() or QApplication([])
-    pal = theme.apply_theme(app, "dark")
-    assert pal is theme.DARK
-    assert app.styleSheet()  # non-empty global QSS
-    assert theme.DARK.accent in app.styleSheet()
-    # The QPalette was applied (note: once a stylesheet is set, Qt wraps the base
-    # style in a QStyleSheetStyle proxy whose objectName() is '', so we verify the
-    # palette took effect rather than the style name).
-    assert app.palette().color(QPalette.ColorRole.Window).name() == theme.DARK.surface
+    # Scoped: this restored nothing at all, so it left every Qt module collected
+    # after it running under the dark palette.
+    with applied_theme(app, "dark") as pal:
+        assert pal is theme.DARK
+        assert app.styleSheet()  # non-empty global QSS
+        assert theme.DARK.accent in app.styleSheet()
+        # The QPalette was applied (note: once a stylesheet is set, Qt wraps the
+        # base style in a QStyleSheetStyle proxy whose objectName() is '', so we
+        # verify the palette took effect rather than the style name).
+        assert app.palette().color(QPalette.ColorRole.Window).name() == theme.DARK.surface

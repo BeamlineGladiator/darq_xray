@@ -2347,12 +2347,11 @@ def run(params: dict, progress: ProgressFn | None = None) -> SlicesResult:
                     # generator suspended on its last yield with `prep` — the
                     # whole aligned volume on the in-core rung — alive in its
                     # frame past the end of the loop.
+                    # One reporter over this slice's own share, rather than the
+                    # affine map re-derived inline.
+                    sp = _progress_mod.sub_progress(progress, sl_lo, sl_hi)
                     for pi, s2d in enumerate(planes):
                         off = float(offsets[pi])
-                        progress(
-                            sl_lo + (sl_hi - sl_lo) * (pi + 1) / max(1, len(offsets)),
-                            f"{prep['volume_id']}: plane {pi + 1}/{len(offsets)}",
-                        )
                         if save_png:
                             if len(offsets) == 1:
                                 png = os.path.join(slice_dir, f"{prep['volume_id']}.png")
@@ -2370,6 +2369,17 @@ def run(params: dict, progress: ProgressFn | None = None) -> SlicesResult:
                             result.pngs.append(png)
                         writer.append(s2d)
                         s2d = None  # the writer copied it; do not hold it into the next
+                        # After the PNG and the append, not before them: the
+                        # fraction reports work *done*, so a cancelled run's
+                        # last report is never one plane ahead of the disk.
+                        # `dfxm/common/render.py` documents the same rule for
+                        # `save_layer_pngs` and `tests/test_common_progress.py`
+                        # pins it there; this loop is the same situation and was
+                        # reporting the opposite way.
+                        sp(
+                            (pi + 1) / max(1, len(offsets)),
+                            f"{prep['volume_id']}: plane {pi + 1}/{len(offsets)}",
+                        )
                     writer.close()
                     writer = planes = None
                     result.n_planes_total += len(offsets)

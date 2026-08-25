@@ -1120,11 +1120,31 @@ def _process_dataset(
             "and 'Save rotation' to keep the run bounded"
         )
 
-    # Product shares of this dataset's slice. The layer PNGs get the bulk
-    # because they are per-layer work on a real volume while the rest are a
-    # fixed handful of renders; the exact split matters little, since
+    # Product shares of this dataset's slice, allocated over the products this
+    # run actually asked for. The layer PNGs and the rotation video get the bulk
+    # because they are per-layer and per-frame work on a real volume while the
+    # rest are a fixed handful of renders; the exact split matters little, since
     # `EtaEstimator` measures the recent rate rather than trusting these weights.
+    #
+    # Fixed fractions were wrong in two ways at once. `report(0.6, "layers
+    # done")` and its siblings fired whether or not the product ran, so turning
+    # one off jumped the bar by that product's whole share — 0.56 in one step
+    # with `save_layers` off — and printed a step line asserting work that never
+    # happened: "animation done" with animation off, "3-D scene ready" while
+    # `scene` is None. Normalising over the enabled products fixes both: the bar
+    # spends its length on what the run is doing, and a boundary is only
+    # reported by the branch that reached it.
     report = progress or _progress_mod.noop
+    weights = {
+        "layers": 6.0 if p["save_layers"] else 0.0,
+        "animation": 1.5 if p["save_animation"] else 0.0,
+        "scene": 1.0 if wants_3d else 0.0,
+        "top_view": 0.5 if p["save_topview"] else 0.0,
+        "rotation": 3.0 if p["save_rotation"] else 0.0,
+    }
+    shares = _progress_mod.weighted_slices(weights)
+    starts = {k: v[0] for k, v in shares.items()}
+    ends = {k: v[1] for k, v in shares.items()}
     report(0.0, f"{name}: rendering")
     if p["save_layers"]:
         prod.layers_dir = Rnd.save_layer_pngs(
@@ -1141,9 +1161,9 @@ def _process_dataset(
             sy,
             style=style,
             group=group,
-            progress=_progress_mod.sub_progress(progress, 0.0, 0.6),
+            progress=_progress_mod.sub_progress(progress, starts["layers"], ends["layers"]),
         )
-    report(0.6, f"{name}: layers done")
+        report(ends["layers"], f"{name}: layers done")
     if p["save_animation"]:
         prod.animation = Rnd.save_layer_animation(
             data,
@@ -1160,14 +1180,15 @@ def _process_dataset(
             sy,
             style=style,
             group=group,
+            progress=_progress_mod.sub_progress(progress, starts["animation"], ends["animation"]),
         )
-    report(0.75, f"{name}: animation done")
+        report(ends["animation"], f"{name}: animation done")
     log_scale = bool(p["log_scale"])
     if log_scale and not R3.log_valid((vmin, vmax)):
         log_scale = False
         prod.notes.append("log scale skipped: colour range includes non-positive values")
     scene = None
-    if p["save_topview"] or p["save_rotation"]:
+    if wants_3d:
         # `data` is a plain array here by construction (see the materialisation
         # above) — `Scene3D` slices and reshapes its volume, so it is not built
         # at all on the streaming path rather than built and left unused.
@@ -1186,7 +1207,7 @@ def _process_dataset(
         note = R3.oversize_note(scene, R3.volume_texture_limit())
         if note:
             prod.notes.append(note)
-    report(0.85, f"{name}: 3-D scene ready")
+        report(ends["scene"], f"{name}: 3-D scene ready")
     if p["save_topview"]:
         try:
             prod.top_view = R3.save_top_view(
@@ -1198,6 +1219,7 @@ def _process_dataset(
             )
         except Exception as exc:  # noqa: BLE001 - no GL / pyvista issue -> note + continue
             prod.notes.append(f"3D top-view skipped: {exc}")
+        report(ends["top_view"], f"{name}: top view done")
     if p["save_rotation"]:
         try:
             prod.rotation_video = R3.save_rotation_video(
@@ -1208,11 +1230,18 @@ def _process_dataset(
                 group=group,
                 style=style,
                 n_frames=int(p["rotation_frames"]),
+                # Per orbit frame. `save_rotation_video` has taken a reporter
+                # since the 3-D viewer was built and `viewer_jobs` has always
+                # passed one; this stage did not, so the longest single
+                # operation of a real STO2 run — rotation_frames renders per
+                # volume — was the one stretch still reporting nothing.
+                progress=_progress_mod.sub_progress(progress, starts["rotation"], ends["rotation"]),
             )
             if prod.rotation_video is None:
                 prod.notes.append("rotation video skipped: volume has no finite voxels")
         except Exception as exc:  # noqa: BLE001 - no GL / pyvista issue -> note + continue
             prod.notes.append(f"rotation video skipped: {exc}")
+        report(ends["rotation"], f"{name}: rotation video done")
     report(1.0, f"{name}: done")
     return prod
 

@@ -80,6 +80,54 @@ def test_slice_for_survives_an_empty_work_list():
     assert P.slice_for(0, 0, 0.0, 1.0) == (0.0, 1.0)
 
 
+def test_slice_for_clamps_an_index_outside_the_slots_it_has():
+    """The `count` clamp alone left the *negative* half of the bug open.
+
+    `slice_for(-1, 0, 0.05, 0.99)` returned `(-0.89, 0.05)` — a slot starting a
+    whole span below `lo`, because clamping the count to 1 makes the division
+    safe without making the slot exist. A stage whose item bookkeeping is one
+    off (`visualize` computes `slice_for(n_datasets - 1, n_datasets, ...)`) then
+    handed a negative fraction to the GUI bar.
+    """
+    assert P.slice_for(-1, 0, 0.05, 0.99) == (0.05, 0.99)
+    assert P.slice_for(-3, 4, 0.0, 1.0) == P.slice_for(0, 4, 0.0, 1.0)
+    assert P.slice_for(9, 4, 0.0, 1.0) == P.slice_for(3, 4, 0.0, 1.0)
+
+
+def test_weighted_slices_allocates_only_over_the_products_that_run():
+    """A product switched off must shorten the bar, not leave a hole in it."""
+    full = P.weighted_slices({"layers": 6.0, "animation": 1.5, "rotation": 2.5})
+    assert full["layers"][0] == 0.0
+    assert full["rotation"][1] == 1.0
+    assert full["layers"][1] == full["animation"][0]
+    assert full["animation"][1] == full["rotation"][0]
+
+    # Off means a zero-width range at its position, and everything else grows.
+    off = P.weighted_slices({"layers": 0.0, "animation": 1.5, "rotation": 2.5})
+    assert off["layers"] == (0.0, 0.0)
+    assert off["animation"] == (0.0, pytest.approx(1.5 / 4.0))
+    assert off["rotation"][1] == 1.0
+
+
+def test_weighted_slices_survives_a_dataset_with_every_product_off():
+    """No division by zero, and no range that claims work."""
+    assert P.weighted_slices({"a": 0.0, "b": 0.0}) == {"a": (0.0, 0.0), "b": (0.0, 0.0)}
+
+
+def test_sub_progress_never_reports_outside_zero_one():
+    """Clamping the local fraction bounds the result to [lo, hi] — nothing more.
+
+    That is worth nothing when the slot itself is wrong, so the absolute value
+    is clamped as well. `EtaEstimator.update` and the GUI bar both take this
+    number at face value.
+    """
+    seen = []
+    report = P.sub_progress(lambda f, t="": seen.append(f), -0.5, 2.0)
+    report(0.0)
+    report(1.0)
+    assert seen == [0.0, 1.0]
+
+
 # -- the harness itself -------------------------------------------------------
 def _ok_trace(n=10):
     return [((i + 1) / n, f"step {i}") for i in range(n)]
@@ -154,3 +202,41 @@ def test_save_layer_pngs_reports_once_per_layer(tmp_path):
     assert [f for f, _ in seen] == [(i + 1) / n_layers for i in range(n_layers)]
     # After the write, not before: the last report means every PNG is on disk.
     assert len(list(tmp_path.glob("field_layers/*.png"))) == n_layers
+
+
+def test_save_layer_animation_reports_the_frame_it_names(tmp_path):
+    """The fraction and the message must agree — and both must be monotonic.
+
+    `FuncAnimation` calls `update` once for the first frame while setting up and
+    then again when the save loop reaches it, so a call counter runs a whole
+    frame ahead of the frame its own message names. This is the other long inner
+    loop in a dataset (the animation renders every layer, same as the PNGs), and
+    with `save_layers` off it is the only thing between two product boundaries.
+    """
+    from dfxm.common import render as Rnd
+
+    n_layers = 4
+    vol = np.random.default_rng(0).standard_normal((n_layers, 4, 6))
+    seen: list[tuple[float, str]] = []
+    Rnd.save_layer_animation(
+        vol,
+        np.arange(n_layers, dtype=float),
+        str(tmp_path / "anim"),
+        "field",
+        -1.0,
+        1.0,
+        "viridis",
+        "t",
+        "c",
+        "gif",
+        0.1,
+        0.2,
+        progress=lambda f, t="": seen.append((f, t)),
+    )
+    assert seen, "the animation reported nothing"
+    fracs = [f for f, _ in seen]
+    assert fracs[-1] == 1.0
+    assert all(b >= a for a, b in zip(fracs, fracs[1:])), fracs
+    for frac, text in seen:
+        named = int(text.rsplit("frame ", 1)[1].split("/")[0])
+        assert frac == pytest.approx(named / n_layers), f"{frac} reported for {text!r}"
