@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-Spec: `/home/albert/Desktop/dfxm_pipeline/docs/superpowers/specs/2026-08-17-trace-autoscale-collisions-design.md` (approved 2026-08-17). Base: master `4878b47`.
+Spec: `docs/superpowers/specs/2026-08-17-trace-autoscale-collisions-design.md` (approved 2026-08-17). Base: master `4878b47`.
 
 ## Goal
 
@@ -42,9 +42,9 @@ Python 3, dataclasses, matplotlib **explicit `Figure` API only** (never pyplot),
 ## Task 1 — `ComposeStyle.trace_autoscale` model field
 
 **Files**
-- `/home/albert/Desktop/dfxm_pipeline/dfxm/compose/recipe.py` — `ComposeStyle` dataclass (lines 18–28; last field is `colorbar_pos` at line 28).
-- `/home/albert/Desktop/dfxm_pipeline/tests/test_compose_recipe.py` — append after `test_colorbar_mode_fields_round_trip_and_old_recipe_defaults` (ends line 209).
-- `/home/albert/Desktop/dfxm_pipeline/docs/Codebase.md` — `ComposeStyle` bullet (lines 532–538).
+- `dfxm/compose/recipe.py` — `ComposeStyle` dataclass (lines 18–28; last field is `colorbar_pos` at line 28).
+- `tests/test_compose_recipe.py` — append after `test_colorbar_mode_fields_round_trip_and_old_recipe_defaults` (ends line 209).
+- `docs/Codebase.md` — `ComposeStyle` bullet (lines 532–538).
 
 **Interfaces**
 - Produces: `ComposeStyle.trace_autoscale: bool = False`. Round-trips through `recipe_to_json`/`recipe_from_json` automatically (`asdict` + `ComposeStyle(**d.get("compose", {}))` — no serializer change needed). `RECIPE_VERSION` stays 1. `validate_recipe` untouched (bool needs no validation).
@@ -52,7 +52,7 @@ Python 3, dataclasses, matplotlib **explicit `Figure` API only** (never pyplot),
 
 **Steps**
 
-- [ ] Append this failing test at the end of `/home/albert/Desktop/dfxm_pipeline/tests/test_compose_recipe.py`:
+- [ ] Append this failing test at the end of `tests/test_compose_recipe.py`:
 
 ```python
 def test_trace_autoscale_round_trips_and_old_recipe_defaults():
@@ -71,7 +71,7 @@ def test_trace_autoscale_round_trips_and_old_recipe_defaults():
 ```
 
 - [ ] Run `DISPLAY= python3 -m pytest -q tests/test_compose_recipe.py` — expect **1 failed**: `AttributeError: 'ComposeStyle' object has no attribute 'trace_autoscale'` (on the `r2` read-back; setting the attribute on the un-slotted dataclass succeeds, but `asdict` never serializes it) or `KeyError: 'trace_autoscale'` at the `pop`.
-- [ ] In `/home/albert/Desktop/dfxm_pipeline/dfxm/compose/recipe.py`, add one field to `ComposeStyle`, directly after the `colorbar_pos` line (line 28):
+- [ ] In `dfxm/compose/recipe.py`, add one field to `ComposeStyle`, directly after the `colorbar_pos` line (line 28):
 
 ```python
     colorbar_pos: str = "right"  # one of COLORBAR_POSITIONS (united mode only)
@@ -79,7 +79,7 @@ def test_trace_autoscale_round_trips_and_old_recipe_defaults():
 ```
 
 - [ ] Run `DISPLAY= python3 -m pytest -q tests/test_compose_recipe.py` — expect **all pass** (23 passed).
-- [ ] Docs (same commit): in `/home/albert/Desktop/dfxm_pipeline/docs/Codebase.md`, Read the `ComposeStyle` bullet (grep `composer-level look knobs` for its location; lines 532–538 at base). Replace its final two lines
+- [ ] Docs (same commit): in `docs/Codebase.md`, Read the `ComposeStyle` bullet (grep `composer-level look knobs` for its location; lines 532–538 at base). Replace its final two lines
 
 ```
   Both are additive fields: absent in old recipe JSON → the defaults above via
@@ -115,9 +115,9 @@ git commit -m "feat(compose): ComposeStyle.trace_autoscale recipe field (docs sy
 ## Task 2 — layout pass: `SizedCell.pinned` + `trace_column_targets` + `autoscale_traces`
 
 **Files**
-- `/home/albert/Desktop/dfxm_pipeline/dfxm/compose/layout.py` — `SizedCell` (lines 67–79), `_trace_cell` pin branches (width-pin return at line 206, height-pin return at line 232), import line 26, new functions inserted after `size_cells` (after line 252, before `measure_cells`).
-- `/home/albert/Desktop/dfxm_pipeline/tests/test_compose_layout.py` — import line 10; new tests appended after `test_zero_length_trace_under_width_pin_still_placeholder` (line 252), before the `# -- measure/align/place` section.
-- `/home/albert/Desktop/dfxm_pipeline/docs/Codebase.md` — `SizedCell` bullet (lines 697–703) and new bullets before the placement-half paragraph (grep `The layout solver's placement half`, line ~805).
+- `dfxm/compose/layout.py` — `SizedCell` (lines 67–79), `_trace_cell` pin branches (width-pin return at line 206, height-pin return at line 232), import line 26, new functions inserted after `size_cells` (after line 252, before `measure_cells`).
+- `tests/test_compose_layout.py` — import line 10; new tests appended after `test_zero_length_trace_under_width_pin_still_placeholder` (line 252), before the `# -- measure/align/place` section.
+- `docs/Codebase.md` — `SizedCell` bullet (lines 697–703) and new bullets before the placement-half paragraph (grep `The layout solver's placement half`, line ~805).
 
 **Interfaces**
 - Consumes: `FigureRecipe` (layout tree + `compose.trace_autoscale`), `dict[int, SizedCell]` from `size_cells`, `data_by_id: dict[str, PanelData]` (`length_um` for traces), `notes: list[str]`.
@@ -128,7 +128,7 @@ git commit -m "feat(compose): ComposeStyle.trace_autoscale recipe field (docs sy
 
 **Steps**
 
-- [ ] In `/home/albert/Desktop/dfxm_pipeline/tests/test_compose_layout.py`, change the import at line 10 from
+- [ ] In `tests/test_compose_layout.py`, change the import at line 10 from
 
 ```python
 from dfxm.compose.layout import SizedCell, measure_cells, place_tree, size_cells
@@ -271,7 +271,7 @@ def test_autoscale_flag_off_is_strict_noop():
 ```
 
 - [ ] Run `DISPLAY= python3 -m pytest -q tests/test_compose_layout.py` — expect **collection error**: `ImportError: cannot import name 'autoscale_traces' from 'dfxm.compose.layout'`.
-- [ ] Implement in `/home/albert/Desktop/dfxm_pipeline/dfxm/compose/layout.py`:
+- [ ] Implement in `dfxm/compose/layout.py`:
 
   1. Change the import at line 26 from `from .recipe import Col, PanelRef, Row, Spacer, TextCell` to:
 
@@ -386,7 +386,7 @@ def autoscale_traces(recipe, cells, data_by_id, notes) -> None:
 ```
 
 - [ ] Run `DISPLAY= python3 -m pytest -q tests/test_compose_layout.py` — expect **all pass** (30 passed).
-- [ ] Docs (same commit), `/home/albert/Desktop/dfxm_pipeline/docs/Codebase.md` (Read each target region first):
+- [ ] Docs (same commit), `docs/Codebase.md` (Read each target region first):
   - In the `SizedCell` bullet (lines 697–703), after the `w_in`/`h_in` mention, insert: `` `pinned` (bool, default `False` — set by `size_cells` when a TRACE cell's size came from a pinned row height / column width, i.e. both pin branches of `_trace_cell`; `autoscale_traces` skips pinned cells — pins outrank autoscale; map cells never set it). `` Splice grammatically into the existing sentence.
   - Immediately before the placement-half paragraph (grep `The layout solver's placement half`), insert:
 
@@ -430,10 +430,10 @@ git commit -m "feat(compose): trace autoscale sizing pass + SizedCell.pinned (do
 ## Task 3 — renderer wiring + text-collision detector
 
 **Files**
-- `/home/albert/Desktop/dfxm_pipeline/dfxm/compose/render.py` — import at line 24; autoscale call after `cells = size_cells(...)` (line 568); new module constants + 4 helpers (place them after `_align_axis_labels`, before `_wrap_bar_node`); detector wiring after the `box_drift_note` loop (lines 872–876), immediately before `return ComposeResult(...)` (line 878).
-- `/home/albert/Desktop/dfxm_pipeline/tests/test_compose_render.py` — new tests appended at end of file (line 740).
-- `/home/albert/Desktop/dfxm_pipeline/docs/Codebase.md` — `render_recipe` pipeline list (starts line 866; step 4 ends line 892; last step is the `box_drift_note` item near line 1079).
-- `/home/albert/Desktop/dfxm_pipeline/docs/Usage.md` — notes-bar paragraph (grep `A **notes bar** under the preview`, lines 1479–1485).
+- `dfxm/compose/render.py` — import at line 24; autoscale call after `cells = size_cells(...)` (line 568); new module constants + 4 helpers (place them after `_align_axis_labels`, before `_wrap_bar_node`); detector wiring after the `box_drift_note` loop (lines 872–876), immediately before `return ComposeResult(...)` (line 878).
+- `tests/test_compose_render.py` — new tests appended at end of file (line 740).
+- `docs/Codebase.md` — `render_recipe` pipeline list (starts line 866; step 4 ends line 892; last step is the `box_drift_note` item near line 1079).
+- `docs/Usage.md` — notes-bar paragraph (grep `A **notes bar** under the preview`, lines 1479–1485).
 
 **Interfaces**
 - Consumes: `autoscale_traces`, `trace_column_targets` from `.layout`; `iter_leaves` (already imported in render.py); the final `fig`, `axes_by_id`, `bar_specs`, `united_specs`, `panels_by_id`, `cells`.
@@ -447,7 +447,7 @@ git commit -m "feat(compose): trace autoscale sizing pass + SizedCell.pinned (do
 
 **Steps**
 
-- [ ] Append these failing tests at the end of `/home/albert/Desktop/dfxm_pipeline/tests/test_compose_render.py`:
+- [ ] Append these failing tests at the end of `tests/test_compose_render.py`:
 
 ```python
 # -- trace autoscale + text-collision advisory (2026-08-17 spec) ---------------
@@ -573,7 +573,7 @@ def test_render_runs_collision_check_at_end_and_clean_figure_has_no_note(
 ```
 
 - [ ] Run `DISPLAY= python3 -m pytest -q tests/test_compose_render.py` — expect **failures**: the autoscale test fails on `abs(wt - wm) < 0.01 * wm` (no pass wired yet), the detector tests fail with `ImportError: cannot import name '_detect_text_collisions'`, the presuggestion test with `ImportError: cannot import name '_collision_presuggestions'`, the spy test with `AttributeError` from `monkeypatch.setattr` (no such attribute).
-- [ ] Implement in `/home/albert/Desktop/dfxm_pipeline/dfxm/compose/render.py`:
+- [ ] Implement in `dfxm/compose/render.py`:
 
   1. Change the layout import (line 24) to:
 
@@ -725,7 +725,7 @@ def _collision_presuggestions(recipe, cells) -> list[str]:
 
 - [ ] Run `DISPLAY= python3 -m pytest -q tests/test_compose_render.py` — expect **all pass** (existing 26 + 6 new).
 - [ ] Docs (same commit), Read each region first:
-  - `/home/albert/Desktop/dfxm_pipeline/docs/Codebase.md`, `render_recipe` pipeline list: after step 4's paragraph (ends `…what size_cells actually decided.`, line 892), insert an item that keeps the existing numbering intact:
+  - `docs/Codebase.md`, `render_recipe` pipeline list: after step 4's paragraph (ends `…what size_cells actually decided.`, line 892), insert an item that keeps the existing numbering intact:
 
 ```
   4b. `autoscale_traces(recipe, cells, data_by_id, notes)` — only when
@@ -768,7 +768,7 @@ def _collision_presuggestions(recipe, cells) -> list[str]:
   column's widest map width (via `layout.trace_column_targets`), else `[]`.
 ```
 
-  - `/home/albert/Desktop/dfxm_pipeline/docs/Usage.md`: in the notes-bar paragraph (grep `A **notes bar** under the preview`), after the sentence ending `— the note always describes exactly what's on screen.` (line 1485), insert:
+  - `docs/Usage.md`: in the notes-bar paragraph (grep `A **notes bar** under the preview`), after the sentence ending `— the note always describes exactly what's on screen.` (line 1485), insert:
 
 ```
 The notes bar can also carry a **text-overlap advisory**: after every render
@@ -806,17 +806,17 @@ git commit -m "feat(compose): wire trace autoscale into render + text-collision 
 ## Task 4 — GUI checkbox "Autoscale traces to column width"
 
 **Files**
-- `/home/albert/Desktop/dfxm_pipeline/gui/figure_builder.py` — `_build_compose_form` (insert between the Padding row, line 256, and the Colourbars heading, line 258); `_load_compose_into_widgets` (widgets tuple lines 317–327 + value loads); `_on_compose_edited` (lines 348–363). `QCheckBox` is already imported (line 21).
-- `/home/albert/Desktop/dfxm_pipeline/tests/test_gui_figure_builder.py` — append after `test_compose_colorbar_widgets_reload_from_recipe` (ends ~line 1065).
-- `/home/albert/Desktop/dfxm_pipeline/docs/Usage.md` — compose-pane bullet (lines 1518–1521 intro sentence).
-- `/home/albert/Desktop/dfxm_pipeline/docs/Codebase.md` — the `figure_builder.py` table row (line 1183): two short-fragment edits.
+- `gui/figure_builder.py` — `_build_compose_form` (insert between the Padding row, line 256, and the Colourbars heading, line 258); `_load_compose_into_widgets` (widgets tuple lines 317–327 + value loads); `_on_compose_edited` (lines 348–363). `QCheckBox` is already imported (line 21).
+- `tests/test_gui_figure_builder.py` — append after `test_compose_colorbar_widgets_reload_from_recipe` (ends ~line 1065).
+- `docs/Usage.md` — compose-pane bullet (lines 1518–1521 intro sentence).
+- `docs/Codebase.md` — the `figure_builder.py` table row (line 1183): two short-fragment edits.
 
 **Interfaces**
 - Produces: `self._compose_trace_autoscale: QCheckBox`, checked ⇔ `recipe.compose.trace_autoscale`; edits route through `_on_compose_edited` (dirty + retitle + `schedule_preview`), reloads through `_load_compose_into_widgets` (signals blocked, never writes back).
 
 **Steps**
 
-- [ ] Append this failing test to `/home/albert/Desktop/dfxm_pipeline/tests/test_gui_figure_builder.py` (after `test_compose_colorbar_widgets_reload_from_recipe`):
+- [ ] Append this failing test to `tests/test_gui_figure_builder.py` (after `test_compose_colorbar_widgets_reload_from_recipe`):
 
 ```python
 def test_compose_trace_autoscale_checkbox_writes_field_and_reloads():
@@ -834,7 +834,7 @@ def test_compose_trace_autoscale_checkbox_writes_field_and_reloads():
 ```
 
 - [ ] Run `DISPLAY= python3 -m pytest -q tests/test_gui_figure_builder.py -k trace_autoscale` — expect **1 failed**: `AttributeError: 'FigureBuilderWindow' object has no attribute '_compose_trace_autoscale'`.
-- [ ] Implement in `/home/albert/Desktop/dfxm_pipeline/gui/figure_builder.py`:
+- [ ] Implement in `gui/figure_builder.py`:
 
   1. In `_build_compose_form`, between the Padding `form.addRow` (line 256) and `form.addRow(QLabel("<b>Colourbars</b>"))` (line 258), insert:
 
@@ -859,7 +859,7 @@ def test_compose_trace_autoscale_checkbox_writes_field_and_reloads():
 
 - [ ] Run `DISPLAY= python3 -m pytest -q tests/test_gui_figure_builder.py` — expect **all pass**.
 - [ ] Docs (same commit), Read each target first:
-  - `/home/albert/Desktop/dfxm_pipeline/docs/Usage.md`, compose-pane intro bullet (lines 1518–1521): replace `the gutter and padding (cm), then two headed groups, then a pinned total width in cm (0 = auto-sized from the layout):` with:
+  - `docs/Usage.md`, compose-pane intro bullet (lines 1518–1521): replace `the gutter and padding (cm), then two headed groups, then a pinned total width in cm (0 = auto-sized from the layout):` with:
 
 ```
   the gutter and padding (cm), an **Autoscale traces to column width**
@@ -873,7 +873,7 @@ def test_compose_trace_autoscale_checkbox_writes_field_and_reloads():
   cm (0 = auto-sized from the layout):
 ```
 
-  - `/home/albert/Desktop/dfxm_pipeline/docs/Codebase.md`, `figure_builder.py` row (one very long table line — grep the exact fragments, edit in place, never retype the row):
+  - `docs/Codebase.md`, `figure_builder.py` row (one very long table line — grep the exact fragments, edit in place, never retype the row):
     - Replace the fragment `` pinned width's special value `0` reads back as `None` = auto), a **Colourbars** heading `` with `` pinned width's special value `0` reads back as `None` = auto), `self._compose_trace_autoscale` (`QCheckBox` "Autoscale traces to column width", bound to `compose.trace_autoscale`), a **Colourbars** heading ``
     - Replace the fragment `` `colorbar_mode`/`colorbar_pos`/`pinned_width_cm` into `self._recipe.compose` `` with `` `colorbar_mode`/`colorbar_pos`/`pinned_width_cm`/`trace_autoscale` into `self._recipe.compose` ``
 - [ ] `ruff check . && ruff format .` — clean.
@@ -894,14 +894,14 @@ git commit -m "feat(gui): figure-builder trace-autoscale checkbox (docs synced)"
 ## Task 5 — smoke step [40] extension + final whole-branch verification
 
 **Files**
-- `/home/albert/Desktop/dfxm_pipeline/tests/gui_smoke.py` — step [40] block (lines 1175–1201; the `print("[40] …")` is line 1201). Step **[41]** (lines 1203–1223) must remain the file's last step — do not touch it.
+- `tests/gui_smoke.py` — step [40] block (lines 1175–1201; the `print("[40] …")` is line 1201). Step **[41]** (lines 1203–1223) must remain the file's last step — do not touch it.
 
 **Interfaces**
 - Consumes: the live `fb` window from step [37]/[40], `_compose_trace_autoscale` from Task 4, `render_now()`.
 
 **Steps**
 
-- [ ] In `/home/albert/Desktop/dfxm_pipeline/tests/gui_smoke.py`, Read the [40] block, then insert immediately **before** the `print("[40] …")` line (line 1201):
+- [ ] In `tests/gui_smoke.py`, Read the [40] block, then insert immediately **before** the `print("[40] …")` line (line 1201):
 
 ```python
     # trace-autoscale toggle: recipe -> widget -> recipe, and a re-render each way

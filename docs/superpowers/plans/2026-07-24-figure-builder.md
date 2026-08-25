@@ -3,7 +3,7 @@
 > **For agentic workers:** REQUIRED SUB-SKILL — use `superpowers:subagent-driven-development` (recommended) or `superpowers:executing-plans` to execute this plan task by task, with a reviewer gate after every task.
 
 **Spec:** `docs/superpowers/specs/2026-07-24-figure-builder-design.md` (approved 2026-07-24)
-**Repo:** `/home/albert/Desktop/dfxm_pipeline`
+**Repo:** `dfxm_pipeline`
 
 ## Goal
 
@@ -39,10 +39,10 @@ Python 3.10, numpy, h5py, matplotlib (explicit `Figure` API + Agg), PySide6 (Pha
 ### Task 1 — Recipe schema + JSON round-trip (`dfxm/compose/recipe.py`)
 
 **Files**
-- Create: `/home/albert/Desktop/dfxm_pipeline/dfxm/compose/__init__.py`
-- Create: `/home/albert/Desktop/dfxm_pipeline/dfxm/compose/recipe.py`
-- Create: `/home/albert/Desktop/dfxm_pipeline/tests/test_compose_recipe.py`
-- Modify: `/home/albert/Desktop/dfxm_pipeline/docs/Codebase.md` (add `dfxm/compose/recipe.py` under "Layer 1 — `dfxm/` core library"; Read the file section first)
+- Create: `dfxm/compose/__init__.py`
+- Create: `dfxm/compose/recipe.py`
+- Create: `tests/test_compose_recipe.py`
+- Modify: `docs/Codebase.md` (add `dfxm/compose/recipe.py` under "Layer 1 — `dfxm/` core library"; Read the file section first)
 
 **Interfaces**
 
@@ -134,7 +134,7 @@ def iter_leaves(node) -> "Iterator[PanelRef | Spacer | TextCell]"
 
 **Steps**
 
-- [ ] Write the failing tests — `/home/albert/Desktop/dfxm_pipeline/tests/test_compose_recipe.py`:
+- [ ] Write the failing tests — `tests/test_compose_recipe.py`:
 ```python
 """Recipe schema + JSON round-trip — dfxm.compose.recipe."""
 
@@ -335,9 +335,9 @@ plus `recipe_to_json` (asdict panels with tuple→list, layout via `_node_to_dic
 ### Task 2 — Extract `draw_map_layer` from `render.layer_figure` (regression-pinned)
 
 **Files**
-- Modify: `/home/albert/Desktop/dfxm_pipeline/dfxm/common/render.py` (function `layer_figure`, lines 41–84)
-- Create: `/home/albert/Desktop/dfxm_pipeline/tests/test_draw_map_layer.py`
-- Modify: `/home/albert/Desktop/dfxm_pipeline/docs/Codebase.md` (the `dfxm/common/render.py` entry gains `draw_map_layer`)
+- Modify: `dfxm/common/render.py` (function `layer_figure`, lines 41–84)
+- Create: `tests/test_draw_map_layer.py`
+- Modify: `docs/Codebase.md` (the `dfxm/common/render.py` entry gains `draw_map_layer`)
 
 **Interfaces**
 
@@ -369,7 +369,7 @@ def draw_map_layer(
 
 **Steps**
 
-- [ ] Write the characterization test FIRST (it must pass against the *unmodified* code — this pins the behaviour the refactor must preserve) — `/home/albert/Desktop/dfxm_pipeline/tests/test_draw_map_layer.py`:
+- [ ] Write the characterization test FIRST (it must pass against the *unmodified* code — this pins the behaviour the refactor must preserve) — `tests/test_draw_map_layer.py`:
 ```python
 """Pin layer_figure's single-figure output across the draw_map_layer extraction."""
 
@@ -512,10 +512,10 @@ def layer_figure(
 ### Task 3 — Extract `draw_slice_axes` from `slices.build_slice_figure`; public profiles draw aliases
 
 **Files**
-- Modify: `/home/albert/Desktop/dfxm_pipeline/dfxm/stages/slices.py` (`build_slice_figure`, lines 821–878)
-- Modify: `/home/albert/Desktop/dfxm_pipeline/dfxm/stages/profiles.py` (add two aliases right after `_draw_trace_axes`, ~line 942)
-- Modify: `/home/albert/Desktop/dfxm_pipeline/tests/test_stage_slices.py` (append characterization tests)
-- Modify: `/home/albert/Desktop/dfxm_pipeline/docs/Codebase.md` (slices/profiles function lists)
+- Modify: `dfxm/stages/slices.py` (`build_slice_figure`, lines 821–878)
+- Modify: `dfxm/stages/profiles.py` (add two aliases right after `_draw_trace_axes`, ~line 942)
+- Modify: `tests/test_stage_slices.py` (append characterization tests)
+- Modify: `docs/Codebase.md` (slices/profiles function lists)
 
 **Interfaces**
 
@@ -654,9 +654,9 @@ draw_trace_axes = _draw_trace_axes
 ### Task 4 — Panel adapters + pure loaders (`dfxm/compose/adapters.py`)
 
 **Files**
-- Create: `/home/albert/Desktop/dfxm_pipeline/dfxm/compose/adapters.py`
-- Create: `/home/albert/Desktop/dfxm_pipeline/tests/test_compose_adapters.py`
-- Modify: `/home/albert/Desktop/dfxm_pipeline/docs/Codebase.md` (`dfxm/compose` section grows `adapters.py`)
+- Create: `dfxm/compose/adapters.py`
+- Create: `tests/test_compose_adapters.py`
+- Modify: `docs/Codebase.md` (`dfxm/compose` section grows `adapters.py`)
 
 **Interfaces**
 
@@ -697,7 +697,7 @@ Selector shapes (documented in the module docstring, enforced by `load_panel`):
 
 **Steps**
 
-- [ ] Write failing tests — `/home/albert/Desktop/dfxm_pipeline/tests/test_compose_adapters.py`. Reuse the synthetic-h5 idioms already in the suite (`tests/test_figures_replot.py::_write_vol` for stacked volumes; `tests/test_stage_profiles.py::_write_consolidated` shape for oblique_slices):
+- [ ] Write failing tests — `tests/test_compose_adapters.py`. Reuse the synthetic-h5 idioms already in the suite (`tests/test_figures_replot.py::_write_vol` for stacked volumes; `tests/test_stage_profiles.py::_write_consolidated` shape for oblique_slices):
 ```python
 """Panel adapters: pure loaders + draw-into-axes dispatch — dfxm.compose.adapters."""
 
@@ -1103,9 +1103,9 @@ _LOADERS = {
 ### Task 5 — Layout solver, sizing pass (`dfxm/compose/layout.py`, part 1)
 
 **Files**
-- Create: `/home/albert/Desktop/dfxm_pipeline/dfxm/compose/layout.py`
-- Create: `/home/albert/Desktop/dfxm_pipeline/tests/test_compose_layout.py`
-- Modify: `/home/albert/Desktop/dfxm_pipeline/docs/Codebase.md`
+- Create: `dfxm/compose/layout.py`
+- Create: `tests/test_compose_layout.py`
+- Modify: `docs/Codebase.md`
 
 **Interfaces**
 
@@ -1396,9 +1396,9 @@ def size_cells(recipe, style, data_by_id, notes):
 ### Task 6 — Layout solver, measure/align/place engine (`dfxm/compose/layout.py`, part 2)
 
 **Files**
-- Modify: `/home/albert/Desktop/dfxm_pipeline/dfxm/compose/layout.py`
-- Modify: `/home/albert/Desktop/dfxm_pipeline/tests/test_compose_layout.py` (append)
-- Modify: `/home/albert/Desktop/dfxm_pipeline/docs/Codebase.md`
+- Modify: `dfxm/compose/layout.py`
+- Modify: `tests/test_compose_layout.py` (append)
+- Modify: `docs/Codebase.md`
 
 **Interfaces**
 
@@ -1624,9 +1624,9 @@ def place_tree(fig, layout, cells, *, gutter_in, pad_in):
 ### Task 7 — `render_recipe` + export + error/notes contract (`dfxm/compose/render.py`)
 
 **Files**
-- Create: `/home/albert/Desktop/dfxm_pipeline/dfxm/compose/render.py`
-- Create: `/home/albert/Desktop/dfxm_pipeline/tests/test_compose_render.py`
-- Modify: `/home/albert/Desktop/dfxm_pipeline/docs/Codebase.md` (compose section completed; data-flow table row)
+- Create: `dfxm/compose/render.py`
+- Create: `tests/test_compose_render.py`
+- Modify: `docs/Codebase.md` (compose section completed; data-flow table row)
 
 **Interfaces**
 
@@ -1657,7 +1657,7 @@ Render pipeline (order matters): `validate_recipe` → style = `style_from_param
 
 **Steps**
 
-- [ ] Write failing tests — `/home/albert/Desktop/dfxm_pipeline/tests/test_compose_render.py` (reuse `_write_obl`, `_write_mosa`, `JOB` helpers — import them from `tests/test_compose_adapters.py` or duplicate; duplication is fine and keeps files standalone):
+- [ ] Write failing tests — `tests/test_compose_render.py` (reuse `_write_obl`, `_write_mosa`, `JOB` helpers — import them from `tests/test_compose_adapters.py` or duplicate; duplication is fine and keeps files standalone):
 ```python
 """render_recipe / export_recipe — dfxm.compose.render."""
 
@@ -1933,10 +1933,10 @@ def export_recipe(recipe, out_dir, *, formats=None, dpi=None,
 ### Task 8 — Headless CLI (`dfxm/compose/__main__.py`) + Usage docs
 
 **Files**
-- Create: `/home/albert/Desktop/dfxm_pipeline/dfxm/compose/__main__.py`
-- Create: `/home/albert/Desktop/dfxm_pipeline/tests/test_compose_cli.py`
-- Modify: `/home/albert/Desktop/dfxm_pipeline/docs/Usage.md` ("Running without the GUI (CLI)" section + a new "Figure builder" chapter stub with the recipe-file + CLI workflow)
-- Modify: `/home/albert/Desktop/dfxm_pipeline/docs/Codebase.md` (`__main__.py` entry)
+- Create: `dfxm/compose/__main__.py`
+- Create: `tests/test_compose_cli.py`
+- Modify: `docs/Usage.md` ("Running without the GUI (CLI)" section + a new "Figure builder" chapter stub with the recipe-file + CLI workflow)
+- Modify: `docs/Codebase.md` (`__main__.py` entry)
 
 **Interfaces**
 
@@ -1953,7 +1953,7 @@ def _main(argv: list[str] | None = None) -> int
 
 **Steps**
 
-- [ ] Write failing tests — `/home/albert/Desktop/dfxm_pipeline/tests/test_compose_cli.py`:
+- [ ] Write failing tests — `tests/test_compose_cli.py`:
 ```python
 """Headless CLI — python3 -m dfxm.compose render."""
 
@@ -2053,7 +2053,7 @@ if __name__ == "__main__":
 ### Task 9 — Acceptance figures 1 & 2 (spec §Acceptance)
 
 **Files**
-- Create: `/home/albert/Desktop/dfxm_pipeline/tests/test_compose_acceptance.py`
+- Create: `tests/test_compose_acceptance.py`
 
 **Interfaces**
 
@@ -2287,10 +2287,10 @@ def test_acceptance_figure_2_ragged_dual_scale(tmp_path):
 ### Task 10 — Panel picker + builder window skeleton + recipe file I/O
 
 **Files**
-- Create: `/home/albert/Desktop/dfxm_pipeline/gui/widgets/panel_picker.py`
-- Create: `/home/albert/Desktop/dfxm_pipeline/gui/figure_builder.py`
-- Create: `/home/albert/Desktop/dfxm_pipeline/tests/test_gui_figure_builder.py`
-- Modify: `/home/albert/Desktop/dfxm_pipeline/docs/Codebase.md` (Layer 2 gains both modules)
+- Create: `gui/widgets/panel_picker.py`
+- Create: `gui/figure_builder.py`
+- Create: `tests/test_gui_figure_builder.py`
+- Modify: `docs/Codebase.md` (Layer 2 gains both modules)
 
 **Interfaces**
 
@@ -2322,7 +2322,7 @@ Outline: a `QTreeWidget` mirroring the layout tree; each item stores a reference
 
 **Steps**
 
-- [ ] Write failing tests — `/home/albert/Desktop/dfxm_pipeline/tests/test_gui_figure_builder.py`:
+- [ ] Write failing tests — `tests/test_gui_figure_builder.py`:
 ```python
 """Figure-builder window + panel picker (offscreen Qt)."""
 
@@ -2421,9 +2421,9 @@ Implement `gui/figure_builder.py`: `QMainWindow` with a left `QSplitter` pane ho
 ### Task 11 — Cached preview with debounce + Refresh + notes bar + click-to-select
 
 **Files**
-- Modify: `/home/albert/Desktop/dfxm_pipeline/gui/figure_builder.py`
-- Modify: `/home/albert/Desktop/dfxm_pipeline/tests/test_gui_figure_builder.py` (append)
-- Modify: `/home/albert/Desktop/dfxm_pipeline/docs/Usage.md` + `docs/Codebase.md`
+- Modify: `gui/figure_builder.py`
+- Modify: `tests/test_gui_figure_builder.py` (append)
+- Modify: `docs/Usage.md` + `docs/Codebase.md`
 
 **Interfaces**
 
@@ -2597,9 +2597,9 @@ def _on_preview_pick(self, ax) -> None:
 ### Task 12 — Right pane: style controls, compose knobs, per-node overrides, export
 
 **Files**
-- Modify: `/home/albert/Desktop/dfxm_pipeline/gui/figure_builder.py`
-- Modify: `/home/albert/Desktop/dfxm_pipeline/tests/test_gui_figure_builder.py` (append)
-- Modify: `/home/albert/Desktop/dfxm_pipeline/docs/Usage.md` + `docs/Codebase.md`
+- Modify: `gui/figure_builder.py`
+- Modify: `tests/test_gui_figure_builder.py` (append)
+- Modify: `docs/Usage.md` + `docs/Codebase.md`
 
 **Interfaces**
 
@@ -2707,10 +2707,10 @@ def export_now(self) -> None:
 ### Task 13 — Main-window launch, gui_smoke step, docs chapters, final verify
 
 **Files**
-- Modify: `/home/albert/Desktop/dfxm_pipeline/gui/main_window.py` (button next to "Publication style…", ~line 115)
-- Modify: `/home/albert/Desktop/dfxm_pipeline/tests/gui_smoke.py` (append step `[37]`)
-- Modify: `/home/albert/Desktop/dfxm_pipeline/docs/Usage.md` (complete the "Figure builder" chapter; add the builder to the Contents list and the "Publication export" cross-reference)
-- Modify: `/home/albert/Desktop/dfxm_pipeline/docs/Codebase.md` (final sweep: compose modules + gui modules + data-flow complete and consistent)
+- Modify: `gui/main_window.py` (button next to "Publication style…", ~line 115)
+- Modify: `tests/gui_smoke.py` (append step `[37]`)
+- Modify: `docs/Usage.md` (complete the "Figure builder" chapter; add the builder to the Contents list and the "Publication export" cross-reference)
+- Modify: `docs/Codebase.md` (final sweep: compose modules + gui modules + data-flow complete and consistent)
 
 **Interfaces**
 

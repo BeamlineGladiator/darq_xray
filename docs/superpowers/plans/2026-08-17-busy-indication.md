@@ -2,8 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Spec:** `/home/albert/Desktop/dfxm_pipeline/docs/superpowers/specs/2026-08-17-busy-indication-design.md` (approved 2026-08-17).
-**Repo:** `/home/albert/Desktop/dfxm_pipeline`. Runs AFTER the trace-autoscale/collisions plan (`2026-08-17-trace-autoscale-collisions-design.md`) is merged — rebase/verify the baseline first.
+**Spec:** `docs/superpowers/specs/2026-08-17-busy-indication-design.md` (approved 2026-08-17).
+**Repo:** `dfxm_pipeline`. Runs AFTER the trace-autoscale/collisions plan (`2026-08-17-trace-autoscale-collisions-design.md`) is merged — rebase/verify the baseline first.
 
 ## Goal
 
@@ -45,10 +45,10 @@ PySide6 (QThread/Signal/QPainter), matplotlib explicit-`Figure` API only, h5py (
 ## Task 1 — Qt-free ETA core: `dfxm/common/eta.py`
 
 **Files**
-- Create `/home/albert/Desktop/dfxm_pipeline/dfxm/common/eta.py`
-- Create `/home/albert/Desktop/dfxm_pipeline/tests/test_common_eta.py`
-- Edit `/home/albert/Desktop/dfxm_pipeline/docs/Codebase.md` (new `#### eta.py` subsection under `### dfxm/common — shared primitives`, inserted after the `#### roi.py (new)` block — find it with grep, don't assume line numbers)
-- Edit `/home/albert/Desktop/dfxm_pipeline/docs/Usage.md` (one sentence in `### The stage panel` under Core concepts: progress readouts may show a `~… left` estimate once a run/batch is >5 % done and >2 s old)
+- Create `dfxm/common/eta.py`
+- Create `tests/test_common_eta.py`
+- Edit `docs/Codebase.md` (new `#### eta.py` subsection under `### dfxm/common — shared primitives`, inserted after the `#### roi.py (new)` block — find it with grep, don't assume line numbers)
+- Edit `docs/Usage.md` (one sentence in `### The stage panel` under Core concepts: progress readouts may show a `~… left` estimate once a run/batch is >5 % done and >2 s old)
 
 **Interfaces (Produces)**
 ```python
@@ -192,10 +192,10 @@ class EtaEstimator:
 ## Task 2 — `gui/widgets/busy.py`: BusyOverlay + busy_cursor + keep_alive
 
 **Files**
-- Create `/home/albert/Desktop/dfxm_pipeline/gui/widgets/busy.py`
-- Create `/home/albert/Desktop/dfxm_pipeline/tests/test_gui_busy.py`
-- Edit `/home/albert/Desktop/dfxm_pipeline/docs/Codebase.md` (`### gui/widgets/` section: add `busy.py` entry)
-- Edit `/home/albert/Desktop/dfxm_pipeline/docs/Usage.md` (short "Busy indication" paragraph under `## Core concepts` → after `### The stage panel`: what the spinner overlay and wait cursor mean)
+- Create `gui/widgets/busy.py`
+- Create `tests/test_gui_busy.py`
+- Edit `docs/Codebase.md` (`### gui/widgets/` section: add `busy.py` entry)
+- Edit `docs/Usage.md` (short "Busy indication" paragraph under `## Core concepts` → after `### The stage panel`: what the spinner overlay and wait cursor mean)
 
 **Interfaces (Produces)**
 ```python
@@ -495,12 +495,12 @@ class BusyOverlay(QWidget):
 The riskiest task. Only the **render** path moves here; `export_now` stays synchronous until Task 4, so the suite is green at this boundary.
 
 **Files**
-- Edit `/home/albert/Desktop/dfxm_pipeline/gui/figure_builder.py` (anchors: `def __init__`, `def _build_center_pane`, `def _build_right_pane`, `def refresh_data`, `def render_now`; do NOT touch `_build_compose_form` internals or anything under `dfxm/compose/`)
-- Create `/home/albert/Desktop/dfxm_pipeline/tests/qt_helpers.py`
-- Edit `/home/albert/Desktop/dfxm_pipeline/tests/test_gui_figure_builder.py`
-- Edit `/home/albert/Desktop/dfxm_pipeline/tests/gui_smoke.py` (steps `[37]` and `[40]` render lines only)
-- Edit `/home/albert/Desktop/dfxm_pipeline/docs/Usage.md` (`## Figure builder` section: preview renders in the background under a spinner; Refresh/Export disabled while rendering; rapid edits coalesce — latest wins)
-- Edit `/home/albert/Desktop/dfxm_pipeline/docs/Codebase.md` (figure_builder entry: `_ComposeWorker`, generation counter, pending slot, overlay)
+- Edit `gui/figure_builder.py` (anchors: `def __init__`, `def _build_center_pane`, `def _build_right_pane`, `def refresh_data`, `def render_now`; do NOT touch `_build_compose_form` internals or anything under `dfxm/compose/`)
+- Create `tests/qt_helpers.py`
+- Edit `tests/test_gui_figure_builder.py`
+- Edit `tests/gui_smoke.py` (steps `[37]` and `[40]` render lines only)
+- Edit `docs/Usage.md` (`## Figure builder` section: preview renders in the background under a spinner; Refresh/Export disabled while rendering; rapid edits coalesce — latest wins)
+- Edit `docs/Codebase.md` (figure_builder entry: `_ComposeWorker`, generation counter, pending slot, overlay)
 
 **Interfaces**
 
@@ -776,10 +776,10 @@ def _no_leaked_debounce_timers():
 ## Task 4 — Figure-builder async export + closeEvent worker handling
 
 **Files**
-- Edit `/home/albert/Desktop/dfxm_pipeline/gui/figure_builder.py` (anchors: `def export_now`, `def closeEvent`)
-- Edit `/home/albert/Desktop/dfxm_pipeline/tests/test_gui_figure_builder.py`
-- Edit `/home/albert/Desktop/dfxm_pipeline/tests/gui_smoke.py` (step `[37]` export lines)
-- Edit `/home/albert/Desktop/dfxm_pipeline/docs/Usage.md` + `/home/albert/Desktop/dfxm_pipeline/docs/Codebase.md` (export threading + close semantics)
+- Edit `gui/figure_builder.py` (anchors: `def export_now`, `def closeEvent`)
+- Edit `tests/test_gui_figure_builder.py`
+- Edit `tests/gui_smoke.py` (step `[37]` export lines)
+- Edit `docs/Usage.md` + `docs/Codebase.md` (export threading + close semantics)
 
 **Interfaces** — Consumes Task 3's `_request_work`/`_on_worker_result` (the `"export"` branch already exists there). `export_now(self) -> None` becomes async; `closeEvent` additionally discards in-flight work.
 
@@ -839,10 +839,10 @@ def test_close_with_live_worker_drops_result_never_attaches(tmp_path, monkeypatc
 ## Task 5 — `BatchWorker` + `DialogBatchRunner` in busy.py
 
 **Files**
-- Edit `/home/albert/Desktop/dfxm_pipeline/gui/widgets/busy.py` (append; anchor: end of file)
-- Edit `/home/albert/Desktop/dfxm_pipeline/tests/test_gui_busy.py` (append)
-- Edit `/home/albert/Desktop/dfxm_pipeline/tests/qt_helpers.py` (append `wait_batch_idle`)
-- Edit `/home/albert/Desktop/dfxm_pipeline/docs/Codebase.md` (busy.py entry grows)
+- Edit `gui/widgets/busy.py` (append; anchor: end of file)
+- Edit `tests/test_gui_busy.py` (append)
+- Edit `tests/qt_helpers.py` (append `wait_batch_idle`)
+- Edit `docs/Codebase.md` (busy.py entry grows)
 
 **Interfaces (Produces)**
 ```python
@@ -1060,10 +1060,10 @@ def wait_batch_idle(dialog, timeout_s: float = 60.0) -> None:
 ## Task 6 — Threaded batch in the generic `ReplotDialog` (+ smoke)
 
 **Files**
-- Edit `/home/albert/Desktop/dfxm_pipeline/gui/widgets/replot_dialog.py` (anchors: `def __init__` tail, `def _on_render`; `render_selection` stays byte-identical)
-- Edit `/home/albert/Desktop/dfxm_pipeline/tests/test_gui_replot_dialog.py` (append)
-- Edit `/home/albert/Desktop/dfxm_pipeline/tests/gui_smoke.py` (extend step `[31]`)
-- Edit `/home/albert/Desktop/dfxm_pipeline/docs/Usage.md` (the three "Replotting … without re-running" sections for strain/mosaicity/rocking: progress bar `{i}/{N}` + ETA + Cancel-after-current-item) and `/home/albert/Desktop/dfxm_pipeline/docs/Codebase.md` (replot_dialog entry)
+- Edit `gui/widgets/replot_dialog.py` (anchors: `def __init__` tail, `def _on_render`; `render_selection` stays byte-identical)
+- Edit `tests/test_gui_replot_dialog.py` (append)
+- Edit `tests/gui_smoke.py` (extend step `[31]`)
+- Edit `docs/Usage.md` (the three "Replotting … without re-running" sections for strain/mosaicity/rocking: progress bar `{i}/{N}` + ETA + Cancel-after-current-item) and `docs/Codebase.md` (replot_dialog entry)
 
 **Interfaces** — Consumes `DialogBatchRunner` (Task 5). Per-item fn: one selection tuple `(key, idxs)` → `self._render_fn(h5, [sel], style, clim, roi, out_dir) -> list[str]` (verified output-identical to the whole-batch call for strain/mosaicity/rocking). Dialog gains `self._batch: DialogBatchRunner` and `reject()` gating.
 
@@ -1158,11 +1158,11 @@ def test_reject_while_running_cancels_instead_of_closing(tmp_path):
 ## Task 7 — Threaded batch in `SliceReplotDialog` and `ProfilesReplotDialog`
 
 **Files**
-- Edit `/home/albert/Desktop/dfxm_pipeline/gui/widgets/slice_replot.py` (anchors: `def __init__` tail, `def _on_render`)
-- Edit `/home/albert/Desktop/dfxm_pipeline/gui/widgets/profiles_replot.py` (same anchors)
-- Edit `/home/albert/Desktop/dfxm_pipeline/tests/test_gui_slice_replot.py` (append one batch test, same shape as Task 6's)
+- Edit `gui/widgets/slice_replot.py` (anchors: `def __init__` tail, `def _on_render`)
+- Edit `gui/widgets/profiles_replot.py` (same anchors)
+- Edit `tests/test_gui_slice_replot.py` (append one batch test, same shape as Task 6's)
 - Create-or-extend a profiles-dialog test: `tests/test_gui_profiles_replot.py` does not exist — the profiles dialog is currently covered by smoke `[33]` only; add the batch test to a new small `tests/test_gui_profiles_replot.py` reusing smoke `[33]`'s h5/jobs construction pattern (read `tests/gui_smoke.py` around step `[33]` for it)
-- Edit `/home/albert/Desktop/dfxm_pipeline/docs/Usage.md` (`#### Replotting slices without re-running` + `#### Replotting line profiles`: progress/ETA/cancel for slices; single-spinner note for profiles) and `/home/albert/Desktop/dfxm_pipeline/docs/Codebase.md` (both widget entries)
+- Edit `docs/Usage.md` (`#### Replotting slices without re-running` + `#### Replotting line profiles`: progress/ETA/cancel for slices; single-spinner note for profiles) and `docs/Codebase.md` (both widget entries)
 
 **Interfaces** — Consumes `DialogBatchRunner`. Slice per-item fn: `(vid, sname, plane_idxs)` → `_sl.render_replot(h5, [sel], style, clims, out_dir, roi=roi)`. Profiles: ONE item = the whole checked-jobs list → `_pr.render_replot(h5, jobs, style, clims, out_dir, dpi=dpi, params=params)` (single item because `used_stems` dedup + per-run shared trace margins are per-call state — splitting changes filenames and trace geometry).
 
@@ -1229,17 +1229,17 @@ def test_reject_while_running_cancels_instead_of_closing(tmp_path):
 ## Task 8 — Wait-cursor sweep
 
 **Files** (every site listed exactly; wrap the named statements only — read each region first)
-1. `/home/albert/Desktop/dfxm_pipeline/gui/stage_view.py::_on_pick_line` — wrap the `dlg = LinePickerDialog(...)` try-body statement: `with busy_cursor("Loading slice planes…"):` (the construction opens the h5 and builds the canvas).
-2. `/home/albert/Desktop/dfxm_pipeline/gui/stage_view.py::_on_jobs_from_marks` — wrap `marks = _sl.read_marks(h5)` AND, inside the per-mark loop, the `dlg = LinePickerDialog(...)` statement.
-3. `/home/albert/Desktop/dfxm_pipeline/gui/stage_view.py::_on_mark_planes` — wrap `dlg = MarkPlanesDialog(h5, parent=self)` (construction reads catalog + marks + first slice).
-4. `/home/albert/Desktop/dfxm_pipeline/gui/widgets/mark_planes.py::_on_slice_changed` — wrap `self._browser.open_slice(sname)`.
-5. `/home/albert/Desktop/dfxm_pipeline/gui/widgets/mark_planes.py::_on_save` — wrap ONLY the `for sname in sorted(...)` write loop (inside its existing `try`), i.e. `with busy_cursor():` around the loop — message boxes must show with a normal cursor.
-6. `/home/albert/Desktop/dfxm_pipeline/gui/widgets/roi_picker.py::_load_current` — wrap `arr, sx, sy = self._previews[idx][1]()` with `busy_cursor("loading preview…", widget=self._readout)` (covers Pick ROI everywhere: stage forms, both replot dialogs, experiment panel).
-7. `/home/albert/Desktop/dfxm_pipeline/gui/experiment_panel.py::_on_initialize_from_data` — replace the manual `QApplication.setOverrideCursor/restoreOverrideCursor` block (and its local `Qt`/`QApplication` imports) with `with busy_cursor(): detections = self._detect(vals)`.
-8. `/home/albert/Desktop/dfxm_pipeline/gui/figure_builder.py::load_recipe_file` — wrap the file read + `recipe_from_json` lines (only those two) with `busy_cursor("Opening recipe…", widget=self._notes_label)`.
-9. `/home/albert/Desktop/dfxm_pipeline/gui/widgets/viewer3d_window.py::load_and_render` — wrap ONLY `self.loaded = self._spec.load()` with `busy_cursor("Loading volume…", widget=self._status)`; the GL scene build/`rebuild()` below stays untouched (spec: placeholder/label behaviour preserved).
+1. `gui/stage_view.py::_on_pick_line` — wrap the `dlg = LinePickerDialog(...)` try-body statement: `with busy_cursor("Loading slice planes…"):` (the construction opens the h5 and builds the canvas).
+2. `gui/stage_view.py::_on_jobs_from_marks` — wrap `marks = _sl.read_marks(h5)` AND, inside the per-mark loop, the `dlg = LinePickerDialog(...)` statement.
+3. `gui/stage_view.py::_on_mark_planes` — wrap `dlg = MarkPlanesDialog(h5, parent=self)` (construction reads catalog + marks + first slice).
+4. `gui/widgets/mark_planes.py::_on_slice_changed` — wrap `self._browser.open_slice(sname)`.
+5. `gui/widgets/mark_planes.py::_on_save` — wrap ONLY the `for sname in sorted(...)` write loop (inside its existing `try`), i.e. `with busy_cursor():` around the loop — message boxes must show with a normal cursor.
+6. `gui/widgets/roi_picker.py::_load_current` — wrap `arr, sx, sy = self._previews[idx][1]()` with `busy_cursor("loading preview…", widget=self._readout)` (covers Pick ROI everywhere: stage forms, both replot dialogs, experiment panel).
+7. `gui/experiment_panel.py::_on_initialize_from_data` — replace the manual `QApplication.setOverrideCursor/restoreOverrideCursor` block (and its local `Qt`/`QApplication` imports) with `with busy_cursor(): detections = self._detect(vals)`.
+8. `gui/figure_builder.py::load_recipe_file` — wrap the file read + `recipe_from_json` lines (only those two) with `busy_cursor("Opening recipe…", widget=self._notes_label)`.
+9. `gui/widgets/viewer3d_window.py::load_and_render` — wrap ONLY `self.loaded = self._spec.load()` with `busy_cursor("Loading volume…", widget=self._status)`; the GL scene build/`rebuild()` below stays untouched (spec: placeholder/label behaviour preserved).
 
-Plus docs: `/home/albert/Desktop/dfxm_pipeline/docs/Usage.md` (extend the Task 2 "Busy indication" paragraph with "loads and saves show a wait cursor") and `/home/albert/Desktop/dfxm_pipeline/docs/Codebase.md` (one line per touched module is NOT needed — instead note in the busy.py entry that these nine sites consume `busy_cursor`).
+Plus docs: `docs/Usage.md` (extend the Task 2 "Busy indication" paragraph with "loads and saves show a wait cursor") and `docs/Codebase.md` (one line per touched module is NOT needed — instead note in the busy.py entry that these nine sites consume `busy_cursor`).
 
 **Interfaces** — Consumes `busy_cursor` only. Imports: `from .widgets.busy import busy_cursor` (stage_view, figure_builder, experiment_panel uses `from .widgets.busy import busy_cursor`), `from .busy import busy_cursor` (mark_planes, roi_picker, viewer3d_window).
 
@@ -1255,9 +1255,9 @@ Plus docs: `/home/albert/Desktop/dfxm_pipeline/docs/Usage.md` (extend the Task 2
 ## Task 9 — Stage-run ETA in `StageView` + final verification
 
 **Files**
-- Edit `/home/albert/Desktop/dfxm_pipeline/gui/stage_view.py` (anchors: the top import block, `def __init__` progress-widget region, `def _on_run`, `def _handle`)
-- Create `/home/albert/Desktop/dfxm_pipeline/tests/test_gui_stage_eta.py`
-- Edit `/home/albert/Desktop/dfxm_pipeline/docs/Usage.md` (`### The stage panel`: the progress text shows `— ~… left` once estimable; resets each run) and `/home/albert/Desktop/dfxm_pipeline/docs/Codebase.md` (stage_view entry: `EtaEstimator` fed from `_on_progress`/`_handle`)
+- Edit `gui/stage_view.py` (anchors: the top import block, `def __init__` progress-widget region, `def _on_run`, `def _handle`)
+- Create `tests/test_gui_stage_eta.py`
+- Edit `docs/Usage.md` (`### The stage panel`: the progress text shows `— ~… left` once estimable; resets each run) and `docs/Codebase.md` (stage_view entry: `EtaEstimator` fed from `_on_progress`/`_handle`)
 
 **Interfaces** — Consumes `EtaEstimator` (Task 1) and the existing `Progress(frac: float, text: str)` dataclass from `dfxm/runner.py`. Produces: `StageView._eta: EtaEstimator`; progress text format `f"{msg.text} — {eta}"` where `eta = self._eta.eta_text()` (already includes `~… left`), plain `msg.text` while not estimable. Progress bar itself unchanged.
 

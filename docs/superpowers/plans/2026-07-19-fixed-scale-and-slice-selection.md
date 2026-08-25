@@ -28,9 +28,9 @@
 ## Task A1: `PlotStyle.scale_um_per_cm` knob + defensive accessor + target-box helper
 
 **Files:**
-- Modify: `/home/albert/Desktop/dfxm_pipeline/dfxm/common/plotting.py` (dataclass at ~line 56; add module functions after `figure_size` ~line 241)
-- Modify: `/home/albert/Desktop/dfxm_pipeline/tests/test_plot_style.py`
-- Modify: `/home/albert/Desktop/dfxm_pipeline/docs/Codebase.md` (plotting.py section)
+- Modify: `dfxm/common/plotting.py` (dataclass at ~line 56; add module functions after `figure_size` ~line 241)
+- Modify: `tests/test_plot_style.py`
+- Modify: `docs/Codebase.md` (plotting.py section)
 
 **Interfaces:**
 - Produces: `PlotStyle.scale_um_per_cm: float | None = None` (new dataclass field, in the `# figure` block next to `figure_width`).
@@ -40,7 +40,7 @@
 
 **Steps:**
 
-- [ ] Read `/home/albert/Desktop/dfxm_pipeline/dfxm/common/plotting.py` lines 55–160 and 225–245, and `/home/albert/Desktop/dfxm_pipeline/tests/test_plot_style.py` in full.
+- [ ] Read `dfxm/common/plotting.py` lines 55–160 and 225–245, and `tests/test_plot_style.py` in full.
 - [ ] Append to `tests/test_plot_style.py` (add `import pytest` and extend the existing `from dfxm.common.plotting import ...` import with `fixed_scale, fixed_scale_box, style_from_json, style_to_json` as needed):
 
 ```python
@@ -146,9 +146,9 @@ def fixed_scale_box(
 ## Task A2: `fit_axes_to_box` draw–measure–resize helper
 
 **Files:**
-- Modify: `/home/albert/Desktop/dfxm_pipeline/dfxm/common/plotting.py` (add after `fixed_scale_box`)
-- Modify: `/home/albert/Desktop/dfxm_pipeline/tests/test_figure_layout.py`
-- Modify: `/home/albert/Desktop/dfxm_pipeline/docs/Codebase.md`
+- Modify: `dfxm/common/plotting.py` (add after `fixed_scale_box`)
+- Modify: `tests/test_figure_layout.py`
+- Modify: `docs/Codebase.md`
 
 **Interfaces:**
 - Produces: `fit_axes_to_box(fig, ax, w_in, h_in, tol_in=0.02, max_iter=3) -> bool` — attaches a `FigureCanvasAgg` if the canvas cannot render, then iteratively corrects the figure size ADDITIVELY until the axes box is within `tol_in` of `(w_in, h_in)`; non-convergence keeps the last size, logs, returns `False` (never raises).
@@ -157,7 +157,7 @@ def fixed_scale_box(
 
 **Steps:**
 
-- [ ] Read `/home/albert/Desktop/dfxm_pipeline/tests/test_figure_layout.py` in full (match its import style). Append:
+- [ ] Read `tests/test_figure_layout.py` in full (match its import style). Append:
 
 ```python
 def _box_inches(fig, ax):
@@ -263,9 +263,9 @@ def finalize_fixed_scale(fig, ax, style: "PlotStyle | None", ext_x_um: float, ex
 ## Task A3: scale bar fixed mode (point-exact bar height)
 
 **Files:**
-- Modify: `/home/albert/Desktop/dfxm_pipeline/dfxm/common/plotting.py` (`draw_scale_bar`, ~line 419; the `bh = ...` line is at ~442)
-- Modify: `/home/albert/Desktop/dfxm_pipeline/tests/test_plot_style.py`
-- Modify: `/home/albert/Desktop/dfxm_pipeline/docs/Codebase.md`
+- Modify: `dfxm/common/plotting.py` (`draw_scale_bar`, ~line 419; the `bh = ...` line is at ~442)
+- Modify: `tests/test_plot_style.py`
+- Modify: `docs/Codebase.md`
 
 **Interfaces:**
 - Produces: `draw_scale_bar(ax, length_um=None, *, style, fixed_scale_um_per_cm=None)` — new keyword-only arg. When set (>0): bar height in data units = `style.scale_bar_thickness_pt * (2.54 / 72.0) * fixed_scale_um_per_cm` (true points at the known scale). When `None`: today's `abs(yr) * 0.004 * style.scale_bar_thickness_pt` byte-for-byte. The bar **never** infers the scale from the style — callers pass it explicitly (only builders that actually fit do).
@@ -338,10 +338,10 @@ Also extend the docstring: fixed mode is opt-in per call; un-fitted callers must
 ## Task A4: wire the shared layer builder + strain diagnostic
 
 **Files:**
-- Modify: `/home/albert/Desktop/dfxm_pipeline/dfxm/common/render.py` (`layer_figure`, ~line 38)
-- Modify: `/home/albert/Desktop/dfxm_pipeline/dfxm/stages/strain.py` (`build_strain_map`, ~lines 353–412)
-- Modify: `/home/albert/Desktop/dfxm_pipeline/tests/test_figure_layout.py`
-- Modify: `/home/albert/Desktop/dfxm_pipeline/docs/Codebase.md`
+- Modify: `dfxm/common/render.py` (`layer_figure`, ~line 38)
+- Modify: `dfxm/stages/strain.py` (`build_strain_map`, ~lines 353–412)
+- Modify: `tests/test_figure_layout.py`
+- Modify: `docs/Codebase.md`
 
 **Interfaces:**
 - Consumes: `fixed_scale_box`, `fit_axes_to_box` from `dfxm.common.plotting`; `draw_scale_bar(..., fixed_scale_um_per_cm=...)` (Task A3).
@@ -422,9 +422,9 @@ def test_build_strain_map_fixed_scale_box():
 ## Task A5: wire `build_slice_figure` (slices run, replot, export)
 
 **Files:**
-- Modify: `/home/albert/Desktop/dfxm_pipeline/dfxm/stages/slices.py` (`build_slice_figure`, ~lines 786–830)
-- Modify: `/home/albert/Desktop/dfxm_pipeline/tests/test_stage_slices.py`
-- Modify: `/home/albert/Desktop/dfxm_pipeline/docs/Codebase.md`, `/home/albert/Desktop/dfxm_pipeline/docs/Usage.md`
+- Modify: `dfxm/stages/slices.py` (`build_slice_figure`, ~lines 786–830)
+- Modify: `tests/test_stage_slices.py`
+- Modify: `docs/Codebase.md`, `docs/Usage.md`
 
 **Interfaces:**
 - Consumes: `fixed_scale_box`, `fit_axes_to_box` (extend the existing `from ..common.plotting import (...)` block in slices.py), `draw_scale_bar(..., fixed_scale_um_per_cm=...)`.
@@ -502,9 +502,9 @@ def test_build_slice_figure_fixed_scale_equal_boxes_across_colorbar_text():
 ## Task A6: wire the profiles standalone overview; pin the companion
 
 **Files:**
-- Modify: `/home/albert/Desktop/dfxm_pipeline/dfxm/stages/profiles.py` (`_draw_reference_image` ~line 523, `render_single` ~line 716; `build_companion_figure` stays untouched)
-- Modify: `/home/albert/Desktop/dfxm_pipeline/tests/test_stage_profiles.py`
-- Modify: `/home/albert/Desktop/dfxm_pipeline/docs/Codebase.md`, `/home/albert/Desktop/dfxm_pipeline/docs/Usage.md`
+- Modify: `dfxm/stages/profiles.py` (`_draw_reference_image` ~line 523, `render_single` ~line 716; `build_companion_figure` stays untouched)
+- Modify: `tests/test_stage_profiles.py`
+- Modify: `docs/Codebase.md`, `docs/Usage.md`
 
 **Interfaces:**
 - Produces: `_draw_reference_image(ax, plane2d, u_um, v_um, attrs, line_color, geom=None, title=None, style=None, fixed_scale_um_per_cm=None)` — new trailing kwarg forwarded to `draw_scale_bar` in the styled branch only.
@@ -615,9 +615,9 @@ Pass `fixed_scale_um_per_cm=(box[2] if box is not None else None)` in its `_draw
 ## Task A7: GUI "Scale (µm/cm)" field + smoke step + user docs — **Phase A gate**
 
 **Files:**
-- Modify: `/home/albert/Desktop/dfxm_pipeline/gui/widgets/export_dialog.py` (`StyleControls`: `_build_controls` Figure section ~line 470, `sync_from_style` ~line 134, `_all_widgets` ~line 155)
-- Modify: `/home/albert/Desktop/dfxm_pipeline/tests/gui_smoke.py` (new step `[29]`, inserted before `print("\nGUI SMOKE PASSED")`)
-- Modify: `/home/albert/Desktop/dfxm_pipeline/docs/Usage.md`, `/home/albert/Desktop/dfxm_pipeline/docs/Codebase.md`
+- Modify: `gui/widgets/export_dialog.py` (`StyleControls`: `_build_controls` Figure section ~line 470, `sync_from_style` ~line 134, `_all_widgets` ~line 155)
+- Modify: `tests/gui_smoke.py` (new step `[29]`, inserted before `print("\nGUI SMOKE PASSED")`)
+- Modify: `docs/Usage.md`, `docs/Codebase.md`
 
 **Interfaces:**
 - Produces: `StyleControls._w_scale_umcm: QLineEdit` — blank = off; defensive parse writes `self._style.scale_um_per_cm` (float > 0 or `None`) and emits `changed`. Persistence is automatic: the global style round-trips through `style_to_json`/`style_from_json` in `gui/main_window.py` (`_save_plot_style`, QSettings key `plot_style`) — no new persistence code.
@@ -701,10 +701,10 @@ Add `from dfxm.common.plotting import CMAP_CHOICES, PlotStyle, fixed_scale` to t
 ## Task B1: `build_pinned_spec` shared core; `tools/pin_slice.py` delegates
 
 **Files:**
-- Modify: `/home/albert/Desktop/dfxm_pipeline/dfxm/stages/slices.py` (add `_find_slice_group` + `build_pinned_spec` after `write_volume_group`, ~line 869)
-- Modify: `/home/albert/Desktop/dfxm_pipeline/tools/pin_slice.py` (replace `_find_slice_group`/`pin_spec` bodies with delegation)
-- Modify: `/home/albert/Desktop/dfxm_pipeline/tests/test_stage_slices.py`
-- Modify: `/home/albert/Desktop/dfxm_pipeline/docs/Codebase.md`
+- Modify: `dfxm/stages/slices.py` (add `_find_slice_group` + `build_pinned_spec` after `write_volume_group`, ~line 869)
+- Modify: `tools/pin_slice.py` (replace `_find_slice_group`/`pin_spec` bodies with delegation)
+- Modify: `tests/test_stage_slices.py`
+- Modify: `docs/Codebase.md`
 
 **Interfaces:**
 - Produces (Qt-free, in `dfxm/stages/slices.py`):
@@ -907,9 +907,9 @@ if __name__ == "__main__":
 ## Task B2: `use_pinned` + `pinned_slices_json` params, run() routing, clobber guard
 
 **Files:**
-- Modify: `/home/albert/Desktop/dfxm_pipeline/dfxm/stages/slices.py` (STAGE params after `slices_json` ~line 405; `run()` routing at the `slices = json.loads(p["slices_json"])` block ~line 976 and `out_h5 = ...` ~line 1006; `output_h5_name` help text)
-- Modify: `/home/albert/Desktop/dfxm_pipeline/tests/test_stage_slices.py`
-- Modify: `/home/albert/Desktop/dfxm_pipeline/docs/Usage.md`, `/home/albert/Desktop/dfxm_pipeline/docs/Codebase.md`
+- Modify: `dfxm/stages/slices.py` (STAGE params after `slices_json` ~line 405; `run()` routing at the `slices = json.loads(p["slices_json"])` block ~line 976 and `out_h5 = ...` ~line 1006; `output_h5_name` help text)
+- Modify: `tests/test_stage_slices.py`
+- Modify: `docs/Usage.md`, `docs/Codebase.md`
 
 **Interfaces:**
 - Produces: two new `Param`s on the slices `STAGE`:
@@ -1067,9 +1067,9 @@ Also append one sentence to the `output_h5_name` Param help: `"While 'Run pinned
 ## Task B3: planes-first selection model (pure logic + unit tests)
 
 **Files:**
-- Create: `/home/albert/Desktop/dfxm_pipeline/gui/widgets/plane_selection_model.py` (PySide6-free)
-- Create: `/home/albert/Desktop/dfxm_pipeline/tests/test_plane_selection_model.py`
-- Modify: `/home/albert/Desktop/dfxm_pipeline/docs/Codebase.md`
+- Create: `gui/widgets/plane_selection_model.py` (PySide6-free)
+- Create: `tests/test_plane_selection_model.py`
+- Modify: `docs/Codebase.md`
 
 **Interfaces:**
 - Produces (all in `gui/widgets/plane_selection_model.py`; consumed by Tasks B4–B6):
@@ -1359,11 +1359,11 @@ def layer_selections(groups, checked_layers, checked_keys):
 ## Task B4: `PlaneSelectionPanel` widget + swap the slices replot dialog onto it
 
 **Files:**
-- Create: `/home/albert/Desktop/dfxm_pipeline/gui/widgets/plane_selection.py`
-- Modify: `/home/albert/Desktop/dfxm_pipeline/gui/widgets/slice_replot.py` (replace the volume→slice→plane `QTreeWidget` with the panel)
-- Modify: `/home/albert/Desktop/dfxm_pipeline/tests/test_gui_slice_replot.py`
-- Modify: `/home/albert/Desktop/dfxm_pipeline/tests/gui_smoke.py` (update `[26]`, add `[30]`)
-- Modify: `/home/albert/Desktop/dfxm_pipeline/docs/Usage.md`, `/home/albert/Desktop/dfxm_pipeline/docs/Codebase.md`
+- Create: `gui/widgets/plane_selection.py`
+- Modify: `gui/widgets/slice_replot.py` (replace the volume→slice→plane `QTreeWidget` with the panel)
+- Modify: `tests/test_gui_slice_replot.py`
+- Modify: `tests/gui_smoke.py` (update `[26]`, add `[30]`)
+- Modify: `docs/Usage.md`, `docs/Codebase.md`
 
 **Interfaces:**
 - Produces: `class PlaneSelectionPanel(QWidget)`:
@@ -1629,10 +1629,10 @@ In `_on_render`, after a successful render, append skip info: `if self._skipped:
 ## Task B5: swap the generic replot dialog (strain/mosaicity/rocking)
 
 **Files:**
-- Modify: `/home/albert/Desktop/dfxm_pipeline/gui/widgets/replot_dialog.py`
-- Modify: `/home/albert/Desktop/dfxm_pipeline/tests/test_gui_replot_dialog.py`
-- Modify: `/home/albert/Desktop/dfxm_pipeline/tests/gui_smoke.py` (add `[31]`)
-- Modify: `/home/albert/Desktop/dfxm_pipeline/docs/Usage.md`, `/home/albert/Desktop/dfxm_pipeline/docs/Codebase.md`
+- Modify: `gui/widgets/replot_dialog.py`
+- Modify: `tests/test_gui_replot_dialog.py`
+- Modify: `tests/gui_smoke.py` (add `[31]`)
+- Modify: `docs/Usage.md`, `docs/Codebase.md`
 
 **Interfaces:**
 - Modified `ReplotDialog(h5_default, catalog_fn, render_fn, style=None, out_default="", preview_fn=None, parent=None)` — constructor and `render_selection(out_dir)`/`select_all()`/`written` unchanged (so `gui/stage_view.py` needs **no** changes). Internals: `self._panel = PlaneSelectionPanel(show_quantities=True)`; left rows via `build_layer_rows(catalog)` (layers listed once, `Z=… µm` parsed when present); right quantities = `[(grp.key, grp.label + shape hint)]`; `_selections()` via `layer_selections(catalog, ...)` (returns `[(key, idxs)]`, accepted by every `render_replot`); skip reasons in status; Render disabled on empty selection. Clim (`ClimGroupSection` keyed per group key), ROI picker (`preview_fn`), timestamped output default, all-checked-on-load unchanged.
@@ -1677,12 +1677,12 @@ def test_generic_dialog_planes_first_product(tmp_path, qapp):
 ## Task B6: Pin planes… dialog + slices form wiring — **Phase B gate**
 
 **Files:**
-- Create: `/home/albert/Desktop/dfxm_pipeline/gui/widgets/pin_planes.py`
-- Modify: `/home/albert/Desktop/dfxm_pipeline/gui/stage_view.py` (button block ~line 140; new `_on_pin_planes` slot next to `_replot_slices` ~line 496)
-- Create: `/home/albert/Desktop/dfxm_pipeline/tests/test_gui_pin_planes.py`
-- Modify: `/home/albert/Desktop/dfxm_pipeline/tests/test_stage_view_buttons.py`
-- Modify: `/home/albert/Desktop/dfxm_pipeline/tests/gui_smoke.py` (add `[32]`)
-- Modify: `/home/albert/Desktop/dfxm_pipeline/docs/Usage.md`, `/home/albert/Desktop/dfxm_pipeline/docs/Codebase.md`
+- Create: `gui/widgets/pin_planes.py`
+- Modify: `gui/stage_view.py` (button block ~line 140; new `_on_pin_planes` slot next to `_replot_slices` ~line 496)
+- Create: `tests/test_gui_pin_planes.py`
+- Modify: `tests/test_stage_view_buttons.py`
+- Modify: `tests/gui_smoke.py` (add `[32]`)
+- Modify: `docs/Usage.md`, `docs/Codebase.md`
 
 **Interfaces:**
 - Produces: `class PinPlanesDialog(QDialog)` — `__init__(self, h5_default="", parent=None)`; attribute `result_json: str | None` (set on accept). Layout: file row (edit + Browse… + Load), `PlaneSelectionPanel(show_quantities=False)` (planes start **unchecked** — pinning means explicit picks), status label, OK/Cancel. Load: `dfxm.stages.slices.replot_catalog(h5)` → `build_slice_rows`; unreadable/empty file → inline status error, nothing written. OK: checked keys grouped by slice_name → `dfxm.stages.slices.build_pinned_spec(h5, sname, offsets)` per group → `self.result_json = json.dumps(specs, indent=2)`; empty selection or `StageUserError` → inline status, dialog stays open, nothing written.
