@@ -29,16 +29,38 @@ from dataclasses import dataclass
 # truthfully read 467 GiB free, and the two numbers side by side read as a
 # contradiction rather than as a policy.
 #
-# Raised from 0.6/0.5 on 2026-08-25 at Albert's request, for more leeway on a
-# machine with RAM to spare. What they trade: headroom only chooses in-core vs
-# streaming and never blocks a run, so a cap set too high lets a run go in-core
-# and OOM, while one set too low only makes it stream (slower, same result). The
-# asymmetry is why these stay well below 1.0 — and why raising them further
-# should wait for the estimator recalibration, since the alignment-chain
-# estimators still *under*-predict (visualize measured 1.67x under), and an
-# under-prediction judged against a looser cap is exactly the OOM direction.
-AVAILABLE_FRACTION = 0.75
-TOTAL_FRACTION = 0.65
+# What they trade: headroom only chooses in-core vs streaming and never blocks a
+# run, so a cap set too high lets a run go in-core and OOM, while one set too low
+# only makes it stream (slower, same result). That asymmetry is why these stay
+# well below 1.0.
+#
+# Raised 0.6/0.5 -> 0.75/0.65 on 2026-08-25, then 0.75/0.65 -> 0.85/0.80 on
+# 2026-08-26, both at Albert's request. The second raise waited on the estimator
+# recalibration, and it is what unblocked it: an under-prediction judged against
+# a looser cap is exactly the OOM direction, and until 2026-08-26 `matched`
+# under-predicted the real dataset by 2.3x while `rocking` under-predicted a
+# short-scan run by 13x. **Every stage now over-predicts every configuration it
+# has been measured against**, by 1.10x at the tightest, so the cap can be
+# spent. If a future estimator is rewritten from reasoning rather than
+# measurement, that margin is what this raise consumed — revisit here.
+#
+# **Which limit binds changed with the second raise.** AVAILABLE binds whenever
+# `ram_available / ram_total < TOTAL_FRACTION / AVAILABLE_FRACTION` = 0.941, so
+# on any machine with less than ~94% of its RAM free — including the 502 GiB
+# development box at 93% — it is now the available side that decides, where
+# before it was the total side. TOTAL_FRACTION is not vestigial: it still guards
+# the case it was added for, a page cache making `available` misleadingly large
+# on a machine whose real working set is much bigger. Both branches are pinned
+# by `test_headroom_is_the_tighter_of_the_two_limits`, which builds its own
+# profile for the TOTAL case precisely because no shared fixture reaches 94%.
+#
+# One thing these fractions do NOT model: the GUI **parent** process is alive
+# while the stage child runs, and its Qt/matplotlib footprint comes out of the
+# same `ram_available`. Every estimator prices the child alone. That is part of
+# why the available side keeps 15% rather than being pushed to 0.95 — on an 8 GB
+# laptop 15% is 0.8 GiB, which is roughly one GUI parent.
+AVAILABLE_FRACTION = 0.85
+TOTAL_FRACTION = 0.80
 
 # Below this there is no point chunking — the bookkeeping costs more than the
 # memory it saves.

@@ -389,21 +389,37 @@ should call it rather than hardcode a unit, as `tests/test_gui_status_bar.py`
 does. `headroom_bytes`
 takes the tighter of two limits — `AVAILABLE_FRACTION` of available RAM (guards
 against other processes) and `TOTAL_FRACTION` of total RAM (guards against a
-misleading "available" behind a large page cache), **75% and 65%** since
-2026-08-25 (raised from 60%/50% at Albert's request, for more leeway on a
-machine with RAM to spare). It is a **budget cap, not a measurement**, which is
-why every surface that shows it calls it a "budget" rather than what is
-"available" — see `advisory._headline`. What the fractions trade: headroom only
-chooses in-core vs streaming and never blocks a run, so a cap set too high lets
-a run go in-core and OOM while one set too low merely makes it stream (slower,
-same result); that asymmetry is why they stay well below 1.0, and why raising
-them further should wait for the estimator recalibration, since the
-alignment-chain estimators still *under*-predict (visualize measured 1.67x
-under) and an under-prediction judged against a looser cap is exactly the OOM
-direction. `tests/test_common_advice.py::test_headroom_is_the_tighter_of_the_two_limits`
+misleading "available" behind a large page cache), **85% and 80%** since
+2026-08-26 (60%/50% → 75%/65% on 2026-08-25, → 85%/80% on 2026-08-26, both at
+Albert's request). It is a **budget cap, not a measurement**, which is why every
+surface that shows it calls it a "budget" rather than what is "available" — see
+`advisory._headline`. What the fractions trade: headroom only chooses in-core vs
+streaming and never blocks a run, so a cap set too high lets a run go in-core
+and OOM while one set too low merely makes it stream (slower, same result); that
+asymmetry is why they stay well below 1.0. The second raise **waited on the
+estimator recalibration and is what that unblocked**: until 2026-08-26 `matched`
+under-predicted the real dataset by 2.3× and `rocking` under-predicted a
+short-scan run by 13×, and an under-prediction judged against a looser cap is
+exactly the OOM direction. Every stage now over-predicts every configuration it
+has been measured against, by **1.10× at the tightest** — that margin is what
+the raise spends, so an estimator rewritten from reasoning rather than
+measurement means revisiting these.
+
+**The raise moved which limit binds.** AVAILABLE binds whenever
+`ram_available / ram_total < TOTAL_FRACTION / AVAILABLE_FRACTION` = **0.941**,
+so on any machine less than ~94% idle — including the 502 GiB development box at
+93%, where the cap went 326.6 → 398.0 GiB — the available side now decides,
+where the total side did before. `TOTAL_FRACTION` is not vestigial: it still
+guards the page-cache case it was added for. One thing neither fraction models:
+the GUI **parent** is alive while the stage child runs and its Qt/matplotlib
+footprint comes out of the same `ram_available`, while every estimator prices
+the child alone — which is why the available side keeps 15% rather than being
+pushed to 95%. `tests/test_common_advice.py::test_headroom_is_the_tighter_of_the_two_limits`
 asserts against the constants rather than their literal values — so tuning them
 is not a busywork edit — while still failing if a change flips **which** limit
-binds for either fixture, the property it actually names.
+binds, the property it actually names. It builds its own 98%-idle profile for
+the TOTAL branch, because after the raise no shared fixture is idle enough to
+reach it and the test would otherwise have covered one branch twice.
 `working_set_budget_bytes(profile, *, rss_floor_bytes)` is
 **the number to pass as `alignment.align_volume_streamed`'s `budget_bytes`**,
 never `headroom_bytes` itself: headroom is RSS and `budget_bytes` is
