@@ -21,7 +21,7 @@ MOSA_PATHS = {
 def _make_layers(tmp_path, n_layers=3, dtype="float32", *, mosa=False):
     """A root with *n_layers* ``layer__N`` folders, each holding a maps.h5."""
     root = tmp_path / "root"
-    root.mkdir()
+    root.mkdir(parents=True)
     for i in range(n_layers):
         folder = root / f"layer__{i + 1}"
         folder.mkdir()
@@ -31,6 +31,23 @@ def _make_layers(tmp_path, n_layers=3, dtype="float32", *, mosa=False):
             for path in paths:
                 f.create_dataset(path, data=layer)
     return str(root)
+
+
+def _make_big_layer(tmp_path, *, ny, nx):
+    """One layer large enough for the fixed-scale canvas to be the bigger one."""
+    root = tmp_path / "big_root"
+    folder = root / "big__1"
+    folder.mkdir(parents=True)
+    with h5py.File(folder / "maps.h5", "w") as f:
+        f.create_dataset(CCMTH_PATH, shape=(ny, nx), dtype="float32")
+    return str(root)
+
+
+@pytest.fixture(scope="module")
+def _strain_defaults():
+    from dfxm.stages import strain
+
+    return strain.STAGE.defaults()
 
 
 def _strain_params(root, **over):
@@ -45,16 +62,87 @@ def _strain_params(root, **over):
     return params
 
 
-def test_strain_estimate_reports_shape_and_peak(tmp_path):
-    from dfxm.stages.strain import estimate
+def _strain_peak(layer_elems, *, plots=True, canvas_px=0):
+    """The recalibrated strain model, spelled out independently of the stage."""
+    from dfxm.common.plotting import AGG_RENDER_BYTES_PER_PIXEL
+    from dfxm.stages import strain
+
+    peak = strain.STRAIN_PROCESS_FLOOR_BYTES + strain.STRAIN_ARRAY_BYTES_PER_ELEM * layer_elems
+    if plots:
+        peak += strain.STRAIN_PLOT_PROCESS_BYTES + strain.STRAIN_PLOT_BYTES_PER_ELEM * layer_elems
+        peak += AGG_RENDER_BYTES_PER_PIXEL * canvas_px
+    return peak
+
+
+def test_strain_estimate_reports_shape_and_peak(tmp_path, _strain_defaults):
+    """One layer's working set, not the volume: `run()` drops each layer as it goes."""
+    from dfxm.stages.strain import _plot_canvas_pixels, estimate
 
     root = _make_layers(tmp_path, n_layers=3, dtype="float32")
-    est = estimate(_strain_params(root))
+    params = _strain_params(root)
+    est = estimate(params)
     assert isinstance(est, CostEstimate)
     assert est.shape == (3, H, W)
     assert est.input_bytes == 3 * H * W * 4
-    # run() holds a float64 map per layer AND the np.stack copy simultaneously
-    assert est.peak_bytes == 2 * 3 * H * W * 8
+    assert est.peak_bytes == _strain_peak(
+        H * W, canvas_px=_plot_canvas_pixels({**_strain_defaults, **params}, (H, W))
+    )
+
+
+def test_strain_peak_does_not_grow_with_the_layer_count(tmp_path):
+    """The claim the old model got wrong, and the reason it over-predicted 5.2x.
+
+    `run()` appends each layer to the StackedVolumeFile and `del`s it, so a
+    hundred layers cost what three do. input_bytes must still scale, or this
+    would pass on an estimator that had stopped counting the input at all.
+    """
+    from dfxm.stages.strain import estimate
+
+    peaks = set()
+    inputs = []
+    for n in (1, 3, 32):
+        root = _make_layers(tmp_path / f"n{n}", n_layers=n, dtype="float32")
+        est = estimate(_strain_params(root))
+        peaks.add(est.peak_bytes)
+        inputs.append(est.input_bytes)
+    assert len(peaks) == 1, f"peak moved with the layer count: {sorted(peaks)}"
+    assert inputs == [H * W * 4, 3 * H * W * 4, 32 * H * W * 4]
+
+
+def test_strain_save_plots_off_drops_the_whole_plotting_term(tmp_path):
+    """Turning the product off must move the estimate, or the toggle is cosmetic."""
+    from dfxm.stages.strain import estimate
+
+    root = _make_layers(tmp_path, n_layers=2, dtype="float32")
+    on = estimate(_strain_params(root, save_plots=True)).peak_bytes
+    off = estimate(_strain_params(root, save_plots=False)).peak_bytes
+    assert off == _strain_peak(H * W, plots=False)
+    assert on > off
+
+
+def test_strain_prices_the_canvas_a_fixed_scale_style_asks_for(tmp_path):
+    """A `scale_um_per_cm` style grew the measured peak from 465 to 1682 MiB.
+
+    The estimator reads the style and sizes the same canvas the builder will,
+    through the shared `strain_map_geometry`. Without this term the model
+    UNDER-predicts a publication-scale run by 3.6x.
+    """
+    from dfxm.common.plotting import canvas_pixels, style_from_params
+    from dfxm.stages.strain import estimate, strain_map_geometry
+
+    # A layer big enough that the fixed-scale box is the larger canvas: at 8x16
+    # px it would not be, and this test would pass on an estimator that ignored
+    # the style entirely.
+    root = _make_big_layer(tmp_path, ny=600, nx=800)
+    plain = _strain_params(root, folder_pattern="big__*")
+    styled = _strain_params(root, folder_pattern="big__*", plot_style={"scale_um_per_cm": 4.0})
+
+    p_geom, _ = strain_map_geometry(None, 800 * 0.152, 600 * 0.385)
+    s_geom, box = strain_map_geometry(style_from_params(styled), 800 * 0.152, 600 * 0.385)
+    assert box is not None, "fixture must reach the fixed-scale path"
+    assert canvas_pixels(s_geom, 200) > canvas_pixels(p_geom, 200), "fixture must grow the canvas"
+
+    assert estimate(styled).peak_bytes > estimate(plain).peak_bytes
 
 
 def test_strain_estimate_sizes_one_layer_not_all_of_them(tmp_path, monkeypatch):
@@ -74,11 +162,7 @@ def test_strain_estimate_sizes_one_layer_not_all_of_them(tmp_path, monkeypatch):
     assert len(opened) == 1, f"opened {len(opened)} files: {opened}"
 
 
-def test_mosaicity_estimate_accounts_for_all_four_datasets(tmp_path):
-    """run() holds chi/mu x com/fwhm at once, then np.stack adds one more."""
-    from dfxm.stages.mosaicity import estimate
-
-    root = _make_layers(tmp_path, n_layers=3, dtype="float32", mosa=True)
+def _mosa_params(root, **over):
     params = {
         "mode": "batch",
         "root_folder": root,
@@ -86,10 +170,60 @@ def test_mosaicity_estimate_accounts_for_all_four_datasets(tmp_path):
         "maps_filename": "maps.h5",
         **MOSA_PATHS,
     }
-    est = estimate(params)
-    per_volume = 3 * H * W * 4
-    assert est.input_bytes == 4 * per_volume
-    assert est.peak_bytes == 5 * per_volume  # four collected + one stacked
+    params.update(over)
+    return params
+
+
+def test_mosaicity_estimate_accounts_for_all_four_datasets(tmp_path):
+    """One LAYER of each present dataset, plus the writer's buffers — not a volume."""
+    from dfxm.stages import mosaicity
+    from dfxm.stages.mosaicity import estimate
+
+    root = _make_layers(tmp_path, n_layers=3, dtype="float32", mosa=True)
+    est = estimate(_mosa_params(root))
+    assert est.input_bytes == 4 * 3 * H * W * 4
+    assert est.peak_bytes == mosaicity.MOSAICITY_PROCESS_FLOOR_BYTES + (
+        4 + mosaicity.MOSAICITY_WRITER_LAYERS
+    ) * (H * W * 4)
+
+
+def test_mosaicity_each_present_dataset_costs_exactly_one_layer(tmp_path):
+    """Measured at 1.00 / 1.01 / 1.00 layers per dataset — the sharpest number
+    in the campaign, so it is pinned as an exact step rather than a bound.
+    """
+    from dfxm.stages.mosaicity import estimate
+
+    keys = list(MOSA_PATHS)
+    peaks = []
+    for n_present in (1, 2, 3, 4):
+        root = tmp_path / f"ds{n_present}"
+        folder = root / "layer__1"
+        folder.mkdir(parents=True)
+        with h5py.File(folder / "maps.h5", "w") as f:
+            for key in keys[:n_present]:
+                f.create_dataset(MOSA_PATHS[key], shape=(H, W), dtype="float32")
+        peaks.append(estimate(_mosa_params(str(root))).peak_bytes)
+    steps = [b - a for a, b in zip(peaks, peaks[1:])]
+    assert steps == [H * W * 4] * 3, f"per-dataset step is not one layer: {steps}"
+
+
+def test_mosaicity_peak_does_not_grow_with_the_layer_count(tmp_path):
+    """Measured flat: 176.1 MiB at one layer, 194.1 at four, eight and sixteen.
+
+    The old model multiplied by n_layers and over-predicted the real STO2 run
+    by 36x. input_bytes must still scale, or an estimator that had stopped
+    counting the input would pass this.
+    """
+    from dfxm.stages.mosaicity import estimate
+
+    peaks, inputs = set(), []
+    for n in (1, 3, 32):
+        root = _make_layers(tmp_path / f"n{n}", n_layers=n, dtype="float32", mosa=True)
+        est = estimate(_mosa_params(root))
+        peaks.add(est.peak_bytes)
+        inputs.append(est.input_bytes)
+    assert len(peaks) == 1, f"peak moved with the layer count: {sorted(peaks)}"
+    assert inputs == [4 * n * H * W * 4 for n in (1, 3, 32)]
 
 
 def test_estimators_never_raise_on_a_missing_root(tmp_path):
@@ -132,9 +266,10 @@ def test_strain_input_bytes_follow_the_source_dtype(tmp_path, dtype, itemsize):
     from dfxm.stages.strain import estimate
 
     root = _make_layers(tmp_path, n_layers=2, dtype=dtype)
-    est = estimate(_strain_params(root))
+    est = estimate(_strain_params(root, save_plots=False))
     assert est.input_bytes == 2 * H * W * itemsize
-    assert est.peak_bytes == 2 * 2 * H * W * 8
+    # peak is dtype-independent: the detrend chain is float64 whatever it reads
+    assert est.peak_bytes == _strain_peak(H * W, plots=False)
 
 
 ALL_ESTIMATOR_STAGES = (
@@ -279,25 +414,80 @@ def test_slices_peak_across_two_volumes_is_the_max_pair_not_the_sum(tmp_path):
     assert est.peak_bytes < load_peak_a + load_peak_b, "peak must not be the sum of both volumes"
 
 
+def _raw_scans(root, *, n_scans=1, n_frames=6, ny=8, nx=16, dtype="uint16", samy_step_mm=0.0):
+    """*n_scans* pco_ff scan folders under *root*, shapes only (no data written).
+
+    *samy_step_mm* spreads the samy positions so the estimators that price the
+    samy X-padding have something to price; 0 (the default) means no padding.
+    """
+    for i in range(n_scans):
+        scan = root / f"rock__{i}"
+        scan.mkdir(parents=True)
+        with h5py.File(scan / f"rock__{i}.h5", "w") as f:
+            f.create_dataset("1.1/measurement/pco_ff", shape=(n_frames, ny, nx), dtype=dtype)
+            # Scalar datasets (shape ()), as the real ESRF positioners are — a
+            # 1-element array here reads back through a deprecated numpy path.
+            f.create_dataset("1.1/instrument/positioners/samy", data=samy_step_mm * i)
+            f.create_dataset("1.1/instrument/positioners/samz", data=0.002 * i)
+    return str(root)
+
+
+def _matched_peak(*, n_frames, ny, nx, pad=0, itemsize=2, autoclim=True):
+    """The recalibrated matched model, spelled out independently of the stage."""
+    from dfxm.stages import matched
+
+    peak = matched.MATCHED_PROCESS_FLOOR_BYTES + min(
+        n_frames * ny * nx * (itemsize + matched.MEDIAN_WORKING_SET_PER_ELEMENT),
+        matched.MEDIAN_BLOCK_WORKING_SET_BYTES,
+    )
+    peak += matched.MATCHED_PADDED_BYTES_PER_ELEM * ny * (nx + pad)
+    if autoclim:
+        peak += matched.MATCHED_CLIM_POOL_BYTES_PER_ELEM * ny * nx
+    return peak
+
+
 def test_matched_is_chunkable(tmp_path):
     """The median needs the whole stack along the FRAME axis only, so an in-plane
-    block gives the identical answer and the stage chunks itself. Peak is the
-    per-scan astype(float64) + nanmedian's internal copy + pooled/frame working
-    set, independent of how many scan folders match — now the ceiling reached
-    when a scan fits one block, not the figure every run reaches.
+    block gives the identical answer and the stage chunks itself.
     """
+    from dfxm.stages import matched
     from dfxm.stages.matched import estimate
 
-    root = tmp_path / "raw"
-    scan = root / "rock__1"
-    scan.mkdir(parents=True)
-    with h5py.File(scan / "rock__1.h5", "w") as f:
-        f.create_dataset("1.1/measurement/pco_ff", data=np.zeros((6, 8, 16), dtype="uint16"))
-    est = estimate({"raw_root": str(root), "rocking_pattern": "rock__*"})
-    scan_elems, frame_elems = 6 * 8 * 16, 8 * 16
+    root = _raw_scans(tmp_path / "raw")
+    est = estimate({"raw_root": root, "rocking_pattern": "rock__*"})
+    scan_elems = 6 * 8 * 16
+    # This fixture is small enough that the median term is the whole stack, not
+    # the block cap — asserted, because on the capped side the (itemsize + per
+    # element) factor below would not be exercised at all.
+    assert scan_elems * (2 + matched.MEDIAN_WORKING_SET_PER_ELEMENT) < (
+        matched.MEDIAN_BLOCK_WORKING_SET_BYTES
+    )
     assert est.chunkable is True
-    assert est.peak_bytes == scan_elems * (2 + 16) + 12 * frame_elems * 8
-    assert est.peak_bytes == 26112
+    assert est.peak_bytes == _matched_peak(n_frames=6, ny=8, nx=16)
+
+
+def test_matched_median_term_stops_at_the_block_working_set(tmp_path):
+    """`load_pco_ff_frame` bounds one block's working set, so the frame count
+    cannot grow the peak past that cap.
+
+    Measured at 512x512: 217.6 / 213.5 / 217.8 / 215.8 MiB for 21 / 51 / 101 /
+    201 frames — flat. The old model climbed to 928 MiB over the same span.
+    """
+    from dfxm.stages import matched
+    from dfxm.stages.matched import estimate
+
+    ny = nx = 256
+    peaks = []
+    for n_frames in (64, 256, 1024):
+        root = _raw_scans(tmp_path / f"f{n_frames}", n_frames=n_frames, ny=ny, nx=nx)
+        peaks.append(estimate({"raw_root": root, "rocking_pattern": "rock__*"}).peak_bytes)
+    # Precondition: the smallest fixture must already exceed the cap, or this
+    # would be testing three uncapped points that happen to differ.
+    assert 64 * ny * nx * (2 + matched.MEDIAN_WORKING_SET_PER_ELEMENT) > (
+        matched.MEDIAN_BLOCK_WORKING_SET_BYTES
+    )
+    assert len(set(peaks)) == 1, f"peak moved with the frame count: {peaks}"
+    assert peaks[0] == _matched_peak(n_frames=64, ny=ny, nx=nx)
 
 
 def test_matched_reports_chunkable_on_every_early_return(tmp_path):
@@ -327,34 +517,152 @@ def test_matched_peak_does_not_grow_with_folder_count(tmp_path):
     """
     from dfxm.stages.matched import estimate
 
-    root = tmp_path / "raw"
-    for i in range(2):
-        scan = root / f"rock__{i}"
-        scan.mkdir(parents=True)
-        with h5py.File(scan / f"rock__{i}.h5", "w") as f:
-            f.create_dataset("1.1/measurement/pco_ff", data=np.zeros((6, 8, 16), dtype="uint16"))
-    est = estimate({"raw_root": str(root), "rocking_pattern": "rock__*"})
-    assert est.peak_bytes == 26112
-    assert est.input_bytes == 2 * 6 * 8 * 16 * 2  # 2 scans x 6 frames x uint16
+    one = estimate({"raw_root": _raw_scans(tmp_path / "a"), "rocking_pattern": "rock__*"})
+    two = estimate(
+        {"raw_root": _raw_scans(tmp_path / "b", n_scans=2), "rocking_pattern": "rock__*"}
+    )
+    assert two.peak_bytes == one.peak_bytes
+    assert two.input_bytes == 2 * one.input_bytes
+    assert two.input_bytes == 2 * 6 * 8 * 16 * 2  # 2 scans x 6 frames x uint16
+
+
+def _rocking_peak(*, n_scans, n_frames, ny, nx, itemsize=2, topview=False, volume_elems=None):
+    """The recalibrated rocking model, spelled out independently of the stage.
+
+    *volume_elems* is the ALIGNED volume's element count; ``None`` means the
+    no-motor path, where the read shape is the volume shape.
+    """
+    from dfxm.stages import rocking
+
+    if volume_elems is None:
+        volume_elems = n_scans * ny * nx
+    peak = (
+        rocking.ROCKING_PROCESS_FLOOR_BYTES
+        + n_frames * ny * nx * (itemsize + 4)
+        + rocking.ROCKING_VOLUME_BYTES_PER_ELEM * volume_elems
+    )
+    if topview:
+        peak += rocking.ROCKING_TOPVIEW_BYTES
+    return peak
 
 
 def test_rocking_peak_models_streaming_per_scan(tmp_path):
-    """run() streams one scan at a time (process_raw_scan: uint16 + float32
-    coexist briefly, `del frames` before the next scan) — it does not hold
-    every scan's stack at once.
+    """run() streams one scan at a time (process_raw_scan: source + float32 copy
+    coexist, `del frames` before the next scan) — but the accumulated volumes do
+    scale with the scan count, which is the term the old model under-charged.
+    """
+    from dfxm.stages.rocking import estimate
+
+    root = _raw_scans(tmp_path / "raw", n_scans=2, n_frames=3)
+    est = estimate({"raw_root": root, "rocking_pattern": "rock__*", "save_topview": False})
+    assert est.input_bytes == 2 * 3 * 8 * 16 * 2  # 2 scans x 3 frames x uint16
+    assert est.input_bytes == 1536
+    assert est.peak_bytes == _rocking_peak(n_scans=2, n_frames=3, ny=8, nx=16)
+
+
+def test_rocking_volume_term_grows_with_the_scan_count(tmp_path):
+    """Each extra scan adds a layer to both accumulated volumes and everything
+    the alignment then does to them — measured at 48.5 B per element per scan.
+    """
+    from dfxm.stages import rocking
+    from dfxm.stages.rocking import estimate
+
+    peaks = []
+    for n in (2, 4, 8):
+        root = _raw_scans(tmp_path / f"s{n}", n_scans=n, n_frames=3)
+        peaks.append(
+            estimate(
+                {"raw_root": root, "rocking_pattern": "rock__*", "save_topview": False}
+            ).peak_bytes
+        )
+    steps = [b - a for a, b in zip(peaks, peaks[1:])]
+    per_scan = rocking.ROCKING_VOLUME_BYTES_PER_ELEM * 8 * 16
+    assert steps == [2 * per_scan, 4 * per_scan]
+
+
+def test_rocking_prices_the_roi_it_will_actually_read(tmp_path):
+    """`process_raw_scan` reads `det[:, ys:ye, xs:xe]`, so everything downstream
+    is ROI-sized. On the real STO2 form (105,1937 / 630,1330 of a 2048x2048
+    detector) ignoring the ROI over-stated the priced work by 3.3x.
+
+    `input_bytes` must NOT follow the ROI: it is the data on disk, which a crop
+    does not change.
+    """
+    from dfxm.stages.rocking import estimate
+
+    root = _raw_scans(tmp_path / "raw", n_scans=2, n_frames=3, ny=64, nx=64)
+    base = {"raw_root": root, "rocking_pattern": "rock__*", "save_topview": False}
+    full = estimate(base)
+    cropped = estimate({**base, "roi_x": "16,48", "roi_y": "8,40"})
+    assert full.peak_bytes == _rocking_peak(n_scans=2, n_frames=3, ny=64, nx=64)
+    assert cropped.peak_bytes == _rocking_peak(n_scans=2, n_frames=3, ny=32, nx=32)
+    assert cropped.input_bytes == full.input_bytes
+
+
+@pytest.mark.parametrize(
+    "roi_x,roi_y",
+    [("", ""), ("junk", "8,40"), ("16,", "8,40"), ("48,16", "8,40"), ("-5,9999", "8,40")],
+)
+def test_rocking_roi_never_shrinks_the_estimate_on_a_half_typed_form(tmp_path, roi_x, roi_y):
+    """A blank, malformed, inverted or out-of-range ROI falls back to the whole
+    axis — the direction run() would actually read — and never raises.
+    """
+    from dfxm.stages.rocking import estimate
+
+    root = _raw_scans(tmp_path / "raw", n_scans=2, n_frames=3, ny=64, nx=64)
+    base = {"raw_root": root, "rocking_pattern": "rock__*", "save_topview": False}
+    est = estimate({**base, "roi_x": roi_x, "roi_y": roi_y})
+    rows = 32 if roi_y == "8,40" and roi_x not in ("junk", "16,") else 64
+    assert est.peak_bytes == _rocking_peak(n_scans=2, n_frames=3, ny=rows, nx=64)
+
+
+def test_rocking_globs_the_pattern_its_source_scan_actually_processes(tmp_path):
+    """`source_scan="mosaicity"` processes the MOSA folders, so the estimate must
+    count those. On the real STO2 form the rocking glob matches 709 folders for a
+    run that processes 76 — a 9x over-statement of the volume term.
     """
     from dfxm.stages.rocking import estimate
 
     root = tmp_path / "raw"
+    _raw_scans(root, n_scans=6, n_frames=3)
     for i in range(2):
-        scan = root / f"rock__{i}"
+        scan = root / f"mosa__{i}"
         scan.mkdir(parents=True)
-        with h5py.File(scan / f"rock__{i}.h5", "w") as f:
-            f.create_dataset("1.1/measurement/pco_ff", data=np.zeros((3, 8, 16), dtype="uint16"))
-    est = estimate({"raw_root": str(root), "rocking_pattern": "rock__*"})
-    assert est.input_bytes == 2 * 3 * 8 * 16 * 2  # 2 scans x 3 frames x uint16
-    assert est.input_bytes == 1536
-    assert est.peak_bytes == 5120
+        with h5py.File(scan / f"mosa__{i}.h5", "w") as f:
+            f.create_dataset("1.1/measurement/pco_ff", shape=(3, 8, 16), dtype="uint16")
+    base = {
+        "raw_root": str(root),
+        "rocking_pattern": "rock__*",
+        "mosa_pattern": "mosa__*",
+        "save_topview": False,
+    }
+    # Precondition: the two globs must disagree, or this asserts nothing.
+    assert len(list(root.glob("rock__*"))) != len(list(root.glob("mosa__*")))
+    from_mosa = estimate({**base, "source_scan": "mosaicity"})
+    from_rocking = estimate({**base, "source_scan": "rocking"})
+    assert from_mosa.shape[0] == 2
+    assert from_rocking.shape[0] == 6
+    assert from_mosa.peak_bytes == _rocking_peak(n_scans=2, n_frames=3, ny=8, nx=16)
+    assert from_mosa.peak_bytes < from_rocking.peak_bytes
+
+
+def test_rocking_prices_the_topview_render_which_is_on_by_default(tmp_path):
+    """`save_topview` costs a data-independent ~365 MiB (the pyvista/VTK import
+    and its render context) and defaults to ON. The old model charged nothing
+    for it and under-predicted a default run by 14x.
+    """
+    from dfxm.stages import rocking
+    from dfxm.stages.rocking import estimate
+
+    root = _raw_scans(tmp_path / "raw", n_scans=2, n_frames=3)
+    base = {"raw_root": root, "rocking_pattern": "rock__*"}
+    off = estimate({**base, "save_topview": False}).peak_bytes
+    on = estimate({**base, "save_topview": True}).peak_bytes
+    assert on - off == rocking.ROCKING_TOPVIEW_BYTES
+    # The default must be the expensive one, or the toggle is priced for a
+    # configuration nobody runs.
+    assert rocking.STAGE.defaults()["save_topview"] is True
+    assert estimate(base).peak_bytes == on
 
 
 def test_paraview_peak_is_the_max_over_files_not_the_sum(tmp_path):
@@ -687,9 +995,13 @@ def test_slices_reports_no_scratch_on_the_coarse_fallback_return_either(tmp_path
 # -----------------------------------------------------------------------------
 # confidence marking
 # -----------------------------------------------------------------------------
-# The four stages whose estimators still model the pre-phase-5
-# accumulate-then-np.stack code. Measured over-prediction on real STO2:
-# strain 5.2x (2.627 GiB est vs 0.508 actual), mosaicity 36x (6.566 vs 0.181).
+# `confidence="conservative"` means "not recalibrated since the streaming
+# rewrite" — the GUI renders it as "at most ~N (conservative estimate)". Until
+# 2026-08-26 four stages carried it: strain, mosaicity, rocking and matched,
+# over-predicting real STO2 by 5.2x and 36x (the two that were measured) and,
+# in rocking's case, UNDER-predicting a default form by 14x. The recalibration
+# campaign measured all four, so none carries the flag any more and every
+# estimator in the pipeline now reports "measured".
 
 
 def test_cost_estimate_confidence_defaults_to_measured():
@@ -697,58 +1009,27 @@ def test_cost_estimate_confidence_defaults_to_measured():
     assert est.confidence == "measured"
 
 
-def test_strain_estimator_marks_itself_conservative(tmp_path):
-    from dfxm.stages.strain import estimate
+def test_no_estimator_still_marks_itself_conservative(tmp_path):
+    """The flag must be re-set deliberately, not left behind by a stale label.
 
-    root = _make_layers(tmp_path, n_layers=3, dtype="float32")
-    est = estimate(_strain_params(root))
-    # Precondition: this test is meaningless on the empty-input early return,
-    # which never reaches the marked `return` statement.
-    assert est.peak_bytes > 0, "fixture did not reach the priced return"
-    assert est.confidence == "conservative"
+    Each fixture is asserted to reach its stage's *priced* return: the
+    unresolved-input early returns never touch the marked `return` statement,
+    so a test that landed on one would pass on any value of the flag.
+    """
+    from dfxm.stages import matched, mosaicity, rocking, strain
 
-
-def test_mosaicity_estimator_marks_itself_conservative(tmp_path):
-    from dfxm.stages.mosaicity import estimate
-
-    root = _make_layers(tmp_path, n_layers=3, dtype="float32", mosa=True)
-    params = {
-        "mode": "batch",
-        "root_folder": root,
-        "folder_pattern": "layer__*",
-        "maps_filename": "maps.h5",
-        **MOSA_PATHS,
-    }
-    est = estimate(params)
-    assert est.peak_bytes > 0, "fixture did not reach the priced return"
-    assert est.confidence == "conservative"
-
-
-def test_rocking_estimator_marks_itself_conservative(tmp_path):
-    from dfxm.stages.rocking import estimate
-
-    root = tmp_path / "raw"
-    for i in range(2):
-        scan = root / f"rock__{i}"
-        scan.mkdir(parents=True)
-        with h5py.File(scan / f"rock__{i}.h5", "w") as f:
-            f.create_dataset("1.1/measurement/pco_ff", data=np.zeros((3, 8, 16), dtype="uint16"))
-    est = estimate({"raw_root": str(root), "rocking_pattern": "rock__*"})
-    assert est.peak_bytes > 0, "fixture did not reach the priced return"
-    assert est.confidence == "conservative"
-
-
-def test_matched_estimator_marks_itself_conservative(tmp_path):
-    from dfxm.stages.matched import estimate
-
-    root = tmp_path / "raw"
-    scan = root / "rock__1"
-    scan.mkdir(parents=True)
-    with h5py.File(scan / "rock__1.h5", "w") as f:
-        f.create_dataset("1.1/measurement/pco_ff", data=np.zeros((6, 8, 16), dtype="uint16"))
-    est = estimate({"raw_root": str(root), "rocking_pattern": "rock__*"})
-    assert est.peak_bytes > 0, "fixture did not reach the priced return"
-    assert est.confidence == "conservative"
+    root = _make_layers(tmp_path / "s", n_layers=3, dtype="float32")
+    mosa_root = _make_layers(tmp_path / "m", n_layers=3, dtype="float32", mosa=True)
+    raw_root = _raw_scans(tmp_path / "raw", n_scans=2, n_frames=3)
+    cases = [
+        ("strain", strain.estimate(_strain_params(root))),
+        ("mosaicity", mosaicity.estimate(_mosa_params(mosa_root))),
+        ("rocking", rocking.estimate({"raw_root": raw_root, "rocking_pattern": "rock__*"})),
+        ("matched", matched.estimate({"raw_root": raw_root, "rocking_pattern": "rock__*"})),
+    ]
+    for name, est in cases:
+        assert est.peak_bytes > 0, f"{name} fixture did not reach the priced return"
+        assert est.confidence == "measured", f"{name} still marks itself conservative"
 
 
 def test_visualize_estimator_is_not_marked(tmp_path):
@@ -827,3 +1108,296 @@ def test_alignment_estimators_read_motors_but_never_voxels(tmp_path, monkeypatch
     # looked at the file at all.
     expected, _extent = _expected_scratch_bytes()
     assert est.scratch_bytes == expected
+
+
+def test_matched_prices_the_samy_padding_the_run_will_add(tmp_path):
+    """`_apply_shift_single` builds an `(ny, nx + pads)` canvas per layer and the
+    figure rasterises it. On the real STO2 dataset the pad is 1058 px on a
+    2048-wide detector — a 52% inflation, and the single largest reason the
+    first recalibration of this stage under-predicted the real run by 2.3x.
+    """
+    from dfxm.common import alignment as A
+    from dfxm.stages import matched
+    from dfxm.stages.matched import estimate
+
+    ny = nx = 64
+    px = 0.5
+    # 40 px of total shift over 7 steps, one direction: pad_left = 40, right = 0.
+    step = 40 * px / 1000.0 / 7
+    flat = _raw_scans(tmp_path / "flat", n_scans=8, n_frames=4, ny=ny, nx=nx)
+    spread = _raw_scans(tmp_path / "spread", n_scans=8, n_frames=4, ny=ny, nx=nx, samy_step_mm=step)
+    base = {
+        "rocking_pattern": "rock__*",
+        "strain_pattern": "rock__*",
+        "pixel_size_x_um": px,
+        "samy_direction": -1,
+    }
+    samy = np.array([step * i for i in range(8)])
+    pad = int(A.compute_pad_left(samy, px, -1)) + int(A.compute_pad_right(samy, px, -1))
+    # Precondition: the fixture must actually pad, or this tests nothing.
+    assert pad > 0, "fixture produced no padding"
+
+    assert estimate({**base, "raw_root": flat}).peak_bytes == _matched_peak(
+        n_frames=4, ny=ny, nx=nx
+    )
+    assert estimate({**base, "raw_root": spread}).peak_bytes == _matched_peak(
+        n_frames=4, ny=ny, nx=nx, pad=pad
+    )
+    assert (
+        estimate({**base, "raw_root": spread}).peak_bytes
+        - estimate({**base, "raw_root": flat}).peak_bytes
+        == matched.MATCHED_PADDED_BYTES_PER_ELEM * ny * pad
+    )
+
+
+def test_matched_drops_the_clim_pool_when_both_limits_are_given(tmp_path):
+    """The ten-frame colour-limit pool only runs when `vmin`/`vmax` are blank.
+
+    Measured as the auto-minus-fixed delta at five frame sizes with fourteen
+    folders — enough to reach the ten-frame cap, which a four-folder fixture
+    never does. That is the regime the first recalibration measured in, and why
+    it under-charged this term.
+    """
+    from dfxm.stages import matched
+    from dfxm.stages.matched import estimate
+
+    root = _raw_scans(tmp_path / "raw", n_scans=12, n_frames=4, ny=32, nx=32)
+    base = {"raw_root": root, "rocking_pattern": "rock__*", "strain_pattern": "rock__*"}
+    auto = estimate(base).peak_bytes
+    fixed = estimate({**base, "vmin": "0", "vmax": "1000"}).peak_bytes
+    assert auto - fixed == matched.MATCHED_CLIM_POOL_BYTES_PER_ELEM * 32 * 32
+    # One limit alone still leaves the pool running — run() needs the other.
+    assert estimate({**base, "vmin": "0"}).peak_bytes == auto
+    assert estimate({**base, "vmax": "1000"}).peak_bytes == auto
+
+
+def test_matched_estimate_survives_unreadable_motors(tmp_path):
+    """No samy dataset at all must mean "no padding", not an exception: a run
+    whose motors are missing does no shifting either.
+    """
+    from dfxm.stages.matched import estimate
+
+    root = tmp_path / "raw"
+    scan = root / "rock__0"
+    scan.mkdir(parents=True)
+    with h5py.File(scan / "rock__0.h5", "w") as f:
+        f.create_dataset("1.1/measurement/pco_ff", shape=(4, 8, 16), dtype="uint16")
+    est = estimate(
+        {"raw_root": str(root), "rocking_pattern": "rock__*", "strain_pattern": "rock__*"}
+    )
+    assert est.peak_bytes == _matched_peak(n_frames=4, ny=8, nx=16)
+
+
+@pytest.mark.parametrize("pixel_size", ["", 0, 0.0, None, "junk"])
+def test_matched_pad_is_zero_when_the_pixel_size_is_unusable(tmp_path, pixel_size):
+    """The pads divide by the pixel size. A blank or zero one means the form is
+    not ready — not that the canvas is unbounded.
+
+    Asserted with warnings as errors, deliberately. Falling through to the
+    division would give `inf`/`nan` offsets, and `int(nan)` raises `ValueError`
+    straight into the fallback — so the estimate comes out the same either way
+    and only the numpy RuntimeWarning distinguishes a checked pixel size from an
+    accidental one. Without `simplefilter("error")` this test passes on an
+    estimator that has no check at all.
+    """
+    import warnings
+
+    from dfxm.stages.matched import estimate
+
+    root = _raw_scans(tmp_path / "raw", n_scans=8, n_frames=4, ny=64, nx=64, samy_step_mm=0.01)
+    params = {
+        "raw_root": root,
+        "rocking_pattern": "rock__*",
+        "strain_pattern": "rock__*",
+        "pixel_size_x_um": pixel_size,
+    }
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", RuntimeWarning)
+        est = estimate(params)
+    assert est.peak_bytes == _matched_peak(n_frames=4, ny=64, nx=64)
+
+
+# -----------------------------------------------------------------------------
+# What the 2026-08-26 review found, and what now pins it
+# -----------------------------------------------------------------------------
+def test_strain_canvas_follows_the_roi_the_render_will_crop_to(tmp_path):
+    """`process_maps_file` hands `build_strain_map` the ROI-CROPPED map, and
+    unlike the array term the crop does not merely shrink this one.
+
+    The legacy and `figure_width` geometries fix the width and take the height
+    from the physical aspect, so a narrow COLUMN crop makes the figure taller:
+    at the STO2 pixel sizes, 1832 columns cropped to 200 takes the canvas from
+    3.9 to 33.8 Mpx. Pricing the un-cropped layer under-predicts that 8x.
+    """
+    from dfxm.stages.strain import _plot_canvas_pixels
+
+    p = {
+        "pixel_size_x_um": 0.151733,
+        "pixel_size_y_um": 0.387584,
+        "roi": "",
+        "plot_style": None,
+    }
+    shape = (1266, 1832)
+    full = _plot_canvas_pixels(p, shape)
+    tall = _plot_canvas_pixels({**p, "roi": "0,1266,800,1000"}, shape)
+    wide = _plot_canvas_pixels({**p, "roi": "630,1266,105,1832"}, shape)
+    # Precondition: the two crops must land on opposite sides of the uncropped
+    # figure, or this passes on an estimator that ignores the ROI entirely.
+    assert tall > full > wide, f"fixture is not two-sided: {wide} {full} {tall}"
+    assert tall > 4 * full, "a narrow column crop must cost several times the full map"
+
+
+def test_strain_canvas_is_not_computed_from_a_transposed_map(tmp_path):
+    """Swapping the extents at the `strain_map_geometry` call site is invisible
+    to a `styled > plain` assertion — the fixed-scale box has the same pixel
+    count either way — so the canvas is pinned against an independently
+    computed figure here.
+    """
+    from dfxm.common.plotting import canvas_pixels
+    from dfxm.stages.strain import (
+        DETREND_DIAG_DPI,
+        DETREND_DIAG_FIGSIZE,
+        STRAIN_MAP_DPI,
+        _plot_canvas_pixels,
+    )
+
+    ny, nx, px, py = 1266, 1832, 0.151733, 0.387584
+    aspect = (ny * py) / (nx * px)
+    # Precondition: a transpose must be distinguishable, i.e. the map is not square.
+    assert abs(aspect - 1.0 / aspect) > 0.1
+    expected = canvas_pixels((7.0, 7.0 * aspect + 1.5), STRAIN_MAP_DPI) + canvas_pixels(
+        DETREND_DIAG_FIGSIZE, DETREND_DIAG_DPI
+    )
+    got = _plot_canvas_pixels(
+        {"pixel_size_x_um": px, "pixel_size_y_um": py, "roi": "", "plot_style": None}, (ny, nx)
+    )
+    assert got == expected
+
+
+@pytest.mark.parametrize(
+    "over",
+    [
+        {"pixel_size_x_um": ""},
+        {"pixel_size_x_um": 0},
+        {"pixel_size_y_um": float("inf")},
+        {"pixel_size_y_um": float("nan")},
+        {"plot_style": "junk"},
+        {"roi": "1,2,3"},
+        {"roi": "junk"},
+    ],
+)
+def test_strain_canvas_never_raises_on_a_half_typed_form(over):
+    """`_plot_canvas_pixels` runs on every GUI keystroke. An infinite pixel size
+    reaches `int(round(inf))`, which raises OverflowError — not ValueError — so
+    the except set is asserted against the real failure modes, not assumed.
+    """
+    from dfxm.stages.strain import _plot_canvas_pixels
+
+    base = {"pixel_size_x_um": 0.151733, "pixel_size_y_um": 0.387584, "roi": "", "plot_style": None}
+    px = _plot_canvas_pixels({**base, **over}, (1266, 1832))
+    assert px > 0
+
+
+def test_canvas_pixels_rounds_each_side_as_matplotlib_does():
+    from dfxm.common.plotting import canvas_pixels
+
+    assert canvas_pixels((7.0, 13.0), 200) == 1400 * 2600
+    assert canvas_pixels((7.004, 13.0), 200) == 1401 * 2600  # 1400.8 -> 1401
+    assert canvas_pixels((0.0, 13.0), 200) == 0
+    assert canvas_pixels((-5.0, 13.0), 200) == 0  # clamped, never negative
+
+
+def test_mosaicity_prices_the_widest_dataset_not_the_last_one(tmp_path):
+    """`_DATASETS` order must not decide the model. A maps.h5 with float64 chi
+    and float32 mu was priced at the mu itemsize — half the real cost.
+    """
+    from dfxm.stages import mosaicity
+    from dfxm.stages.mosaicity import estimate
+
+    root = tmp_path / "mixed"
+    folder = root / "layer__1"
+    folder.mkdir(parents=True)
+    with h5py.File(folder / "maps.h5", "w") as f:
+        # chi comes FIRST in _DATASETS and is the wide one; mu comes last.
+        f.create_dataset(MOSA_PATHS["chi_com_path"], shape=(H, W), dtype="float64")
+        f.create_dataset(MOSA_PATHS["mu_fwhm_path"], shape=(H, W), dtype="float32")
+    est = estimate(_mosa_params(str(root)))
+    assert est.peak_bytes == mosaicity.MOSAICITY_PROCESS_FLOOR_BYTES + (
+        2 + mosaicity.MOSAICITY_WRITER_LAYERS
+    ) * (H * W * 8)
+
+
+def test_rocking_prices_the_aligned_volume_not_the_frames_it_read(tmp_path):
+    """`run()` X-pads by the samy extremes and resamples Z; both inflate what
+    accumulates. On real STO2 the aligned volume is (76, 700, 2891) against a
+    1832-column read — a 1.58x inflation the model must carry.
+    """
+    from dfxm.common import alignment as A
+    from dfxm.stages import rocking
+    from dfxm.stages.rocking import estimate
+
+    ny = nx = 64
+    px = 0.5
+    step = 40 * px / 1000.0 / 7  # 40 px of total shift over 7 steps
+    flat = _raw_scans(tmp_path / "flat", n_scans=8, n_frames=3, ny=ny, nx=nx)
+    spread = _raw_scans(tmp_path / "spread", n_scans=8, n_frames=3, ny=ny, nx=nx, samy_step_mm=step)
+    base = {
+        "rocking_pattern": "rock__*",
+        "mosa_pattern": "rock__*",
+        "pixel_size_x_um": px,
+        "samy_direction": -1,
+        "save_topview": False,
+    }
+    aligned = A.aligned_shape_for_params(
+        {**rocking.STAGE.defaults(), **base, "raw_root": spread},
+        (8, ny, nx),
+        pattern_key="rocking_pattern",
+    )
+    # Precondition: the fixture must actually inflate, or this tests nothing.
+    assert aligned is not None and aligned[2] > nx, f"no padding in the fixture: {aligned}"
+
+    got = estimate({**base, "raw_root": spread}).peak_bytes
+    assert got == _rocking_peak(
+        n_scans=8, n_frames=3, ny=ny, nx=nx, volume_elems=aligned[0] * aligned[1] * aligned[2]
+    )
+    assert got > estimate({**base, "raw_root": flat}).peak_bytes
+
+
+@pytest.mark.parametrize("dtype,itemsize", [("uint16", 2), ("float32", 4), ("float64", 8)])
+def test_raw_stage_read_terms_follow_the_source_dtype(tmp_path, dtype, itemsize):
+    """rocking's per-scan read is `itemsize + 4` and matched's median term is
+    `itemsize + MEDIAN_WORKING_SET_PER_ELEMENT`; neither had a dtype test.
+    """
+    from dfxm.stages import matched
+    from dfxm.stages.matched import estimate as matched_estimate
+    from dfxm.stages.rocking import estimate as rocking_estimate
+
+    root = _raw_scans(tmp_path / f"raw{dtype}", n_scans=2, n_frames=3, dtype=dtype)
+    rock = rocking_estimate({"raw_root": root, "rocking_pattern": "rock__*", "save_topview": False})
+    assert rock.peak_bytes == _rocking_peak(n_scans=2, n_frames=3, ny=8, nx=16, itemsize=itemsize)
+    match = matched_estimate(
+        {"raw_root": root, "rocking_pattern": "rock__*", "strain_pattern": "rock__*"}
+    )
+    # Precondition: below the block cap, or the itemsize would not appear at all.
+    assert 3 * 8 * 16 * (itemsize + matched.MEDIAN_WORKING_SET_PER_ELEMENT) < (
+        matched.MEDIAN_BLOCK_WORKING_SET_BYTES
+    )
+    assert match.peak_bytes == _matched_peak(n_frames=3, ny=8, nx=16, itemsize=itemsize)
+
+
+@pytest.mark.parametrize("limit", ["-", "abc", "1e", ".", "-.", "1,2"])
+def test_matched_survives_a_half_typed_colour_limit(tmp_path, limit):
+    """`vmin`/`vmax` are free-text params and the auto-clim gate parses them, so
+    the gate must absorb what a user types on the way to a number.
+
+    `"-"` is the first keystroke of a negative limit. A limit that does not
+    parse is one run() will not use either, so the pooled pass is what happens
+    and charging it is the conservative direction as well as the correct one.
+    """
+    from dfxm.stages.matched import estimate
+
+    root = _raw_scans(tmp_path / "raw", n_scans=2, n_frames=4, ny=32, nx=32)
+    base = {"raw_root": root, "rocking_pattern": "rock__*", "strain_pattern": "rock__*"}
+    priced = _matched_peak(n_frames=4, ny=32, nx=32)
+    for over in ({"vmin": limit}, {"vmax": limit}, {"vmin": limit, "vmax": limit}):
+        assert estimate({**base, **over}).peak_bytes == priced

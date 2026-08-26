@@ -284,6 +284,18 @@ def plan_run(profile, estimate, *, allow_downsample: bool = False, scratch_dir=N
     downsample = 1
     if allow_downsample:
         # Each doubling of the factor quarters the in-plane element count.
+        #
+        # **Before wiring `allow_downsample` up to anything**: since 2026-08-26
+        # four estimators (strain, mosaicity, rocking, matched) report peaks
+        # that INCLUDE their child's process image — 96-176 MiB, plus 416 for
+        # rocking's top view. A process image does not shrink when you coarsen
+        # the data, so dividing the whole figure here under-states a downsampled
+        # run's real cost for those stages. The chunked path below divides the
+        # same way and errs the safe direction (it over-states per-layer cost and
+        # so chunks harder); this one errs the other way. No caller passes
+        # `allow_downsample=True` today, which is the only reason it is a note
+        # rather than a fix — the fix is to subtract the floor before dividing,
+        # which needs the floor to be a field on `CostEstimate`.
         while downsample < 8 and estimate.peak_bytes / (downsample**2) > budget:
             downsample *= 2
         if downsample > 1:

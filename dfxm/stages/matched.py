@@ -24,7 +24,11 @@ from ..common.errors import StageUserError
 from ..common.figures import FigureSpec, register
 from ..common.h5io import resolve_input_file
 from ..common.plotting import CMAP_CHOICES, apply_round_clim, resolve_cmap, style_from_params
-from ..common.raster import extract_motor_positions, find_h5_file
+from ..common.raster import (
+    extract_motor_positions,
+    find_h5_file,
+    motor_positions_for_estimate,
+)
 from ..common.sort import find_matching_folders
 from ..config.models import CostEstimate, Param, ParamType, SeeAlso, StageSpec
 
@@ -403,23 +407,104 @@ def _rock_h5(raw_root, name):
     return find_h5_file(os.path.join(raw_root, name))
 
 
+# --- Recalibrated 2026-08-26 against measured child peak RSS ------------------
+#
+# Two of these constants exist because the FIRST recalibration of this stage was
+# still wrong, and the real STO2 run caught it: a synthetic fixture with four
+# scan folders never reached the ten-frame colour-limit pool, and its samy
+# positions were close enough together that the X-padding was ~4% instead of
+# 52%. The model over-predicted every synthetic point and then came in at
+# **0.43x** of the real measurement. Both terms below are the fix; both are
+# measured on fixtures that reach the regime they describe.
+
+# The process image of a matched child. Measured 156.6 MiB
+# (`measure_process_floor`), charged with slack.
+MATCHED_PROCESS_FLOOR_BYTES = 176 * 1024 * 1024
+
+# The auto colour-limit pass, per element of ONE detector frame, charged only
+# when it runs (both `vmin` and `vmax` blank). It holds up to ten whole frames
+# of finite values in `pooled`, `np.concatenate`s them into one array of the
+# same total size, and then `np.percentile` partitions a copy of THAT — three
+# pool-sized arrays, not three frame-sized ones. Measured as the auto-minus-
+# fixed delta at five frame sizes with fourteen folders (so the ten-frame cap is
+# really reached): 11 to 13 frames' worth, i.e. 88-104 B per frame element.
+MATCHED_CLIM_POOL_BYTES_PER_ELEM = 80
+
+# Everything sized by the PADDED canvas, per element of it: `_apply_shift_single`
+# builds an `(ny, nx_new)` float64 for each layer and `render.layer_figure`
+# rasterises it. Isolated by holding the frame at 1024x1024 and spreading samy
+# so the padding ran 0 / 0.5x / 1x / 2x of the frame width: peak RSS rose
+# 412.4 -> 463.8 -> 525.2 -> 631.8 MiB, i.e. **98, 108 and 105 B per extra
+# element** — as linear as anything in this campaign. 208 is that rate plus the
+# per-layer working set the fit attributes to the same quantity, rounded up
+# until the real STO2 run keeps a ~17% margin rather than the ~11% the fitted
+# value left it; the real run is the configuration that matters and the one
+# whose regime the synthetic fixtures kept missing.
+MATCHED_PADDED_BYTES_PER_ELEM = 208
+
+
+def _auto_clim(p: dict) -> bool:
+    """Whether ``run()`` will take the auto colour-limit path.
+
+    ``vmin``/``vmax`` are free-text params, so ``_parse_float`` raises on
+    anything half-typed — ``"-"`` is the first keystroke of a negative limit —
+    and this is called outside ``estimate()``'s try. A limit that does not parse
+    is a limit ``run()`` will not use either, so the pooled pass is what happens
+    and charging it is both correct and the conservative direction.
+    """
+    for key in ("vmin", "vmax"):
+        try:
+            if _parse_float(p.get(key)) is None:
+                return True
+        except (TypeError, ValueError):
+            return True
+    return False
+
+
+def _samy_pad_px(p: dict) -> int:
+    """X-padding (px) ``run()`` will add, from the strain layers' samy positions.
+
+    Mirrors ``run()``'s ``compute_pad_left + compute_pad_right`` on the same
+    inputs. Returns 0 — the un-padded model, which is what a run without motors
+    actually does — whenever the motors cannot be read or the pixel size is
+    unusable. Never raises: this is called on every GUI form change.
+    """
+    try:
+        # No guard on an empty `samy` here: `motor_positions_for_estimate`
+        # returns empty arrays when the motors are unreadable and
+        # `compute_pad_left`/`compute_pad_right` both answer 0 for those, which
+        # is the correct model — a run without motors does no shifting. A guard
+        # would be unreachable, and unreachable guards are how this project has
+        # repeatedly ended up with checks that check nothing.
+        samy, _samz = motor_positions_for_estimate(
+            p.get("raw_root"),
+            p.get("strain_pattern"),
+            str(p.get("samy_path") or "1.1/instrument/positioners/samy"),
+            str(p.get("samz_path") or "1.1/instrument/positioners/samz"),
+        )
+        scale_x = float(p.get("pixel_size_x_um") or 0.0)
+        if not scale_x > 0:
+            # The pads divide by the pixel size. A blank or zero one means the
+            # form is not ready, not that the canvas is infinite.
+            return 0
+        direction = int(p.get("samy_direction") or 1)
+        return int(A.compute_pad_left(samy, scale_x, direction)) + int(
+            A.compute_pad_right(samy, scale_x, direction)
+        )
+    except (OSError, TypeError, ValueError, ZeroDivisionError):
+        return 0
+
+
 def estimate(params: dict) -> CostEstimate:
     """Peak memory for a matched run, from HDF5 shapes only.
 
     ``run()`` loads **one** scan at a time via ``load_pco_ff_frame`` — the
-    matched-layer loop calls it per output layer, and ``stack``/``background``
-    are locals that die on return, so nothing accumulates across layers except
-    the small pooled-clim list. Within one call: ``ds[:].astype(np.float64)``
-    holds the source stack (native dtype) and its float64 copy together, and
-    ``np.nanmedian(stack, axis=0)`` needs its own internal float64-sized copy
-    of the stack to sort along axis 0 — ``scan_elems * (itemsize + 16)``. On
-    top of that, up to ~10 pooled clim arrays plus a couple of frame-sized
-    working copies (``background``, ``corrected``) persist at once, bounded as
-    ``12 * frame_elems * 8``. Peak is therefore
-    ``scan_elems * (itemsize + 16) + 12 * frame_elems * 8`` for one scan,
-    independent of the folder count — ``input_bytes`` still sums every
-    matching folder's stack (the data that will eventually be read, even
-    though only one is resident at a time).
+    matched-layer loop calls it per output layer, and that function's ``block``/
+    ``sub``/``out`` locals die on return. What *does* survive the loop is the
+    colour-limit pool (``pooled`` and its ``allv`` concatenation are never
+    deleted), which is why it is priced separately below. ``input_bytes`` still
+    sums every matching folder's stack — the data that will eventually be read,
+    even though only one scan is resident at a time.
 
     ``chunkable=True``. The median needs the whole stack along the **frame
     axis** only — no pixel's median depends on any other pixel's — so
@@ -427,13 +512,40 @@ def estimate(params: dict) -> CostEstimate:
     back (see that function). The earlier ``False``, reasoned "an exact median
     needs the whole stack", was a statement the code itself contradicts.
 
-    Two caveats this model carries, both deliberately left for the
-    estimator-recalibration pass rather than fixed here. The peak expression
-    still describes the *un-budgeted* whole-stack form, so it is now a ceiling
-    reached only when a scan fits :data:`MEDIAN_BLOCK_WORKING_SET_BYTES` in one
-    block; and its ``+ 16`` under-states ``np.nanmedian``'s real internals,
-    measured at 35-50 B/element depending on the frame count (see
-    :data:`MEDIAN_WORKING_SET_PER_ELEMENT`, charged at 64).
+    **What recalibration changed (2026-08-26).** The old peak,
+    ``scan_elems * (itemsize + 16) + 12 * frame_elems * 8``, described the
+    *un-budgeted* whole-stack form and so grew without bound with the frame
+    count. It does not: :func:`load_pco_ff_frame` bounds one block's working set
+    at :data:`MEDIAN_BLOCK_WORKING_SET_BYTES`, and the measurement shows it —
+    at 512x512 the peak is **flat** across 21, 51, 101 and 201 frames (217.6,
+    213.5, 217.8, 215.8 MiB), while the old model climbed to 928 MiB, a 4.3x
+    over-prediction. The median term is therefore capped at that constant, and
+    the ``+ 16`` per element is replaced by the measured
+    :data:`MEDIAN_WORKING_SET_PER_ELEMENT` the blocking itself budgets against
+    — the two now agree instead of contradicting each other.
+
+    The peak is
+    :data:`MATCHED_PROCESS_FLOOR_BYTES` ``+ min(scan_elems * (itemsize +``
+    :data:`MEDIAN_WORKING_SET_PER_ELEMENT` ``),``
+    :data:`MEDIAN_BLOCK_WORKING_SET_BYTES` ``) +``
+    :data:`MATCHED_PADDED_BYTES_PER_ELEM` ``* padded_elems``, plus
+    :data:`MATCHED_CLIM_POOL_BYTES_PER_ELEM` ``* frame_elems`` when the auto
+    colour-limit pass runs. Still independent of the folder count.
+
+    ``padded_elems`` is ``ny * (nx + pad_left + pad_right)``, the canvas
+    :func:`_apply_shift_single` builds and :func:`render.layer_figure`
+    rasterises. The pads come from the **strain** layers' samy positions
+    (:func:`alignment.compute_pad_left`/``compute_pad_right``, exactly as
+    ``run()`` computes them), read through
+    :func:`raster.motor_positions_for_estimate` — memoised, never raising, and
+    returning empty when the motors are unavailable, which is the right model
+    for that path because a run without motors does no shifting either. On the
+    real STO2 dataset the pad is **1058 px on a 2048-wide detector**: a 52%
+    inflation of everything downstream, and the largest single reason the first
+    recalibration of this stage under-predicted the real run by 2.3x.
+
+    **Currency**: ``peak_bytes`` is whole-child peak RSS, process image
+    included — see :func:`dfxm.stages.strain.estimate`.
     """
     p = {**STAGE.defaults(), **params}
     try:
@@ -457,7 +569,28 @@ def estimate(params: dict) -> CostEstimate:
         elems *= dim
     frame_elems = elems // scan_shape[0] if scan_shape and scan_shape[0] else elems
     input_bytes = len(folders) * elems * itemsize
-    peak = elems * (itemsize + 16) + 12 * frame_elems * 8
+    # Two edges this cap does not describe, both left as notes rather than terms
+    # because neither is reachable on this beamline's data and a guessed bound
+    # would be worse than a named residual:
+    #
+    # * `_layers_per_block` floors the blocking at ONE detector row, so a stack
+    #   whose single row exceeds the cap (roughly >1500 frames on a 2048-wide
+    #   detector) really does hold more than `MEDIAN_BLOCK_WORKING_SET_BYTES`.
+    #   STO2's rocking scans carry 50.
+    # * `frame_elems` below divides by `scan_shape[0]`, which assumes a 3-D
+    #   dataset. `load_pco_ff_frame` also accepts a 2-D one (no blocking at all),
+    #   and for that shape this arithmetic gives the column count instead of the
+    #   frame — a large under-count. No 2-D `pco_ff` exists in this dataset.
+    median_bytes = min(
+        elems * (itemsize + MEDIAN_WORKING_SET_PER_ELEMENT),
+        MEDIAN_BLOCK_WORKING_SET_BYTES,
+    )
+    ny = scan_shape[1] if len(scan_shape) > 1 else 1
+    nx = scan_shape[2] if len(scan_shape) > 2 else frame_elems
+    padded_elems = ny * (nx + _samy_pad_px(p))
+    peak = MATCHED_PROCESS_FLOOR_BYTES + median_bytes + MATCHED_PADDED_BYTES_PER_ELEM * padded_elems
+    if _auto_clim(p):
+        peak += MATCHED_CLIM_POOL_BYTES_PER_ELEM * frame_elems
     # `shape[0]` here counts scan FOLDERS, but what the stage chunks is one
     # scan's detector rows, so it names its own span rather than let
     # `advice.plan_run` read the folder count and call it "layers".
@@ -469,7 +602,6 @@ def estimate(params: dict) -> CostEstimate:
         True,
         None,
         (rows, "detector rows"),
-        confidence="conservative",
     )
 
 

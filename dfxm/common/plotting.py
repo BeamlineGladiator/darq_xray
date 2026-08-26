@@ -274,6 +274,43 @@ def figure_size(style: PlotStyle, ext_x: float, ext_y: float) -> tuple[float, fl
     return (float(w), float(w) * aspect + 1.0)
 
 
+# What one Agg render of a figure costs in bytes per canvas pixel, for a stage
+# estimating its own peak. A single RGBA buffer is 4 B/px; this is 16 of them,
+# because saving a figure is not one render:
+#
+# * ``bbox_inches="tight"`` draws the figure once to find the tight bounding box
+#   and again to rasterise it;
+# * ``fit_axes_to_box`` (the fixed-scale path) iterates to convergence, drawing
+#   each time;
+# * the PNG encoder holds its own copy of the finished buffer.
+#
+# **Measured, not argued** (2026-08-26, `strain` at 1266x1832 with
+# ``scale_um_per_cm`` set to 20 / 10 / 6.4, giving canvases of 4.84 / 12.09 /
+# 25.03 Mpx): peak RSS rose 579.3 -> 971.2 -> 1682.2 MiB, whose local slopes are
+# **54.1, 54.4 and 54.2 B per canvas pixel** — the most linear relationship in
+# that campaign. 64 is that rate rounded up to a whole RGBA multiple.
+#
+# The rate is the *fixed-scale* one. The legacy path (no ``fit_axes_to_box``)
+# comes in below it, so charging this to both over-states the cheaper path,
+# which is the safe direction. Read this constant; do not re-derive it from
+# "how many buffers should Agg need", which is how the under-count that
+# preceded it was arrived at.
+AGG_RENDER_BYTES_PER_PIXEL = 64
+
+
+def canvas_pixels(figsize: tuple[float, float], dpi: float) -> int:
+    """Pixels in an Agg canvas of *figsize* inches at *dpi*.
+
+    The geometry half of :data:`AGG_RENDER_BYTES_PER_PIXEL`, split out so a
+    stage's ``estimate()`` sizes the same canvas its ``run()`` will actually
+    rasterise. Matplotlib rounds each side to whole pixels, so this does too.
+    """
+    w_in, h_in = figsize
+    return max(0, int(round(float(w_in) * float(dpi)))) * max(
+        0, int(round(float(h_in) * float(dpi)))
+    )
+
+
 _MAX_FIXED_SIDE_IN = 30.0  # sanity cap: a typo scale must not request a 47k-pixel render
 
 
