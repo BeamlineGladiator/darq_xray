@@ -491,19 +491,47 @@ def estimate(params: dict) -> CostEstimate:
 def _plot_canvas_pixels(p: dict, layer_shape: tuple[int, ...]) -> int:
     """Canvas pixels the two full-size per-layer figures rasterise to.
 
-    The histogram is left out deliberately: its figure is small and fixed, and
-    the slack in :data:`STRAIN_PLOT_PROCESS_BYTES` covers it. Degrades to the
-    legacy geometry if the style or the pixel sizes are unusable — an estimate
-    is advisory and must not raise on a half-typed form.
+    Sized from the **ROI-cropped** map, because that is what
+    ``process_maps_file`` hands ``build_strain_map`` — and unlike the array
+    term, cropping does not merely shrink this one. The legacy and
+    ``figure_width`` geometries fix the width and take the height from the
+    physical aspect, so a narrow **column** crop makes the figure *taller*: at
+    the real STO2 pixel sizes, cropping 1832 columns to 200 takes the canvas
+    from 3.9 to 32 Mpx. Charging the un-cropped layer here would under-predict
+    that by 8x, and under-prediction is the direction that OOMs.
+
+    The two figures are charged as a sum although they render sequentially, so
+    the true peak is the larger of them. That over-charge is deliberate and is
+    what covers the third figure — the histogram — which is not modelled at all.
+
+    Degrades to the legacy geometry at the layer's **taller** orientation if the
+    style or the pixel sizes are unusable — ``max(ny/nx, nx/ny)``, because the
+    aspect is what sets the height and a bare ``ny/nx`` picks the cheaper of the
+    two for no reason. That is still a floor rather than a bound: the real
+    geometry uses the *physical* aspect ``(ny*py)/(nx*px)``, which without usable
+    pixel sizes is not derivable. It is not a hazard, because a form whose pixel
+    sizes do not parse cannot run at all — ``run()`` calls
+    ``float(p["pixel_size_x_um"])`` on the way into every layer — so this figure
+    only ever describes a form the user is still filling in.
     """
+    ny, nx = 1, 1
     try:
         ny, nx = int(layer_shape[-2]), int(layer_shape[-1])
+        roi = _parse_roi(p.get("roi"))
+        if roi is not None:
+            r0, r1, c0, c1 = roi
+            if r1 > r0 and c1 > c0:
+                ny, nx = min(ny, r1) - max(0, r0), min(nx, c1) - max(0, c0)
         px, py = float(p["pixel_size_x_um"]), float(p["pixel_size_y_um"])
         figsize, _box = strain_map_geometry(style_from_params(p), nx * px, ny * py)
+    except (KeyError, IndexError, TypeError, ValueError, ArithmeticError):
+        aspect = max(ny / nx, nx / ny) if (nx and ny) else 1.0
+        figsize = (7.0, 7.0 * aspect + 1.5)
+    try:
         return canvas_pixels(figsize, STRAIN_MAP_DPI) + canvas_pixels(
             DETREND_DIAG_FIGSIZE, DETREND_DIAG_DPI
         )
-    except (KeyError, IndexError, TypeError, ValueError, ZeroDivisionError):
+    except (TypeError, ValueError, ArithmeticError):
         return canvas_pixels((7.0, 8.5), STRAIN_MAP_DPI) + canvas_pixels(
             DETREND_DIAG_FIGSIZE, DETREND_DIAG_DPI
         )
@@ -531,7 +559,16 @@ def strain_map_geometry(
     The one place the strain map's figure size is decided, shared by
     :func:`build_strain_map` (which renders it) and :func:`estimate` (which
     prices the canvas). They drifting apart is exactly how a fixed-scale style
-    could grow the canvas 6x with the estimate unmoved.
+    could grow the canvas 6x with the estimate unmoved — though sharing the
+    function is not sufficient on its own: the two call sites passed *different*
+    extents (full layer vs ROI-cropped) until a review caught it, so check the
+    arguments as well as the callee.
+
+    **One behaviour change from the inline code this replaced**: a zero
+    ``ext_x_um`` (a blank pixel size, or a zero-width layer) used to raise
+    ``ZeroDivisionError`` out of ``build_strain_map``; it now yields aspect 1.0
+    and a ``(7.0, 8.5)`` figure. Rendering something square beats crashing a
+    render, and the estimator needs a number rather than an exception.
     """
     legacy = (7.0, 7.0 * (ext_y_um / ext_x_um if ext_x_um else 1.0) + 1.5)
     if style is None:

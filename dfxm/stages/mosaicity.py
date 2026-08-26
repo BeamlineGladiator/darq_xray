@@ -427,6 +427,16 @@ MOSAICITY_PROCESS_FLOOR_BYTES = 96 * 1024 * 1024
 MOSAICITY_WRITER_LAYERS = 3
 
 
+def _elems(shape: tuple[int, ...]) -> int:
+    """Element count of *shape*; 0 for the empty tuple (no dataset seen yet)."""
+    if not shape:
+        return 0
+    n = 1
+    for dim in shape:
+        n *= int(dim)
+    return n
+
+
 def estimate(params: dict) -> CostEstimate:
     """Peak memory for a mosaicity run, from HDF5 shapes only.
 
@@ -465,15 +475,22 @@ def estimate(params: dict) -> CostEstimate:
             return CostEstimate(0, 0, None, True, "no layer folders resolved yet")
         present = 0
         layer_shape: tuple[int, ...] = ()
-        itemsize = 8
+        itemsize = 0
         with h5py.File(work[0], "r") as f:
             for key, _default, _group, _name in _DATASETS:
                 ds_path = str(p.get(key) or "")
                 if ds_path and ds_path in f:
                     ds = f[ds_path]
-                    layer_shape = tuple(int(d) for d in ds.shape)
-                    itemsize = int(ds.dtype.itemsize)
+                    ds_shape = tuple(int(d) for d in ds.shape)
+                    # The LARGEST of the present datasets on both counts, not
+                    # whichever happens to come last in `_DATASETS`. A maps.h5
+                    # with float64 chi and float32 mu was being priced at the
+                    # mu itemsize — half the real cost, the direction that OOMs.
+                    if _elems(ds_shape) > _elems(layer_shape):
+                        layer_shape = ds_shape
+                    itemsize = max(itemsize, int(ds.dtype.itemsize))
                     present += 1
+        itemsize = itemsize or 8
         if not present:
             return CostEstimate(0, 0, None, True, "none of the mosaicity datasets found")
     except Exception as exc:  # noqa: BLE001 - an estimate is advisory, never fatal

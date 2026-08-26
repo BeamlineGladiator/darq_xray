@@ -753,10 +753,23 @@ def _motors(raw_root: str, pattern: str, samy_path: str, samz_path: str):
 # conditional: both are small, and over-stating a toggled-off product is safe.
 ROCKING_PROCESS_FLOOR_BYTES = 176 * 1024 * 1024
 
-# Per element of the accumulated volumes, per scan: `sum_slices`/`spec_slices`
-# and the `np.stack` copies of each, then the alignment's padded canvas and
-# uniform-Z resample, then the aligned-h5 write. Measured **48.5 B** by least
-# squares over the scan-size and scan-count sweeps.
+# Per element of the ALIGNED volume: `sum_slices`/`spec_slices` and the
+# `np.stack` copies of each, the alignment's padded canvas and uniform-Z
+# resample, the aligned-h5 write, and the per-layer render. Measured **48.5 B**
+# by least squares over the scan-size and scan-count sweeps (r2 0.997).
+#
+# **Known looseness, measured rather than suspected.** Those sweeps used 21-frame
+# scans, where this term is what the whole peak is made of. On the real STO2
+# form the scans carry 575 frames, the per-scan read dominates instead, and the
+# volume's own marginal comes out at about **11 B per aligned element** — so the
+# model over-predicts that run by 1.9x (11.168 GiB against a measured 5.841).
+# 48 is kept because it is what the small-frame regime measures and a model must
+# cover both; tightening it means re-measuring across frame counts on real data,
+# not splitting the difference. The two regimes and their figures:
+#
+#   synthetic, 21 frames, 6-24 scans  ->  1.14-1.56x over
+#   real STO2, 575 frames, 10 layers  ->  1.14x over
+#   real STO2, 575 frames, 76 layers  ->  1.91x over
 ROCKING_VOLUME_BYTES_PER_ELEM = 48
 
 # What `save_topview` adds: the pyvista/VTK import and a render context. It is
@@ -838,10 +851,10 @@ def estimate(params: dict) -> CostEstimate:
         return CostEstimate(0, 0, None, True, f"cannot size input: {type(exc).__name__}")
 
     n = len(folders)
-    scan_elems = 1
+    detector_elems = 1
     for dim in scan_shape:
-        scan_elems *= dim
-    total = n * scan_elems * itemsize  # the whole input on disk, ROI or not
+        detector_elems *= dim
+    total = n * detector_elems * itemsize  # the whole input on disk, ROI or not
 
     # `process_raw_scan` reads `det[:, ys:ye, xs:xe]`, so everything downstream
     # — the float32 copy, both accumulators, the aligned volumes — is sized by
@@ -860,12 +873,37 @@ def estimate(params: dict) -> CostEstimate:
         roi_x = roi_y = None
     rows = _roi_span(roi_y, full_h)
     cols = _roi_span(roi_x, full_w)
-    layer_elems = rows * cols
-    scan_elems = n_frames * layer_elems
+    read_elems = rows * cols
+    scan_elems = n_frames * read_elems
+
+    # The volumes that accumulate are not the frames that were read: the
+    # alignment X-pads them by the samy extremes and resamples Z onto a uniform
+    # grid, and both inflations compound. `aligned_shape_for_params` is the one
+    # implementation of that — a per-caller copy is exactly how the seven peak
+    # models drifted apart before — and it returns None on the no-motor path,
+    # where run() does no shifting and the read shape IS the volume shape.
+    #
+    # It is handed the ALREADY-cropped shape, with ROI keys it will not find, so
+    # that `_roi_span` above stays the single place this estimator resolves an
+    # ROI. Letting it re-parse `roi_x`/`roi_y` itself put two different ROI
+    # semantics in one model, which disagreed on exactly the malformed inputs
+    # `_roi_span` exists to absorb.
+    aligned = A.aligned_shape_for_params(
+        p,
+        (n, rows, cols),
+        pattern_key=pattern_key,
+        roi_x_key="__roi_already_applied__",
+        roi_y_key="__roi_already_applied__",
+    )
+    if aligned is not None:
+        nz, ny_a, nx_a = aligned
+        volume_elems = int(nz) * int(ny_a) * int(nx_a)
+    else:
+        volume_elems = n * read_elems
     peak = (
         ROCKING_PROCESS_FLOOR_BYTES
         + scan_elems * (itemsize + 4)
-        + ROCKING_VOLUME_BYTES_PER_ELEM * n * layer_elems
+        + ROCKING_VOLUME_BYTES_PER_ELEM * volume_elems
     )
     if p["save_topview"]:
         peak += ROCKING_TOPVIEW_BYTES

@@ -428,10 +428,14 @@ the old ones:
   two errors pointed in opposite directions, so the figure could be far too low
   on short scans and far too high on long ones. Both are now modelled: unticking
   **Save top view** visibly drops the cost line, and so does tightening the ROI.
-- **A publication fixed scale is priced.** Setting **Scale (µm/cm)** in the
-  style panel can make each `strain` layer's figure many times larger in pixels,
-  and that really does cost memory (measured: 465 MB → 1.6 GB on one dataset).
-  The cost line follows the style you have set, so it moves when you change it.
+- **The figure you are about to render is priced, style and ROI included.**
+  Setting **Scale (µm/cm)** in the style panel can make each `strain` layer's
+  figure many times larger in pixels, and that really does cost memory
+  (measured: 465 MB → 1.6 GB on one dataset). So can a **narrow ROI**: the
+  figure keeps its width and takes its height from the data's shape, so cropping
+  to a tall thin column makes the image taller, not smaller — on the STO2
+  geometry, cropping 1832 columns to 200 takes the render from 3.9 to 34
+  megapixels. The cost line follows both, so it moves when you change either.
 
 A small dataset will now show a floor of a few hundred MB even when the data
 itself is tiny. That is not the estimator being pessimistic — it is what a
