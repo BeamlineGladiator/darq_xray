@@ -408,6 +408,15 @@ M GiB RAM" in the status bar is expected, not a contradiction — the status bar
 reports what the machine has, this line reports what a run is allowed to take.
 **System check…** shows the same figure on its own **Headroom** row. The budget
 only decides whether a run streams or stays in memory; it never blocks a run.
+
+**The budget went up on 2026-08-26** — from 75%/65% of available/total RAM to
+85%/80%, which on this machine moved it from 326.6 to 398.0 GiB. That was held
+back until the memory estimates had been measured against real runs rather than
+inferred, because a run that is under-estimated *and* judged against a looser
+budget is how you get an out-of-memory failure instead of a slow run. Since the
+estimates now over-predict every case they have been checked against, the extra
+budget is safe to spend. The practical effect is that fewer runs stream, so more
+of them stay in memory and finish faster; the products are identical either way.
 `needs ~N` is a normal estimate;
 `at most ~N (conservative estimate)` means the stage's estimator has not been
 recalibrated since the last rewrite and tends to over-predict, so the real run

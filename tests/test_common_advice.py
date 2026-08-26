@@ -32,18 +32,36 @@ def _est(peak_gb, *, chunkable=True, shape=(100, 700, 2891)):
 
 
 def test_headroom_is_the_tighter_of_the_two_limits():
-    """Each fixture is chosen so a *different* one of the two limits binds.
+    """Each case is chosen so a *different* one of the two limits binds.
 
     Asserted against the constants rather than their literal values, so tuning
-    the fractions (0.6/0.5 -> 0.75/0.65 on 2026-08-25) does not turn this into a
-    busywork edit — while still failing loudly if a change ever flips which
-    limit binds, which is the property the test actually names. Substituting one
-    fraction for the other in either line is the mutation: both fail.
+    the fractions (0.6/0.5 -> 0.75/0.65 on 2026-08-25, -> 0.85/0.80 on
+    2026-08-26) does not turn this into a busywork edit — while still failing
+    loudly if a change ever flips which limit binds, which is the property the
+    test actually names. Substituting one fraction for the other in either line
+    is the mutation: both fail.
+
+    The TOTAL case builds its own profile rather than using a shared fixture.
+    The 2026-08-26 raise moved the crossover to `available/total >= 0.941`, and
+    no shared fixture is that idle — `workstation_sw_gl` sits at 460/502 = 0.916
+    and now binds on AVAILABLE like everything else. Left on that fixture this
+    test would still have passed, silently covering one branch twice.
     """
-    # workstation: 0.75*460 = 345 GB (available) vs 0.65*502 = 326 GB (total)
-    assert headroom_bytes(workstation_sw_gl()) == int(TOTAL_FRACTION * 502 * GB)
-    # tiny_ram: 0.75*1 = 0.75 GB (available) vs 0.65*8 = 5.2 GB (total)
+    # The crossover itself, stated rather than implied: TOTAL binds only above it.
+    crossover = TOTAL_FRACTION / AVAILABLE_FRACTION
+    idle = dataclasses.replace(workstation_sw_gl(), ram_available=int(0.98 * 502 * GB))
+    assert idle.ram_available / idle.ram_total > crossover, "fixture is not idle enough"
+    assert headroom_bytes(idle) == int(TOTAL_FRACTION * 502 * GB)
+
+    # tiny_ram: almost nothing free, so the available side binds by a wide margin.
+    assert tiny_ram().ram_available / tiny_ram().ram_total < crossover
     assert headroom_bytes(tiny_ram()) == int(AVAILABLE_FRACTION * 1 * GB)
+
+    # And the shared workstation fixture, which the raise moved across the line —
+    # asserted so a future change that moves it back is visible here.
+    ws = workstation_sw_gl()
+    assert ws.ram_available / ws.ram_total < crossover
+    assert headroom_bytes(ws) == int(AVAILABLE_FRACTION * 460 * GB)
 
 
 FLOOR = 250 * 1024 * 1024  # a VTK-importing stage's process image
