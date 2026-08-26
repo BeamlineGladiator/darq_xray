@@ -225,3 +225,24 @@ def test_save_top_view_end_to_end_all_modes(tmp_path):
             window_size=(160, 120),
         )
         assert out is not None and os.path.getsize(out) > 0
+
+
+def test_save_top_view_reports_its_two_costs(tmp_path):
+    """The GL render and the `savefig` are the whole of a top view.
+
+    Pinned against real GL because that is where the render actually happens;
+    `visualize`/`rocking` only forward a sub-range into this, and on a dataset
+    whose other products are switched off that sub-range is most of the bar.
+    """
+    seen = []
+    out = R3.save_top_view(
+        _scene(),
+        os.path.join(tmp_path, "top.png"),
+        cbar_label="x",
+        progress=lambda f, t="": seen.append((f, t)),
+    )
+    assert out and os.path.exists(out)
+    fracs = [f for f, _ in seen]
+    assert fracs == sorted(fracs), seen
+    assert fracs[-1] == 1.0, seen
+    assert len(seen) >= 2, seen

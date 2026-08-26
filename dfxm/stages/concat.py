@@ -36,6 +36,7 @@ import h5py
 import numpy as np
 
 from ..common import h5io
+from ..common import progress as _progress_mod
 from ..common.errors import StageUserError
 from ..common.sort import find_matching_folders
 from ..config.models import Param, ParamType, StageSpec
@@ -391,12 +392,13 @@ def concatenate_single_file(
                     compression="gzip",
                 )
                 idx = 0
+                copy_progress = _progress_mod.sub_progress(progress, 0.5, 0.9)
                 for j, entry in enumerate(valid_entries):
                     src = h5in[f"{entry}/{detector_read_path}"]
                     n = entries_n_frames[j]
                     dset[idx : idx + n] = src[()]
                     idx += n
-                    progress(0.5 + 0.4 * (j + 1) / len(valid_entries), f"copied {entry}")
+                    copy_progress((j + 1) / len(valid_entries), f"copied {entry}")
             else:
                 progress(0.55, "building detector VDS")
                 # An explicit loop rather than a comprehension so the VDS build

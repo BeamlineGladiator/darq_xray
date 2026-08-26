@@ -574,16 +574,25 @@ def build_detrend_diag(
 # Figure catalog
 # -----------------------------------------------------------------------------
 def _detrend_ccmth(
-    maps_path: str, ccmth_com_path: str, roi: list | None
+    maps_path: str, ccmth_com_path: str, roi: list | None, progress=None
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Load ccmth, detrend (arctan surface), then ROI-crop. Returns (original, detrended, surface).
 
     Detrend BEFORE ROI (project invariant). Used by both process_maps_file (run) and
     figures()._build_detrend (export rebuild) so the two can never drift.
+
+    *progress* takes a local 0..1 fraction. The two slow steps are the HDF5 read
+    and the arctan surface fit over the full map — the crops after them are
+    views. Together they are the first half of a layer, and before this the
+    whole of it passed in silence: a one-layer run (`single` mode, which is one
+    layer by definition) said nothing at all until 0.45.
     """
+    report = progress or _progress_mod.noop
     ccmth_map = load_map(maps_path, ccmth_com_path)
+    report(0.55, "ccmth read")
     ccmth_original = ccmth_map.copy()
     ccmth_map, surface = detrend_arctan_2d(ccmth_map)
+    report(1.0, "detrended")
     ccmth_map = apply_roi(ccmth_map, roi)
     surface = apply_roi(surface, roi)
     ccmth_original = apply_roi(ccmth_original, roi)
@@ -792,18 +801,24 @@ def process_maps_file(
     *progress* takes a local 0..1 fraction over this layer's own work. There is
     no loop here to report from — reading and detrending the map, and then
     rendering each plot, are individually slow steps — so the boundaries between
-    them are where it speaks.
+    them are where it speaks, including the two inside `_detrend_ccmth`. It
+    reports its own end rather than relying on the caller to close the layer,
+    because a `save_plots=False` run has nothing after `compute_strain`.
     """
     report = progress or _progress_mod.noop
     # detrend ccmth on the FULL map, THEN crop ROI (order matters)
-    ccmth_original, ccmth_map, surface = _detrend_ccmth(maps_path, ccmth_com_path, roi)
+    ccmth_original, ccmth_map, surface = _detrend_ccmth(
+        maps_path,
+        ccmth_com_path,
+        roi,
+        progress=_progress_mod.sub_progress(progress, 0.0, 0.45),
+    )
     report(0.45, f"{name}: detrended")
 
     strain = compute_strain(ccmth_map, ccmth_ref_deg)
     report(0.6, f"{name}: strain computed")
 
     plots: list[str] = []
-    report(0.7, f"{name}: rendering plots")
     if save_plots and out_dir:
         os.makedirs(out_dir, exist_ok=True)
         p = os.path.join(out_dir, f"{name}_strain.png")
@@ -811,16 +826,22 @@ def process_maps_file(
             p, dpi=200, bbox_inches="tight", facecolor="white"
         )
         plots.append(p)
+        report(0.75, f"{name}: strain map saved")
         ph = os.path.join(out_dir, f"{name}_hist.png")
         hist_fig = build_strain_histogram(strain, style=style)
         if hist_fig is not None:
             hist_fig.savefig(ph, dpi=150, bbox_inches="tight", facecolor="white")
             plots.append(ph)
+        report(0.85, f"{name}: histogram saved")
         pd = os.path.join(out_dir, f"{name}_detrend_diag.png")
         build_detrend_diag(ccmth_original, ccmth_map, surface, style=style).savefig(
             pd, dpi=120, bbox_inches="tight", facecolor="white"
         )
         plots.append(pd)
+    # Reported whether or not plots were saved: the layer is finished either
+    # way, and leaving the last word to the plot branch left a `save_plots=False`
+    # run reporting 0.6 and then nothing until the caller closed the layer.
+    report(1.0, f"{name}: done")
 
     layer = LayerResult(
         name=name,

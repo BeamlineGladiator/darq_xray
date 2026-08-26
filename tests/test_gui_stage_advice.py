@@ -17,8 +17,8 @@ from dfxm.common.advisory import Advisory  # noqa: E402
 from dfxm.config.models import Experiment  # noqa: E402
 from gui.bindings import STAGE_SPECS  # noqa: E402
 from gui.stage_view import StageView  # noqa: E402
-from gui.theme import apply_theme  # noqa: E402
 from tests.machine_fixtures import workstation_sw_gl  # noqa: E402
+from tests.qt_helpers import applied_theme  # noqa: E402
 
 # The real headline from the first STO2 `visualize` run (in the wording that
 # replaced "safely available") — long enough to wrap in the banner at the width
@@ -176,9 +176,7 @@ def test_the_banner_grows_to_fit_a_wrapped_message():
     a pixel count keeps this honest across fonts and DPI.
     """
     app = QApplication.instance()
-    previous = app.styleSheet()
-    apply_theme(app, "light")
-    try:
+    with applied_theme(app, "light"):
         view = StageView("visualize", STAGE_SPECS["visualize"], Experiment())
         view.resize(1000, 800)
         view.show()
@@ -203,5 +201,3 @@ def test_the_banner_grows_to_fit_a_wrapped_message():
         # banner that ignored it would measure short and this test could fail.
         assert styled.heightForWidth(width) > plain.heightForWidth(width)
         assert view._banner.heightForWidth(width) == styled.heightForWidth(width)
-    finally:
-        app.setStyleSheet(previous)

@@ -14,6 +14,8 @@ from dataclasses import dataclass
 import numpy as np
 from matplotlib.figure import Figure
 
+from . import progress as _progress
+
 PRESETS = ("front", "top", "side", "iso")
 OPACITY_MAPPINGS = ("linear", "sigmoid", "geom", "geom_r")
 RENDER_MODES = ("volume", "surface", "isosurface")
@@ -634,12 +636,27 @@ def _orbit_frames(scene: Scene3D, *, elevation, zoom, base_camera, window_size):
 
 
 def save_top_view(
-    scene: Scene3D, path, *, cbar_label, group=None, style=None, window_size=(1920, 1080)
+    scene: Scene3D,
+    path,
+    *,
+    cbar_label,
+    group=None,
+    style=None,
+    window_size=(1920, 1080),
+    progress=None,
 ):
-    """Styled top-view figure (colorbar + scale bar); returns path or None if empty."""
+    """Styled top-view figure (colorbar + scale bar); returns path or None if empty.
+
+    *progress* takes a **local** 0..1 fraction. The two costs are the offscreen
+    GL render of the whole volume and the `savefig` of the figure built around
+    it; without them the caller can only mark the boundaries either side, which
+    on a dataset whose other products are switched off is the entire slot.
+    """
+    report = progress or _progress.noop
     got = render_scene_image(scene, CameraSpec(preset="top"), window_size=window_size)
     if got is None:
         return None
+    report(0.6, "3-D top view rendered")
     img, px_per_um = got
     fig, _ax, _im = scene_figure(
         img,
@@ -652,6 +669,7 @@ def save_top_view(
         style=style,
     )
     fig.savefig(path, dpi=150, facecolor="white", bbox_inches="tight")
+    report(1.0, "3-D top view saved")
     return path
 
 

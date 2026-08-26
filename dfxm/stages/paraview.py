@@ -542,10 +542,11 @@ def _write_partitioned_vti(
     the returned dict, so the in-core and streaming writers cannot drift apart
     in any of them — only in how they produce a piece's arrays.
 
-    *piece_fields* is a callable ``(z0, z1) -> {name: array}`` returning the
-    already-cleaned fields for the **inclusive** Z extent ``[z0, z1]``, sized to
-    the piece. *field_names* is what those dicts will be keyed by, in order,
-    needed up front for the manifest.
+    *piece_fields* is a callable ``(z0, z1, progress) -> {name: array}``
+    returning the already-cleaned fields for the **inclusive** Z extent
+    ``[z0, z1]``, sized to the piece, and reporting its own 0..1 progress into
+    *progress* as it goes. *field_names* is what those dicts will be keyed by,
+    in order, needed up front for the manifest.
     """
     if not output_path_pvti.endswith(".pvti"):
         raise ValueError(f"output_path_pvti must end with .pvti: {output_path_pvti}")
@@ -570,13 +571,24 @@ def _write_partitioned_vti(
         piece_basename = f"{base_no_ext}_piece_{k:0{n_pad}d}.vti"
         piece_path = os.path.join(pieces_dir, piece_basename)
         piece_rel = f"{pieces_subdir_name}/{piece_basename}"
-        field_slices = piece_fields(z0, z1)
-        # Building a piece (read + align + clean) and writing it are both slow
-        # on a real volume, and a run with few, large pieces would otherwise
-        # still go quiet for a long stretch inside each one. Two reports per
-        # piece halve that worst case at no cost.
+        # Building a piece (read + convert + clean) and writing it are both slow
+        # on a real volume, and a run with few, large pieces would otherwise go
+        # quiet for a long stretch inside each one. The build gets the first
+        # half of the piece's slot and reports per field inside it, the write
+        # the second half: granularity then follows the work rather than
+        # `n_pieces`, which is a memory decision the user makes for other
+        # reasons entirely.
+        piece_note = f"{base_no_ext}: piece {k + 1}/{len(extents)}"
+        build = _progress_mod.sub_progress(
+            report, k / max(1, len(extents)), (k + 0.5) / max(1, len(extents))
+        )
+        field_slices = piece_fields(
+            z0, z1, lambda f, t="", _b=build, _n=piece_note: _b(f, f"{_n}: {t}" if t else _n)
+        )
+        # "built", not "writing": this fires before `write_piece_vti`, and the
+        # rule everywhere else here is that a report names work already done.
         report(
-            (k + 0.5) / max(1, len(extents)), f"{base_no_ext}: writing piece {k + 1}/{len(extents)}"
+            (k + 0.5) / max(1, len(extents)), f"{base_no_ext}: piece {k + 1}/{len(extents)} built"
         )
         write_piece_vti(
             field_slices, (z0, z1), whole_dims, spacing_tuple, origin_tuple, piece_path, compression
@@ -667,7 +679,12 @@ def save_volumes_as_pvti(
         cleaned_volumes["valid_mask"] = valid_mask.astype(SAVE_DTYPE)
 
     return _write_partitioned_vti(
-        lambda z0, z1: {name: vol[z0 : z1 + 1] for name, vol in cleaned_volumes.items()},
+        # The in-core builder is a slice of arrays already in memory, so there is
+        # nothing inside it worth reporting; it accepts the callback only to
+        # keep one `piece_fields` contract.
+        lambda z0, z1, progress=None: {
+            name: vol[z0 : z1 + 1] for name, vol in cleaned_volumes.items()
+        },
         list(cleaned_volumes.keys()),
         (nz, ny, nx),
         spacing,
@@ -986,14 +1003,19 @@ def save_volumes_streamed(
     # --- pass 2: one piece at a time ---
     reader = _SlabReader(providers)
 
-    def piece_fields(z0: int, z1: int) -> dict:
+    def piece_fields(z0: int, z1: int, progress=None) -> dict:
         # One field at a time, converting and dropping each float64 slab before
         # asking for the next: holding all of them to build the mask, and then a
         # float64 cleaned copy of each on top, is what made the peak scale with
         # `n_pieces` badly enough to beat the in-core writer at n_pieces=1.
+        #
+        # That loop is also the export's real cost — a slab read per field per
+        # piece — so it reports per field. A mosaicity volume carries several,
+        # which is where this buys the bar most of its resolution.
+        report_field = progress or _progress_mod.noop
         cleaned: dict = {}
         mask = None
-        for name in reader.names:
+        for i, name in enumerate(reader.names):
             block = reader.field_slab(name, z0, z1 + 1)  # piece extents are inclusive
             finite = np.isfinite(block) if (write_valid_mask or replace_nan) else None
             if write_valid_mask:
@@ -1002,6 +1024,7 @@ def save_volumes_streamed(
             # That asymmetry is the in-core writer's and is preserved.
             cleaned[name] = _clean_to_save_dtype(block, finite if replace_nan else None, sentinel)
             del block, finite
+            report_field((i + 1) / max(1, len(reader.names)), f"read {name}")
         if write_valid_mask:
             cleaned["valid_mask"] = mask.astype(SAVE_DTYPE)
         return cleaned
@@ -1656,18 +1679,43 @@ def run(params: dict, progress: ProgressFn | None = None) -> ParaviewResult:
     budget_bytes = _run_budget_bytes(p, out_dir)
     result = ParaviewResult(output_dir=out_dir)
 
-    # Two exports share the working range; whichever runs gets its half and
-    # reports per .vti piece inside it. The old fixed 0.1 / 0.55 / 0.98 said
-    # nothing at all across either export, which on a 17 GB volume is the
-    # entire run.
+    # Two exports share the working range; each one that actually runs gets an
+    # equal slot and reports per .vti piece inside it. The old fixed
+    # 0.1 / 0.55 / 0.98 said nothing at all across either export, which on a
+    # 17 GB volume is the entire run.
+    #
+    # The slots come from the exports that will *run*, not from the two
+    # `export_*` flags, because the flags answer a different question than the
+    # bar asks. Counting them split the range at `EXPORT_LO + span`, which for a
+    # single export is `EXPORT_HI` itself: a strain-only run — unchecking a
+    # default-on GUI box — handed strain the empty range [0.97, 0.97] and
+    # reported 0.97 for every piece of the whole export. And an enabled volume
+    # whose file is missing is skipped a few lines below, so counting its flag
+    # reserved half the bar for work that never happened: a dataset with only a
+    # strain volume, `mosa_volume_file` left at its pre-filled default, opened
+    # at 0.495.
     EXPORT_LO, EXPORT_HI = 0.02, 0.97
-    n_exports = int(bool(p["export_mosaicity"])) + int(bool(p["export_strain"]))
-    mid = EXPORT_LO + (EXPORT_HI - EXPORT_LO) / max(1, n_exports)
+    mosa_file = p["mosa_volume_file"] if bool(p["export_mosaicity"]) else ""
+    strain_file = p["strain_volume_file"] if bool(p["export_strain"]) else ""
+    # `os.path.exists` is as far as this can see without opening both files.
+    # `_process_mosaicity`/`_process_strain` can still return None for a volume
+    # that exists but carries no usable fields, and by then the slots are fixed,
+    # so that export's share is handed back in one jump. Left as is: the failing
+    # check is immediate, so the jump covers no silence — the thing the bar is
+    # for — and deciding runnability up front would mean a second copy of the
+    # field and shape checks, free to drift from the ones that matter.
+    will_run = [bool(f) and os.path.exists(f) for f in (mosa_file, strain_file)]
+    ranges = [
+        _progress_mod.slice_for(sum(will_run[:i]), sum(will_run), EXPORT_LO, EXPORT_HI)
+        if runs
+        else (EXPORT_LO, EXPORT_HI)
+        for i, runs in enumerate(will_run)
+    ]
+    (mosa_lo, mosa_hi), (strain_lo, strain_hi) = ranges
 
-    if bool(p["export_mosaicity"]):
-        mosa_file = p["mosa_volume_file"]
-        if mosa_file and os.path.exists(mosa_file):
-            progress(EXPORT_LO, "exporting mosaicity volume")
+    if mosa_file:
+        if os.path.exists(mosa_file):
+            progress(mosa_lo, "exporting mosaicity volume")
             info = _process_mosaicity(
                 p,
                 out_dir,
@@ -1678,19 +1726,18 @@ def run(params: dict, progress: ProgressFn | None = None) -> ParaviewResult:
                 roi_y,
                 budget_bytes=budget_bytes,
                 notes=result.notes,
-                progress=_progress_mod.sub_progress(progress, EXPORT_LO, mid),
+                progress=_progress_mod.sub_progress(progress, mosa_lo, mosa_hi),
             )
             if info:
                 result.exports.append(info)
             else:
                 result.skipped.append("mosaicity: no datasets / shape mismatch")
-        elif mosa_file:
+        else:
             result.skipped.append(f"mosaicity volume not found: {mosa_file}")
 
-    if bool(p["export_strain"]):
-        strain_file = p["strain_volume_file"]
-        if strain_file and os.path.exists(strain_file):
-            progress(mid, "exporting strain volume")
+    if strain_file:
+        if os.path.exists(strain_file):
+            progress(strain_lo, "exporting strain volume")
             info = _process_strain(
                 p,
                 out_dir,
@@ -1701,13 +1748,13 @@ def run(params: dict, progress: ProgressFn | None = None) -> ParaviewResult:
                 roi_y,
                 budget_bytes=budget_bytes,
                 notes=result.notes,
-                progress=_progress_mod.sub_progress(progress, mid, EXPORT_HI),
+                progress=_progress_mod.sub_progress(progress, strain_lo, strain_hi),
             )
             if info:
                 result.exports.append(info)
             else:
                 result.skipped.append("strain: 'strain' dataset not found")
-        elif strain_file:
+        else:
             result.skipped.append(f"strain volume not found: {strain_file}")
 
     info_path = os.path.join(out_dir, "export_info.txt")

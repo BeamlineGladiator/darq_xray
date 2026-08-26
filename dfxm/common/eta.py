@@ -60,10 +60,15 @@ class EtaEstimator:
       standing at "~1 s left", because at that point it does not know.
     * **The rate is local.** See :data:`_RATE_WINDOW_S`.
 
-    What it still cannot fix: *frac* itself. Stages assign it by milestone
-    (0.05 loading, 0.6 halfway, 1.0 done) rather than in proportion to work, so
-    a signal that sits at 0.6 for 40 % of the run cannot be extrapolated
-    accurately by anything. That is a stage-side defect, fixed stage by stage.
+    What this module cannot fix is *frac* itself, and it used to have to live
+    with a bad one: stages assigned it by milestone (0.05 loading, 0.6 halfway,
+    1.0 done) rather than in proportion to work, and a signal that sits at 0.6
+    for 40 % of the run cannot be extrapolated accurately by anything. That was
+    always a stage-side defect and it was fixed stage by stage — every stage now
+    reports per layer, volume, piece, plane, frame or job through
+    :mod:`dfxm.common.progress`, with `tests/progress_trace.py` holding the
+    largest step any of them may take. The clamping in ``update`` stays because
+    the contract, not the current callers, is what it defends.
     """
 
     def __init__(self, clock=time.monotonic) -> None:

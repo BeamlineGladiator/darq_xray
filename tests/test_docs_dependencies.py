@@ -90,11 +90,34 @@ def test_every_real_package_is_covered_by_discovery():
     *different* top-level package still fails this.
     """
     not_shipped = {"tests"}
+
+    def _is_ours(path) -> bool:
+        """Reject anything under a checkout directory that is not source.
+
+        `pathlib.Path.glob` matches dotted names — unlike `glob.glob`, which
+        skips them — so `*/**/__init__.py` walks straight into `.venv`. README
+        and docs/Usage both tell the user to create exactly that, inside the
+        clone, so without this filter the test fails for anyone who follows the
+        install instructions: a real venv contributes hundreds of names like
+        `.venv.lib.python3.12.site-packages.numpy`. `site-packages` is matched
+        as well as the leading dot, because a venv is not required to be hidden
+        or to be called `.venv`.
+        """
+        parts = path.relative_to(ROOT).parts
+        return not any(
+            part.startswith(".") or part in {"__pycache__", "site-packages", "node_modules"}
+            for part in parts
+        )
+
     found = {
         str(p.parent.relative_to(ROOT)).replace("/", ".")
         for p in ROOT.glob("*/**/__init__.py")
-        if "__pycache__" not in p.parts
-    } | {str(p.parent.relative_to(ROOT)).replace("/", ".") for p in ROOT.glob("*/__init__.py")}
+        if _is_ours(p)
+    } | {
+        str(p.parent.relative_to(ROOT)).replace("/", ".")
+        for p in ROOT.glob("*/__init__.py")
+        if _is_ours(p)
+    }
     assert "dfxm.stages" in found, "package scan found nothing — the glob is broken"
     uncovered = sorted(
         n

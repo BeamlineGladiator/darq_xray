@@ -787,11 +787,42 @@ def _render(
     prod = RockingProducts(name=name, vmin=vmin, vmax=vmax)
     if clim_note:
         prod.notes.append(clim_note)
+    # Product shares of this dataset's slice, over the products actually asked
+    # for — the same allocation `visualize._process_dataset` uses, and for the
+    # same reason: a fixed fraction reported for a product that is switched off
+    # jumps the bar by that product's whole share.
+    #
+    # `save_layer_pngs` gained a per-layer `progress` in the reporting sweep and
+    # `visualize` passes it; this stage took a sub-range, spent it on a single
+    # `report(0.0)` and forwarded nothing, so its whole render half was silent.
+    # On a 78-layer, two-volume dataset that is minutes with the bar at rest.
+    weights = {
+        "layers": 6.0 if p["save_layers"] else 0.0,
+        "animation": 1.5 if p["save_animation"] else 0.0,
+        "top_view": 1.0 if p["save_topview"] else 0.0,
+    }
+    shares = _progress_mod.weighted_slices(weights)
+    starts = {k: v[0] for k, v in shares.items()}
+    ends = {k: v[1] for k, v in shares.items()}
+    report(0.0, f"{name}: rendering")
     if p["save_layers"]:
-        report(0.0, f"{name}: rendering layers")
         prod.layers_dir = Rnd.save_layer_pngs(
-            vol, z_um, ds_dir, name, vmin, vmax, cmap, title, cbar, sx, sy, style=style, group=group
+            vol,
+            z_um,
+            ds_dir,
+            name,
+            vmin,
+            vmax,
+            cmap,
+            title,
+            cbar,
+            sx,
+            sy,
+            style=style,
+            group=group,
+            progress=_progress_mod.sub_progress(progress, starts["layers"], ends["layers"]),
         )
+        report(ends["layers"], f"{name}: layers done")
     if p["save_animation"]:
         prod.animation = Rnd.save_layer_animation(
             vol,
@@ -808,7 +839,9 @@ def _render(
             sy,
             style=style,
             group=group,
+            progress=_progress_mod.sub_progress(progress, starts["animation"], ends["animation"]),
         )
+        report(ends["animation"], f"{name}: animation done")
     if p["save_topview"]:
         scene = R3.Scene3D(
             volume=vol,
@@ -823,6 +856,13 @@ def _render(
         note = R3.oversize_note(scene, R3.volume_texture_limit())
         if note:
             prod.notes.append(note)
+        # Half the slot for building the scene and probing the GL texture limit
+        # (an out-of-process probe), half for the render and save inside
+        # `save_top_view` — the same split `visualize` uses.
+        report(
+            starts["top_view"] + (ends["top_view"] - starts["top_view"]) * 0.5,
+            f"{name}: 3-D scene ready",
+        )
         try:
             prod.top_view = R3.save_top_view(
                 scene,
@@ -830,9 +870,16 @@ def _render(
                 cbar_label=cbar,
                 group=group,
                 style=style,
+                progress=_progress_mod.sub_progress(
+                    progress,
+                    starts["top_view"] + (ends["top_view"] - starts["top_view"]) * 0.5,
+                    ends["top_view"],
+                ),
             )
         except Exception as exc:  # noqa: BLE001 - no GL -> note + continue
             prod.notes.append(f"3D top-view skipped: {exc}")
+        report(ends["top_view"], f"{name}: top view done")
+    report(1.0, f"{name}: done")
     result.datasets.append(prod)
 
 
@@ -927,7 +974,7 @@ def run(params: dict, progress: ProgressFn | None = None) -> RockingResult:
         spec_cfg,
         bool(p["normalize_sum"]),
         bool(p["subtract_background"]),
-        progress=lambda fr, m: progress(0.1 + 0.5 * fr, m),
+        progress=_progress_mod.sub_progress(progress, 0.1, 0.6),
     )
     if sum_vol is None:
         result.skipped.append("no rocking scans processed successfully")

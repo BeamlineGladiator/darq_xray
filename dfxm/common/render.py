@@ -201,19 +201,57 @@ def save_layer_animation(
     *,
     style=None,
     group=None,
+    progress=None,
 ):
-    """Layer-by-layer flip-through movie. MP4 (ffmpeg) with GIF fallback."""
+    """Layer-by-layer flip-through movie. MP4 (ffmpeg) with GIF fallback.
+
+    *progress* takes a **local** 0..1 fraction — wrap it with
+    `dfxm.common.progress.sub_progress` to place it in a caller's range. Like
+    :func:`save_layer_pngs`, this renders every layer, so it is one of the two
+    long inner loops in a `visualize` or `rocking` dataset; without a reporter
+    its caller can only mark the boundaries around it, and a run with the layer
+    PNGs switched off has nothing else to speak between them.
+
+    The denominator counts the render passes, not the layers: ``fmt="both"``
+    drives the animation twice, once per container. It is a *prediction*, and
+    one case can beat it — an MP4 write that fails partway and falls back to GIF
+    (see :func:`_save_animation`) replays the whole animation without having
+    said it would. The count is therefore clamped, and the message quotes the
+    same two numbers as the fraction rather than the per-container frame index,
+    so the two can never contradict each other: the worst that happens is the
+    bar reaching the end of this call's share slightly early, which is the safe
+    direction for a fallback nobody predicted.
+
+    Two earlier attempts at this were wrong. Counting raw calls put the fraction
+    a frame ahead of the frame it named, because `FuncAnimation` composes the
+    first frame once while setting up and again when the save loop reaches it.
+    Suppressing the repeat by comparing against the last `z` then broke a
+    single-layer volume, where every call has `z == 0` and a second container
+    could never advance at all — it topped out at half.
+    """
+    report = progress or _progress.noop
     ext_x, ext_y = volume.shape[2] * sx, volume.shape[1] * sy
     z_size = volume.shape[0]
     fig, ax, im = layer_figure(
         volume[0], vmin, vmax, cmap, ext_x, ext_y, title, cbar, style=style, group=group
     )
     title_obj = ax.set_title(f"{title}\nZ = {z_um[0]:.2f} µm (Layer 0/{z_size - 1})")
+    total_frames = max(1, z_size * (2 if fmt == "both" else 1))
+    rendered = [0]
 
     def update(frame):
         z = frame % z_size
         im.set_data(volume[z])
         title_obj.set_text(f"{title}\nZ = {z_um[z]:.2f} µm (Layer {z}/{z_size - 1})")
+        # After the frame is composed. Counted rather than derived from `frame`,
+        # because a container that replays the animation would otherwise send
+        # the fraction backwards; clamped, because it may replay more times than
+        # `total_frames` predicted.
+        rendered[0] = min(total_frames, rendered[0] + 1)
+        report(
+            rendered[0] / total_frames,
+            f"{name}: animation frame {rendered[0]}/{total_frames}",
+        )
         return [im, title_obj]
 
     anim = FuncAnimation(fig, update, frames=z_size, blit=False)

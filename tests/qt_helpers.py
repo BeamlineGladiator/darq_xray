@@ -6,9 +6,40 @@ sys.path, so both worlds import this as ``tests.qt_helpers``.
 
 from __future__ import annotations
 
+import contextlib
 import time
 
 from PySide6.QtWidgets import QApplication
+
+
+@contextlib.contextmanager
+def applied_theme(app: QApplication, mode: str):
+    """Apply a theme for the duration of a test, then put the app back.
+
+    `gui.theme.apply_theme` changes three process-wide things — the style, the
+    palette and the stylesheet — and pytest shares one QApplication across every
+    Qt module in the run. A test that restored only `app.styleSheet()` left
+    every later widget under Fusion with the themed palette but the *old*
+    stylesheet, a combination no production path produces; anything measuring
+    geometry, colour or `style()` behaviour afterwards then depends on
+    collection order, and surfaces as an unrelated test flaking.
+
+    The style is restored by name rather than by handing the previous QStyle
+    object back: `QApplication.setStyle` takes ownership and deletes what it
+    replaces, so the saved pointer is not safe to reuse.
+    """
+    from gui.theme import apply_theme
+
+    style_name = app.style().objectName()
+    palette = app.palette()
+    sheet = app.styleSheet()
+    try:
+        yield apply_theme(app, mode)
+    finally:
+        app.setStyleSheet(sheet)
+        if style_name:
+            app.setStyle(style_name)
+        app.setPalette(palette)
 
 
 def wait_builder_idle(w, timeout_s: float = 30.0) -> None:

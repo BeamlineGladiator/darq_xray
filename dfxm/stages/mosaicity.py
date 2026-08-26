@@ -530,6 +530,10 @@ def run(params: dict, progress: ProgressFn | None = None) -> MosaicityResult:
         # and the whole write tail as one jump to 1.0.
         for i, (name, maps_path) in enumerate(work):
             lay_lo, lay_hi = _progress_mod.slice_for(i, len(work), 0.0, LAYERS_HI)
+            # One reporter over this layer's own share, so the fractions below
+            # read as "how far through this layer" instead of re-deriving the
+            # map into the run-wide bar at every site.
+            lp = _progress_mod.sub_progress(progress, lay_lo, lay_hi)
             progress(lay_lo, f"mosaicity: {name}")
             if not os.path.exists(maps_path):
                 result.skipped.append(f"{name}: {maps_filename} not found")
@@ -543,20 +547,31 @@ def run(params: dict, progress: ProgressFn | None = None) -> MosaicityResult:
                     data = {}
                     for di, (key, path) in enumerate(config.items()):
                         data[key] = _read_dataset(f, path)
-                        progress(
-                            lay_lo + (lay_hi - lay_lo) * 0.8 * (di + 1) / max(1, len(config)),
-                            f"mosaicity: {name} {key}",
-                        )
+                        lp(0.6 * (di + 1) / max(1, len(config)), f"mosaicity: {name} {key}")
             except OSError as exc:
                 result.skipped.append(f"{name}: {exc}")
                 continue
             if all(v is None for v in data.values()):
                 result.skipped.append(f"{name}: no datasets")
                 continue
-            for key, arr in data.items():
+            # Appending a map to the stacked file is a write per key, and it is
+            # the other half of a layer's cost. Reporting only the reads left
+            # the whole write in one jump — 0.2 of a one-layer run's entire bar,
+            # and `single` mode is one layer by definition.
+            for wi, (key, arr) in enumerate(data.items()):
                 if arr is not None:
                     group_name, ds_name = routing[key]
                     out.append(f"{group_name}/{ds_name}", arr)
+                    what = "wrote"
+                else:
+                    # `_read_dataset` returns None for a path this maps.h5 does
+                    # not have. The report still fires — the bar's granularity
+                    # must not depend on which optional datasets a layer
+                    # happens to carry — but it must not claim a write that did
+                    # not happen, which is the same defect this change fixes in
+                    # `visualize`'s product boundaries.
+                    what = "skipped"
+                lp(0.6 + 0.4 * (wi + 1) / max(1, len(data)), f"mosaicity: {name} {what} {key}")
             del data
             result.layers.append(name)
             progress(lay_hi, f"mosaicity: {name} done")

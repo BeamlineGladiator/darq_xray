@@ -586,6 +586,9 @@ def run(params: dict, progress: ProgressFn | None = None) -> MatchedResult:
     LAYERS_LO, LAYERS_HI = 0.2, 0.98
     for i in range(result.n_strain):
         lay_lo, lay_hi = _progress_mod.slice_for(i, result.n_strain, LAYERS_LO, LAYERS_HI)
+        # One reporter over this layer's own share; the fractions below are
+        # "how far through this layer", not re-derivations of the run-wide map.
+        lp = _progress_mod.sub_progress(progress, lay_lo, lay_hi)
         progress(lay_lo, f"matched layer {i}")
         m = matches[i]
         if m is None:
@@ -598,8 +601,9 @@ def run(params: dict, progress: ProgressFn | None = None) -> MatchedResult:
             # a scan with a different detector ROI/shape can't share the canvas
             result.skipped.append(f"layer {i}: frame shape {img.shape} != {(ny, nx_orig)}")
             continue
-        progress(lay_lo + (lay_hi - lay_lo) * 0.5, f"matched layer {i}: frame loaded")
+        lp(0.35, f"matched layer {i}: frame loaded")
         shifted = _apply_shift_single(img, shifts_px[i], pad_left, nx_new)
+        lp(0.5, f"matched layer {i}: frame shifted")
         title = (
             f"Rocking Curve (frame {frame_index}, median-subtracted)\n"
             f"Z = {z_um[i]:.2f} µm (Layer {i}/{result.n_strain - 1})\n{rock_names[m]}"
@@ -620,10 +624,16 @@ def run(params: dict, progress: ProgressFn | None = None) -> MatchedResult:
             style=style,
             group=cmap_group,
         )
+        lp(0.65, f"matched layer {i}: figure built")
         png = os.path.join(layers_dir, f"layer_{i:04d}.png")
         fig.savefig(png, dpi=150, facecolor="white", bbox_inches="tight")
         result.pngs.append(png)
         result.n_saved += 1
+        # A layer is four steps — frame read, shift, figure, save — and the two
+        # it used to report were its ends. Splitting at 0.5 was arbitrary: it
+        # put the read and the shift on one side and the whole render on the
+        # other, so half a layer's bar covered a `savefig` and half covered an
+        # array slice.
         progress(lay_hi, f"matched layer {i} done")
         # NOTE: figures().build() in this module mirrors this exact recompute
         # (load_pco_ff_frame → _apply_shift_single → layer_figure) to rebuild
