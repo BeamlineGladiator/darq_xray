@@ -620,6 +620,21 @@ def _parse_pair(text) -> tuple | None:
     return tuple(parts)
 
 
+def _roi_span(pair: tuple | None, full: int) -> int:
+    """Rows/columns an ROI selects out of *full*, the way ``det[:, a:b]`` would.
+
+    Clamped to ``[0, full]`` and never above *full*, so a stale ROI from another
+    dataset cannot make an estimate larger than the detector it is sizing. A
+    blank or inverted ROI means the whole axis, matching
+    :func:`process_raw_scan`'s ``roi_x[0] if roi_x else 0`` defaults.
+    """
+    if not pair:
+        return int(full)
+    lo = max(0, min(int(pair[0]), int(full)))
+    hi = max(0, min(int(pair[1]), int(full)))
+    return (hi - lo) if hi > lo else int(full)
+
+
 def _parse_opt_int(text) -> int | None:
     if text is None or str(text).strip() == "":
         return None
@@ -711,32 +726,104 @@ def _motors(raw_root: str, pattern: str, samy_path: str, samz_path: str):
     return extract_motor_positions(folders, samy_path, samz_path)
 
 
+# --- Recalibrated 2026-08-26 against measured child peak RSS ------------------
+#
+# The model this replaced was wrong in BOTH directions, which is why no single
+# correction factor would have fixed it:
+#
+# * it charged 20 B per element per scan for the accumulate-stack-align-write
+#   chain that measures 48.5, and charged nothing at all for `save_topview`, so
+#   on scans with few frames it **under-predicted** — 13.4x on a synthetic
+#   512x512, 21-frame, 6-scan run with the default toggles, the dangerous
+#   direction;
+# * it sized the per-scan read from the whole detector when `process_raw_scan`
+#   reads only the ROI, so on scans with many frames that inflated term
+#   dominated and it **over-predicted** — 3.2x on the real STO2 form (575-frame
+#   mosa scans, a 2048x2048 detector cropped to 700x1832).
+#
+# Measured on this box with `tests/peak_rss.py`: five scan shapes at six scans,
+# scan counts 3/6/12/24 at one shape, frame counts 21/51/101/201 at one shape,
+# the render toggles at four volume sizes, and then ten real STO2 layers. A
+# two-regressor fit over the first three sweeps reached r2 = 0.997. Tables in
+# `docs/Codebase.md`.
+
+# The process image of a rocking child. Measured 154.3 MiB
+# (`measure_process_floor`), charged with slack. `save_layers` (+34 MiB, for
+# matplotlib) and `save_animation` (+8 MiB) are folded in here rather than made
+# conditional: both are small, and over-stating a toggled-off product is safe.
+ROCKING_PROCESS_FLOOR_BYTES = 176 * 1024 * 1024
+
+# Per element of the accumulated volumes, per scan: `sum_slices`/`spec_slices`
+# and the `np.stack` copies of each, then the alignment's padded canvas and
+# uniform-Z resample, then the aligned-h5 write. Measured **48.5 B** by least
+# squares over the scan-size and scan-count sweeps.
+ROCKING_VOLUME_BYTES_PER_ELEM = 48
+
+# What `save_topview` adds: the pyvista/VTK import and a render context. It is
+# **data-independent** — measured at 361.4 / 373.9 / 354.4 / 353.5 / 375.0 MiB
+# across a 16x span of volume sizes — and on a small-ROI run it is the single
+# largest term, which is exactly what the old model missed. (Measured
+# with EGL unavailable on this box, so this is a software-GL figure; a hardware
+# context would be no larger.)
+ROCKING_TOPVIEW_BYTES = 416 * 1024 * 1024
+
+
 def estimate(params: dict) -> CostEstimate:
     """Peak memory for a rocking run, from HDF5 shapes only.
 
-    ``run()`` streams scans one at a time, not all at once:
-    ``build_raw_volumes`` -> ``process_raw_scan`` reads one scan's detector
-    stack as uint16 and immediately ``.astype(np.float32)``\\ s it (source and
-    float32 copy coexist briefly), then ``del frames`` drops it before the next
-    scan. Only the running per-scan 2-D accumulators and the two final
-    ``(n_layers, H, W)`` float32 volumes (``sum_vol``/``spec_vol``, doubled
-    while ``np.stack`` builds each from its list of 2-D slices) persist across
-    the loop. Peak is modelled as
-    ``max(scan_elems * (itemsize + 4) + 2 * n_layers * layer_elems * 4,
-    20 * n_layers * layer_elems)`` — the first term is one scan's streaming
-    peak, the second is a floor for the list-and-stack accumulation once all
-    scans are collected. ``chunkable=True``.
+    ``run()`` streams scans one at a time: ``build_raw_volumes`` ->
+    ``process_raw_scan`` reads one scan's detector stack in its stored dtype and
+    immediately ``.astype(np.float32)``\\ s it (source and float32 copy coexist),
+    then ``del frames`` drops it before the next scan. What *accumulates* is the
+    two lists of 2-D slices, which become the ``(n_layers, H, W)`` volumes, which
+    the alignment then pads and resamples. The model is the sum of three
+    measured terms plus a conditional fourth:
 
-    The folder count is an upper bound on ``n_layers``: ``source_scan``
-    ``"mosaicity"`` uses a different glob pattern (every matched mosa folder,
-    no filtering) and the default ``"rocking"`` path additionally masks
-    folders to the mosa/strain samz union, which this shape-only estimate
-    cannot evaluate without reading motor positions from every folder.
+    * :data:`ROCKING_PROCESS_FLOOR_BYTES`;
+    * one scan's read, ``scan_elems * (itemsize + 4)``. Measured: this term only
+      bites above ~50 frames per scan, where its local slope is **5.85 B per
+      scan element** against the 6 charged — but a real rocking scan can carry
+      hundreds of frames, so it stays in the model;
+    * :data:`ROCKING_VOLUME_BYTES_PER_ELEM` ``* n_scans * layer_elems``, which is
+      what actually dominates at ordinary frame counts;
+    * :data:`ROCKING_TOPVIEW_BYTES` when ``save_topview`` is on — **default on,
+      ~365 MiB, and entirely absent from the old model**, which is why that
+      model under-predicted a few-frame default run by 13.4x.
+
+    ``layer_elems`` and ``scan_elems`` are both sized from the **ROI'd** frame,
+    not the detector: ``process_raw_scan`` reads ``det[:, ys:ye, xs:xe]``, so
+    the float32 copy, both accumulators and the aligned volumes follow
+    ``roi_x``/``roi_y``. On the real STO2 form (``roi_x`` 105,1937 and ``roi_y``
+    630,1330 against a 2048x2048 detector) ignoring the ROI over-stated the
+    priced work by 3.3x, and on 575-frame scans that inflated read term was
+    large enough to hide the two under-charges above. ``input_bytes``
+    deliberately keeps the un-cropped figure — that is the data on disk, which
+    the ROI does not change.
+
+    ``chunkable=True``.
+
+    The folder glob **follows ``source_scan``**, as ``run()`` does:
+    ``"mosaicity"`` processes the mosa folders (every match, no filtering), so
+    the estimate globs ``mosa_pattern`` there. Globbing ``rocking_pattern``
+    regardless counted 709 folders for a real STO2 run that processes 76.
+    On the default ``"rocking"`` path the count remains an upper bound — that
+    path additionally masks folders to the mosa/strain samz union, which this
+    shape-only estimate cannot evaluate without reading motor positions from
+    every folder, and an upper bound is the safe direction for the volume term.
+
+    **Currency**: ``peak_bytes`` is whole-child peak RSS, process image
+    included — see :func:`dfxm.stages.strain.estimate`.
     """
     p = {**STAGE.defaults(), **params}
     try:
         root = str(p.get("raw_root") or "").rstrip("/")
-        folders = find_matching_folders(root, p.get("rocking_pattern") or "*") if root else []
+        # Mirror run()'s layer choice: `source_scan="mosaicity"` processes the
+        # MOSA folders, not the rocking ones. Globbing `rocking_pattern` there
+        # regardless counted 709 folders for a run that processes 76 on the real
+        # STO2 form — a 9x over-statement of the volume term, in the
+        # configuration this project's own saved form actually uses.
+        pattern_key = "mosa_pattern" if p.get("source_scan") == "mosaicity" else "rocking_pattern"
+        folders = find_matching_folders(root, p.get(pattern_key) or "*") if root else []
         if not folders:
             return CostEstimate(0, 0, None, True, "no scan folders resolved yet")
         first = resolve_input_file(folders[0])
@@ -754,13 +841,35 @@ def estimate(params: dict) -> CostEstimate:
     scan_elems = 1
     for dim in scan_shape:
         scan_elems *= dim
-    layer_elems = scan_elems // scan_shape[0] if scan_shape and scan_shape[0] else scan_elems
-    total = n * scan_elems * itemsize
-    peak = max(
-        scan_elems * (itemsize + 4) + 2 * n * layer_elems * 4,
-        20 * n * layer_elems,
+    total = n * scan_elems * itemsize  # the whole input on disk, ROI or not
+
+    # `process_raw_scan` reads `det[:, ys:ye, xs:xe]`, so everything downstream
+    # — the float32 copy, both accumulators, the aligned volumes — is sized by
+    # the ROI, not the detector. On the real STO2 form (roi_x 105,1937 /
+    # roi_y 630,1330 against a 2048x2048 detector) ignoring it over-stated the
+    # priced work by 3.3x.
+    n_frames = scan_shape[0] if scan_shape else 1
+    full_h = scan_shape[1] if len(scan_shape) > 1 else 1
+    full_w = scan_shape[2] if len(scan_shape) > 2 else 1
+    try:
+        roi_x, roi_y = _parse_pair(p.get("roi_x")), _parse_pair(p.get("roi_y"))
+    except (TypeError, ValueError):
+        # A half-typed ROI ("105," while the user is still going) must not make
+        # the estimator raise, and must not shrink the estimate either: fall
+        # back to the whole detector, which is what run() would read.
+        roi_x = roi_y = None
+    rows = _roi_span(roi_y, full_h)
+    cols = _roi_span(roi_x, full_w)
+    layer_elems = rows * cols
+    scan_elems = n_frames * layer_elems
+    peak = (
+        ROCKING_PROCESS_FLOOR_BYTES
+        + scan_elems * (itemsize + 4)
+        + ROCKING_VOLUME_BYTES_PER_ELEM * n * layer_elems
     )
-    return CostEstimate(peak, total, (n, *scan_shape), True, None, confidence="conservative")
+    if p["save_topview"]:
+        peak += ROCKING_TOPVIEW_BYTES
+    return CostEstimate(int(peak), total, (n, *scan_shape), True, None)
 
 
 def _render(

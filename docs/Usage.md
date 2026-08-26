@@ -411,7 +411,34 @@ only decides whether a run streams or stays in memory; it never blocks a run.
 `needs ~N` is a normal estimate;
 `at most ~N (conservative estimate)` means the stage's estimator has not been
 recalibrated since the last rewrite and tends to over-predict, so the real run
-may be lighter. Hover the line for the reasoning behind it (why that strategy,
+may be lighter. **As of 2026-08-26 no stage shows the conservative wording any
+more** — the last four estimators (`strain`, `mosaicity`, `rocking`, `matched`)
+were measured against real runs that day, so every stage now reports `needs ~N`.
+Three things about those numbers changed, and are worth knowing if you remember
+the old ones:
+
+- **`strain` and `mosaicity` ask for far less.** They used to be priced as
+  though they held the whole stacked volume in memory, which they have not done
+  since the streaming rewrite — `mosaicity` was over-stated by **36×**. Both now
+  price one layer's working set, so their figures barely move as you add layers.
+- **`rocking` now reacts to Save top view and to the detector ROI.** Its old
+  figure left out the 3-D top view entirely (about 365 MB of pyvista/VTK,
+  whatever the volume size) and, going the other way, priced every scan as if
+  the whole detector were read when only your **Detector ROI X/Y** crop is. The
+  two errors pointed in opposite directions, so the figure could be far too low
+  on short scans and far too high on long ones. Both are now modelled: unticking
+  **Save top view** visibly drops the cost line, and so does tightening the ROI.
+- **A publication fixed scale is priced.** Setting **Scale (µm/cm)** in the
+  style panel can make each `strain` layer's figure many times larger in pixels,
+  and that really does cost memory (measured: 465 MB → 1.6 GB on one dataset).
+  The cost line follows the style you have set, so it moves when you change it.
+
+A small dataset will now show a floor of a few hundred MB even when the data
+itself is tiny. That is not the estimator being pessimistic — it is what a
+Python worker process with numpy, HDF5 and matplotlib loaded actually costs, and
+it is now included rather than ignored.
+
+Hover the line for the reasoning behind it (why that strategy,
 what would change it) — a run that simply fits in memory has nothing to add
 beyond the line itself, so there is no tooltip in that case. The line is purely
 informative — it never changes what the run does, and it disappears for stages

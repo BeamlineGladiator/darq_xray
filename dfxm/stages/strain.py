@@ -34,12 +34,14 @@ from ..common.errors import StageUserError
 from ..common.figures import FigureSpec, ReplotGroup, crop_roi_2d, register, resolve_clim
 from ..common.h5io import StackedVolumeFile
 from ..common.plotting import (
+    AGG_RENDER_BYTES_PER_PIXEL,
     PlotStyle,
     add_colorbar,
     apply_axes_mode,
     apply_round_clim,
     apply_text_scale,
     build_histogram,
+    canvas_pixels,
     draw_scale_bar,
     figure_size,
     fit_axes_to_box,
@@ -378,42 +380,79 @@ def load_map(filepath: str, dataset_path: str) -> np.ndarray:
         return f[dataset_path][:]
 
 
+# --- Recalibrated 2026-08-26 against measured child peak RSS ------------------
+#
+# `run()` processes one layer and drops it, so the peak does not scale with
+# `n_layers`. Every constant below was measured on this box with
+# `tests/peak_rss.py` over six layer shapes spanning 20x (0.262 M to 5.243 M
+# elements) at eight layers, plus three fixed-scale styles; the numbers and the
+# fits are reproduced in `docs/Codebase.md`.
+
+# The detrend chain's own arrays, per element of a FULL layer: `load_map`'s
+# read, its `.copy()`, `residual_1`, `residual_2`, `surface`, `np.nanmedian`'s
+# internal copy, and the `strain` map — seven float64. Measured with
+# `save_plots` off: 43.0 B/elem by least squares (r2 0.992) with local slopes
+# 30.7-52.3, and a 102.0 MiB intercept that lands on the independently measured
+# 96.7 MiB process floor. 56 is seven whole copies, above the measured slope.
+STRAIN_ARRAY_BYTES_PER_ELEM = 56
+
+# The process image of a `save_plots=False` run: interpreter, numpy, h5py, and
+# this module. Measured 96.7 MiB (`measure_process_floor`), charged with slack.
+STRAIN_PROCESS_FLOOR_BYTES = 112 * 1024 * 1024
+
+# What importing and using matplotlib's Agg stack adds to the process image.
+# Measured as the difference between the two floors, 166.2 - 96.7 = 69.5 MiB.
+STRAIN_PLOT_PROCESS_BYTES = 72 * 1024 * 1024
+
+# What rasterising the layer costs per element, on top of the arrays. The four
+# `imshow` calls over a full map (one strain map, three detrend panels) each
+# normalise to float64 and convert to uint8 RGBA, so this is data-dependent —
+# the assumption that a plotting term is data-independent because "an Agg canvas
+# is sized by inches and dpi" was only ever half true. Measured as the
+# plots-on minus plots-off marginal: 51.7 B/elem. 64 is eight float64-equivalents.
+STRAIN_PLOT_BYTES_PER_ELEM = 64
+
+
 def estimate(params: dict) -> CostEstimate:
     """Peak memory for a strain run, from HDF5 shapes only.
 
-    Reads ``.shape``/``.dtype`` of ONE layer and multiplies by the layer count,
-    never touching data, so the GUI can call this on every form change. Never
-    raises: an unreadable input reports an unknown cost with the reason in
-    ``note``.
+    Reads ``.shape``/``.dtype`` of ONE layer, never touching data, so the GUI
+    can call this on every form change. Never raises: an unreadable input
+    reports an unknown cost with the reason in ``note``.
 
-    The arithmetic below, ``2 * n_layers * H * W * 8``, models the *old*
-    ``run()``: it accumulated a float64 strain map per layer in a ``slices``
-    list, and then ``save_stacked_volume`` called ``np.stack`` to build one
-    contiguous copy alongside it, so a whole volume and its duplicate were
-    resident together at the high-water mark. Neither survives — the ``slices``
-    local and ``save_stacked_volume`` were both deleted. ``run()`` now
-    ``append``s each layer to a ``StackedVolumeFile`` and drops it immediately,
-    so the resident set no longer scales with ``n_layers`` at all: the real peak
-    is a handful of layer-sized float64 arrays — ``process_maps_file``'s detrend
-    chain (``ccmth_original``, ``ccmth_map``, ``surface``) plus the ``strain``
-    map it returns.
+    **What this models.** ``run()`` computes one layer, ``append``s it to a
+    ``StackedVolumeFile`` and drops it, so the peak is one layer's working set —
+    it does **not** scale with ``n_layers``, and the figure this estimator
+    returned until 2026-08-26 (``2 * n_layers * H * W * 8``, a model of the
+    deleted accumulate-then-``np.stack`` code) over-predicted the real STO2 run
+    by **5.2x**. The recalibrated model has four terms, each measured:
 
-    **Recalibration warning — the fix is not simply dropping ``n_layers``.**
-    The current figure over-predicts, which is the safe direction, and is
-    deliberately left unchanged here. Two things a per-layer model must account
-    for before it can replace it:
+    * :data:`STRAIN_PROCESS_FLOOR_BYTES` — the child's process image.
+    * :data:`STRAIN_ARRAY_BYTES_PER_ELEM` x the **full** layer, for the detrend
+      chain. Full, not ROI-cropped, on purpose: ``_detrend_ccmth`` detrends
+      before it crops (the project invariant), and ``apply_roi`` returns a
+      *view*, which keeps the whole parent array alive.
+    * with ``save_plots`` on, :data:`STRAIN_PLOT_PROCESS_BYTES` plus
+      :data:`STRAIN_PLOT_BYTES_PER_ELEM` x the layer, for matplotlib's import
+      and its per-element rasterisation.
+    * with ``save_plots`` on, the **canvas**:
+      :data:`~dfxm.common.plotting.AGG_RENDER_BYTES_PER_PIXEL` x the pixels of
+      the two full-size figures, sized through :func:`strain_map_geometry` so
+      the estimate follows the same style the run will use. This term is why a
+      style is read here at all: a ``scale_um_per_cm`` of 6.4 grows the strain
+      map to the 30-inch clamp, and the measured peak with it, from 465 MiB to
+      **1682 MiB**. A model blind to the style under-predicts that by 3.6x, and
+      under-prediction is the direction that greenlights a run which then OOMs.
 
-    * With ``save_plots`` on (the default), each layer rasterises three figures
-      at 120-200 dpi. An Agg canvas is sized by figure inches and dpi, **not**
-      by the data, so on modest layer shapes the rendering buffers — not the
-      arrays — are the high-water mark, and a model in bare ``H * W * 8`` units
-      **under**-predicts. Under-prediction is the dangerous direction: it
-      greenlights a run that then OOMs.
-    * ``StackedVolumeFile`` writes ``strain`` gzip-compressed one chunk per
-      layer, so h5py holds a compression buffer of about one layer on top.
+    **Currency.** ``peak_bytes`` here is *whole-child peak RSS*, process image
+    included, because that is what :func:`~dfxm.common.advice.plan_run` compares
+    against ``headroom_bytes`` and prints to the user as "needs X RAM". The
+    three alignment-chain estimators (visualize/slices/paraview) still report
+    allocations only and cover their floor by over-predicting instead; that
+    inconsistency is recorded in ``docs/Codebase.md`` and should be closed when
+    those are next recalibrated, not papered over here.
 
-    ``total_input`` and the reported ``shape`` still legitimately scale with
-    ``n_layers``; only ``peak_bytes`` is the stale part.
+    ``total_input`` and the reported ``shape`` still scale with ``n_layers``.
     """
     p = {**STAGE.defaults(), **params}
     try:
@@ -435,15 +474,75 @@ def estimate(params: dict) -> CostEstimate:
         layer_elems *= dim
     n_layers = len(work)
     input_bytes = n_layers * layer_elems * itemsize
-    peak_bytes = 2 * n_layers * layer_elems * 8
+
+    peak_bytes = STRAIN_PROCESS_FLOOR_BYTES + STRAIN_ARRAY_BYTES_PER_ELEM * layer_elems
+    if p["save_plots"]:
+        peak_bytes += STRAIN_PLOT_PROCESS_BYTES + STRAIN_PLOT_BYTES_PER_ELEM * layer_elems
+        peak_bytes += AGG_RENDER_BYTES_PER_PIXEL * _plot_canvas_pixels(p, layer_shape)
     return CostEstimate(
-        peak_bytes, input_bytes, (n_layers, *layer_shape), True, None, confidence="conservative"
+        int(peak_bytes),
+        input_bytes,
+        (n_layers, *layer_shape),
+        True,
+        None,
     )
+
+
+def _plot_canvas_pixels(p: dict, layer_shape: tuple[int, ...]) -> int:
+    """Canvas pixels the two full-size per-layer figures rasterise to.
+
+    The histogram is left out deliberately: its figure is small and fixed, and
+    the slack in :data:`STRAIN_PLOT_PROCESS_BYTES` covers it. Degrades to the
+    legacy geometry if the style or the pixel sizes are unusable — an estimate
+    is advisory and must not raise on a half-typed form.
+    """
+    try:
+        ny, nx = int(layer_shape[-2]), int(layer_shape[-1])
+        px, py = float(p["pixel_size_x_um"]), float(p["pixel_size_y_um"])
+        figsize, _box = strain_map_geometry(style_from_params(p), nx * px, ny * py)
+        return canvas_pixels(figsize, STRAIN_MAP_DPI) + canvas_pixels(
+            DETREND_DIAG_FIGSIZE, DETREND_DIAG_DPI
+        )
+    except (KeyError, IndexError, TypeError, ValueError, ZeroDivisionError):
+        return canvas_pixels((7.0, 8.5), STRAIN_MAP_DPI) + canvas_pixels(
+            DETREND_DIAG_FIGSIZE, DETREND_DIAG_DPI
+        )
 
 
 # -----------------------------------------------------------------------------
 # Plotting (Figure/Agg API — no pyplot)
 # -----------------------------------------------------------------------------
+# The dpi each per-layer plot is saved at, and the detrend diagnostic's fixed
+# figure size. Constants rather than literals at the `savefig` calls because
+# `estimate()` sizes the same canvases (`plotting.canvas_pixels`) and a dpi
+# changed in one place only would silently re-open the under-prediction this
+# recalibration closed.
+STRAIN_MAP_DPI = 200
+STRAIN_HIST_DPI = 150
+DETREND_DIAG_DPI = 120
+DETREND_DIAG_FIGSIZE = (20, 6)
+
+
+def strain_map_geometry(
+    style: PlotStyle | None, ext_x_um: float, ext_y_um: float
+) -> tuple[tuple[float, float], tuple[float, float, float] | None]:
+    """``(figsize_inches, fixed_scale_box)`` for the per-layer strain map.
+
+    The one place the strain map's figure size is decided, shared by
+    :func:`build_strain_map` (which renders it) and :func:`estimate` (which
+    prices the canvas). They drifting apart is exactly how a fixed-scale style
+    could grow the canvas 6x with the estimate unmoved.
+    """
+    legacy = (7.0, 7.0 * (ext_y_um / ext_x_um if ext_x_um else 1.0) + 1.5)
+    if style is None:
+        return legacy, None
+    box = fixed_scale_box(style, ext_x_um, ext_y_um)
+    if box is not None:
+        # headroom for labels/colourbar; fit_axes_to_box converges regardless
+        return (box[0] + 1.5, box[1] + 1.5), box
+    return (figure_size(style, ext_x_um, ext_y_um) or legacy), None
+
+
 def build_strain_map(
     strain: np.ndarray,
     px: float,
@@ -471,16 +570,7 @@ def build_strain_map(
         vmin, vmax, _ = apply_round_clim(vmin, vmax, style)
 
     ny, nx = strain.shape
-    box = fixed_scale_box(style, nx * px, ny * py) if style is not None else None
-    legacy_figsize = (7, 7 * (ny * py) / (nx * px) + 1.5)
-    if box is not None:
-        figsize = (box[0] + 1.5, box[1] + 1.5)  # headroom; fit_axes_to_box converges regardless
-    else:
-        figsize = (
-            (figure_size(style, nx * px, ny * py) or legacy_figsize)
-            if style is not None
-            else legacy_figsize
-        )
+    figsize, box = strain_map_geometry(style, nx * px, ny * py)
 
     fig = styled_figure(figsize, styled=style is not None)
     ax = fig.add_subplot(111)
@@ -547,7 +637,7 @@ def build_detrend_diag(
     When *style* is ``None`` the legacy look is reproduced exactly. The caller
     is responsible for calling ``fig.savefig``.
     """
-    fig = styled_figure((20, 6), styled=style is not None)
+    fig = styled_figure(DETREND_DIAG_FIGSIZE, styled=style is not None)
     axes = fig.subplots(1, 3)
     for ax, title, d in zip(
         axes,
@@ -823,19 +913,19 @@ def process_maps_file(
         os.makedirs(out_dir, exist_ok=True)
         p = os.path.join(out_dir, f"{name}_strain.png")
         build_strain_map(strain, pixel_size_x_um, pixel_size_y_um, roi, vlim, style=style).savefig(
-            p, dpi=200, bbox_inches="tight", facecolor="white"
+            p, dpi=STRAIN_MAP_DPI, bbox_inches="tight", facecolor="white"
         )
         plots.append(p)
         report(0.75, f"{name}: strain map saved")
         ph = os.path.join(out_dir, f"{name}_hist.png")
         hist_fig = build_strain_histogram(strain, style=style)
         if hist_fig is not None:
-            hist_fig.savefig(ph, dpi=150, bbox_inches="tight", facecolor="white")
+            hist_fig.savefig(ph, dpi=STRAIN_HIST_DPI, bbox_inches="tight", facecolor="white")
             plots.append(ph)
         report(0.85, f"{name}: histogram saved")
         pd = os.path.join(out_dir, f"{name}_detrend_diag.png")
         build_detrend_diag(ccmth_original, ccmth_map, surface, style=style).savefig(
-            pd, dpi=120, bbox_inches="tight", facecolor="white"
+            pd, dpi=DETREND_DIAG_DPI, bbox_inches="tight", facecolor="white"
         )
         plots.append(pd)
     # Reported whether or not plots were saved: the layer is finished either

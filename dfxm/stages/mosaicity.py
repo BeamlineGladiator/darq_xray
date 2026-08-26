@@ -407,36 +407,56 @@ def _read_dataset(h5f: h5py.File, path: str) -> np.ndarray | None:
     return obj[:] if isinstance(obj, h5py.Dataset) else None
 
 
+# --- Recalibrated 2026-08-26 against measured child peak RSS ------------------
+#
+# Measured on this box with `tests/peak_rss.py`: six layer shapes spanning 20x
+# with all four datasets present, and 1/2/3/4 datasets at two of those shapes.
+# The peak is flat in `n_layers` (176.1 MiB at one layer, 194.1 at four, eight
+# and sixteen), and the per-dataset slope at the larger shape came out at
+# **1.00, 1.01 and 1.00 float64 layers** — as exact as this campaign got. See
+# `docs/Codebase.md` for the tables.
+
+# The process image of a mosaicity child: interpreter, numpy, h5py, this module.
+# It is the lightest in the pipeline because `run()` never imports matplotlib.
+# Measured 74.1 MiB (`measure_process_floor`), charged with slack.
+MOSAICITY_PROCESS_FLOOR_BYTES = 96 * 1024 * 1024
+
+# Layers resident beyond the one-per-present-dataset the `data` dict holds:
+# `StackedVolumeFile`'s gzip compression buffer and h5py's read buffer. Measured
+# as the dataset-count-independent remainder, **1.77 layers** at both shapes.
+MOSAICITY_WRITER_LAYERS = 3
+
+
 def estimate(params: dict) -> CostEstimate:
     """Peak memory for a mosaicity run, from HDF5 shapes only.
 
-    The arithmetic below, ``(n_present + 1)`` whole volumes, models the *old*
-    ``run()``: it held every layer of all present datasets (chi/mu x com/fwhm)
-    in a ``collected`` dict at once and then ``np.stack``ed one more contiguous
-    volume per dataset on top, which made this one of the heaviest stages. The
-    ``collected`` dict and the ``np.stack`` are gone. ``run()`` now ``append``s
-    each layer to a ``StackedVolumeFile`` as it is read and drops it, so the
-    resident set no longer scales with ``n_layers``: the real peak is one
-    layer of each present dataset (the per-folder ``data`` dict) plus the
-    writer's per-dataset compression buffers.
+    ``run()`` reads one layer of each present dataset into the per-folder
+    ``data`` dict, ``append``s each to a ``StackedVolumeFile`` and drops the
+    dict, so the peak is **one layer per present dataset** plus the writer's
+    buffers — it does not scale with ``n_layers``. The figure this estimator
+    returned until 2026-08-26 (``(n_present + 1)`` whole *volumes*, a model of
+    the deleted ``collected``-dict-then-``np.stack`` code) over-predicted the
+    real STO2 run by **36x**, the worst error in the pipeline.
 
-    **Recalibration warning — the fix is not simply dropping ``n_layers``.**
-    The current figure over-predicts, which is the safe direction, and is
-    deliberately left unchanged here. What a per-layer model must still count:
+    The recalibrated model is
+    :data:`MOSAICITY_PROCESS_FLOOR_BYTES` ``+ (present +``
+    :data:`MOSAICITY_WRITER_LAYERS` ``) * layer_elems * itemsize``, in the
+    source's own dtype because ``_read_dataset`` and ``out.append`` both keep
+    it. ``present`` still matters and is still counted: switching a dataset off
+    genuinely removes one layer from the peak.
 
-    * ``StackedVolumeFile`` chunks every volume one layer per chunk and (at the
-      default ``compression="gzip"``) holds a compression buffer per dataset, so
-      the writer's own footprint scales with ``n_present``, not with 1.
-    * ``figures()``/``replot`` paths reach the same file through
-      ``_streamed_clim`` and ``render_volume_layer``, which are layer-at-a-time
-      by construction and are *not* part of ``run()``'s peak — do not fold them
-      in.
+    ``figures()``/``replot`` reach the same file through ``_streamed_clim`` and
+    ``render_volume_layer``, which are layer-at-a-time by construction and are
+    **not** part of ``run()``'s peak — they are deliberately not folded in.
 
-    A model in bare layer units would sit close enough to the noise floor that
-    under-prediction becomes easy, and under-prediction is the dangerous
-    direction (it greenlights a run that then OOMs). ``total_input`` and the
-    reported ``shape`` still legitimately scale with ``n_layers``; only
-    ``peak_bytes`` is the stale part.
+    **Currency**: ``peak_bytes`` is whole-child peak RSS, process image
+    included — see :func:`dfxm.stages.strain.estimate` for why, and for the
+    inconsistency with the three alignment-chain estimators that this records
+    rather than hides.
+
+    ``total_input`` and the reported ``shape`` still scale with ``n_layers``.
+    Never raises — an unresolved work list or no matching datasets returns an
+    unknown cost with the reason in ``note``.
     """
     p = {**STAGE.defaults(), **params}
     try:
@@ -465,14 +485,15 @@ def estimate(params: dict) -> CostEstimate:
     n_layers = len(work)
     per_volume = n_layers * layer_elems * itemsize
     input_bytes = present * per_volume
-    peak_bytes = (present + 1) * per_volume
+    peak_bytes = MOSAICITY_PROCESS_FLOOR_BYTES + (present + MOSAICITY_WRITER_LAYERS) * (
+        layer_elems * itemsize
+    )
     return CostEstimate(
         peak_bytes,
         input_bytes,
         (n_layers, *layer_shape),
         True,
         f"{present} datasets stacked together",
-        confidence="conservative",
     )
 
 

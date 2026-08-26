@@ -403,23 +403,29 @@ def _rock_h5(raw_root, name):
     return find_h5_file(os.path.join(raw_root, name))
 
 
+# --- Recalibrated 2026-08-26 against measured child peak RSS ------------------
+#
+# The process image of a matched child. Measured 156.6 MiB
+# (`measure_process_floor`), charged with slack.
+MATCHED_PROCESS_FLOOR_BYTES = 176 * 1024 * 1024
+
+# The pooled clim arrays plus the frame-sized working copies (`out`,
+# `background`, `corrected`), per element of ONE detector frame. The old model's
+# `12 * frame_elems * 8` was already right: measured local slopes over five
+# frame sizes spanning 32x run **84 to 103 B per frame element** against the 96
+# charged. This is the term that survived recalibration unchanged.
+MATCHED_FRAME_BYTES_PER_ELEM = 96
+
+
 def estimate(params: dict) -> CostEstimate:
     """Peak memory for a matched run, from HDF5 shapes only.
 
     ``run()`` loads **one** scan at a time via ``load_pco_ff_frame`` — the
     matched-layer loop calls it per output layer, and ``stack``/``background``
     are locals that die on return, so nothing accumulates across layers except
-    the small pooled-clim list. Within one call: ``ds[:].astype(np.float64)``
-    holds the source stack (native dtype) and its float64 copy together, and
-    ``np.nanmedian(stack, axis=0)`` needs its own internal float64-sized copy
-    of the stack to sort along axis 0 — ``scan_elems * (itemsize + 16)``. On
-    top of that, up to ~10 pooled clim arrays plus a couple of frame-sized
-    working copies (``background``, ``corrected``) persist at once, bounded as
-    ``12 * frame_elems * 8``. Peak is therefore
-    ``scan_elems * (itemsize + 16) + 12 * frame_elems * 8`` for one scan,
-    independent of the folder count — ``input_bytes`` still sums every
-    matching folder's stack (the data that will eventually be read, even
-    though only one is resident at a time).
+    the small pooled-clim list. ``input_bytes`` still sums every matching
+    folder's stack (the data that will eventually be read, even though only one
+    is resident at a time).
 
     ``chunkable=True``. The median needs the whole stack along the **frame
     axis** only — no pixel's median depends on any other pixel's — so
@@ -427,13 +433,27 @@ def estimate(params: dict) -> CostEstimate:
     back (see that function). The earlier ``False``, reasoned "an exact median
     needs the whole stack", was a statement the code itself contradicts.
 
-    Two caveats this model carries, both deliberately left for the
-    estimator-recalibration pass rather than fixed here. The peak expression
-    still describes the *un-budgeted* whole-stack form, so it is now a ceiling
-    reached only when a scan fits :data:`MEDIAN_BLOCK_WORKING_SET_BYTES` in one
-    block; and its ``+ 16`` under-states ``np.nanmedian``'s real internals,
-    measured at 35-50 B/element depending on the frame count (see
-    :data:`MEDIAN_WORKING_SET_PER_ELEMENT`, charged at 64).
+    **What recalibration changed (2026-08-26).** The old peak,
+    ``scan_elems * (itemsize + 16) + 12 * frame_elems * 8``, described the
+    *un-budgeted* whole-stack form and so grew without bound with the frame
+    count. It does not: :func:`load_pco_ff_frame` bounds one block's working set
+    at :data:`MEDIAN_BLOCK_WORKING_SET_BYTES`, and the measurement shows it —
+    at 512x512 the peak is **flat** across 21, 51, 101 and 201 frames (217.6,
+    213.5, 217.8, 215.8 MiB), while the old model climbed to 928 MiB, a 4.3x
+    over-prediction. The median term is therefore capped at that constant, and
+    the ``+ 16`` per element is replaced by the measured
+    :data:`MEDIAN_WORKING_SET_PER_ELEMENT` the blocking itself budgets against
+    — the two now agree instead of contradicting each other.
+
+    The peak is
+    :data:`MATCHED_PROCESS_FLOOR_BYTES` ``+ min(scan_elems * (itemsize +``
+    :data:`MEDIAN_WORKING_SET_PER_ELEMENT` ``),``
+    :data:`MEDIAN_BLOCK_WORKING_SET_BYTES` ``) +``
+    :data:`MATCHED_FRAME_BYTES_PER_ELEM` ``* frame_elems``, independent of the
+    folder count.
+
+    **Currency**: ``peak_bytes`` is whole-child peak RSS, process image
+    included — see :func:`dfxm.stages.strain.estimate`.
     """
     p = {**STAGE.defaults(), **params}
     try:
@@ -457,7 +477,11 @@ def estimate(params: dict) -> CostEstimate:
         elems *= dim
     frame_elems = elems // scan_shape[0] if scan_shape and scan_shape[0] else elems
     input_bytes = len(folders) * elems * itemsize
-    peak = elems * (itemsize + 16) + 12 * frame_elems * 8
+    median_bytes = min(
+        elems * (itemsize + MEDIAN_WORKING_SET_PER_ELEMENT),
+        MEDIAN_BLOCK_WORKING_SET_BYTES,
+    )
+    peak = MATCHED_PROCESS_FLOOR_BYTES + median_bytes + MATCHED_FRAME_BYTES_PER_ELEM * frame_elems
     # `shape[0]` here counts scan FOLDERS, but what the stage chunks is one
     # scan's detector rows, so it names its own span rather than let
     # `advice.plan_run` read the folder count and call it "layers".
@@ -469,7 +493,6 @@ def estimate(params: dict) -> CostEstimate:
         True,
         None,
         (rows, "detector rows"),
-        confidence="conservative",
     )
 
 
