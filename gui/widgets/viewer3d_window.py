@@ -423,7 +423,12 @@ class Viewer3DWindow(QWidget):
         # purpose: `rebuild` never re-fits, so spinning back to 1 reproduces the
         # blank render this is protecting against.
         limit = R3.volume_texture_limit(self._canvas.plotter if self._canvas.ensure() else None)
-        self._autofit_note = R3.apply_texture_fit(self.scene, limit, 0)
+        note = R3.apply_texture_fit(self.scene, limit, 0)
+        # Keep the note only when a coarsening actually happened. When auto-fit
+        # DECLINES (nothing can fit a too-deep volume) `rebuild`'s live oversize
+        # note already says so, and carrying both put two blank-render warnings
+        # on one status line that disagreed about the remedy.
+        self._autofit_note = note if int(self.scene.downsample) > 1 else None
         self._init_controls_from_scene()
         self.rebuild()
         if self._canvas.available:

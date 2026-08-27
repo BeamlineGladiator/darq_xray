@@ -521,7 +521,19 @@ def _plot_canvas_pixels(p: dict, layer_shape: tuple[int, ...]) -> int:
         if roi is not None:
             r0, r1, c0, c1 = roi
             if r1 > r0 and c1 > c0:
-                ny, nx = min(ny, r1) - max(0, r0), min(nx, c1) - max(0, c0)
+                # Into temporaries: the fallback below sizes the legacy geometry
+                # from ny/nx, so an out-of-range ROI must not leave a negative
+                # value behind for it to work from.
+                cropped_ny = min(ny, r1) - max(0, r0)
+                cropped_nx = min(nx, c1) - max(0, c0)
+                if cropped_ny <= 0 or cropped_nx <= 0:
+                    # The ROI lies outside the layer. `canvas_pixels` clamps a
+                    # negative figure size to 0, which would silently delete the
+                    # largest plotting term instead of falling back; raise so
+                    # the legacy geometry below is used, as for any other
+                    # unusable input.
+                    raise ValueError("roi does not intersect the layer")
+                ny, nx = cropped_ny, cropped_nx
         px, py = float(p["pixel_size_x_um"]), float(p["pixel_size_y_um"])
         figsize, _box = strain_map_geometry(style_from_params(p), nx * px, ny * py)
     except (KeyError, IndexError, TypeError, ValueError, ArithmeticError):

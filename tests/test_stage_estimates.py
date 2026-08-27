@@ -1401,3 +1401,86 @@ def test_matched_survives_a_half_typed_colour_limit(tmp_path, limit):
     priced = _matched_peak(n_frames=4, ny=32, nx=32)
     for over in ({"vmin": limit}, {"vmax": limit}, {"vmin": limit, "vmax": limit}):
         assert estimate({**base, **over}).peak_bytes == priced
+
+
+def _mosa_scans(root, *, n_scans=2, n_frames=4, ny=8, nx=16, samy_mm=0.0):
+    """Mosa folders whose samy anchors the alignment — `run()` uses mosa[0]."""
+    import h5py
+
+    for i in range(n_scans):
+        scan = root / f"mosa__{i}"
+        scan.mkdir(parents=True)
+        with h5py.File(scan / f"mosa__{i}.h5", "w") as f:
+            f.create_dataset("1.1/measurement/pco_ff", shape=(n_frames, ny, nx), dtype="uint16")
+            f.create_dataset("1.1/instrument/positioners/samy", data=samy_mm)
+            f.create_dataset("1.1/instrument/positioners/samz", data=0.0)
+    return str(root)
+
+
+def test_rocking_estimate_anchors_the_samy_shift_where_the_run_does(tmp_path):
+    """`run()` anchors at `mosa_samy[0]` (rocking.py: samy_ref, samz_ref).
+    Anchoring the ESTIMATE at the rocking glob's own first scan makes the pad —
+    and with it the dominant 48 B/elem volume term — too SMALL, which is the
+    under-prediction direction the recalibration exists to close."""
+    from dfxm.common import alignment as A
+    from dfxm.stages import rocking as RK
+
+    root = tmp_path / "raw"
+    step, n, ny, nx = 0.05, 4, 8, 16
+    # Rocking scans sit ABOVE the mosaicity reference, so anchoring at the
+    # rocking glob's first scan loses the whole mosa->rock offset.
+    _raw_scans(root, n_scans=n, n_frames=4, ny=ny, nx=nx, samy_step_mm=step)
+    for i in range(n):  # shift every rocking samy up by a full 10 steps
+        import h5py
+
+        with h5py.File(root / f"rock__{i}" / f"rock__{i}.h5", "r+") as f:
+            del f["1.1/instrument/positioners/samy"]
+            f.create_dataset("1.1/instrument/positioners/samy", data=step * (10 + i))
+    _mosa_scans(root, samy_mm=0.0)
+
+    p = {
+        **RK.STAGE.defaults(),
+        "raw_root": str(root),
+        "rocking_pattern": "rock__*",
+        "mosa_pattern": "mosa__*",
+        "pixel_size_x_um": 1.0,
+        "samy_direction": 1,
+        "save_topview": False,
+    }
+    est = RK.estimate(p)
+
+    samy = np.array([step * (10 + i) for i in range(n)])
+    samz = np.array([0.002 * i for i in range(n)])
+    anchored = A.aligned_extent(
+        (n, ny, nx), samy, samz, scale_x=1.0, samy_direction=1, ref_samy=0.0, ref_samz=0.0
+    )
+    unanchored = A.aligned_extent((n, ny, nx), samy, samz, scale_x=1.0, samy_direction=1)
+    # Precondition: the two anchorings really do disagree, or this is vacuous.
+    assert anchored[2] > unanchored[2], (anchored, unanchored)
+
+    expected = _rocking_peak(
+        n_scans=n, n_frames=4, ny=ny, nx=nx, volume_elems=anchored[0] * anchored[1] * anchored[2]
+    )
+    assert est.peak_bytes == expected
+
+
+def test_strain_out_of_range_roi_falls_back_instead_of_zeroing_the_canvas(_strain_defaults):
+    """`min(ny, r1) - max(0, r0)` can go NEGATIVE, and `canvas_pixels` clamps a
+    negative figure to 0 — silently deleting the largest plotting term instead
+    of falling back to the legacy geometry. Nothing raises, so the cost line
+    shows a number computed from a term that vanished."""
+    from dfxm.stages.strain import _plot_canvas_pixels
+
+    layer = (1266, 1832)
+    good = _plot_canvas_pixels({**_strain_defaults, "roi": ""}, layer)
+    bad = _plot_canvas_pixels({**_strain_defaults, "roi": "2000,3000,0,1832"}, layer)
+    assert good > 0
+    # The defect was the MAP canvas term vanishing entirely, leaving only the
+    # detrend diagnostic. Assert the term survived — not which of the two
+    # geometries is larger, which is not the property at stake.
+    from dfxm.common.plotting import canvas_pixels
+    from dfxm.stages.strain import DETREND_DIAG_DPI, DETREND_DIAG_FIGSIZE
+
+    diag_only = canvas_pixels(DETREND_DIAG_FIGSIZE, DETREND_DIAG_DPI)
+    assert bad > diag_only, (bad, diag_only)
+    assert (bad - diag_only) > 0.5 * (good - diag_only), (good, bad, diag_only)

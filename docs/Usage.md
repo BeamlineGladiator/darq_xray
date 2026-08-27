@@ -503,7 +503,10 @@ you to do anything, and recommends `surface` mode when your GL stack is
 software-rendered (surface mode uploads geometry, not one giant texture, and is
 far faster on a software renderer besides). Set **3D downsample** to `1` to opt
 out and keep full resolution, and the note changes to the blank-render warning;
-set it to any other number to force exactly that factor. Switch to `surface` or
+set it to any other number to force exactly that factor. The note appears only
+when the run will actually render something in 3-D — with **Save top view** and
+**Save rotation** both off there is no volume render to be blank — and it never
+offers coarsening for a volume coarsening cannot fix (see below). Switch to `surface` or
 `isosurface`, or crop the volume under the limit, and the note clears.
 
 This note needs to know your GL stack's texture limit, which the app only
