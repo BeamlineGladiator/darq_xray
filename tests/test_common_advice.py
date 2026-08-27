@@ -276,6 +276,23 @@ def test_advise_3d_ignores_a_shape_whose_axes_it_cannot_identify():
     assert advise_3d(workstation_sw_gl(), (76, 0, 1832), "volume", 0).reasons == ()
 
 
+def test_advise_3d_recommends_surface_mode_on_a_software_renderer():
+    """The texture cap says why volume mode fails; THIS says what to do about
+    it, and on a software renderer it is the more actionable half. It was
+    deleted silently in 56c23c3 because nothing covered it."""
+    reasons = advise_3d(workstation_sw_gl(), (100, 700, 2891), "volume", 0).reasons
+    assert any("surface mode uploads geometry" in r for r in reasons)
+    assert any("llvmpipe" in r for r in reasons)  # names the renderer it saw
+
+    # Hardware GL with the same small cap gets the cap reason and NOT this one.
+    import dataclasses
+
+    prof = workstation_sw_gl()
+    prof = dataclasses.replace(prof, gl=dataclasses.replace(prof.gl, software=False))
+    reasons = advise_3d(prof, (100, 700, 2891), "volume", 0).reasons
+    assert reasons and not any("surface mode uploads geometry" in r for r in reasons)
+
+
 def test_advise_3d_leaves_a_fitting_volume_alone():
     advice = advise_3d(laptop_hw_gl(), (100, 700, 2891), "volume")
     assert advice.downsample == 1

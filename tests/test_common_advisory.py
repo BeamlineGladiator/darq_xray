@@ -266,12 +266,22 @@ def _detector_estimate(params):
     return CostEstimate(1 * GB, 1 * GB, (76, 575, 2048, 2048), True)
 
 
-def test_no_texture_hint_from_a_four_element_detector_shape():
+def test_a_four_element_scan_shape_is_reduced_to_the_volume_axes():
+    """`rocking.estimate` reports `(n_folders, n_frames, H, W)`. Refusing that
+    outright silenced the hint for the stage with the pipeline's widest volume;
+    reading it as `(Z, Y, X)` aimed `roi_y` at the frame count. The frame axis
+    is consumed by the sum, so the volume axes are `(folders, H, W)`."""
+    from dfxm.common.advisory import _aligned_shape_for_hint
+
+    params = {"raw_root": "", "rocking_pattern": "*", "pixel_size_x_um": 0.15}
+    assert _aligned_shape_for_hint((76, 575, 2048, 2048), params) == (76, 2048, 2048)
+
     spec = _spec_with("tests.test_common_advisory:_detector_estimate")
     adv = advise_stage(
         spec, {"volume_downsample": 0, "save_topview": True}, profile=workstation_sw_gl()
     )
-    assert HINT_3D_TEXTURE not in adv.hints
+    assert HINT_3D_TEXTURE in adv.hints
+    assert "2048" in adv.hints[HINT_3D_TEXTURE]
 
 
 def test_the_hint_reads_rockings_own_folder_pattern():

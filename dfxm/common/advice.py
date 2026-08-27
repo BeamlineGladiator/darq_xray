@@ -432,7 +432,17 @@ def advise_3d(profile, shape, mode: str, requested: int = 0) -> Advice:
         )
     else:
         reasons.append(
-            f"{cap}, and coarsening cannot fit it (Z is never block-averaged) — volume "
-            f"mode renders BLANK; use surface mode or crop the ROI"
+            f"{cap}, and {render3d.unfittable_reason(dims, limit)} — volume mode renders "
+            f"BLANK; use surface mode or crop the ROI"
+        )
+    if profile.gl.software:
+        # Restored after `56c23c3` dropped it while rewriting this function. On a
+        # software renderer this is the more actionable half of the advice — the
+        # texture cap is only the reason volume mode fails, this is the way out —
+        # and `test_advise_3d_recommends_surface_mode_on_a_software_renderer`
+        # now exists so it cannot be deleted silently a second time.
+        reasons.append(
+            f"software renderer ({profile.gl.renderer}) — surface mode uploads geometry "
+            "instead of one large texture and will be far faster here"
         )
     return Advice(downsample, "surface", tuple(reasons))

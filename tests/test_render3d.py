@@ -314,6 +314,26 @@ def test_fit_downsample_never_collapses_an_axis_to_nothing():
     assert note and "BLANK" in note and "coarsened" not in note
 
 
+def test_an_explicit_factor_that_coarsens_the_volume_away_is_reported():
+    """An explicit factor is honoured verbatim by design, but one that averages
+    an axis to nothing yields an EMPTY volume, and `oversize_note` cannot see it
+    (a collapsed shape is trivially under the limit)."""
+    thin = R3.Scene3D(volume=np.ones((2, 10, 3000)), spacing=(1, 1, 1))
+    note = R3.apply_texture_fit(thin, 256, 16)
+    assert thin.downsample == 16  # honoured, not overridden
+    assert thin.prepared()[0].size == 0
+    assert note and "coarsens this volume to nothing" in note
+
+
+def test_unfittable_reason_names_the_axis_actually_blocking_the_fit():
+    """Z-bound and collapse-bound have different remedies; telling a thin
+    volume's owner that Z is the problem sends them away from the crop that
+    would fix it."""
+    assert "Z axis" in R3.unfittable_reason((3000, 8, 8), 2048)
+    reason = R3.unfittable_reason((2, 10, 3000), 256)
+    assert "Z axis" not in reason and "average a short one away" in reason
+
+
 def test_fit_factor_for_shape_is_the_rule_prepared_shape_follows():
     """One encoding of which axes a downsample touches. If these two disagree,
     the advisory promises fits the renderer cannot deliver."""

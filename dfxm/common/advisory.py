@@ -149,7 +149,7 @@ def _details(plan: RunPlan, conservative: bool) -> tuple[str, ...]:
 _ALIGNMENT_PATTERN_KEYS = ("mosa_pattern", "strain_pattern", "rocking_pattern")
 
 
-def _aligned_shape_for_hint(raw_shape: tuple[int, ...], params: dict) -> tuple[int, ...]:
+def _aligned_shape_for_hint(raw_shape: tuple[int, ...], params: dict) -> tuple[int, ...] | None:
     """Widen *raw_shape* to what the alignment chain will actually upload.
 
     `estimate.shape` is the on-disk shape read straight out of the volume
@@ -172,12 +172,16 @@ def _aligned_shape_for_hint(raw_shape: tuple[int, ...], params: dict) -> tuple[i
     memoises, and *raw_shape* is already paid for by the estimator call that
     produced it.
     """
-    # A raw shape that is not already (Z, Y, X) cannot seed the search: `rocking`
-    # reports the four-element detector shape (n_folders, n_frames, H, W), and
-    # `roi_shape` applied to that lines the ROI up against the wrong axes (for
-    # STO2 it yields a zero-height (76, 0, 1832), right only by accident on a
-    # square detector). Such a shape may only be WIDENED into a real aligned
-    # shape, never used as the answer.
+    # `rocking.estimate` reports the four-element scan shape
+    # (n_folders, n_frames, H, W). Feeding that to `roi_shape` lines `roi_y` up
+    # against the FRAME COUNT (for STO2 it yielded a zero-height (76, 0, 1832),
+    # right only by accident on a square detector), and simply refusing it left
+    # the stage with the pipeline's widest volume unable to show the hint at
+    # all. Reduce it to the (layers, detector rows, detector cols) triple that
+    # `rocking.estimate` itself prices — the frame axis is consumed by the sum,
+    # it is not a volume axis — so the ROI lands on the detector axes it names.
+    if len(raw_shape) == 4:
+        raw_shape = (raw_shape[0], raw_shape[2], raw_shape[3])
     usable = len(raw_shape) == 3 and min(raw_shape) >= 1
     best = raw_shape if usable else None
     for pattern_key in _ALIGNMENT_PATTERN_KEYS:

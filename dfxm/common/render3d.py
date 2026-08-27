@@ -459,6 +459,23 @@ def fit_factor_for_shape(shape, limit) -> int:
     return 1
 
 
+def unfittable_reason(shape, limit) -> str:
+    """Why no coarsening fits *shape* under *limit* — the blocker, not a guess.
+
+    Two different things make :func:`fit_factor_for_shape` decline, and they
+    have different remedies. Saying "Z is never block-averaged" for a thin
+    volume whose Y axis simply cannot survive the factor its X axis needs sends
+    the user to the wrong fix: there, cropping X is exactly what works.
+    """
+    z, y, x = (int(n) for n in shape)
+    if z + 1 > int(limit):
+        return "coarsening cannot fit it (the Z axis is never block-averaged)"
+    return (
+        "coarsening cannot fit it (every factor big enough for the long axis "
+        "would average a short one away entirely)"
+    )
+
+
 def fit_downsample(scene: Scene3D, limit) -> int:
     """Smallest power-of-two downsample that gets *scene* under the GL *limit*.
 
@@ -492,7 +509,7 @@ def oversize_note(scene: Scene3D, limit) -> str | None:
         f"set the 3-D downsample to 0 to coarsen it {fitted}x to fit (or Downsample "
         f"{fitted} in the 3-D viewer), or crop the ROI"
         if fitted > 1
-        else "coarsening cannot fit it (Z is never block-averaged) — use surface "
+        else f"{unfittable_reason(scene.prepared_shape(), limit)} — use surface "
         "mode, or crop the ROI"
     )
     return (
@@ -520,6 +537,18 @@ def apply_texture_fit(scene: Scene3D, limit, requested: int = 0) -> str | None:
     requested = int(requested)
     if requested >= 1:
         scene.downsample = requested
+        if min(scene.prepared_shape()) < 1:
+            # An explicit factor is honoured verbatim by design — but honouring
+            # one that averages an axis away produces an EMPTY volume, and
+            # `oversize_note` stays silent about it (the collapsed shape is
+            # trivially under the limit). That is the "worse than blank" case
+            # `fit_factor_for_shape` refuses on the auto path; on this path the
+            # user asked for it, so it is reported rather than overridden.
+            return (
+                f"3-D downsample {requested} coarsens this volume to nothing "
+                f"({tuple(int(n) for n in scene.volume.shape)} -> {scene.prepared_shape()}) "
+                f"— nothing will render; lower it, or crop the ROI instead."
+            )
         return oversize_note(scene, limit)
     before = max(scene.prepared_shape())
     fitted = fit_downsample(scene, limit)
