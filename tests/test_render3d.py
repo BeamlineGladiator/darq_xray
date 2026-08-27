@@ -301,6 +301,40 @@ def test_apply_texture_fit_warns_when_no_factor_can_fit():
     assert "surface mode" in note and "coarsening cannot fit it" in note
 
 
+def test_fit_downsample_never_collapses_an_axis_to_nothing():
+    """A factor that block-averages an axis away leaves VTK an EMPTY volume,
+    which is worse than the blank render it was meant to avoid — and the note
+    would claim the fit succeeded."""
+    thin = R3.Scene3D(volume=np.zeros((2, 10, 3000)), spacing=(1, 1, 1))
+    # 3000 needs 16x to get under 256, but 10 // 16 == 0 wipes out Y.
+    assert R3.fit_downsample(thin, 256) == 1
+    note = R3.apply_texture_fit(thin, 256, 0)
+    assert thin.downsample == 1
+    assert thin.prepared()[0].size > 0  # still renderable, even if blank
+    assert note and "BLANK" in note and "coarsened" not in note
+
+
+def test_fit_factor_for_shape_is_the_rule_prepared_shape_follows():
+    """One encoding of which axes a downsample touches. If these two disagree,
+    the advisory promises fits the renderer cannot deliver."""
+    for shape in [(2, 10, 3000), (76, 700, 2891), (5, 64, 64), (3000, 8, 8)]:
+        for factor in (1, 2, 4, 8, 16):
+            scene = R3.Scene3D(volume=np.zeros(shape), spacing=(1, 1, 1), downsample=factor)
+            assert R3.points_at_factor(shape, factor) == max(scene.prepared_shape()) + 1
+
+
+def test_oversize_note_offers_coarsening_only_when_coarsening_can_work():
+    wide = R3.Scene3D(volume=np.zeros((2, 700, 2891)), spacing=(1, 1, 1))
+    note = R3.oversize_note(wide, 2048)
+    assert note and "downsample to 0" in note  # 2x fits, so the offer is real
+
+    deep = R3.Scene3D(volume=np.zeros((3000, 8, 8)), spacing=(1, 1, 1))
+    note = R3.oversize_note(deep, 2048)
+    assert note and "surface mode" in note
+    # Z is never block-averaged, so this must NOT send the user to coarsening.
+    assert "downsample to 0" not in note
+
+
 def test_apply_texture_fit_is_silent_without_a_limit_or_in_geometry_mode():
     s = R3.Scene3D(volume=np.zeros((2, 700, 2891)), spacing=(1, 1, 1))
     assert R3.apply_texture_fit(s, None, 0) is None and s.downsample == 1

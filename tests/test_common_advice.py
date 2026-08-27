@@ -248,6 +248,34 @@ def test_advise_3d_does_not_promise_a_fit_coarsening_cannot_deliver():
     assert "cannot fit it" in reason and "surface mode" in reason
 
 
+def test_advise_3d_names_the_factor_the_actor_will_actually_use():
+    """The hint's remedy is "set it to 0", so the factor it names must be the
+    one auto-fit picks — the same 1/2/4/8/16 ladder, not `requested` doubled."""
+    from dfxm.common import render3d as R3
+
+    shape = (100, 700, 12000)
+    actor = R3.fit_factor_for_shape(shape, 2048)
+    assert actor == 8  # precondition: 12000 // 8 = 1500 fits, 4x does not
+    reason = " ".join(advise_3d(workstation_sw_gl(), shape, "volume", 3).reasons)
+    assert "coarsen 8x" in reason and "coarsen 6x" not in reason
+
+
+def test_advise_3d_does_not_promise_a_fit_beyond_the_actors_cap():
+    """Past 16x auto-fit declines and the render stays blank; the hint must not
+    say "set it to 0 and fit"."""
+    reason = " ".join(advise_3d(workstation_sw_gl(), (100, 700, 40960), "volume", 3).reasons)
+    assert "and fit" not in reason
+    assert "surface mode" in reason or "crop the ROI" in reason
+
+
+def test_advise_3d_ignores_a_shape_whose_axes_it_cannot_identify():
+    """`rocking.estimate` reports a four-element detector shape
+    `(n_folders, n_frames, H, W)`. Guessing which axis is Z produces a hint
+    about the detector, not the volume."""
+    assert advise_3d(workstation_sw_gl(), (76, 575, 2048, 2048), "volume", 0).reasons == ()
+    assert advise_3d(workstation_sw_gl(), (76, 0, 1832), "volume", 0).reasons == ()
+
+
 def test_advise_3d_leaves_a_fitting_volume_alone():
     advice = advise_3d(laptop_hw_gl(), (100, 700, 2891), "volume")
     assert advice.downsample == 1

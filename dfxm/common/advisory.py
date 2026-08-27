@@ -140,10 +140,13 @@ def _details(plan: RunPlan, conservative: bool) -> tuple[str, ...]:
 
 
 # Which of a stage's folder-pattern params to try when widening a raw shape to
-# its aligned extent (see `_aligned_shape_for_hint`). Only `visualize` wires a
-# `render_mode` param today, and its two candidate volumes (the mosaicity file
-# and the strain file) are selected by these two params respectively.
-_ALIGNMENT_PATTERN_KEYS = ("mosa_pattern", "strain_pattern")
+# its aligned extent (see `_aligned_shape_for_hint`). `visualize`'s two
+# candidate volumes (the mosaicity file and the strain file) are selected by the
+# first two; `rocking_pattern` is here because `rocking.estimate` picks it for
+# every `source_scan` except "mosaicity" (rocking.py), so without it the hint
+# priced rocking's samy padding off the MOSA folders — a different, usually
+# narrower, samy span than the aligned rocking volume the hint is about.
+_ALIGNMENT_PATTERN_KEYS = ("mosa_pattern", "strain_pattern", "rocking_pattern")
 
 
 def _aligned_shape_for_hint(raw_shape: tuple[int, ...], params: dict) -> tuple[int, ...]:
@@ -169,10 +172,21 @@ def _aligned_shape_for_hint(raw_shape: tuple[int, ...], params: dict) -> tuple[i
     memoises, and *raw_shape* is already paid for by the estimator call that
     produced it.
     """
-    best = raw_shape
+    # A raw shape that is not already (Z, Y, X) cannot seed the search: `rocking`
+    # reports the four-element detector shape (n_folders, n_frames, H, W), and
+    # `roi_shape` applied to that lines the ROI up against the wrong axes (for
+    # STO2 it yields a zero-height (76, 0, 1832), right only by accident on a
+    # square detector). Such a shape may only be WIDENED into a real aligned
+    # shape, never used as the answer.
+    usable = len(raw_shape) == 3 and min(raw_shape) >= 1
+    best = raw_shape if usable else None
     for pattern_key in _ALIGNMENT_PATTERN_KEYS:
+        if not params.get(pattern_key):
+            continue
         candidate = alignment.aligned_shape_for_params(params, raw_shape, pattern_key=pattern_key)
-        if candidate is not None and max(candidate) > max(best):
+        if candidate is None or min(candidate) < 1:
+            continue
+        if best is None or max(candidate) > max(best):
             best = candidate
     return best
 
@@ -204,7 +218,15 @@ def _hints(profile: MachineProfile, estimate: CostEstimate, params: dict) -> dic
         mode = str(params.get("render_mode") or ("volume" if has_3d else ""))
         if not mode or profile.gl_status != "ok" or profile.gl is None or estimate.shape is None:
             return {}
+        # A stage that renders no 3-D product this run cannot render a blank
+        # one. The toggles are the stage's own (`save_topview`/`save_rotation`),
+        # so a stage that offers no such switch is unaffected.
+        toggles = [k for k in ("save_topview", "save_rotation") if k in params]
+        if toggles and not any(params.get(k) for k in toggles):
+            return {}
         shape = _aligned_shape_for_hint(estimate.shape, params)
+        if shape is None:
+            return {}
         result = advice.advise_3d(profile, shape, mode, params.get("volume_downsample", 0))
         if not result.reasons:
             return {}

@@ -261,6 +261,37 @@ def test_no_texture_hint_for_a_stage_that_renders_no_3d():
     assert HINT_3D_TEXTURE not in adv.hints
 
 
+def _detector_estimate(params):
+    """What `rocking.estimate` really reports: `(n_folders, n_frames, H, W)`."""
+    return CostEstimate(1 * GB, 1 * GB, (76, 575, 2048, 2048), True)
+
+
+def test_no_texture_hint_from_a_four_element_detector_shape():
+    spec = _spec_with("tests.test_common_advisory:_detector_estimate")
+    adv = advise_stage(
+        spec, {"volume_downsample": 0, "save_topview": True}, profile=workstation_sw_gl()
+    )
+    assert HINT_3D_TEXTURE not in adv.hints
+
+
+def test_the_hint_reads_rockings_own_folder_pattern():
+    """`rocking.estimate` picks `rocking_pattern` unless source_scan is
+    mosaicity; a hint priced off the mosa folders describes a different
+    volume."""
+    from dfxm.common.advisory import _ALIGNMENT_PATTERN_KEYS
+
+    assert "rocking_pattern" in _ALIGNMENT_PATTERN_KEYS
+
+
+def test_no_texture_hint_when_no_3d_product_was_asked_for():
+    """With Save top view off there is no volume render to be blank."""
+    spec = _spec_with("tests.test_common_advisory:_wide_estimate")
+    adv = advise_stage(
+        spec, {"volume_downsample": 0, "save_topview": False}, profile=workstation_sw_gl()
+    )
+    assert HINT_3D_TEXTURE not in adv.hints
+
+
 def test_no_texture_hint_when_the_volume_fits():
     spec = _spec_with("tests.test_common_advisory:_wide_estimate")
     prof = laptop_hw_gl()

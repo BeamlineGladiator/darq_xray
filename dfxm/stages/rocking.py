@@ -814,14 +814,20 @@ def estimate(params: dict) -> CostEstimate:
       bites above ~50 frames per scan, where its local slope is **5.85 B per
       scan element** against the 6 charged — but a real rocking scan can carry
       hundreds of frames, so it stays in the model;
-    * :data:`ROCKING_VOLUME_BYTES_PER_ELEM` ``* n_scans * layer_elems``, which is
-      what actually dominates at ordinary frame counts;
+    * :data:`ROCKING_VOLUME_BYTES_PER_ELEM` ``* volume_elems``, which is what
+      actually dominates at ordinary frame counts. ``volume_elems`` is the
+      **aligned** element count from :func:`alignment.aligned_shape_for_params`
+      — NOT ``n_scans * read_elems``: the samy X-pad and the uniform-Z resample
+      compound, 1.58x on real STO2. It anchors at ``mosa_samy[0]``
+      (``ref_pattern_key="mosa_pattern"``) because that is where ``run()``
+      anchors; anchoring at the read glob's own first scan under-states the pad;
     * :data:`ROCKING_TOPVIEW_BYTES` when ``save_topview`` is on — **default on,
       ~365 MiB, and entirely absent from the old model**, which is why that
       model under-predicted a few-frame default run by 13.4x.
 
-    ``layer_elems`` and ``scan_elems`` are both sized from the **ROI'd** frame,
-    not the detector: ``process_raw_scan`` reads ``det[:, ys:ye, xs:xe]``, so
+    ``read_elems`` and ``scan_elems`` are both sized from the **ROI'd** frame,
+    not the detector (``volume_elems`` is the aligned count described above):
+    ``process_raw_scan`` reads ``det[:, ys:ye, xs:xe]``, so
     the float32 copy, both accumulators and the aligned volumes follow
     ``roi_x``/``roi_y``. On the real STO2 form (``roi_x`` 105,1937 and ``roi_y``
     630,1330 against a 2048x2048 detector) ignoring the ROI over-stated the
@@ -905,12 +911,19 @@ def estimate(params: dict) -> CostEstimate:
     # ROI. Letting it re-parse `roi_x`/`roi_y` itself put two different ROI
     # semantics in one model, which disagreed on exactly the malformed inputs
     # `_roi_span` exists to absorb.
+    # `ref_pattern_key` matters as much as `pattern_key`: run() anchors every
+    # shift at `mosa_samy[0]` (see `samy_ref` in `run`), NOT at the first scan of
+    # whichever glob it is reading. Without it the pad — and with it the
+    # dominant per-element volume term — comes out too small whenever the
+    # rocking scans sit away from the mosaicity reference, which is the
+    # under-prediction direction this estimator was rebuilt to close.
     aligned = A.aligned_shape_for_params(
         p,
         (n, rows, cols),
         pattern_key=pattern_key,
         roi_x_key="__roi_already_applied__",
         roi_y_key="__roi_already_applied__",
+        ref_pattern_key="mosa_pattern",
     )
     if aligned is not None:
         nz, ny_a, nx_a = aligned

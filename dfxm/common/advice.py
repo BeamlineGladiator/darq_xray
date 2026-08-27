@@ -377,20 +377,6 @@ def plan_run(profile, estimate, *, allow_downsample: bool = False, scratch_dir=N
     return RunPlan("disk-backed", budget, 0, downsample, scratch_dir, tuple(reasons), blocked)
 
 
-def _points_at(shape, factor: int) -> int:
-    """Largest texture edge (in POINTS) a volume of *shape* needs at *factor*.
-
-    Mirrors the actor, :func:`dfxm.common.render3d.fit_downsample`: coarsening
-    block-averages Y and X and leaves Z alone, so a volume too DEEP for the
-    limit is not rescued by any factor. Getting this wrong would have the hint
-    promise a fit the run cannot deliver. A shape that is not (Z, Y, X) is
-    treated as all-coarsenable — the pre-2026-08 behaviour.
-    """
-    dims = [int(d) for d in shape]
-    fixed, coarsenable = (dims[0], dims[1:]) if len(dims) == 3 else (0, dims)
-    return max([fixed] + [d // max(1, factor) for d in coarsenable]) + 1
-
-
 def advise_3d(profile, shape, mode: str, requested: int = 0) -> Advice:
     """Recommended downsample and render mode for a volume of *shape*.
 
@@ -399,52 +385,54 @@ def advise_3d(profile, shape, mode: str, requested: int = 0) -> Advice:
     blank product. Geometry modes (surface/isosurface) upload geometry instead,
     so they are unaffected and get no advice.
 
-    *requested* is the stage's ``volume_downsample`` setting: ``0`` (the
-    default) means the run fits the volume itself, so the hint says what will
-    happen rather than asking for an action; ``>= 1`` is the user's own factor,
-    and the hint fires only when that factor leaves the volume over the limit.
+    *requested* is the stage's ``volume_downsample``: ``0`` (the default) means
+    the run fits the volume itself, so the reason says what will happen rather
+    than asking for an action; ``>= 1`` is the user's own factor and produces a
+    reason only when that factor leaves the volume over the limit.
+
+    The factor named here comes from :func:`dfxm.common.render3d.fit_factor_for_shape`
+    — the same function the run uses — because the remedy is "set it to 0", and
+    a hint that names a factor auto-fit would not pick states the wrong
+    resolution loss, or promises a fit past the 16x cap that never arrives.
+
+    *shape* must be ``(Z, Y, X)``. Anything else returns no advice rather than
+    guessing which axis is Z: ``rocking.estimate`` reports a four-element
+    detector shape ``(n_folders, n_frames, H, W)``, and reading that as a volume
+    produced a hint about the detector.
     """
     reasons: list[str] = []
     if mode != "volume" or profile.gl is None or not profile.gl.max_3d_texture:
         return Advice(1, None, ())
-    if not shape:
+    dims = tuple(int(d) for d in shape) if shape else ()
+    if len(dims) != 3 or min(dims) < 1:
         return Advice(1, None, ())
+
+    from . import render3d  # local: keeps the figure stack off a bare estimate's import path
+
     limit = int(profile.gl.max_3d_texture)
     requested = max(0, int(requested or 0))
-    longest = max(int(d) + 1 for d in shape)
-    if _points_at(shape, max(1, requested)) <= limit:
+    if render3d.points_at_factor(dims, max(1, requested)) <= limit:
         return Advice(1, None, ())  # fits as configured — nothing to say
 
-    downsample = max(1, requested)
-    while downsample < 16 and _points_at(shape, downsample) > limit:
-        downsample *= 2
-    fits = _points_at(shape, downsample) <= limit
+    longest = max(dims)
+    downsample = render3d.fit_factor_for_shape(dims, limit)
+    fits = downsample > 1  # 1 means no factor helps: Z is never block-averaged
+    cap = f"volume is {longest} px on its longest axis but this GL stack caps 3-D textures at {limit} px"
     if requested >= 1:
         remedy = (
             f"set it to 0 to coarsen {downsample}x and fit"
             if fits
             else "use surface mode or crop the ROI"
         )
-        reasons.append(
-            f"volume is {longest - 1} px on its longest axis but this GL stack caps 3-D "
-            f"textures at {limit} px — at 3-D downsample {requested} volume mode renders "
-            f"BLANK; {remedy}"
-        )
+        reasons.append(f"{cap} — at 3-D downsample {requested} volume mode renders BLANK; {remedy}")
     elif fits:
         reasons.append(
-            f"volume is {longest - 1} px on its longest axis but this GL stack caps 3-D "
-            f"textures at {limit} px — the run coarsens it {downsample}x to fit; set 3-D "
-            f"downsample to 1 for full resolution, which renders blank here"
+            f"{cap} — the run coarsens it {downsample}x to fit; set 3-D downsample to 1 "
+            f"for full resolution, which renders blank here"
         )
     else:
         reasons.append(
-            f"volume is {longest - 1} px on its longest axis but this GL stack caps 3-D "
-            f"textures at {limit} px, and coarsening cannot fit it (Z is never "
-            f"block-averaged) — volume mode renders BLANK; use surface mode or crop the ROI"
-        )
-    if profile.gl.software:
-        reasons.append(
-            f"software renderer ({profile.gl.renderer}) — surface mode uploads geometry "
-            "instead of one large texture and will be far faster here"
+            f"{cap}, and coarsening cannot fit it (Z is never block-averaged) — volume "
+            f"mode renders BLANK; use surface mode or crop the ROI"
         )
     return Advice(downsample, "surface", tuple(reasons))

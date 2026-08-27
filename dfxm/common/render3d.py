@@ -9,7 +9,7 @@ this module stays Qt-free and figure code uses the explicit Figure/Agg API.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 
 import numpy as np
 from matplotlib.figure import Figure
@@ -411,53 +411,95 @@ def _probe_texture_limit() -> int | None:
             pl.close()
 
 
+_MAX_FIT_DOWNSAMPLE = 16  # the cap `advice.advise_3d` mirrors — see `_MAX_FIT` there
+
+
+def points_at_factor(shape, factor: int) -> int:
+    """Largest texture edge (in POINTS) a volume of *shape* needs at *factor*.
+
+    The texture is sized in POINTS — one more than the voxel count per axis —
+    so a volume as wide as the limit already fails (empirically: 2047 px
+    renders, 2048 px is blank at a 2048 limit). Mirrors
+    :meth:`Scene3D.prepared_shape`: coarsening block-averages Y and X and never
+    touches Z. `test_fit_factor_for_shape_is_the_rule_prepared_shape_follows`
+    pins the two together, because a disagreement here makes the advisory
+    promise fits the renderer cannot deliver.
+    """
+    z, y, x = (int(n) for n in shape)
+    f = max(1, int(factor))
+    return max(z, y // f, x // f) + 1
+
+
+def fit_factor_for_shape(shape, limit) -> int:
+    """Smallest power-of-two coarsening that gets *shape* under *limit*.
+
+    ``1`` — never coarsen — when coarsening is not the answer, which covers
+    three distinct cases that all look alike from outside:
+
+    * the shape already fits;
+    * no factor up to :data:`_MAX_FIT_DOWNSAMPLE` gets it under the limit,
+      because Z is never block-averaged and a volume too DEEP stays too deep;
+    * every factor that would fit **collapses an axis to nothing**. A thin
+      volume like ``(2, 10, 3000)`` under a 256-px limit needs 16x for its long
+      axis, but ``10 // 16 == 0`` — that hands VTK an EMPTY volume, which is
+      worse than the blank render this is avoiding, while reporting success.
+
+    Shared with :func:`dfxm.common.advice.advise_3d` so the factor the hint
+    names is the factor the run will use.
+    """
+    if limit is None or len(tuple(shape)) != 3 or min(int(n) for n in shape) < 1:
+        return 1
+    limit = int(limit)
+    z, y, x = (int(n) for n in shape)
+    factor = 1
+    while factor <= _MAX_FIT_DOWNSAMPLE:
+        if y // factor >= 1 and x // factor >= 1 and points_at_factor(shape, factor) <= limit:
+            return factor
+        factor *= 2
+    return 1
+
+
+def fit_downsample(scene: Scene3D, limit) -> int:
+    """Smallest power-of-two downsample that gets *scene* under the GL *limit*.
+
+    ``1`` in every case :func:`fit_factor_for_shape` declines, plus the two
+    this scene knows and a bare shape does not: an unknown limit and a geometry
+    mode (surface/isosurface upload geometry, not one 3-D texture).
+    """
+    if limit is None or scene.mode != "volume":
+        return 1
+    return fit_factor_for_shape(tuple(scene.volume.shape), limit)
+
+
 def oversize_note(scene: Scene3D, limit) -> str | None:
     """Warning text when *scene* is too big for the GL 3-D texture *limit*.
 
     ``None`` when the scene fits, when *limit* is unknown (None) or when the
-    mode is surface/isosurface (those upload geometry, not a 3-D texture). The
-    texture is sized in POINTS — one more than the voxel count per axis — so a
-    volume as wide as the limit already fails (empirically: 2047 px renders,
-    2048 px is blank at a 2048 limit).
+    mode is surface/isosurface (those upload geometry, not a 3-D texture).
+
+    The remedy is **not** fixed text: it asks whether coarsening can actually
+    help this volume. Offering "set the 3-D downsample to 0" for a volume too
+    deep to fit sends the user to the one thing that cannot work — and `0` is
+    not even selectable in the 3-D viewer, whose spin runs 1-16.
     """
     if limit is None or scene.mode != "volume":
         return None
     biggest = max(scene.prepared_shape())
     if biggest + 1 <= int(limit):
         return None
+    fitted = fit_downsample(scene, limit)
+    remedy = (
+        f"set the 3-D downsample to 0 to coarsen it {fitted}x to fit (or Downsample "
+        f"{fitted} in the 3-D viewer), or crop the ROI"
+        if fitted > 1
+        else "coarsening cannot fit it (Z is never block-averaged) — use surface "
+        "mode, or crop the ROI"
+    )
     return (
         f"3-D volume render exceeds this machine's GL 3-D texture limit "
         f"({biggest} voxels along one axis, limit {int(limit)}) — the volume renders "
-        f"BLANK; set the 3-D downsample to 0 to coarsen it to fit (or raise Downsample "
-        f"in the 3-D viewer), crop the ROI, or use surface mode."
+        f"BLANK; {remedy}."
     )
-
-
-_MAX_FIT_DOWNSAMPLE = 16  # the cap `advice.advise_3d` recommends against, too
-
-
-def fit_downsample(scene: Scene3D, limit) -> int:
-    """Smallest power-of-two downsample that gets *scene* under the GL *limit*.
-
-    Returns ``1`` — never coarsen — whenever coarsening is not the answer: an
-    unknown limit, a geometry mode (surface/isosurface upload no 3-D texture),
-    a scene that already fits, or one no factor can rescue. That last case is
-    real: :func:`downsample_volume` block-averages Y/X and leaves Z untouched,
-    so a volume too DEEP for the limit stays too deep however finely Y and X
-    are averaged, and coarsening it would cost resolution for nothing.
-    """
-    if limit is None or scene.mode != "volume":
-        return 1
-    limit = int(limit)
-    factor = 1
-    while factor <= _MAX_FIT_DOWNSAMPLE:
-        # `replace` rather than the shape arithmetic inline: it shares the
-        # volume (no copy) and keeps `prepared_shape` the one place that knows
-        # which axes a downsample actually touches.
-        if max(replace(scene, downsample=factor).prepared_shape()) + 1 <= limit:
-            return factor
-        factor *= 2
-    return 1
 
 
 def apply_texture_fit(scene: Scene3D, limit, requested: int = 0) -> str | None:
@@ -470,6 +512,10 @@ def apply_texture_fit(scene: Scene3D, limit, requested: int = 0) -> str | None:
     verbatim in every mode — including ``1``, which reproduces the blank render
     and returns its warning. Auto only ever coarsens FURTHER, never undoes a
     coarser factor the caller already set. ``None`` when there is nothing to say.
+
+    When auto-fit declines, the note is :func:`oversize_note`'s — it already
+    picks the remedy that suits this volume, and a second wording here is how
+    the 3-D viewer ended up showing two warnings that contradicted each other.
     """
     requested = int(requested)
     if requested >= 1:
@@ -485,17 +531,7 @@ def apply_texture_fit(scene: Scene3D, limit, requested: int = 0) -> str | None:
             f"axis, limit {int(limit)}) — set the 3-D downsample to 1 for full "
             f"resolution, which this GL stack cannot display."
         )
-    if oversize_note(scene, limit) is None:
-        return None
-    # Auto-fit was asked for and declined, so coarsening is not the remedy here
-    # (`fit_downsample` only declines a still-oversize scene when no factor
-    # helps) — saying "coarsen it" would send the user somewhere that cannot work.
-    return (
-        f"3-D volume render exceeds this machine's GL 3-D texture limit "
-        f"({max(scene.prepared_shape())} voxels along one axis, limit {int(limit)}) and "
-        f"coarsening cannot fit it (Z is never block-averaged) — the volume renders "
-        f"BLANK; use surface mode, or crop the ROI."
-    )
+    return oversize_note(scene, limit)
 
 
 def _top_camera(bounds):

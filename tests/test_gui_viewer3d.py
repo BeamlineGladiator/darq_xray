@@ -93,6 +93,34 @@ def test_driving_the_spin_clears_the_autofit_note(monkeypatch):
     w.close()
 
 
+def _deep_spec():
+    """Too DEEP for the limit: coarsening block-averages Y/X, never Z, so no
+    factor can fit this one."""
+    lv = LoadedVolume(
+        volume=np.ones((40, 4, 4)),
+        spacing=(0.15, 0.38, 2.0),
+        cmap="magma",
+        clim=(0.0, 1.0),
+        cbar_label="Intensity",
+        group="raw",
+    )
+    return VolumeSourceSpec(
+        name="deep", load=lambda: lv, loader={"kind": "h5_dataset", "path": "/x", "dataset": "deep"}
+    )
+
+
+def test_an_unfittable_volume_gets_one_message_not_two(monkeypatch):
+    """Showing the auto-fit note AND the oversize note put two blank-render
+    warnings on one line that disagreed about the remedy."""
+    monkeypatch.setattr("gui.widgets.viewer3d_window.R3.volume_texture_limit", lambda *a, **kw: 8)
+    w = Viewer3DWindow(_deep_spec(), "visualize")
+    w.load_and_render()
+    text = w._status.text()
+    assert text.count("BLANK") <= 1, text
+    assert not ("cannot fit it" in text and "downsample to 0" in text), text
+    w.close()
+
+
 def test_window_survives_without_gl():
     # offscreen: PvCanvas.ensure() may fail -> placeholder; nothing raises
     w = Viewer3DWindow(_spec(), "rocking")

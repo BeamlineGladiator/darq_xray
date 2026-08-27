@@ -233,8 +233,17 @@ def aligned_shape_for_params(
     pattern_key: str,
     roi_x_key: str = "roi_x",
     roi_y_key: str = "roi_y",
+    ref_pattern_key: str = "",
 ) -> tuple[int, int, int] | None:
     """The aligned ``(nz, ny, nx)`` shape for *shape*, from a stage's params.
+
+    *ref_pattern_key* names the folder pattern whose FIRST scan anchors the
+    samy/samz shift, for a stage that anchors somewhere other than the scans it
+    is reading: ``rocking`` shifts every scan relative to ``mosa_samy[0]``
+    (rocking.py's ``samy_ref``), so pricing its pad from the rocking glob's own
+    first scan loses the whole mosaicity-to-rocking offset and under-states the
+    aligned width — the OOM direction. Empty (the default) keeps
+    :func:`aligned_extent`'s own ``samy[0]`` reference.
 
     The estimator-facing wrapper around :func:`roi_shape` + :func:`aligned_extent`:
     it resolves the ROI and the motor positions out of a stage's parameter dict
@@ -268,12 +277,23 @@ def aligned_shape_for_params(
         roi_x = _parse_roi(p.get(roi_x_key))
         roi_y = _parse_roi(p.get(roi_y_key))
         cropped = roi_shape(shape, roi_x, roi_y)
+        ref_samy = ref_samz = None
+        if ref_pattern_key:
+            r_samy, r_samz = raster.motor_positions_for_estimate(
+                p.get("raw_root"), p.get(ref_pattern_key), p.get("samy_path"), p.get("samz_path")
+            )
+            if len(r_samy):
+                ref_samy = float(r_samy[0])
+            if len(r_samz):
+                ref_samz = float(r_samz[0])
         return aligned_extent(
             cropped,
             samy,
             samz,
             scale_x=scale_x,
             samy_direction=int(p.get("samy_direction") or 1),
+            ref_samy=ref_samy,
+            ref_samz=ref_samz,
         )
     except Exception:  # noqa: BLE001 - an estimate is advisory, never fatal
         return None
