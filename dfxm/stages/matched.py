@@ -422,7 +422,11 @@ def _rock_h5(raw_root, name):
 MATCHED_PROCESS_FLOOR_BYTES = 176 * 1024 * 1024
 
 # The auto colour-limit pass, per element of ONE detector frame, charged only
-# when it runs (both `vmin` and `vmax` blank). It holds up to ten whole frames
+# when it runs — which is whenever `vmin` OR `vmax` is blank or unparseable,
+# not only when both are (`run()` gates on `vmin is None or vmax is None`, and
+# `_auto_clim` returns True on the first key that does not parse). One limit
+# alone still leaves the pooled pass running, which is what
+# `test_matched_drops_the_clim_pool_when_both_limits_are_given` asserts. It holds up to ten whole frames
 # of finite values in `pooled`, `np.concatenate`s them into one array of the
 # same total size, and then `np.percentile` partitions a copy of THAT — three
 # pool-sized arrays, not three frame-sized ones. Measured as the auto-minus-

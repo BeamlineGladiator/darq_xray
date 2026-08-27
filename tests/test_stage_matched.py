@@ -464,3 +464,29 @@ def test_a_styleless_export_rebuild_falls_back_the_same_way_the_run_does(tmp_pat
     specs[0].build(None)
     assert seen["group"] is None
     assert seen["cmap"] == "turbo"  # the recorded stage colormap
+
+
+def test_the_estimator_literals_match_the_spec_defaults():
+    """`matched.estimate` reads its dataset paths as `p.get(key) or "<literal>"`.
+
+    The literals are unreachable through `estimate()`, which merges
+    `STAGE.defaults()` first — so they are not a fallback anyone hits, they are a
+    SECOND COPY of three Param defaults. Deleting the branch would trade the
+    duplicate for a swallowed `KeyError` (this helper returns a 0 pad on any
+    exception, an under-prediction), and threading `STAGE.defaults()` through
+    would keep a branch that cannot be exercised. Pinning the copies is what
+    actually catches the failure the duplication allows: a Param default edited
+    without the estimator following it.
+    """
+    import pathlib
+    import re
+
+    source = pathlib.Path(M.__file__).read_text()
+    literals = dict(re.findall(r'p\.get\("(\w+)"\) or "([^"]+)"', source))
+    defaults = M.STAGE.defaults()
+    assert literals, "the `p.get(key) or literal` pattern is gone — drop this test with it"
+    for key, literal in literals.items():
+        assert literal == defaults[key], (
+            f"{key}: estimator falls back to {literal!r} but the spec default is "
+            f"{defaults[key]!r} — update dfxm/stages/matched.py to match"
+        )

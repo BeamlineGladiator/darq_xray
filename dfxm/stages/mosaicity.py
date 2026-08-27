@@ -496,9 +496,7 @@ def estimate(params: dict) -> CostEstimate:
     except Exception as exc:  # noqa: BLE001 - an estimate is advisory, never fatal
         return CostEstimate(0, 0, None, True, f"cannot size input: {type(exc).__name__}")
 
-    layer_elems = 1
-    for dim in layer_shape:
-        layer_elems *= dim
+    layer_elems = _elems(layer_shape)
     n_layers = len(work)
     per_volume = n_layers * layer_elems * itemsize
     input_bytes = present * per_volume
