@@ -485,24 +485,30 @@ above, and only appearing when it has something to say. It clears itself the
 moment the setting it warned about no longer applies (you change the field, or
 the condition it was about goes away), so it never lingers as stale advice.
 
-Today the one field that carries this is **visualize**'s **3D render mode**
-(under Advanced → Appearance). `volume` mode uploads the whole aligned grid to
-the graphics card as **one** 3-D texture, and every graphics stack caps how
-big that texture may be (2048 px per axis on typical software/llvmpipe GL —
-narrower than a typical ~2891 px-wide aligned volume). Push past that cap and
-the renderer does not error — it draws **nothing at all**, so the 3-D top view
-and rotation video come out as blank images with no indication anything went
-wrong. Once this session has checked your machine's graphics capability (see
-below), opening the visualize stage with `render_mode=volume` selected shows a
-note under the field naming the exact limit and by how much you'd need to
-downsample, and recommends `surface` mode instead when your GL stack is
-software-rendered (surface mode uploads geometry, not one giant texture, and
-is far faster on a software renderer besides). Switch to `surface` or
-`isosurface`, or crop/downsample the volume, and the note clears.
+The fields that carry this today are **visualize**'s **3D render mode** and
+**rocking**'s **3D downsample** (both under Advanced → Appearance) — one field
+per stage, since the note is the same paragraph wherever it is shown. `volume` mode uploads the whole aligned grid to the graphics
+card as **one** 3-D texture, and every graphics stack caps how big that texture
+may be (2048 px per axis on typical software/llvmpipe GL — narrower than a
+typical ~2891 px-wide aligned volume). Push past that cap and the renderer does
+not error — it draws **nothing at all**, so the 3-D top view and rotation video
+would come out as blank images with no indication anything went wrong.
+
+Because that is a silent failure, the run **fits the volume for you**: **3D
+downsample** defaults to `0`, meaning "coarsen by the smallest factor that gets
+under this machine's limit". Once this session has checked your machine's
+graphics capability (see below), the note under the field tells you what will
+happen — the exact limit and the factor the run will apply — rather than asking
+you to do anything, and recommends `surface` mode when your GL stack is
+software-rendered (surface mode uploads geometry, not one giant texture, and is
+far faster on a software renderer besides). Set **3D downsample** to `1` to opt
+out and keep full resolution, and the note changes to the blank-render warning;
+set it to any other number to force exactly that factor. Switch to `surface` or
+`isosurface`, or crop the volume under the limit, and the note clears.
 
 This note needs to know your GL stack's texture limit, which the app only
 checks once per session — quietly, in the background, the first time you open
-a stage that has a field like this (currently just visualize), so it never
+a stage that has a field like this (visualize or rocking), so it never
 delays opening any other stage or blocks the form while you type. Until that
 check lands, the note simply stays silent rather than guessing; the
 after-the-run notice described in visualize's own section below (dataset notes
@@ -812,6 +818,7 @@ frame**, anchored to the mosaicity reference so they overlay the other volumes.
 | `specific_frame_idx` | which frame to extract (blank = central) |
 | `normalize_sum` | divide the summed intensity by frame count |
 | `subtract_background` | subtract each pixel's median across the scan's frames before summing, so only above-background signal accumulates — applies to whichever scan type the run reads (default on; turn off for a plain intensity sum, e.g. a mosa-scan topograph where the background level itself is meaningful) |
+| `volume_downsample` | coarsening applied before the 3-D top view, a block-average over N×N pixels in Y and X (Z untouched). `0` (default) picks the smallest factor that fits this machine's GL 3-D texture limit — which the aligned rocking volume, the widest in the pipeline, normally needs on software GL; `1` never coarsens and renders **blank** when over the limit; `N` applies exactly N. Same field, same meaning, as [[#5. Visualize volumes (`visualize`)|visualize]]'s |
 
 **Source scan selector (`source_scan`)**
 
@@ -915,6 +922,7 @@ Align the stacked mosaicity/strain volumes and render them.
 | `output_format` | `mp4` / `gif` / `both` |
 | `save_rotation` | write a 360° orbiting movie of the 3-D volume render (same look and opacity as the top view; container follows `output_format`). Slow — off by default |
 | `render_mode` | how the 3-D top view and rotation video draw the volume: `volume` (default — true volumetric rendering, shaded, transfer-function opacity), `surface` (the legacy NaN-thresholded mesh), or `isosurface` (stacked contour shells) |
+| `volume_downsample` | coarsening applied before 3-D rendering, a block-average over N×N pixels in Y and X (Z untouched). `0` (default) picks the smallest factor that fits this machine's GL 3-D texture limit — which a volume wider than that limit needs in order to render at all; `1` never coarsens and renders **blank** when over the limit; `N` applies exactly N. Whatever it does is recorded in the dataset's notes |
 | `opacity_mapping` | opacity transfer function used by `render_mode=volume`: `linear` (default), `sigmoid` (emphasises mid-range values), `geom` (high values), `geom_r` (low values). Ignored by `surface`/`isosurface` |
 | `rotation_frames` | frames in one 360° orbit of the rotation video (default 180, 15 fps) |
 | `log_scale` | logarithmic colour mapping for the 3-D top view and rotation video. Falls back to linear — with a note recorded on the dataset — whenever the colour range includes zero or negative values (e.g. Center-of-mass and strain, which straddle zero) |
@@ -932,19 +940,22 @@ Align the stacked mosaicity/strain volumes and render them.
 > scale bar in every frame, and each frame is rendered at an absolute camera
 > pose along the orbit, so the movie really does turn all the way round.
 
-> [!warning] "3-D volume render exceeds this machine's GL 3-D texture limit"
+> [!warning] "3-D volume coarsened 2x to fit this machine's GL 3-D texture limit"
 > `render_mode=volume` uploads the whole volume as one 3-D texture, and every
 > graphics stack caps its size (2048 px per axis on software/llvmpipe GL —
 > narrower than a typical 2891 px-wide aligned volume). Over that cap the
 > renderer draws **nothing**, so the top view and the orbit video would be blank
-> images with no error. The stage now detects this and records it in the
-> dataset's notes (shown in the run summary); the same hint appears in the 3-D
-> viewer's status line, and — once this session's one-time GL check has run —
-> as a note under the **3D render mode** field itself, before you ever click
-> Run (see [[#Per-field notes]] above). Crop the map ROI (or raise
-> **Downsample** in the 3-D viewer) until the largest axis fits, or render on a
-> machine with a real GPU. Nothing is downsampled automatically — the products
-> keep full resolution.
+> images with no error. The stage detects this and **coarsens the volume until
+> it fits** (see `volume_downsample` above), recording the factor in the
+> dataset's notes (shown in the run summary). The 3-D viewer opens such a volume
+> already fitted too, with its **Downsample** spin showing the factor in force.
+> Only Y and X are block-averaged — Z never is — so a volume too *deep* for the
+> limit cannot be fitted at all; there the note stays the old
+> "renders **BLANK**" warning, and the answer is `surface` mode or a real GPU.
+> Set `volume_downsample` to `1` if you would rather have full resolution and
+> the warning. Once this session's one-time GL check has run, the same
+> information appears under the **3D downsample** field before you ever click
+> Run (see [[#Per-field notes]] above).
 
 > [!tip] Picking the run-time ROI interactively
 > Click **Pick ROI…** (in the button row alongside Run/Cancel) to open a visual
@@ -2459,17 +2470,22 @@ scene, camera/bounds just re-render the existing one):
 | Control | Effect |
 | --- | --- |
 | **Value threshold** + min/max | when checked, NaNs out voxels outside the `[min, max]` value window before rendering |
-| **Downsample** | block-averages the volume 1–16× in Y/X (Z untouched) before rendering — a quick way to preview a large volume responsively |
+| **Downsample** | block-averages the volume 1–16× in Y/X (Z untouched) before rendering — a quick way to preview a large volume responsively. Set for you when the window opens if the volume is over this machine's GL 3-D texture limit (see below); changing it by hand takes over from there |
 | **Clip plane** + **Clip axis** (X/Y/Z) + **Flip clip direction** | NaNs out the half of the volume on one side of an axis-aligned plane through the volume's centre; **Flip clip direction** swaps which half is kept. This is a v1 (axis presets + flip only) — not a live draggable plane widget |
 | **Camera preset** (Front / Top / Side / Iso) | snaps the interactive camera to that preset (offsets reset to 0/0/1×) |
 | **Azimuth / Elevation / Zoom** + **Apply camera pose** | applies a custom offset on top of the `front` preset. These three fields always show the *last applied* pose, not wherever your mouse has since orbited the view — video/image exports use the live plotter camera, not these fields |
 | **Show bounds axes (µm)** | toggles a `pyvista` bounding box with µm-labelled X/Y/Z axes around the volume |
 
-The status line under the view reports the loaded volume's shape — and, when
-the volume is wider than this machine's GL 3-D texture limit (so `volume` mode
-can only draw a blank canvas), says so and names the limit. Raise **Downsample**
-until it fits, or switch **Render mode** to `surface`/`isosurface`, which upload
-geometry instead of a 3-D texture.
+The status line under the view reports the loaded volume's shape. A volume
+wider than this machine's GL 3-D texture limit can only draw a blank canvas in
+`volume` mode, so the window **opens it already coarsened** by the smallest
+factor that fits: **Downsample** shows the factor in force and the status line
+says what was done and why. Spin **Downsample** back to `1` and you get the full
+volume and the blank canvas it implies — the window stops fitting for you the
+moment you touch that control. If coarsening cannot fit it (only Y and X are
+block-averaged, never Z), the status line says the render is blank instead;
+switch **Render mode** to `surface`/`isosurface`, which upload geometry rather
+than a 3-D texture.
 
 > [!warning] A volume too big for this machine is decimated for display
 > The 3-D view needs the whole volume in memory at once, so a **rocking**

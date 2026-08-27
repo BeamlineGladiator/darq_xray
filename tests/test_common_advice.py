@@ -219,6 +219,35 @@ def test_advise_3d_downsamples_to_fit_the_texture_limit():
     assert any("2048" in r for r in advice.reasons)
 
 
+def test_advise_3d_says_what_the_run_will_do_rather_than_asking():
+    """`volume_downsample` 0 is the shipped default: the run fits the volume
+    itself, so the hint reports that instead of demanding an action."""
+    advice = advise_3d(workstation_sw_gl(), (100, 700, 2891), "volume", 0)
+    reason = " ".join(advice.reasons)
+    assert "coarsens it 2x" in reason and "2048" in reason
+    assert "BLANK" not in reason
+
+
+def test_advise_3d_warns_when_the_user_opted_out_of_the_fit():
+    advice = advise_3d(workstation_sw_gl(), (100, 700, 2891), "volume", 1)
+    reason = " ".join(advice.reasons)
+    assert "BLANK" in reason and "set it to 0" in reason
+
+
+def test_advise_3d_is_silent_when_the_users_own_factor_already_fits():
+    """2891 // 4 = 722: over the cap at 1, under it at 4, so there is nothing
+    left to warn about."""
+    assert advise_3d(workstation_sw_gl(), (100, 700, 2891), "volume", 4).reasons == ()
+
+
+def test_advise_3d_does_not_promise_a_fit_coarsening_cannot_deliver():
+    """Z is never block-averaged, so a volume too DEEP is not rescued by any
+    factor — the hint must not offer one (it would be a lie the run then
+    contradicts)."""
+    reason = " ".join(advise_3d(workstation_sw_gl(), (3000, 8, 8), "volume", 0).reasons)
+    assert "cannot fit it" in reason and "surface mode" in reason
+
+
 def test_advise_3d_leaves_a_fitting_volume_alone():
     advice = advise_3d(laptop_hw_gl(), (100, 700, 2891), "volume")
     assert advice.downsample == 1

@@ -195,11 +195,17 @@ def _hints(profile: MachineProfile, estimate: CostEstimate, params: dict) -> dic
     "no hint" rather than taking the caller's window down.
     """
     try:
-        mode = str(params.get("render_mode") or "")
+        # `rocking` has no `render_mode` field — it renders volume mode
+        # unconditionally — so keying the hint on that field alone left the one
+        # stage whose aligned volume is widest unable to show it. A stage that
+        # declares `volume_downsample` renders in 3-D; volume is its mode when
+        # it offers no choice.
+        has_3d = "volume_downsample" in params
+        mode = str(params.get("render_mode") or ("volume" if has_3d else ""))
         if not mode or profile.gl_status != "ok" or profile.gl is None or estimate.shape is None:
             return {}
         shape = _aligned_shape_for_hint(estimate.shape, params)
-        result = advice.advise_3d(profile, shape, mode)
+        result = advice.advise_3d(profile, shape, mode, params.get("volume_downsample", 0))
         if not result.reasons:
             return {}
         return {HINT_3D_TEXTURE: " ".join(result.reasons)}

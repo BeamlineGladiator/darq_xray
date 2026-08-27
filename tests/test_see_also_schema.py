@@ -190,3 +190,11 @@ def test_a_param_pointer_and_that_params_help_do_not_state_the_same_rule():
     # ...and the help is the one that says what the dropdown itself is for
     assert "headless" in help_text.lower()
     assert "headless" not in pointer.lower(), pointer
+
+
+def test_no_stage_declares_one_advice_key_on_two_fields():
+    """`ParamForm.apply_hints` writes a hint under EVERY param declaring its
+    key, so two fields sharing one key render the same paragraph twice."""
+    for name, spec in STAGE_SPECS.items():
+        keys = [p.advice_key for p in spec.params if p.advice_key]
+        assert len(keys) == len(set(keys)), f"{name} repeats an advice_key: {keys}"

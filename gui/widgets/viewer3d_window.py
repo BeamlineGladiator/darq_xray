@@ -59,6 +59,9 @@ class Viewer3DWindow(QWidget):
         self._style_json = style_json
         self.loaded: LoadedVolume | None = None
         self.scene: R3.Scene3D | None = None
+        # Set once, at open, when the volume had to be coarsened to render at
+        # all; cleared as soon as the user drives the Downsample spin themselves.
+        self._autofit_note: str | None = None
         self._canvas = PvCanvas()
         self._status = QLabel("")
         self._status.setWordWrap(True)
@@ -341,6 +344,7 @@ class Viewer3DWindow(QWidget):
 
     def _on_downsample(self, value: int) -> None:
         self.scene.downsample = value
+        self._autofit_note = None  # the user is driving now; stop explaining
         self.rebuild()
 
     def _current_clip(self) -> tuple | None:
@@ -414,6 +418,12 @@ class Viewer3DWindow(QWidget):
             cmap=self.loaded.cmap,
             clim=self.loaded.clim,
         )
+        # Fit to this machine's GL 3-D texture limit BEFORE the controls sync,
+        # so the Downsample spin shows the factor actually in force. One-shot on
+        # purpose: `rebuild` never re-fits, so spinning back to 1 reproduces the
+        # blank render this is protecting against.
+        limit = R3.volume_texture_limit(self._canvas.plotter if self._canvas.ensure() else None)
+        self._autofit_note = R3.apply_texture_fit(self.scene, limit, 0)
         self._init_controls_from_scene()
         self.rebuild()
         if self._canvas.available:
@@ -449,8 +459,9 @@ class Viewer3DWindow(QWidget):
         )
         # Too big for this machine's 3-D texture -> VTK renders nothing, silently.
         oversize = R3.oversize_note(self.scene, R3.volume_texture_limit(pl)) if ok else None
-        if oversize:
-            status += f" — {oversize}"
+        for line in (self._autofit_note, oversize):
+            if line:
+                status += f" — {line}"
         self._status.setText(self._with_notes(status))
         # pl.clear() above also drops the bounds axes actor — re-apply it here
         # so toggling structural controls doesn't silently hide the bounds.

@@ -210,7 +210,13 @@ def test_oversize_volume_becomes_a_note(tmp_path, monkeypatch):
 
     monkeypatch.setattr(RK.R3, "save_top_view", lambda scene, path, **kw: path)
     monkeypatch.setattr(RK.R3, "volume_texture_limit", lambda *a, **kw: 4)
-    p = {**RK.STAGE.defaults(), "save_layers": False, "save_animation": False, "save_topview": True}
+    p = {
+        **RK.STAGE.defaults(),
+        "save_layers": False,
+        "save_animation": False,
+        "save_topview": True,
+        "volume_downsample": 1,  # opt out of the auto-fit: this pins the warning
+    }
     res = RK.RockingResult(output_dir=str(tmp_path))
     RK._render(
         res,
@@ -625,3 +631,34 @@ def test_rocking_clim_block_budget_never_buys_more_than_the_budget(tmp_path):
             assert working_set <= budget, (
                 f"budget {budget} bought a {working_set:.0f} B working set"
             )
+
+
+def test_rocking_volume_downsample_auto_fits_the_texture_limit(tmp_path, monkeypatch):
+    """Default (0): coarsen to fit rather than save a blank top view."""
+    import numpy as np
+
+    captured = {}
+
+    def fake_top(scene, path, **kw):
+        captured["scene"] = scene
+        return path
+
+    monkeypatch.setattr(RK.R3, "save_top_view", fake_top)
+    monkeypatch.setattr(RK.R3, "volume_texture_limit", lambda *a, **kw: 4)
+    p = {**RK.STAGE.defaults(), "save_layers": False, "save_animation": False, "save_topview": True}
+    res = RK.RockingResult(output_dir=str(tmp_path))
+    RK._render(
+        res,
+        np.zeros((2, 4, 5)),
+        np.arange(2.0),
+        1.0,
+        "sum_intensity",
+        p,
+        str(tmp_path),
+        "gray",
+        "t",
+        "I",
+    )
+    assert captured["scene"].downsample == 2
+    assert any("coarsened 2x" in n for n in res.datasets[0].notes)
+    assert not any("BLANK" in n for n in res.datasets[0].notes)

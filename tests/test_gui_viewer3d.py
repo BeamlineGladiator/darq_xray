@@ -43,6 +43,56 @@ def test_window_builds_scene_from_source():
     w.close()
 
 
+def _wide_spec():
+    """A volume too wide for a small GL 3-D texture limit (the STO2 shape, in
+    miniature): 9 px on its longest axis against a limit of 6."""
+    lv = LoadedVolume(
+        volume=np.ones((2, 8, 9)),
+        spacing=(0.15, 0.38, 2.0),
+        cmap="magma",
+        clim=(0.0, 1.0),
+        cbar_label="Intensity",
+        group="raw",
+    )
+    return VolumeSourceSpec(
+        name="wide", load=lambda: lv, loader={"kind": "h5_dataset", "path": "/x", "dataset": "wide"}
+    )
+
+
+def test_window_opens_already_fitted_to_the_texture_limit(monkeypatch):
+    """A volume over the limit renders blank; the viewer opens it coarsened
+    instead, with the Downsample spin showing the factor in force."""
+    monkeypatch.setattr("gui.widgets.viewer3d_window.R3.volume_texture_limit", lambda *a, **kw: 6)
+    w = Viewer3DWindow(_wide_spec(), "visualize")
+    w.load_and_render()
+    assert w.scene.downsample == 2  # (2, 4, 4) -> 5 points <= 6
+    assert w._downsample_spin.value() == 2
+    assert w._autofit_note and "coarsened 2x" in w._autofit_note
+    w.close()
+
+
+def test_a_fitting_volume_opens_untouched(monkeypatch):
+    monkeypatch.setattr(
+        "gui.widgets.viewer3d_window.R3.volume_texture_limit", lambda *a, **kw: 4096
+    )
+    w = Viewer3DWindow(_wide_spec(), "visualize")
+    w.load_and_render()
+    assert w.scene.downsample == 1 and w._autofit_note is None
+    w.close()
+
+
+def test_driving_the_spin_clears_the_autofit_note(monkeypatch):
+    """Spinning back to 1 must reproduce today's blank render, not keep
+    explaining a coarsening that is no longer in force."""
+    monkeypatch.setattr("gui.widgets.viewer3d_window.R3.volume_texture_limit", lambda *a, **kw: 6)
+    w = Viewer3DWindow(_wide_spec(), "visualize")
+    w.load_and_render()
+    w._downsample_spin.setValue(1)
+    assert w.scene.downsample == 1
+    assert w._autofit_note is None
+    w.close()
+
+
 def test_window_survives_without_gl():
     # offscreen: PvCanvas.ensure() may fail -> placeholder; nothing raises
     w = Viewer3DWindow(_spec(), "rocking")

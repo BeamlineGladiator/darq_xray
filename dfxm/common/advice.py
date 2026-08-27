@@ -377,13 +377,32 @@ def plan_run(profile, estimate, *, allow_downsample: bool = False, scratch_dir=N
     return RunPlan("disk-backed", budget, 0, downsample, scratch_dir, tuple(reasons), blocked)
 
 
-def advise_3d(profile, shape, mode: str) -> Advice:
+def _points_at(shape, factor: int) -> int:
+    """Largest texture edge (in POINTS) a volume of *shape* needs at *factor*.
+
+    Mirrors the actor, :func:`dfxm.common.render3d.fit_downsample`: coarsening
+    block-averages Y and X and leaves Z alone, so a volume too DEEP for the
+    limit is not rescued by any factor. Getting this wrong would have the hint
+    promise a fit the run cannot deliver. A shape that is not (Z, Y, X) is
+    treated as all-coarsenable — the pre-2026-08 behaviour.
+    """
+    dims = [int(d) for d in shape]
+    fixed, coarsenable = (dims[0], dims[1:]) if len(dims) == 3 else (0, dims)
+    return max([fixed] + [d // max(1, factor) for d in coarsenable]) + 1
+
+
+def advise_3d(profile, shape, mode: str, requested: int = 0) -> Advice:
     """Recommended downsample and render mode for a volume of *shape*.
 
     Volume mode uploads the grid as ONE 3-D texture; exceeding
     ``GL_MAX_3D_TEXTURE_SIZE`` makes VTK render nothing at all — a silently
     blank product. Geometry modes (surface/isosurface) upload geometry instead,
     so they are unaffected and get no advice.
+
+    *requested* is the stage's ``volume_downsample`` setting: ``0`` (the
+    default) means the run fits the volume itself, so the hint says what will
+    happen rather than asking for an action; ``>= 1`` is the user's own factor,
+    and the hint fires only when that factor leaves the volume over the limit.
     """
     reasons: list[str] = []
     if mode != "volume" or profile.gl is None or not profile.gl.max_3d_texture:
@@ -391,18 +410,38 @@ def advise_3d(profile, shape, mode: str) -> Advice:
     if not shape:
         return Advice(1, None, ())
     limit = int(profile.gl.max_3d_texture)
-    # The texture is sized in POINTS — one more than the voxel count per axis.
+    requested = max(0, int(requested or 0))
     longest = max(int(d) + 1 for d in shape)
-    if longest <= limit:
-        return Advice(1, None, ())
+    if _points_at(shape, max(1, requested)) <= limit:
+        return Advice(1, None, ())  # fits as configured — nothing to say
 
-    downsample = 1
-    while downsample < 16 and (longest // downsample) + 1 > limit:
+    downsample = max(1, requested)
+    while downsample < 16 and _points_at(shape, downsample) > limit:
         downsample *= 2
-    reasons.append(
-        f"volume is {longest - 1} px on its longest axis but this GL stack caps 3-D "
-        f"textures at {limit} px — downsample {downsample}x, or volume mode renders blank"
-    )
+    fits = _points_at(shape, downsample) <= limit
+    if requested >= 1:
+        remedy = (
+            f"set it to 0 to coarsen {downsample}x and fit"
+            if fits
+            else "use surface mode or crop the ROI"
+        )
+        reasons.append(
+            f"volume is {longest - 1} px on its longest axis but this GL stack caps 3-D "
+            f"textures at {limit} px — at 3-D downsample {requested} volume mode renders "
+            f"BLANK; {remedy}"
+        )
+    elif fits:
+        reasons.append(
+            f"volume is {longest - 1} px on its longest axis but this GL stack caps 3-D "
+            f"textures at {limit} px — the run coarsens it {downsample}x to fit; set 3-D "
+            f"downsample to 1 for full resolution, which renders blank here"
+        )
+    else:
+        reasons.append(
+            f"volume is {longest - 1} px on its longest axis but this GL stack caps 3-D "
+            f"textures at {limit} px, and coarsening cannot fit it (Z is never "
+            f"block-averaged) — volume mode renders BLANK; use surface mode or crop the ROI"
+        )
     if profile.gl.software:
         reasons.append(
             f"software renderer ({profile.gl.renderer}) — surface mode uploads geometry "
