@@ -9,7 +9,7 @@ this module stays Qt-free and figure code uses the explicit Figure/Agg API.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import numpy as np
 from matplotlib.figure import Figure
@@ -29,17 +29,34 @@ _VOLUME_CLEAR_STEPS = 2
 
 
 def downsample_volume(vol: np.ndarray, factor: int) -> np.ndarray:
-    """Block-average (nanmean) over factor×factor Y/X blocks; Z untouched."""
+    """Block-average (nanmean) over factor×factor Y/X blocks; Z untouched.
+
+    Averaged **one Z layer at a time**, not in one whole-volume `nanmean` call.
+    The result is identical either way, but `np.nanmean` internally copies its
+    input and builds a full-size NaN mask, which measured **2.06x the volume**
+    in extra peak RSS — 1.2 GiB on the real STO2 aligned volume. Since
+    `apply_texture_fit` makes coarsening the DEFAULT for a volume over this
+    machine's GL 3-D texture limit, that spike would land on every such run;
+    per layer it is 2.06x of one layer instead (about 16 MiB there).
+    """
     if factor <= 1:
         return vol
     z, y, x = vol.shape
     yc, xc = (y // factor) * factor, (x // factor) * factor
-    v = vol[:, :yc, :xc].reshape(z, yc // factor, factor, xc // factor, factor)
+    if z == 0:  # nothing to average: keep the shape contract, skip the dtype dance
+        return vol[:, :yc:factor, :xc:factor]
     import warnings
 
+    out = None
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", RuntimeWarning)  # all-NaN blocks -> NaN
-        return np.nanmean(v, axis=(2, 4))
+        for i in range(z):
+            layer = vol[i, :yc, :xc].reshape(yc // factor, factor, xc // factor, factor)
+            averaged = np.nanmean(layer, axis=(1, 3))
+            if out is None:  # the first layer fixes the dtype nanmean promotes to
+                out = np.empty((z, *averaged.shape), dtype=averaged.dtype)
+            out[i] = averaged
+    return out
 
 
 def threshold_mask(vol: np.ndarray, window) -> np.ndarray:
@@ -411,7 +428,73 @@ def oversize_note(scene: Scene3D, limit) -> str | None:
     return (
         f"3-D volume render exceeds this machine's GL 3-D texture limit "
         f"({biggest} voxels along one axis, limit {int(limit)}) — the volume renders "
-        f"BLANK; crop the ROI (or raise Downsample in the 3-D viewer) to get under it."
+        f"BLANK; set the 3-D downsample to 0 to coarsen it to fit (or raise Downsample "
+        f"in the 3-D viewer), crop the ROI, or use surface mode."
+    )
+
+
+_MAX_FIT_DOWNSAMPLE = 16  # the cap `advice.advise_3d` recommends against, too
+
+
+def fit_downsample(scene: Scene3D, limit) -> int:
+    """Smallest power-of-two downsample that gets *scene* under the GL *limit*.
+
+    Returns ``1`` — never coarsen — whenever coarsening is not the answer: an
+    unknown limit, a geometry mode (surface/isosurface upload no 3-D texture),
+    a scene that already fits, or one no factor can rescue. That last case is
+    real: :func:`downsample_volume` block-averages Y/X and leaves Z untouched,
+    so a volume too DEEP for the limit stays too deep however finely Y and X
+    are averaged, and coarsening it would cost resolution for nothing.
+    """
+    if limit is None or scene.mode != "volume":
+        return 1
+    limit = int(limit)
+    factor = 1
+    while factor <= _MAX_FIT_DOWNSAMPLE:
+        # `replace` rather than the shape arithmetic inline: it shares the
+        # volume (no copy) and keeps `prepared_shape` the one place that knows
+        # which axes a downsample actually touches.
+        if max(replace(scene, downsample=factor).prepared_shape()) + 1 <= limit:
+            return factor
+        factor *= 2
+    return 1
+
+
+def apply_texture_fit(scene: Scene3D, limit, requested: int = 0) -> str | None:
+    """Set ``scene.downsample`` per *requested* and return the note to report.
+
+    *requested* ``0`` means "fit automatically": coarsen by the smallest factor
+    that gets under the GL 3-D texture *limit*, and say so, so a machine whose
+    limit is smaller than the volume renders a coarser picture instead of a
+    silently blank one. Any value ``>= 1`` is an explicit choice, honoured
+    verbatim in every mode — including ``1``, which reproduces the blank render
+    and returns its warning. Auto only ever coarsens FURTHER, never undoes a
+    coarser factor the caller already set. ``None`` when there is nothing to say.
+    """
+    requested = int(requested)
+    if requested >= 1:
+        scene.downsample = requested
+        return oversize_note(scene, limit)
+    before = max(scene.prepared_shape())
+    fitted = fit_downsample(scene, limit)
+    if fitted > int(scene.downsample):
+        scene.downsample = fitted
+        return (
+            f"3-D volume coarsened {fitted}x to fit this machine's GL 3-D texture "
+            f"limit ({before} -> {max(scene.prepared_shape())} voxels on its longest "
+            f"axis, limit {int(limit)}) — set the 3-D downsample to 1 for full "
+            f"resolution, which this GL stack cannot display."
+        )
+    if oversize_note(scene, limit) is None:
+        return None
+    # Auto-fit was asked for and declined, so coarsening is not the remedy here
+    # (`fit_downsample` only declines a still-oversize scene when no factor
+    # helps) — saying "coarsen it" would send the user somewhere that cannot work.
+    return (
+        f"3-D volume render exceeds this machine's GL 3-D texture limit "
+        f"({max(scene.prepared_shape())} voxels along one axis, limit {int(limit)}) and "
+        f"coarsening cannot fit it (Z is never block-averaged) — the volume renders "
+        f"BLANK; use surface mode, or crop the ROI."
     )
 
 

@@ -439,13 +439,45 @@ def _run_process(p, tmp_path, nx=5):
     )
 
 
+def _capture_scene(monkeypatch, limit):
+    """Stub the top-view render, keep the scene it was handed, set the GL limit."""
+    captured = {}
+
+    def fake_top(scene, path, **kw):
+        captured["scene"] = scene
+        return path
+
+    monkeypatch.setattr(V.R3, "save_top_view", fake_top)
+    monkeypatch.setattr(V.R3, "volume_texture_limit", lambda *a, **kw: limit)
+    return captured
+
+
 def test_oversize_volume_becomes_a_note(tmp_path, monkeypatch):
     """Wider than the GL 3-D texture limit -> add_volume draws NOTHING and says
-    nothing; the stage must not report success with a blank product."""
+    nothing; opting out of the auto-fit must not report success with a blank
+    product."""
     monkeypatch.setattr(V.R3, "save_top_view", lambda scene, path, **kw: path)
     monkeypatch.setattr(V.R3, "volume_texture_limit", lambda *a, **kw: 4)
+    prod = _run_process({**_oversize_params(), "volume_downsample": 1}, tmp_path)
+    assert any("texture limit" in n and "BLANK" in n for n in prod.notes)
+
+
+def test_volume_downsample_auto_fits_the_texture_limit(tmp_path, monkeypatch):
+    """The shipped default coarsens until it fits, so the product is a coarser
+    picture instead of a silently blank one."""
+    captured = _capture_scene(monkeypatch, 4)
     prod = _run_process(_oversize_params(), tmp_path)
-    assert any("texture limit" in n for n in prod.notes)
+    assert captured["scene"].downsample == 2  # (2, 4, 5) -> (2, 2, 2): 3 points <= 4
+    assert any("coarsened 2x" in n for n in prod.notes)
+    assert not any("BLANK" in n for n in prod.notes)
+
+
+def test_volume_downsample_explicit_factor_is_honoured(tmp_path, monkeypatch):
+    """An explicit factor is a user request, applied whether or not it is needed."""
+    captured = _capture_scene(monkeypatch, 4096)  # nothing to fit
+    prod = _run_process({**_oversize_params(), "volume_downsample": 2}, tmp_path)
+    assert captured["scene"].downsample == 2
+    assert not prod.notes
 
 
 def test_no_oversize_note_for_a_small_volume_or_unknown_limit(tmp_path, monkeypatch):
@@ -454,6 +486,15 @@ def test_no_oversize_note_for_a_small_volume_or_unknown_limit(tmp_path, monkeypa
     assert not _run_process(_oversize_params(), tmp_path).notes
     monkeypatch.setattr(V.R3, "volume_texture_limit", lambda *a, **kw: None)  # no GL
     assert not _run_process(_oversize_params(), tmp_path).notes
+
+
+def test_auto_fit_says_nothing_when_it_cannot_help(tmp_path, monkeypatch):
+    """A volume too DEEP for the limit is not rescued by coarsening Y/X (Z is
+    never block-averaged), so the honest blank-render warning survives."""
+    captured = _capture_scene(monkeypatch, 2)  # even (2, 1, 1) needs 3 points
+    prod = _run_process(_oversize_params(), tmp_path)
+    assert captured["scene"].downsample == 1  # no resolution spent for nothing
+    assert any("BLANK" in n for n in prod.notes)
 
 
 def test_scene_carries_new_3d_params(tmp_path, monkeypatch):

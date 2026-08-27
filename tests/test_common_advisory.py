@@ -242,6 +242,25 @@ def test_an_oversized_volume_on_software_gl_gets_a_texture_hint():
     assert "2048" in adv.hints[HINT_3D_TEXTURE]
 
 
+def test_texture_hint_reaches_a_stage_with_no_render_mode_field():
+    """`rocking` renders volume mode unconditionally and has no `render_mode`
+    param, so keying the hint on that field alone hid it from the stage whose
+    aligned volume is the widest in the pipeline."""
+    spec = _spec_with("tests.test_common_advisory:_wide_estimate")
+    prof = workstation_sw_gl()
+    assert prof.gl.max_3d_texture < max(_wide_estimate({}).shape)  # precondition
+    adv = advise_stage(spec, {"volume_downsample": 0}, profile=prof)
+    assert HINT_3D_TEXTURE in adv.hints
+    assert "coarsens it" in adv.hints[HINT_3D_TEXTURE]
+
+
+def test_no_texture_hint_for_a_stage_that_renders_no_3d():
+    """A stage with neither field is not a 3-D stage: no hint, whatever the GL."""
+    spec = _spec_with("tests.test_common_advisory:_wide_estimate")
+    adv = advise_stage(spec, {}, profile=workstation_sw_gl())
+    assert HINT_3D_TEXTURE not in adv.hints
+
+
 def test_no_texture_hint_when_the_volume_fits():
     spec = _spec_with("tests.test_common_advisory:_wide_estimate")
     prof = laptop_hw_gl()

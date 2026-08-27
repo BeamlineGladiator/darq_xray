@@ -378,6 +378,26 @@ STAGE = StageSpec(
             ),
         ),
         Param(
+            "volume_downsample",
+            ParamType.INT,
+            "3D downsample",
+            default=0,
+            advanced=True,
+            group="Appearance",
+            # No `advice_key` here: `render_mode` below already carries the
+            # 3-D texture hint for this stage, and `ParamForm.apply_hints`
+            # renders a hint under EVERY field declaring its key — two copies
+            # of the same paragraph in one form.
+            help=(
+                "Coarsening applied to the volume before 3-D rendering, as a "
+                "block-average over N x N pixels in Y and X (Z is untouched). "
+                "0 (the default) picks the smallest factor that fits this "
+                "machine's GL 3-D texture limit, which a volume wider than that "
+                "limit needs to render at all; 1 never coarsens, and renders "
+                "BLANK when the volume is over the limit; N applies exactly N."
+            ),
+        ),
+        Param(
             "opacity_mapping",
             ParamType.ENUM,
             "3D opacity mapping",
@@ -1211,8 +1231,10 @@ def _process_dataset(
             f"{name}: 3-D scene built",
         )
         # A volume wider than the GL 3-D texture limit renders blank without any
-        # error — say so instead of shipping empty products (no auto-downsample).
-        note = R3.oversize_note(scene, R3.volume_texture_limit())
+        # error. `volume_downsample` 0 (the default) coarsens until it fits, so
+        # the product is a coarser picture rather than an empty one; 1 opts out
+        # and gets the warning instead.
+        note = R3.apply_texture_fit(scene, R3.volume_texture_limit(), int(p["volume_downsample"]))
         if note:
             prod.notes.append(note)
         report(ends["scene"], f"{name}: 3-D scene ready")
@@ -1698,6 +1720,12 @@ def _main(argv: list[str] | None = None) -> int:
     ap.add_argument("--strain-pattern", default="*")
     ap.add_argument("--output-dir", default="")
     ap.add_argument("--no-topview", action="store_true")
+    ap.add_argument(
+        "--downsample",
+        type=int,
+        default=0,
+        help="3-D block-average factor; 0 = fit this machine's GL texture limit",
+    )
     args = ap.parse_args(argv)
     res = run(
         dict(
@@ -1708,6 +1736,7 @@ def _main(argv: list[str] | None = None) -> int:
             strain_pattern=args.strain_pattern,
             output_dir=args.output_dir,
             save_topview=not args.no_topview,
+            volume_downsample=args.downsample,
         ),
         progress=lambda f, m: print(f"  [{f * 100:5.1f}%] {m}"),
     )

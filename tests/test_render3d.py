@@ -203,6 +203,111 @@ def test_oversize_note_fires_only_for_oversize_volume_mode_scenes():
     assert R3.oversize_note(big, 2048) is None
 
 
+def test_downsample_volume_averages_one_layer_at_a_time(monkeypatch):
+    """`np.nanmean` copies its input and builds a full-size NaN mask — measured
+    2.06x the volume in extra peak RSS, a 1.2 GiB spike on the real STO2 volume.
+    Handing it one Z layer at a time costs 2.06x of a layer instead, which is
+    what makes coarsening affordable as the DEFAULT for an oversize volume."""
+    seen = []
+    real = np.nanmean
+
+    def spy(a, *args, **kwargs):
+        seen.append(np.asarray(a).size)
+        return real(a, *args, **kwargs)
+
+    monkeypatch.setattr(R3.np, "nanmean", spy)
+    vol = np.ones((6, 8, 8), dtype=np.float32)
+    out = R3.downsample_volume(vol, 2)
+    assert out.shape == (6, 4, 4)
+    assert len(seen) == 6  # one call per Z layer, not one for the volume
+    assert max(seen) <= vol[0].size
+
+
+def test_downsample_volume_block_averages_and_keeps_nan_blocks():
+    """The layer-wise loop must produce exactly what one whole-volume nanmean
+    would: block means, NaN where a block is entirely NaN, dtype preserved."""
+    vol = np.array([[[1.0, 3.0, np.nan, np.nan], [5.0, 7.0, np.nan, np.nan]]], dtype=np.float32)
+    out = R3.downsample_volume(vol, 2)
+    assert out.dtype == np.float32
+    assert out[0, 0, 0] == 4.0  # mean of 1, 3, 5, 7
+    assert np.isnan(out[0, 0, 1])  # all-NaN block stays NaN
+    # An odd remainder is dropped, not padded (7 // 2 == 3 columns).
+    assert R3.downsample_volume(np.ones((2, 7, 7), dtype=np.float64), 2).shape == (2, 3, 3)
+
+
+# --- auto-fit to the GL 3-D texture limit ---------------------------------
+
+
+def test_fit_downsample_finds_the_smallest_power_of_two_that_fits():
+    # The real STO2 aligned volume: 2891 px wide against a 2048 px software-GL cap.
+    s = R3.Scene3D(volume=np.zeros((2, 700, 2891)), spacing=(1, 1, 1))
+    assert R3.fit_downsample(s, 2048) == 2  # 2891 // 2 = 1445 (+1 point) fits
+    assert R3.fit_downsample(s, 1024) == 4
+    assert R3.fit_downsample(s, 8192) == 1  # already fits -> never coarsen
+
+
+def test_fit_downsample_declines_when_it_cannot_decide_or_cannot_help():
+    s = R3.Scene3D(volume=np.zeros((2, 700, 2891)), spacing=(1, 1, 1))
+    assert R3.fit_downsample(s, None) == 1  # limit unknown
+    s.mode = "surface"
+    assert R3.fit_downsample(s, 2048) == 1  # geometry upload has no texture cap
+    # Block-averaging never touches Z, so no factor rescues a too-deep volume:
+    # coarsening Y/X would only degrade the image and still render blank.
+    deep = R3.Scene3D(volume=np.zeros((3000, 8, 8)), spacing=(1, 1, 1))
+    assert R3.fit_downsample(deep, 2048) == 1
+    # Past the 16x cap there is no answer either.
+    huge = R3.Scene3D(volume=np.zeros((2, 8, 100_000)), spacing=(1, 1, 1))
+    assert R3.fit_downsample(huge, 2048) == 1
+
+
+def test_apply_texture_fit_auto_coarsens_and_says_so():
+    s = R3.Scene3D(volume=np.zeros((2, 700, 2891)), spacing=(1, 1, 1))
+    note = R3.apply_texture_fit(s, 2048, 0)
+    assert s.downsample == 2
+    assert note and "2x" in note and "2048" in note and "2891" in note and "1445" in note
+    assert "BLANK" not in note  # it fits now; nothing renders blank
+
+
+def test_apply_texture_fit_leaves_a_fitting_scene_alone():
+    s = R3.Scene3D(volume=np.zeros((2, 8, 9)), spacing=(1, 1, 1))
+    assert R3.apply_texture_fit(s, 2048, 0) is None
+    assert s.downsample == 1
+
+
+def test_apply_texture_fit_honours_an_explicit_factor():
+    s = R3.Scene3D(volume=np.zeros((2, 700, 2891)), spacing=(1, 1, 1))
+    assert R3.apply_texture_fit(s, 2048, 4) is None  # 2891 // 4 = 722, fits
+    assert s.downsample == 4
+    # An explicit factor is a user request in its own right, honoured with no
+    # limit to check against and in the modes that upload geometry.
+    geom = R3.Scene3D(volume=np.zeros((2, 8, 9)), spacing=(1, 1, 1), mode="surface")
+    assert R3.apply_texture_fit(geom, None, 3) is None
+    assert geom.downsample == 3
+
+
+def test_apply_texture_fit_explicit_1_keeps_todays_blank_render_warning():
+    s = R3.Scene3D(volume=np.zeros((2, 700, 2891)), spacing=(1, 1, 1))
+    note = R3.apply_texture_fit(s, 2048, 1)
+    assert s.downsample == 1
+    assert note and "BLANK" in note
+
+
+def test_apply_texture_fit_warns_when_no_factor_can_fit():
+    deep = R3.Scene3D(volume=np.zeros((3000, 8, 8)), spacing=(1, 1, 1))
+    note = R3.apply_texture_fit(deep, 2048, 0)
+    assert deep.downsample == 1  # coarsening Y/X would not have helped
+    assert note and "BLANK" in note
+    # ...and it must not send the user to the one remedy that cannot work here.
+    assert "surface mode" in note and "coarsening cannot fit it" in note
+
+
+def test_apply_texture_fit_is_silent_without_a_limit_or_in_geometry_mode():
+    s = R3.Scene3D(volume=np.zeros((2, 700, 2891)), spacing=(1, 1, 1))
+    assert R3.apply_texture_fit(s, None, 0) is None and s.downsample == 1
+    s.mode = "surface"
+    assert R3.apply_texture_fit(s, 2048, 0) is None and s.downsample == 1
+
+
 # --- compositor (Agg, no pyvista) -----------------------------------------
 
 
