@@ -509,6 +509,24 @@ when the run will actually render something in 3-D — with **Save top view** an
 offers coarsening for a volume coarsening cannot fix (see below). Switch to `surface` or
 `isosurface`, or crop the volume under the limit, and the note clears.
 
+It is measured on the volume the run will actually **build**, not on the file
+as it sits on disk: your **analysis ROI** is applied first, then the samy
+X-padding and the uniform-Z resampling that widen it. So tightening the ROI
+really does clear the note, and on **rocking** — whose input is the whole
+detector, not a volume — a narrow ROI means no note at all, where the field
+once warned about a 2048 px detector no run would ever upload. Rocking's
+padding is measured from the **mosaicity** reference scan, the same anchor
+`run()` uses, so the note cannot promise a fit the run then contradicts.
+
+If the ROI crops the volume away entirely — a stale ROI carried over from
+another dataset, or a reversed pair — this note says **that** instead
+("the analysis ROI leaves this volume empty …"), rather than going quiet
+and letting you discover it after the run. It rides on the same note, so
+it appears under the same conditions: a 3-D product actually being saved,
+in `volume` mode, after the one-time GL check has landed. Outside those —
+`surface` mode, or both 3-D toggles off — an empty ROI still shows up only
+in the run's own error, not on the form.
+
 This note needs to know your GL stack's texture limit, which the app only
 checks once per session — quietly, in the background, the first time you open
 a stage that has a field like this (visualize or rocking), so it never
@@ -955,6 +973,10 @@ Align the stacked mosaicity/strain volumes and render them.
 > Only Y and X are block-averaged — Z never is — so a volume too *deep* for the
 > limit cannot be fitted at all; there the note stays the old
 > "renders **BLANK**" warning, and the answer is `surface` mode or a real GPU.
+> A volume that arrives already **empty** — a zero-width or zero-height
+> analysis ROI, or an empty file — is a different thing and says so ("the
+> 3-D volume is empty … check the ROI"): no downsample setting can bring
+> back an axis that was never read.
 > Set `volume_downsample` to `1` if you would rather have full resolution and
 > the warning. Once this session's one-time GL check has run, the same
 > information appears under the **3D downsample** field before you ever click
@@ -2505,7 +2527,12 @@ volume and the blank canvas it implies — the window stops fitting for you the
 moment you touch that control. If coarsening cannot fit it (only Y and X are
 block-averaged, never Z), the status line says the render is blank instead;
 switch **Render mode** to `surface`/`isosurface`, which upload geometry rather
-than a 3-D texture.
+than a 3-D texture. A volume that arrives **empty** — a zero-width or
+zero-height analysis ROI, an empty dataset — adds "the 3-D volume is empty
+…" to that same status line, beside the generic "no finite voxels after
+threshold/clip", which on its own pointed at the threshold for something
+the ROI had done. The empty note stays put while you work the
+**Downsample** spin, since no factor can undo it.
 
 > [!warning] A volume too big for this machine is decimated for display
 > The 3-D view needs the whole volume in memory at once, so a **rocking**

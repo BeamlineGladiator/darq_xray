@@ -462,17 +462,38 @@ def fit_factor_for_shape(shape, limit) -> int:
 def unfittable_reason(shape, limit) -> str:
     """Why no coarsening fits *shape* under *limit* — the blocker, not a guess.
 
-    Two different things make :func:`fit_factor_for_shape` decline, and they
+    Three different things make :func:`fit_factor_for_shape` decline, and they
     have different remedies. Saying "Z is never block-averaged" for a thin
     volume whose Y axis simply cannot survive the factor its X axis needs sends
     the user to the wrong fix: there, cropping X is exactly what works.
+
+    The third — no factor up to :data:`_MAX_FIT_DOWNSAMPLE` is *big enough* —
+    used to be reported as the collapse case, which is not merely vague but
+    false: a ``(2, 5000, 5000)`` volume under a 256-px limit collapses nothing
+    (``5000 // 16 == 312``), it is simply more than 16x too wide. Told it was
+    averaging an axis away, a user would crop the short axis, which is precisely
+    the axis that is fine. Decided by asking, factor by factor, whether the
+    points fit: if some factor fits and :func:`fit_factor_for_shape` still
+    refused, that factor collapses an axis; if none fits, the cap is the wall.
+    Takes the SAME shape :func:`fit_downsample` decided from — the raw volume,
+    not a already-coarsened `prepared_shape` — or the two disagree about which
+    factors were on the table.
     """
     z, y, x = (int(n) for n in shape)
-    if z + 1 > int(limit):
+    limit = int(limit)
+    if z + 1 > limit:
         return "coarsening cannot fit it (the Z axis is never block-averaged)"
+    factor = 1
+    while factor <= _MAX_FIT_DOWNSAMPLE:
+        if points_at_factor(shape, factor) <= limit:
+            return (
+                "coarsening cannot fit it (every factor big enough for the long axis "
+                "would average a short one away entirely)"
+            )
+        factor *= 2
     return (
-        "coarsening cannot fit it (every factor big enough for the long axis "
-        "would average a short one away entirely)"
+        f"coarsening cannot fit it (even {_MAX_FIT_DOWNSAMPLE}x, the most this "
+        "offers, leaves it over the limit)"
     )
 
 
@@ -509,7 +530,7 @@ def oversize_note(scene: Scene3D, limit) -> str | None:
         f"set the 3-D downsample to 0 to coarsen it {fitted}x to fit (or Downsample "
         f"{fitted} in the 3-D viewer), or crop the ROI"
         if fitted > 1
-        else f"{unfittable_reason(scene.prepared_shape(), limit)} — use surface "
+        else f"{unfittable_reason(tuple(scene.volume.shape), limit)} — use surface "
         "mode, or crop the ROI"
     )
     return (
@@ -535,6 +556,18 @@ def apply_texture_fit(scene: Scene3D, limit, requested: int = 0) -> str | None:
     the 3-D viewer ended up showing two warnings that contradicted each other.
     """
     requested = int(requested)
+    # An axis that arrived at zero length was not coarsened away — an empty ROI
+    # (this project has produced a `(76, 0, 1832)` one) or an empty file did it,
+    # and no downsample setting can undo that. Reported before the factor is
+    # even considered, because the collapse branch below reads Z too and would
+    # otherwise blame the factor: "3-D downsample 1 coarsens this volume to
+    # nothing ... lower it" for a volume nothing coarsened, at the one factor
+    # that cannot be lowered.
+    raw = tuple(int(n) for n in scene.volume.shape)
+    if min(raw) < 1:
+        if requested >= 1:
+            scene.downsample = requested
+        return f"the 3-D volume is empty {raw} — nothing will render; check the ROI."
     if requested >= 1:
         scene.downsample = requested
         if min(scene.prepared_shape()) < 1:

@@ -45,6 +45,15 @@ _CHUNK_REPLACEMENT = "blocking the work into groups — slower, same result"
 # to (`visualize`'s `render_mode`) rather than matched by name in the GUI.
 HINT_3D_TEXTURE = "3d_texture"
 
+# Shown under that same field when the ROI, not the texture cap, is what will
+# make the 3-D product blank. Worded to name the cause the user can act on:
+# `render3d.apply_texture_fit` says the same thing after the run, and a pair
+# that disagreed about the cause is exactly what this project keeps paying for.
+EMPTY_ROI_HINT = (
+    "the analysis ROI leaves this volume empty {shape} — nothing will render; "
+    "check roi_x / roi_y against the volume's real extent."
+)
+
 
 def disk_probe_dir(spec: StageSpec, params: dict) -> str:
     """Which directory's filesystem to measure for free space.
@@ -140,16 +149,28 @@ def _details(plan: RunPlan, conservative: bool) -> tuple[str, ...]:
 
 
 # Which of a stage's folder-pattern params to try when widening a raw shape to
-# its aligned extent (see `_aligned_shape_for_hint`). `visualize`'s two
-# candidate volumes (the mosaicity file and the strain file) are selected by the
-# first two; `rocking_pattern` is here because `rocking.estimate` picks it for
-# every `source_scan` except "mosaicity" (rocking.py), so without it the hint
-# priced rocking's samy padding off the MOSA folders — a different, usually
-# narrower, samy span than the aligned rocking volume the hint is about.
+# its aligned extent (see `_aligned_shape_for_hint`), for a stage with no
+# anchoring rule of its own: every declared pattern is tried and the widest
+# candidate wins, so the hint never goes quiet because the wrong volume's motors
+# were read. `visualize`'s two candidate volumes (the mosaicity file and the
+# strain file) are the first two. `rocking` does NOT use this sweep — it mirrors
+# `rocking.estimate`'s single pattern and mosa anchor instead — but
+# `rocking_pattern` stays listed so a future 3-D stage declaring it is priced off
+# its own folders rather than off the MOSA ones, a different and usually
+# narrower samy span. `test_the_hint_reads_rockings_own_folder_pattern` asserts
+# the behaviour, not this membership.
 _ALIGNMENT_PATTERN_KEYS = ("mosa_pattern", "strain_pattern", "rocking_pattern")
 
 
-def _aligned_shape_for_hint(raw_shape: tuple[int, ...], params: dict) -> tuple[int, ...] | None:
+# The sentinel `rocking.estimate` passes for "this shape is already cropped":
+# a key no params dict holds, so `aligned_shape_for_params` resolves no ROI and
+# the crop stays in the one place that performed it.
+_ROI_ALREADY_APPLIED = "__roi_already_applied__"
+
+
+def _aligned_shape_for_hint(
+    raw_shape: tuple[int, ...], params: dict, *, stage: str = ""
+) -> tuple[int, ...] | None:
     """Widen *raw_shape* to what the alignment chain will actually upload.
 
     `estimate.shape` is the on-disk shape read straight out of the volume
@@ -165,12 +186,26 @@ def _aligned_shape_for_hint(raw_shape: tuple[int, ...], params: dict) -> tuple[i
     candidate volume, e.g. visualize's mosaicity file and strain file) via
     `alignment.aligned_shape_for_params` and keeps whichever widens the shape
     the most, so the hint never goes quiet just because the wrong volume's
-    motors were read. Falls back to *raw_shape* unchanged when no pattern
-    resolves (no `raw_root` yet, motors unreadable, ...) — same as before this
-    widening existed, never worse. No new file IO: `aligned_shape_for_params`
-    only reads motor positions, which `raster.motor_positions_for_estimate`
-    memoises, and *raw_shape* is already paid for by the estimator call that
-    produced it.
+    motors were read. Falls back to the CROPPED *raw_shape* when no pattern
+    resolves (no `raw_root` yet, motors unreadable, ...) — the state a form
+    spends most of its life in. Cropped, because every estimator reports the
+    shape it read OFF DISK and every run crops before it uploads: falling back
+    to the uncropped shape priced a volume nothing ever builds, and for
+    `rocking` — whose `estimate.shape` is the whole 2048x2048 detector, not a
+    volume — that put a permanent, false "renders BLANK" advisory on the form
+    of every machine whose GL cap is 2048.
+
+    *stage* names the stage so `rocking` can be priced the way `rocking.estimate`
+    prices it: its own `pattern_key`, and `ref_pattern_key="mosa_pattern"`
+    because `run()` anchors every samy shift at `mosa_samy[0]`, not at the first
+    scan of the glob being read. Without that anchor the hint under-states the
+    aligned width whenever the rocking scans sit away from the mosaicity
+    reference — silence about a render that will actually come out blank, which
+    is the direction that hurts. Other stages keep the widest-candidate sweep.
+
+    No new file IO: `aligned_shape_for_params` only reads motor positions, which
+    `raster.motor_positions_for_estimate` memoises, and *raw_shape* is already
+    paid for by the estimator call that produced it.
     """
     # `rocking.estimate` reports the four-element scan shape
     # (n_folders, n_frames, H, W). Feeding that to `roi_shape` lines `roi_y` up
@@ -182,12 +217,47 @@ def _aligned_shape_for_hint(raw_shape: tuple[int, ...], params: dict) -> tuple[i
     # it is not a volume axis — so the ROI lands on the detector axes it names.
     if len(raw_shape) == 4:
         raw_shape = (raw_shape[0], raw_shape[2], raw_shape[3])
-    usable = len(raw_shape) == 3 and min(raw_shape) >= 1
-    best = raw_shape if usable else None
-    for pattern_key in _ALIGNMENT_PATTERN_KEYS:
+    if len(raw_shape) != 3 or min(raw_shape) < 1:
+        return None
+    # Crop ONCE, here, and tell `aligned_shape_for_params` the ROI is spent, so
+    # exactly one place in this helper resolves an ROI.
+    cropped = alignment.roi_shape_for_params(params, raw_shape)
+    if min(cropped) < 1:
+        # An ROI that reads nothing is returned, not discarded: the alignment of
+        # an empty volume is empty, so no candidate below could rescue it, and
+        # `_hints` has a truthful thing to say about it. Silence here is what a
+        # stale ROI carried over from another dataset used to buy — a form with
+        # no advisory at all, and the emptiness discovered after the run.
+        return cropped
+    best = cropped
+    if stage == "rocking":
+        # Mirror `rocking.estimate`: the glob follows `source_scan`, the samy
+        # anchor never does.
+        source = "mosa_pattern" if params.get("source_scan") == "mosaicity" else "rocking_pattern"
+        pattern_keys, ref_pattern_key = (source,), "mosa_pattern"
+    else:
+        pattern_keys, ref_pattern_key = _ALIGNMENT_PATTERN_KEYS, ""
+    for pattern_key in pattern_keys:
+        # A blank pattern is skipped, never globbed as `"*"`. `rocking.estimate`
+        # does default to `"*"` — but only in `find_matching_folders`, for the
+        # folder COUNT; it hands `aligned_shape_for_params` the params
+        # unmodified, so the pad it prices is empty too. And `run()` reads
+        # `p["rocking_pattern"]` with no default at all: a blank pattern raises
+        # `StageUserError("no rocking folders matching '' …")` before any volume
+        # exists. Substituting `"*"` here priced the samy span of every folder
+        # under `raw_root` — 100 px -> 2107 px on this project's own fixture —
+        # for a run that cannot happen, which is a false "renders BLANK"
+        # advisory of exactly the kind this helper was fixed to stop emitting.
         if not params.get(pattern_key):
             continue
-        candidate = alignment.aligned_shape_for_params(params, raw_shape, pattern_key=pattern_key)
+        candidate = alignment.aligned_shape_for_params(
+            params,
+            cropped,
+            pattern_key=pattern_key,
+            roi_x_key=_ROI_ALREADY_APPLIED,
+            roi_y_key=_ROI_ALREADY_APPLIED,
+            ref_pattern_key=ref_pattern_key,
+        )
         if candidate is None or min(candidate) < 1:
             continue
         if best is None or max(candidate) > max(best):
@@ -195,7 +265,9 @@ def _aligned_shape_for_hint(raw_shape: tuple[int, ...], params: dict) -> tuple[i
     return best
 
 
-def _hints(profile: MachineProfile, estimate: CostEstimate, params: dict) -> dict[str, str]:
+def _hints(
+    profile: MachineProfile, estimate: CostEstimate, params: dict, stage: str = ""
+) -> dict[str, str]:
     """Per-parameter advisories. Empty until GL has actually been probed.
 
     The texture ceiling is not cosmetic: volume mode uploads the grid as ONE
@@ -228,9 +300,17 @@ def _hints(profile: MachineProfile, estimate: CostEstimate, params: dict) -> dic
         toggles = [k for k in ("save_topview", "save_rotation") if k in params]
         if toggles and not any(params.get(k) for k in toggles):
             return {}
-        shape = _aligned_shape_for_hint(estimate.shape, params)
+        shape = _aligned_shape_for_hint(estimate.shape, params, stage=stage)
         if shape is None:
             return {}
+        if min(shape) < 1:
+            # Not a texture-cap problem, and `advise_3d` would say nothing about
+            # it (a zero axis is trivially under any cap) — but the same field
+            # is the right place to say it, because the outcome is the same
+            # blank product, and knowing it before a 26-minute run is the whole
+            # point of a pre-flight note. The run path says this too
+            # (`render3d.apply_texture_fit`); this is its pre-flight half.
+            return {HINT_3D_TEXTURE: EMPTY_ROI_HINT.format(shape=tuple(int(n) for n in shape))}
         result = advice.advise_3d(profile, shape, mode, params.get("volume_downsample", 0))
         if not result.reasons:
             return {}
@@ -282,7 +362,7 @@ def advise_stage(
             details=_details(plan, conservative),
             blocked=plan.blocked,
             conservative=conservative,
-            hints=_hints(prof, estimate, params),
+            hints=_hints(prof, estimate, params, spec.name),
         )
     except Exception as exc:  # noqa: BLE001 — delivered to the user as text
         return Advisory(prof, None, None, f"cannot estimate cost: {type(exc).__name__}")

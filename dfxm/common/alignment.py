@@ -53,6 +53,32 @@ def roi_shape(
     return nz, max(0, ye - ys), max(0, xe - xs)
 
 
+def roi_shape_for_params(
+    p: dict, shape: tuple[int, ...], *, roi_x_key: str = "roi_x", roi_y_key: str = "roi_y"
+) -> tuple[int, int, int]:
+    """:func:`roi_shape` with the ROI read out of a stage's parameter dict.
+
+    The crop half of :func:`aligned_shape_for_params`, on its own, for the
+    caller that needs the post-crop extent even when the aligned extent is
+    unknown — :func:`~dfxm.common.advisory._aligned_shape_for_hint` falls back
+    to it on the no-motor path, where the run does no shifting and the cropped
+    shape IS the volume shape. Reusing this rather than re-parsing makes the crop
+    identical to the one :func:`aligned_shape_for_params` performs: a half-typed
+    ``"105,"`` yields no crop here exactly as it does there, instead of two
+    callers disagreeing on the malformed inputs :func:`_parse_roi` exists to
+    absorb.
+
+    That is agreement with the ALIGNMENT chain, which is what this models — not
+    with every estimator. ``rocking.estimate``'s ``_roi_span`` deliberately
+    reads an INVERTED pair (``"1330,630"``) as "the whole axis", pricing the
+    worst case rather than an empty read, where :func:`roi_shape` follows numpy
+    slicing and yields 0 — which is what :func:`apply_roi_3d` really produces.
+    Both are right for their own job (a cost model must not under-predict, a
+    shape model must not lie about the shape), so expect them to differ there.
+    """
+    return roi_shape(shape, _parse_roi(p.get(roi_x_key)), _parse_roi(p.get(roi_y_key)))
+
+
 def _samy_ref(samy: np.ndarray, ref_samy: float | None) -> float:
     """Resolve the samy reference: explicit value, else the first layer."""
     return float(samy[0]) if ref_samy is None else float(ref_samy)

@@ -344,7 +344,14 @@ class Viewer3DWindow(QWidget):
 
     def _on_downsample(self, value: int) -> None:
         self.scene.downsample = value
-        self._autofit_note = None  # the user is driving now; stop explaining
+        # The user is driving now; stop explaining a coarsening they overrode.
+        # An EMPTY volume is not that: no spin value can bring back an axis the
+        # ROI never read, and clearing the note here dropped the user back to
+        # `rebuild`'s "no finite voxels after threshold/clip" — the misleading
+        # message this note exists to replace — at the exact moment they reached
+        # for a control to fix it.
+        if min(int(n) for n in self.scene.volume.shape) >= 1:
+            self._autofit_note = None
         self.rebuild()
 
     def _current_clip(self) -> tuple | None:
@@ -428,7 +435,15 @@ class Viewer3DWindow(QWidget):
         # DECLINES (nothing can fit a too-deep volume) `rebuild`'s live oversize
         # note already says so, and carrying both put two blank-render warnings
         # on one status line that disagreed about the remedy.
-        self._autofit_note = note if int(self.scene.downsample) > 1 else None
+        #
+        # An EMPTY volume is the exception: no coarsening happened (there is
+        # nothing to coarsen), and nothing else here says why. `oversize_note`
+        # is silent — a zero axis is trivially under the limit — and `rebuild`
+        # falls through to "no finite voxels after threshold/clip", which blames
+        # the threshold for an ROI that read nothing. Dropping this note left
+        # the one surface it was written for showing the wrong cause.
+        empty = min(int(n) for n in self.scene.volume.shape) < 1
+        self._autofit_note = note if int(self.scene.downsample) > 1 or empty else None
         self._init_controls_from_scene()
         self.rebuild()
         if self._canvas.available:

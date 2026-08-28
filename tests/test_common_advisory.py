@@ -60,9 +60,9 @@ def test_ignores_params_that_are_not_inputs(tmp_path):
     assert disk_probe_dir(spec, {"some_output": str(tmp_path / "x.h5")}) == os.getcwd()
 
 
-def _spec_with(estimator_target: str) -> StageSpec:
+def _spec_with(estimator_target: str, name: str = "demo") -> StageSpec:
     return StageSpec(
-        name="demo",
+        name=name,
         label="Demo",
         description="",
         params=_SPEC.params,
@@ -284,13 +284,24 @@ def test_a_four_element_scan_shape_is_reduced_to_the_volume_axes():
     assert "2048" in adv.hints[HINT_3D_TEXTURE]
 
 
-def test_the_hint_reads_rockings_own_folder_pattern():
+def test_the_hint_reads_rockings_own_folder_pattern(tmp_path):
     """`rocking.estimate` picks `rocking_pattern` unless source_scan is
-    mosaicity; a hint priced off the mosa folders describes a different
-    volume."""
-    from dfxm.common.advisory import _ALIGNMENT_PATTERN_KEYS
+    mosaicity; a hint priced off the mosa folders describes a different volume.
 
-    assert "rocking_pattern" in _ALIGNMENT_PATTERN_KEYS
+    Asserted through the helper, not by membership in `_ALIGNMENT_PATTERN_KEYS`:
+    that assertion kept passing after `rocking` stopped using the sweep at all.
+    """
+    from dfxm.common.advisory import _aligned_shape_for_hint
+
+    params = _rocking_raw_root(tmp_path)  # rocking scans sit 0.30 mm from mosa
+    raw = (2, 575, 50, 100)
+    # The two globs describe genuinely different volumes here, or this test
+    # could not tell which one was read.
+    from_rocking = _aligned_shape_for_hint(raw, params, stage="rocking")
+    from_mosa = _aligned_shape_for_hint(
+        raw, {**params, "source_scan": "mosaicity"}, stage="rocking"
+    )
+    assert max(from_rocking) > max(from_mosa)
 
 
 def test_no_texture_hint_when_no_3d_product_was_asked_for():
@@ -445,3 +456,133 @@ def test_the_headline_calls_its_second_figure_a_budget():
 
     assert "budget" in adv.headline, adv.headline
     assert "available" not in adv.headline, adv.headline
+
+
+def test_the_rocking_hint_prices_the_roi_not_the_whole_detector():
+    """`rocking.estimate` reports the shape it READ — the whole 2048x2048
+    detector — and `run()` crops before it builds anything (`det[:, ys:ye,
+    xs:xe]`). Falling back to the uncropped shape put a permanent, false
+    "renders BLANK" advisory on rocking's form on every 2048-cap stack, for a
+    volume the run never uploads."""
+    from dfxm.common.advisory import _aligned_shape_for_hint
+
+    prof = workstation_sw_gl()
+    params = {
+        "raw_root": "",  # nothing resolves -> the fallback path, a form mid-edit
+        "rocking_pattern": "*",
+        "pixel_size_x_um": 0.15,
+        "roi_x": "900,1100",
+        "roi_y": "900,1100",
+    }
+    # Precondition: uncropped, this detector shape really does trip the cap —
+    # otherwise the assertion below would pass however the ROI were handled.
+    assert 2048 + 1 > prof.gl.max_3d_texture
+    assert _aligned_shape_for_hint((76, 575, 2048, 2048), params, stage="rocking") == (76, 200, 200)
+
+    spec = _spec_with("tests.test_common_advisory:_detector_estimate", name="rocking")
+    adv = advise_stage(spec, {**params, "volume_downsample": 0, "save_topview": True}, profile=prof)
+    assert HINT_3D_TEXTURE not in adv.hints
+
+
+def _rocking_raw_root(tmp_path):
+    """Two mosa scans at samy~0 and two rocking scans 0.30 mm away.
+
+    At 0.15 um/px that offset is 2000 px of samy pad — the difference between a
+    volume that fits a 2048-px cap and one that does not.
+    """
+    import h5py
+
+    for prefix, samys in (("mosa__", (0.0, 0.001)), ("rock__", (0.300, 0.301))):
+        for i, samy in enumerate(samys):
+            folder = tmp_path / f"{prefix}{i}"
+            folder.mkdir(parents=True)
+            with h5py.File(folder / f"{prefix}{i}.h5", "w") as f:
+                f["1.1/instrument/positioners/samy"] = samy
+                f["1.1/instrument/positioners/samz"] = 0.01 * i
+    return {
+        "raw_root": str(tmp_path),
+        "mosa_pattern": "mosa__*",
+        "rocking_pattern": "rock__*",
+        "pixel_size_x_um": 0.15,
+        "samy_direction": 1,
+        "samy_path": "1.1/instrument/positioners/samy",
+        "samz_path": "1.1/instrument/positioners/samz",
+    }
+
+
+def test_the_rocking_hint_anchors_the_samy_shift_where_the_run_does(tmp_path):
+    """`run()` shifts every scan relative to `mosa_samy[0]`, which is why
+    `rocking.estimate` passes `ref_pattern_key="mosa_pattern"`. Anchored at the
+    rocking glob's own first scan instead, the hint loses the whole
+    mosaicity-to-rocking offset and under-states the aligned width — it goes
+    SILENT about a render that will come out blank, the direction that hurts."""
+    from dfxm.common.advisory import _aligned_shape_for_hint
+
+    prof = workstation_sw_gl()
+    params = _rocking_raw_root(tmp_path)
+    raw = (2, 575, 50, 100)  # (folders, frames, H, W), comfortably under the cap
+
+    anchored = _aligned_shape_for_hint(raw, params, stage="rocking")
+    unanchored = _aligned_shape_for_hint(raw, params)
+    # The fixture must sit astride the cap, or neither branch is being tested.
+    assert max(anchored) + 1 > prof.gl.max_3d_texture
+    assert max(unanchored) + 1 <= prof.gl.max_3d_texture
+
+    spec = _spec_with("tests.test_common_advisory:_rocking_estimate", name="rocking")
+    adv = advise_stage(spec, {**params, "volume_downsample": 0, "save_topview": True}, profile=prof)
+    assert HINT_3D_TEXTURE in adv.hints
+
+
+def _rocking_estimate(params):
+    return CostEstimate(1 * GB, 1 * GB, (2, 575, 50, 100), True)
+
+
+def test_an_empty_roi_is_reported_before_the_run_not_after():
+    """A stale ROI carried over from another dataset crops the volume to
+    nothing. Cropping the hint's fallback (correctly) made the texture note go
+    quiet there, and nothing else on the form spoke — so the emptiness would
+    surface only after a 26-minute run. The same field says it up front."""
+    from dfxm.common.advisory import EMPTY_ROI_HINT, _aligned_shape_for_hint
+
+    params = {"raw_root": "", "pixel_size_x_um": 0.15, "roi_y": "3000,4000"}
+    shape = _aligned_shape_for_hint((76, 1266, 1832), params)
+    assert shape is not None and min(shape) < 1  # returned, not discarded
+
+    spec = _spec_with("tests.test_common_advisory:_raw_shape_estimate")
+    adv = advise_stage(
+        spec, {**params, "volume_downsample": 0, "save_topview": True}, profile=workstation_sw_gl()
+    )
+    assert HINT_3D_TEXTURE in adv.hints
+    assert adv.hints[HINT_3D_TEXTURE].startswith(EMPTY_ROI_HINT.split("{")[0])
+    # ...and it must not be the texture-cap paragraph, which is about a
+    # different cause and a different remedy.
+    assert "texture" not in adv.hints[HINT_3D_TEXTURE]
+
+
+def test_a_blank_rocking_pattern_prices_no_pad_because_no_run_can_happen():
+    """A blank pattern must NOT be globbed as `"*"`.
+
+    `rocking.estimate`'s `or "*"` default is only in `find_matching_folders`,
+    for the folder count — it hands `aligned_shape_for_params` its params
+    unmodified — and `run()` reads `p["rocking_pattern"]` with no default at
+    all, raising `StageUserError` before any volume exists. Pricing the samy
+    span of every folder under `raw_root` for a run that cannot happen is a
+    false "renders BLANK" advisory, the kind this helper exists to stop.
+    """
+    from dfxm.common.advisory import _aligned_shape_for_hint
+
+    raw = (2, 575, 50, 100)
+    unpadded = _aligned_shape_for_hint(raw, {"raw_root": "/nowhere"}, stage="rocking")
+    assert unpadded == (2, 50, 100)  # the cropped shape, no pad invented
+
+    # Precondition: the estimator prices no pad for a blank pattern either — it
+    # passes its params through unmodified, so this is the shape the hint must
+    # agree with, and `"*"` here would have been the hint inventing one.
+    assert (
+        alignment.aligned_shape_for_params(
+            {"raw_root": "/nowhere", "rocking_pattern": "", "pixel_size_x_um": 0.15},
+            (2, 50, 100),
+            pattern_key="rocking_pattern",
+        )
+        is None
+    )

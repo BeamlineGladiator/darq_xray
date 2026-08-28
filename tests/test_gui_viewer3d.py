@@ -81,6 +81,54 @@ def test_a_fitting_volume_opens_untouched(monkeypatch):
     w.close()
 
 
+def _empty_spec():
+    """A volume an ROI has cropped to nothing — the `(76, 0, 1832)` shape this
+    project has really produced, in miniature."""
+    lv = LoadedVolume(
+        volume=np.ones((2, 0, 9)),
+        spacing=(0.15, 0.38, 2.0),
+        cmap="magma",
+        clim=(0.0, 1.0),
+        cbar_label="Intensity",
+        group="raw",
+    )
+    return VolumeSourceSpec(
+        name="empty", load=lambda: lv, loader={"kind": "h5_dataset", "path": "/x", "dataset": "e"}
+    )
+
+
+def test_an_empty_volume_keeps_its_note_even_though_nothing_was_coarsened(monkeypatch):
+    """The note filter keys on "a coarsening happened", and an empty volume
+    coarsens nothing — so the one note written for this window was thrown away
+    here. Nothing else covers it: `oversize_note` is silent (a zero axis is
+    under any limit) and `rebuild` falls through to "no finite voxels after
+    threshold/clip", blaming the threshold for an ROI that read nothing."""
+    monkeypatch.setattr(
+        "gui.widgets.viewer3d_window.R3.volume_texture_limit", lambda *a, **kw: 2048
+    )
+    w = Viewer3DWindow(_empty_spec(), "visualize")
+    w.load_and_render()
+    assert w.scene.downsample == 1  # precondition: no coarsening to explain
+    assert w._autofit_note and "is empty" in w._autofit_note
+    w.close()
+
+
+def test_driving_the_spin_keeps_the_empty_volume_note(monkeypatch):
+    """ "The user is driving now" is the right rule for a coarsening they
+    overrode, and the wrong one for an emptiness no factor can undo: clearing it
+    dropped them back onto "no finite voxels after threshold/clip" at the exact
+    moment they reached for a control to fix it."""
+    monkeypatch.setattr(
+        "gui.widgets.viewer3d_window.R3.volume_texture_limit", lambda *a, **kw: 2048
+    )
+    w = Viewer3DWindow(_empty_spec(), "visualize")
+    w.load_and_render()
+    assert w._autofit_note and "is empty" in w._autofit_note  # precondition
+    w._downsample_spin.setValue(4)
+    assert w._autofit_note and "is empty" in w._autofit_note
+    w.close()
+
+
 def test_driving_the_spin_clears_the_autofit_note(monkeypatch):
     """Spinning back to 1 must reproduce today's blank render, not keep
     explaining a coarsening that is no longer in force."""

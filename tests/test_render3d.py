@@ -430,3 +430,43 @@ def test_scene_figure_honours_style_decoration_flags():
     )
     assert len(fig.axes) == 1  # image only — no colorbar axes
     assert not [a for a in ax.artists if isinstance(a, AnchoredOffsetbox)]  # no scale bar
+
+
+def test_unfittable_reason_separates_the_16x_cap_from_a_collapsed_axis():
+    """A volume more than 16x too wide collapses nothing — `5000 // 16 == 312`
+    — it is simply past the cap `fit_factor_for_shape` stops at. Reported as a
+    collapse, it sent the user to crop the one axis that was never the
+    problem."""
+    assert R3.fit_factor_for_shape((2, 5000, 5000), 256) == 1  # precondition
+    reason = R3.unfittable_reason((2, 5000, 5000), 256)
+    assert "average a short one away" not in reason
+    assert "16x" in reason
+    # ...while a real collapse still reads as one, and Z still beats both.
+    assert "average a short one away" in R3.unfittable_reason((2, 10, 3000), 256)
+    assert "Z axis" in R3.unfittable_reason((3000, 8, 8), 2048)
+
+
+def test_oversize_note_explains_from_the_shape_fit_downsample_judged():
+    """`fit_downsample` decides from the raw volume, so the explanation must
+    come from the same shape: handed an already-coarsened `prepared_shape`, the
+    two disagree about which factors were ever on the table — this scene's
+    prepared shape looks one 2x away from fitting, and the volume is not."""
+    scene = R3.Scene3D(volume=np.zeros((2, 5000, 5000)), spacing=(1, 1, 1), downsample=16)
+    assert R3.fit_downsample(scene, 256) == 1  # precondition: nothing fits
+    note = R3.oversize_note(scene, 256)
+    assert note and "16x" in note and "average a short one away" not in note
+
+
+def test_an_empty_volume_is_reported_as_empty_not_as_coarsened_away():
+    """A zero-length axis arrives from an empty ROI (this project has produced a
+    `(76, 0, 1832)` volume), not from the factor — Z is never divided at all.
+    Blamed on the downsample, the note told the user to lower a `1` that cannot
+    be lowered, and hid the ROI that actually did it."""
+    empty = R3.Scene3D(volume=np.zeros((2, 0, 1832)), spacing=(1, 1, 1))
+    note = R3.apply_texture_fit(empty, 2048, 1)
+    assert note and "is empty" in note
+    assert "coarsens this volume to nothing" not in note
+    assert empty.downsample == 1
+    # The auto path said nothing at all (a collapsed shape is under the limit).
+    auto = R3.Scene3D(volume=np.zeros((2, 0, 1832)), spacing=(1, 1, 1))
+    assert "is empty" in (R3.apply_texture_fit(auto, 2048, 0) or "")
