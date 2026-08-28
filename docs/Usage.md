@@ -1999,9 +1999,22 @@ and why your next matched run will not look like your last one.
 > `h5_path`s point at the STO2 `oblique_slices_v2.h5`; edit them for your data).
 > The Style pane's Font scale now goes up to 20 (was 5) for large pages.
 >
-> **Recipe files** are JSON. **Save as…** appends `.json` when you type a name
-> without an extension, and **Open…** lists `*.json` by default — switch its
-> file-type dropdown to *All files* to open a recipe saved under another name.
+> **Recipe files** are JSON. **Save recipe as…** appends `.json` when you type
+> a name without an extension, and **Open recipe…** lists `*.json` by default —
+> switch its file-type dropdown to *All files* to open a recipe saved under
+> another name.
+>
+> **Recipe ≠ picture.** The three buttons under the left pane's **Recipe**
+> header read and write the `.json` layout; the only control that writes image
+> files is **Export figure…** at the bottom of the right pane. Each one's
+> tooltip points at the other, so neither can be mistaken for the other.
+>
+> **Where a recipe lands.** The window title carries the file —
+> `Figure builder — <name> — /path/to/recipe.json` — with a trailing `*` while
+> there are unsaved edits, and `(unsaved)` before the first save. **Save recipe
+> as…** opens beside the data the recipe describes: the folder of its first
+> panel's h5, or (for a recipe with no panels yet) the folder of the first h5
+> the stage forms currently point at, falling back to the last folder you used.
 
 The figure builder (`dfxm/compose/`) assembles a **multi-panel publication
 figure** — several map/slice/trace panels from one or more stage outputs,
@@ -2142,7 +2155,7 @@ column, spacer, or text cell) and every recipe load schedules a re-render
 300 ms after the last edit, so a burst of clicks re-renders once, not once
 per click. The render itself runs on a background thread, so the window stays
 responsive while it works: a translucent spinner overlay ("Rendering…") covers
-the preview and the **Refresh data**/**Export…** buttons disable for the
+the preview and the **Refresh data**/**Export figure…** buttons disable for the
 duration, clearing and re-enabling the moment the result lands. A render
 requested while one is already running is queued — only the most recently
 requested render ever attaches its result to the canvas (**latest wins**), so
@@ -2150,7 +2163,7 @@ a burst of edits, or the 300 ms debounce firing mid-render, never flashes a
 stale, superseded figure on screen. Render and export requests are queued in
 **separate slots**, so a render queued behind a running export (or an export
 queued behind a running render) is never silently dropped by the other kind
-— both eventually run (see the **Export…** bullet below for the export
+— both eventually run (see the **Export figure…** bullet below for the export
 side). A **Refresh data** button forces an
 immediate re-render *and*
 drops the cached source-file readings first — normally a panel's h5 data is
@@ -2225,8 +2238,8 @@ at a glance from a panel still auto-lettering.
 
 **In-app editor: right pane (style, compose, overrides, export)**
 
-The right pane is a scrollable column with three sections, plus an **Export…**
-button pinned below it (outside the scroll area, so it stays visible however
+The right pane is a scrollable column with three sections, plus an **Export
+figure…** button pinned below it (outside the scroll area, so it stays visible however
 far you scroll the sections — see the Export bullet at the end of this list):
 
 - *Style* — the full per-figure style control set (the same
@@ -2235,7 +2248,7 @@ far you scroll the sections — see the Export bullet at the end of this list):
   with — editing it here never touches the app-wide session style. Every
   change serialises the whole style into `recipe.style` (a plain JSON-safe
   dict) and schedules a re-render, so the preview always matches what
-  Export… will write. Opening a saved recipe rebuilds this working copy from
+  Export figure… will write. Opening a saved recipe rebuilds this working copy from
   the recipe's own stored `style` dict (falling back to a bare default style
   if the recipe has none) and refreshes every control from it.
 - *Compose* — the composer-level knobs on `recipe.compose`: the label
@@ -2382,12 +2395,12 @@ far you scroll the sections — see the Export bullet at the end of this list):
   aligned to one x position (and x-axis labels within a row to one y), even
   when the panels' tick numbers have different widths — so e.g. a strain
   trace's label lines up with its mosaicity neighbours'.
-- **Export…** — the accent-coloured button pinned to the **bottom of the right
+- **Export figure…** — the accent-coloured button pinned to the **bottom of the right
   pane**, always in view: it sits outside the scrolling column, so you never
   have to scroll past Style/Compose/Selected node to reach it. It opens a
   directory picker and, like the live preview, runs on
   the same background compose thread (spinner overlay text "Exporting…";
-  **Refresh data**/**Export…** disable for the duration and re-enable when it
+  **Refresh data**/**Export figure…** disable for the duration and re-enable when it
   lands) — it writes the recipe with `dfxm.compose.render.export_recipe` (the
   same formats/DPI the recipe's current style specifies — exactly what the
   live preview is showing you, including any style-pane edits not yet saved

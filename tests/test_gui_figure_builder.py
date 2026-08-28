@@ -1613,3 +1613,95 @@ def test_export_button_is_pinned_outside_the_right_pane_scroll_area():
     scrolls = pane.findChildren(QScrollArea)
     assert scrolls, "right pane lost its scroll area"
     assert w._controls in scrolls[0].widget().findChildren(type(w._controls))
+
+
+def _buttons_by_text(w):
+    from PySide6.QtWidgets import QPushButton
+
+    return {b.text(): b for b in w.findChildren(QPushButton)}
+
+
+def test_recipe_buttons_name_the_recipe_and_point_at_export():
+    """Open/Save/Save as must say what they act on.
+
+    Unlabelled Open/Save/Save as in a figure-composing window read as image
+    commands; they write the .json recipe. Every label names it and every
+    tooltip cross-references the button that does write images.
+    """
+    from gui.figure_builder import RECIPE_VS_EXPORT_TIP
+
+    w = _win()
+    btns = _buttons_by_text(w)
+    for text in ("Open recipe…", "Save recipe", "Save recipe as…"):
+        assert text in btns, f"missing {text!r}"
+        tip = btns[text].toolTip()
+        assert ".json" in tip and RECIPE_VS_EXPORT_TIP in tip
+
+    # And the header naming the group.
+    from PySide6.QtWidgets import QLabel
+
+    headers = [
+        lb
+        for lb in w.findChildren(QLabel)
+        if lb.text() == "Recipe" and lb.property("role") == "group-header"
+    ]
+    assert headers, "left pane lost its Recipe group header"
+
+
+def test_export_button_names_the_figure_and_points_back_at_save_recipe():
+    w = _win()
+    assert w._export_btn.text() == "Export figure…"
+    tip = w._export_btn.toolTip()
+    assert "PNG/PDF/SVG" in tip and "Save recipe" in tip
+
+
+def test_title_shows_unsaved_then_the_recipe_path(tmp_path):
+    """The window title is the only place the recipe's path is shown."""
+    w = _win()
+    assert "(unsaved)" in w.windowTitle()
+
+    w.add_panels([_panel("a")])
+    assert w.windowTitle().endswith("*")  # dirty marker survives
+
+    path = tmp_path / "mine.json"
+    w.save_recipe_file(str(path))
+    assert str(path) in w.windowTitle()
+    assert not w.windowTitle().endswith("*")  # saved -> clean
+
+
+def test_default_save_dir_prefers_current_path_then_panel_then_provider(tmp_path):
+    data = tmp_path / "exp"
+    data.mkdir()
+    h5 = data / "stacked.h5"
+    h5.write_text("")
+
+    # 1. no panels, no provider data -> Qt's own default
+    w = _win()
+    assert w._default_save_dir() == ""
+
+    # 2. a panel's h5 wins: the recipe belongs beside the data it describes
+    w.add_panels([PanelDef("a", PanelSource(str(h5), "map_layer", {"stage": "strain", "z": 0}))])
+    assert w._default_save_dir() == str(data)
+
+    # 3. an already-saved recipe re-saves in place
+    w._current_path = str(tmp_path / "here.json")
+    assert w._default_save_dir() == str(tmp_path / "here.json")
+
+    # 4. no panels -> fall back to the provider's first non-empty h5
+    w2 = _track(
+        FigureBuilderWindow(
+            lambda: {"strain": {"h5": ""}, "mosaicity": {"h5": str(h5)}},
+            PlotStyle(scale_um_per_cm=10.0),
+        )
+    )
+    assert w2._default_save_dir() == str(data)
+
+
+def test_default_save_dir_survives_a_broken_defaults_provider():
+    """A provider reaching into live stage forms must never block Save as."""
+
+    def boom():
+        raise RuntimeError("stage form exploded")
+
+    w = _track(FigureBuilderWindow(boom, PlotStyle(scale_um_per_cm=10.0)))
+    assert w._default_save_dir() == ""

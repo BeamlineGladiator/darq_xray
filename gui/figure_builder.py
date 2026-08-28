@@ -70,6 +70,18 @@ def _ensure_json_suffix(path: str) -> str:
     return path if ext else path + ".json"
 
 
+# The one sentence that separates the window's two kinds of file action, so the
+# recipe buttons and the export button can each point at the other. Both halves
+# name the object AND the format — "recipe (.json)" vs "image files" — because
+# the confusion this fixes was reading Save as "save the figure I am looking at".
+RECIPE_VS_EXPORT_TIP = (
+    "A recipe (.json) is the layout, not the picture — use Export figure… for image files."
+)
+EXPORT_FIGURE_TIP = (
+    "Render the composed figure to image files (PNG/PDF/SVG, per the Style settings) "
+    "in a directory you pick. To save the layout itself instead, use Save recipe."
+)
+
 # Row/Col gap spin sentinel: the spinbox minimum shown as "follow gutter" (gap_cm=None).
 _GAP_FOLLOW = -0.1
 
@@ -207,12 +219,34 @@ class FigureBuilderWindow(QMainWindow):
         pane = QWidget()
         layout = QVBoxLayout(pane)
 
+        # "Recipe" names what this row acts on. Unlabelled Open/Save/Save as
+        # buttons in a window whose point is making figures read as image
+        # commands; they are not — they read and write the *.json recipe, and
+        # the only control that writes image files is Export figure… in the
+        # right pane. Every label and tooltip here says which of the two it is.
+        recipe_header = QLabel("Recipe")
+        recipe_header.setProperty("role", "group-header")
+        recipe_header.setToolTip(RECIPE_VS_EXPORT_TIP)
+        layout.addWidget(recipe_header)
+
         file_row = QHBoxLayout()
-        open_btn = QPushButton("Open…")
+        open_btn = QPushButton("Open recipe…")
+        open_btn.setToolTip(
+            "Load a saved .json recipe — the panel layout, style and compose "
+            "settings. " + RECIPE_VS_EXPORT_TIP
+        )
         open_btn.clicked.connect(self._on_open)
-        save_btn = QPushButton("Save")
+        save_btn = QPushButton("Save recipe")
+        save_btn.setToolTip(
+            "Save the panel layout, style and compose settings to this recipe's "
+            ".json file. " + RECIPE_VS_EXPORT_TIP
+        )
         save_btn.clicked.connect(self._on_save)
-        save_as_btn = QPushButton("Save as…")
+        save_as_btn = QPushButton("Save recipe as…")
+        save_as_btn.setToolTip(
+            "Save the panel layout, style and compose settings to a new .json "
+            "file. " + RECIPE_VS_EXPORT_TIP
+        )
         save_as_btn.clicked.connect(self._on_save_as)
         file_row.addWidget(open_btn)
         file_row.addWidget(save_btn)
@@ -313,11 +347,9 @@ class FigureBuilderWindow(QMainWindow):
         # inside the scroll the button was only reachable by scrolling to the very
         # end. `role="primary"` paints it in the accent (see gui/theme.py) — it is
         # the pane's one action, the rest are settings.
-        self._export_btn = QPushButton("Export…")
+        self._export_btn = QPushButton("Export figure…")
         self._export_btn.setProperty("role", "primary")
-        self._export_btn.setToolTip(
-            "Write the composed figure to a directory (PNG/PDF/SVG, per the Style settings)."
-        )
+        self._export_btn.setToolTip(EXPORT_FIGURE_TIP)
         self._export_btn.clicked.connect(self.export_now)
         outer.addWidget(self._export_btn)
 
@@ -1323,8 +1355,16 @@ class FigureBuilderWindow(QMainWindow):
             self.select_node(selected)
 
     def _update_title(self) -> None:
+        """``Figure builder — <name> — <recipe path or (unsaved)>[ *]``.
+
+        The path is in the title because nothing else on screen showed it: a
+        Save-as writes wherever the file dialog happened to be pointing, and a
+        user who then asked "where did my recipe go?" had no way to find out
+        from the app. ``(unsaved)`` says plainly that Save will ask for a path.
+        """
         star = " *" if self._dirty else ""
-        self.setWindowTitle(f"Figure builder — {self._recipe.name}{star}")
+        where = self._current_path or "(unsaved)"
+        self.setWindowTitle(f"Figure builder — {self._recipe.name} — {where}{star}")
 
     def _after_mutation(self) -> None:
         self._dirty = True
@@ -1748,9 +1788,40 @@ class FigureBuilderWindow(QMainWindow):
         else:
             self._on_save_as()
 
+    def _default_save_dir(self) -> str:
+        """Where an unsaved recipe's Save-as dialog should open.
+
+        Preference order: the recipe's own file (a re-save stays put), then the
+        directory of the first panel's ``h5_path`` — a recipe describes that
+        data, so it belongs beside it — then the first non-empty ``h5`` the
+        ``defaults_provider`` offers, for a recipe with no panels yet. Falls
+        back to ``""`` (Qt's last-used directory), which is what it did before.
+
+        It walks ``recipe.panels`` and not ``iter_leaves(recipe.layout)``: the
+        layout's leaves are ``PanelRef`` ids, and only the ``PanelDef`` list
+        carries a ``source.h5_path``.
+
+        Never raises: the provider is supplied by the main window and reaches
+        into live stage forms, and a bad one must not stop the user saving.
+        """
+        if self._current_path:
+            return self._current_path
+        for panel in self._recipe.panels:
+            h5 = getattr(panel.source, "h5_path", "") or ""
+            if h5:
+                return os.path.dirname(os.path.abspath(h5))
+        try:
+            for entry in (self._defaults_provider() or {}).values():
+                h5 = (entry or {}).get("h5") or ""
+                if h5:
+                    return os.path.dirname(os.path.abspath(h5))
+        except Exception:  # noqa: BLE001 — a bad provider must never block Save as
+            pass
+        return ""
+
     def _on_save_as(self) -> None:
         path, _ = QFileDialog.getSaveFileName(
-            self, "Save figure recipe", self._current_path or "", "Figure recipe (*.json)"
+            self, "Save figure recipe", self._default_save_dir(), "Figure recipe (*.json)"
         )
         if not path:
             return
