@@ -284,6 +284,10 @@ class FigureBuilderWindow(QMainWindow):
         return pane
 
     def _build_right_pane(self) -> QWidget:
+        pane = QWidget()
+        outer = QVBoxLayout(pane)
+        outer.setContentsMargins(0, 0, 0, 0)
+
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         container = QWidget()
@@ -300,13 +304,24 @@ class FigureBuilderWindow(QMainWindow):
         layout.addWidget(QLabel("<b>Selected node</b>"))
         layout.addWidget(self._build_inspector())
 
-        self._export_btn = QPushButton("Export…")
-        self._export_btn.clicked.connect(self.export_now)
-        layout.addWidget(self._export_btn)
-
         layout.addStretch(1)
         scroll.setWidget(container)
-        return scroll
+        outer.addWidget(scroll, 1)
+
+        # Export sits *outside* the scroll area, pinned to the bottom of the pane:
+        # Style + Compose + Selected node together are taller than the window, so
+        # inside the scroll the button was only reachable by scrolling to the very
+        # end. `role="primary"` paints it in the accent (see gui/theme.py) — it is
+        # the pane's one action, the rest are settings.
+        self._export_btn = QPushButton("Export…")
+        self._export_btn.setProperty("role", "primary")
+        self._export_btn.setToolTip(
+            "Write the composed figure to a directory (PNG/PDF/SVG, per the Style settings)."
+        )
+        self._export_btn.clicked.connect(self.export_now)
+        outer.addWidget(self._export_btn)
+
+        return pane
 
     def _build_compose_form(self) -> QFormLayout:
         """Widgets bound to ``recipe.compose``; every edit calls ``_on_compose_edited``."""

@@ -1583,3 +1583,33 @@ def test_copy_roi_to_all_image_panels(tmp_path):
     assert other.roi == (1, 5, 2, 7) and other.crop_to_data is True
     assert trace.roi is None  # traces untouched
     assert w.is_dirty() and "copied to 1" in w._notes_label.text()
+
+
+def test_export_button_is_pinned_outside_the_right_pane_scroll_area():
+    """The Export… button must not live inside the right pane's QScrollArea.
+
+    Style + Compose + Selected node are together taller than the window, so an
+    Export… button at the end of that scrolled column was only reachable after
+    scrolling all the way down. It is now a sibling of the scroll area, pinned
+    to the bottom of the pane, and carries role="primary" so the global QSS
+    paints it in the accent.
+    """
+    from PySide6.QtWidgets import QScrollArea
+
+    w = _win()
+    btn = w._export_btn
+
+    # No QScrollArea anywhere between the button and the window.
+    parent = btn.parentWidget()
+    while parent is not None and parent is not w:
+        assert not isinstance(parent, QScrollArea), "Export… is inside a scroll area"
+        parent = parent.parentWidget()
+
+    assert btn.property("role") == "primary"
+    assert btn.toolTip()
+
+    # It really is a sibling of the scroll area holding the style controls.
+    pane = btn.parentWidget()
+    scrolls = pane.findChildren(QScrollArea)
+    assert scrolls, "right pane lost its scroll area"
+    assert w._controls in scrolls[0].widget().findChildren(type(w._controls))

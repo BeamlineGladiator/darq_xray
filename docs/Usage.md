@@ -2225,8 +2225,9 @@ at a glance from a panel still auto-lettering.
 
 **In-app editor: right pane (style, compose, overrides, export)**
 
-The right pane is a scrollable column with three sections plus an **Export…**
-button:
+The right pane is a scrollable column with three sections, plus an **Export…**
+button pinned below it (outside the scroll area, so it stays visible however
+far you scroll the sections — see the Export bullet at the end of this list):
 
 - *Style* — the full per-figure style control set (the same
   `StyleControls` widget used by [[#Publication export]]), bound to an
@@ -2381,7 +2382,10 @@ button:
   aligned to one x position (and x-axis labels within a row to one y), even
   when the panels' tick numbers have different widths — so e.g. a strain
   trace's label lines up with its mosaicity neighbours'.
-- **Export…** opens a directory picker and, like the live preview, runs on
+- **Export…** — the accent-coloured button pinned to the **bottom of the right
+  pane**, always in view: it sits outside the scrolling column, so you never
+  have to scroll past Style/Compose/Selected node to reach it. It opens a
+  directory picker and, like the live preview, runs on
   the same background compose thread (spinner overlay text "Exporting…";
   **Refresh data**/**Export…** disable for the duration and re-enable when it
   lands) — it writes the recipe with `dfxm.compose.render.export_recipe` (the
