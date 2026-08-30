@@ -324,7 +324,8 @@ Y height by more than ~5%, it warns before you go further.
 
 Each stage's form is pre-filled from the experiment, and **an upstream stage's
 output auto-fills the next stage's input** (e.g. the strain/mosaicity volumes
-flow into `visualize`, `paraview` and `slices`; the slices file flows into
+flow into `visualize`, `paraview` and `slices`; the rocking stage's aligned
+volumes flow into `visualize` and `slices`; the slices file flows into
 `profiles`). You can still point any stage at files manually. If the
 experiment has ROIs set, they also pre-fill every stage's crop in that
 stage's own frame — rocking gets the absolute detector window, while
@@ -661,6 +662,7 @@ flowchart TD
     A -->|4. rocking| F[aligned_raw_rocking_volumes.h5 + media]
     D --> G[5. visualize · PNG/MP4/3D]
     E --> G
+    F --> G
     D --> H[6. paraview · .pvti]
     E --> H
     D --> I[7. slices]
@@ -981,19 +983,28 @@ preview is oriented exactly like the exported maps.
 
 ### 5. Visualize volumes (`visualize`)
 
-Align the stacked mosaicity/strain volumes and render them.
+Align the stacked mosaicity/strain volumes and render them — and render the
+rocking stage's already-aligned raw volumes alongside them.
 
 - **Input:** `stacked_volumes.h5` and/or `stacked_strain_volumes.h5` (+ raw
-  motors for alignment).
+  motors for alignment), and optionally
+  `aligned_raw_rocking_volumes.h5` / `aligned_raw_mosa_volumes.h5` from the
+  [[#4. Aligned rocking volumes (`rocking`)|rocking]] stage.
 - **Output:** per-layer PNGs, a layer animation (MP4→GIF fallback), a 3-D
   top-view, an optional rotating 3-D orbit video
   (`<name>_rotation.mp4`/`.gif`), and an interactive
-  [[#3-D volume viewer|3-D view]].
+  [[#3-D volume viewer|3-D view]] — one set per dataset, in its own
+  sub-directory.
 
-**Essentials:** both volume files, raw root, Map ROI X/Y, output dir
+**Essentials:** the two stacked volume files, the two aligned raw volume files,
+raw root, Map ROI X/Y, output dir
 
 | Param | Meaning |
 |---|---|
+| `aligned_rocking_file` | `aligned_raw_rocking_volumes.h5` from the rocking stage; contributes `raw_sum` and `raw_specific` (blank = skip both). Pre-filled only once the file exists, so this stage stays runnable before you have run rocking |
+| `aligned_mosa_file` | `aligned_raw_mosa_volumes.h5` — the rocking stage run with **Source scan = mosaicity**; contributes `raw_mosa_sum` and `raw_mosa_specific` (blank = skip both). Pre-filled on the same terms |
+| `include_raw_sum` / `include_raw_specific` | render the summed / single-frame volume from the aligned **rocking** file (both on by default) |
+| `include_mosa_sum` / `include_mosa_specific` | render the summed / single-frame volume from the aligned **mosa** file (both on by default) |
 | `center_method` | `midrange` / `mean` / `median` (CoM colour centring only) |
 | `roi_x` / `roi_y` | map-frame crop in map pixels (`c0,c1` / `r0,r1`), relative to the darfix window, NOT absolute detector pixels; pre-filled from the experiment's analysis window |
 | `output_format` | `mp4` / `gif` / `both` |
@@ -1038,12 +1049,43 @@ Align the stacked mosaicity/strain volumes and render them.
 > information appears under the **3D downsample** field before you ever click
 > Run (see [[#Per-field notes]] above).
 
+> [!note] The raw volumes are rendered **as stored** — the Map ROI does not touch them
+> The [[#4. Aligned rocking volumes (`rocking`)|rocking]] stage has already done
+> the alignment: it cropped to its detector ROI, applied the samy X-shift and
+> interpolated onto the uniform Z grid, all anchored to the same mosaicity
+> reference the stacked volumes use. So this stage reads those volumes and
+> renders them, and nothing else — no second crop, no second shift, no second
+> interpolation. Cropping an already-cropped volume would move it out of the
+> frame the others share, which is why `roi_x` / `roi_y` apply only to
+> `stacked_volumes.h5` and `stacked_strain_volumes.h5`.
+>
+> For the same reason each raw volume is drawn at **its own file's**
+> µm-per-pixel scales (recorded by the rocking run that wrote it), not at this
+> form's **Pixel size X/Y**. Their colours come from the shared **raw** colormap
+> group in *Publication style…*, exactly as in
+> [[#7. Oblique slices (`slices`)|slices]], and they carry the same four names
+> and titles there — `raw_sum`, `raw_specific`, `raw_mosa_sum`,
+> `raw_mosa_specific`. Run the rocking stage twice to get all four: once with
+> **Source scan = rocking**, once with **Source scan = mosaicity**.
+
+> [!warning] "these volumes will NOT overlay"
+> The raw and stacked volumes are co-registered only when the rocking run's
+> **detector** ROI covers the same window as this run's **Map ROI**. Both are
+> pre-filled from the experiment's darfix + analysis windows, so they normally
+> agree; when they do not, nothing raises and each picture looks fine on its own
+> — they simply do not line up. So the stage compares each raw volume's Y × X
+> against the aligned stacked volumes' and records a note on the dataset (shown
+> in the run summary) naming both shapes. The fix is to re-run rocking with the
+> pre-filled ROI. With no stacked volume in the run there is nothing to compare
+> against, and no note is made.
+
 > [!tip] Picking the run-time ROI interactively
 > Click **Pick ROI…** (in the button row alongside Run/Cancel) to open a visual
 > picker that shows the middle Z-layer of the χ/μ Center-of-mass and strain
 > volumes. Drag a rectangle and click **OK** — the `roi_x` and `roi_y` fields
 > are filled automatically. Returns no preview when the volume files cannot be
-> read.
+> read. The aligned raw volumes are not offered in the picker — the ROI does not
+> apply to them.
 
 > [!info] Volumes too big for this machine are streamed — same images, more patience
 > It measures the machine's free memory first and takes whichever of two routes

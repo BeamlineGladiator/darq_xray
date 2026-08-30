@@ -33,7 +33,7 @@ from ..common import render3d as R3
 from ..common import volumeio
 from ..common.figures import FigureSpec, register
 from ..common.h5io import sum_dataset_bytes
-from ..common.plotting import apply_round_clim, resolve_cmap, style_from_params
+from ..common.plotting import GROUP_BY_KIND, apply_round_clim, resolve_cmap, style_from_params
 from ..common.raster import extract_motor_positions
 from ..common.sort import find_matching_folders
 from ..config.models import CostEstimate, Param, ParamType, SeeAlso, StageSpec
@@ -95,6 +95,36 @@ RSS_FLOOR_BYTES = 768 * 1024 * 1024
 # fills samy and samz from the same folders, so they are empty together.
 _NO_MOTOR_Z_STEP_UM = 2.0
 
+# The already-aligned raw volumes this stage can render alongside the stacked
+# ones: ``(toggle param, file param, in-file dataset, kind)``.
+#
+# These four rows are `slices._STD_VOLUMES`' four aligned rows, and deliberately
+# use the same *kind* strings: a kind is `plotting.GROUP_BY_KIND`'s own key, so
+# all four resolve to the one "raw" colormap group the style dialog already
+# offers, and the same picture carries the same name in both stages. The kind
+# doubles as the dataset name here — the output sub-directory and the PNG stem.
+#
+# The rocking stage writes each file with `source_scan="rocking"` (the
+# `raw_*` pair) or `source_scan="mosaicity"` (the `raw_mosa_*` pair), which is
+# why one file param feeds two rows.
+_RAW_VOLUMES: tuple[tuple[str, str, str, str], ...] = (
+    ("include_raw_sum", "aligned_rocking_file", "sum_intensity", "raw_sum"),
+    ("include_raw_specific", "aligned_rocking_file", "specific_frame", "raw_specific"),
+    ("include_mosa_sum", "aligned_mosa_file", "sum_intensity", "raw_mosa_sum"),
+    ("include_mosa_specific", "aligned_mosa_file", "specific_frame", "raw_mosa_specific"),
+)
+
+# ``kind -> (title, colourbar label)``, word for word `slices`' own table, so a
+# figure exported from either stage is labelled identically. The two
+# ``*_specific`` titles gain the frame index from the file's own
+# ``specific_frame_idx`` attribute — see :func:`_display_info`.
+_RAW_TITLES: dict[str, tuple[str, str]] = {
+    "raw_sum": ("Background-subtracted Sum Intensity", "Sum intensity (a.u.)"),
+    "raw_specific": ("Background-subtracted Frame", "Intensity (a.u.)"),
+    "raw_mosa_sum": ("Mosa-integrated Sum Intensity", "Sum intensity (a.u.)"),
+    "raw_mosa_specific": ("Mosa-integrated Frame", "Intensity (a.u.)"),
+}
+
 
 def _noop(_frac: float, _msg: str) -> None:
     pass
@@ -106,7 +136,8 @@ STAGE = StageSpec(
     description=(
         "Aligns the stacked mosaicity/strain volumes into the shared sample frame "
         "(samy shift + uniform-Z interpolation) and renders per-layer PNGs, a layer "
-        "animation, a 3-D top view, and an optional rotating 3-D video."
+        "animation, a 3-D top view, and an optional rotating 3-D video. The rocking "
+        "stage's aligned raw volumes can be rendered alongside them, as stored."
     ),
     params=(
         Param(
@@ -127,6 +158,29 @@ STAGE = StageSpec(
             help=(
                 "The stacked strain volume (stacked_strain_volumes.h5) from the strain stage. "
                 "Leave blank to skip strain rendering."
+            ),
+        ),
+        Param(
+            "aligned_rocking_file",
+            ParamType.PATH,
+            "Aligned rocking volume",
+            must_exist=True,
+            help=(
+                "The aligned rocking volume (aligned_raw_rocking_volumes.h5) from the rocking "
+                "stage — its summed and single-frame intensities. It is ALREADY aligned and "
+                "cropped, so it is rendered exactly as stored: no samy shift, no Z interpolation, "
+                "and the Map ROI below does not apply to it. Leave blank to skip it."
+            ),
+        ),
+        Param(
+            "aligned_mosa_file",
+            ParamType.PATH,
+            "Aligned mosa volume",
+            must_exist=True,
+            help=(
+                "The aligned mosa volume (aligned_raw_mosa_volumes.h5) from the rocking stage run "
+                "with Source scan = mosaicity. Same two datasets, same as-stored treatment as the "
+                "aligned rocking volume above. Leave blank to skip it."
             ),
         ),
         Param(
@@ -284,6 +338,54 @@ STAGE = StageSpec(
             help=(
                 "Robust percentile for colour limits, e.g. 99.5 ignores the most extreme "
                 "0.5 % of pixels when setting the scale."
+            ),
+        ),
+        Param(
+            "include_raw_sum",
+            ParamType.BOOL,
+            "Render raw sum",
+            default=True,
+            advanced=True,
+            group="Raw volumes",
+            help=(
+                "Render the background-subtracted summed intensity from the aligned rocking "
+                "volume. Ignored when that file is blank."
+            ),
+        ),
+        Param(
+            "include_raw_specific",
+            ParamType.BOOL,
+            "Render raw specific frame",
+            default=True,
+            advanced=True,
+            group="Raw volumes",
+            help=(
+                "Render the single-frame intensity from the aligned rocking volume — the one "
+                "angular position the rocking stage extracted. Ignored when that file is blank."
+            ),
+        ),
+        Param(
+            "include_mosa_sum",
+            ParamType.BOOL,
+            "Render mosa sum",
+            default=True,
+            advanced=True,
+            group="Raw volumes",
+            help=(
+                "Render the mosa-integrated summed intensity from the aligned mosa volume. "
+                "Ignored when that file is blank."
+            ),
+        ),
+        Param(
+            "include_mosa_specific",
+            ParamType.BOOL,
+            "Render mosa specific frame",
+            default=True,
+            advanced=True,
+            group="Raw volumes",
+            help=(
+                "Render the mosa-integrated single-frame intensity from the aligned mosa volume. "
+                "Ignored when that file is blank."
             ),
         ),
         Param(
@@ -649,10 +751,21 @@ def _colorbar_range_streamed(blocks):
     return (float(lo), float(volumeio.stream_quantile(arrays, 99.0)))
 
 
-def _display_info(dataset_name, is_strain=False):
-    """(title, cbar_label, cmap_group) for a dataset; group None = not a std quantity."""
+def _display_info(dataset_name, is_strain=False, frame_idx=None):
+    """(title, cbar_label, cmap_group) for a dataset; group None = not a std quantity.
+
+    *frame_idx* labels the single-frame raw volumes with the angular position
+    the rocking stage extracted (its ``specific_frame_idx`` attribute). It is
+    optional because not every caller has the file open; without it the title is
+    the bare "… Frame".
+    """
     if is_strain:
         return ("Strain (cot method)", "Strain (ε)", "strain")
+    if dataset_name in _RAW_TITLES:
+        title, cbar = _RAW_TITLES[dataset_name]
+        if dataset_name.endswith("_specific") and frame_idx is not None:
+            title = f"{title} {int(frame_idx)}"
+        return (title, cbar, GROUP_BY_KIND.get(dataset_name))
     axis = (
         "χ"
         if dataset_name.startswith("chi_")
@@ -745,7 +858,18 @@ def estimate(params: dict) -> CostEstimate:
     total = 0
     largest_elems = 0
     largest: tuple[int, ...] | None = None
-    for name in ("mosa_volume_file", "strain_volume_file"):
+    # The two aligned raw files are counted here too, and the arithmetic below
+    # over-predicts for them on purpose — they run NO alignment chain, so the
+    # `3 * largest_elems * 8` term buys them headroom they do not need, and
+    # `sum_dataset_bytes` counts both of a file's datasets even when only one is
+    # enabled. Over-predicting only makes `advice.plan_run` block harder, which
+    # is the safe direction; under-predicting greenlights a run that then OOMs.
+    for name in (
+        "mosa_volume_file",
+        "strain_volume_file",
+        "aligned_rocking_file",
+        "aligned_mosa_file",
+    ):
         path = str(p.get(name) or "")
         if not path:
             continue
@@ -950,6 +1074,178 @@ def _align_streamed(dset, samy, samz, *, scale_x, samy_direction, roi_x, roi_y, 
     return streamed, streamed.z_uniform_um, streamed.scale_z_um
 
 
+# -----------------------------------------------------------------------------
+# Already-aligned raw volumes (rocking's output)
+# -----------------------------------------------------------------------------
+# What one element of a raw volume costs while the colour-limit reductions walk
+# it, ON TOP of the block itself: `volumeio.stream_quantile` holds the
+# `isfinite` mask (1 B), its float64 copy (8 B), the rank search's window (8 B)
+# and its `searchsorted` / `- 1` / `clip` index arrays (3 x 8 B) = 41 B. That is
+# the same `dtype.itemsize + 8 * (retained + 1) + 1` accounting
+# `alignment.align_volume_streamed` prices its own cached median at and
+# `slices._aligned_block_budget` converts a budget with; it is shared rather
+# than re-derived. There is no centring copy in the term because no raw kind is
+# centred — `_source_and_clim(kind="fwhm")` takes percentiles and shifts nothing.
+_QUANTILE_BYTES_PER_ELEMENT = 41
+
+
+def _raw_block_budget(dset, budget_bytes: int) -> int:
+    """*budget_bytes* of working set, in the block bytes :func:`iter_blocks` counts.
+
+    ``iter_blocks`` sizes a block by its bytes **in the stored dtype**, while the
+    reductions consuming it hold ``_QUANTILE_BYTES_PER_ELEMENT`` more per
+    element. Handing the budget over raw would buy a block an order of magnitude
+    too large. Integer division rounds **down**, the safe direction.
+    """
+    itemsize = max(1, int(np.dtype(dset.dtype).itemsize))
+    return max(1, int(budget_bytes) * itemsize // (itemsize + _QUANTILE_BYTES_PER_ELEMENT))
+
+
+def _raw_streamed(dset, *, z_um, scale_z, budget_bytes):
+    """An ALREADY-aligned volume presented as a :class:`~.alignment.StreamedAlignment`.
+
+    The rocking stage wrote this dataset *after* its own detector ROI crop, samy
+    X-shift and uniform-Z interpolation, anchored to the same mosaicity
+    reference every other volume uses. So there is no alignment chain to run
+    here and none is run: the dataset is handed over as ascending Z-blocks and
+    nothing else. That is exactly the contract `slices` gives its
+    ``source="aligned"`` volumes, and it is why this stage's Map ROI does not
+    touch these volumes — cropping an already-cropped volume a second time would
+    move it out of the frame it shares with the stacked ones.
+
+    Presenting it as a ``StreamedAlignment`` rather than as a bare array is what
+    lets the rest of the stage stay unaware of the distinction: ``_source_and_clim``
+    picks its in-core or streaming rung off ``block_layers`` and
+    ``_process_dataset`` renders whatever comes back.
+
+    ``pad_left``/``pad_right``/``center_offset`` are zero: the padding happened
+    in the stage that wrote the file, and no raw kind is centred. They are
+    reported for interface parity, not consumed.
+    """
+    shape = tuple(int(d) for d in dset.shape)
+    n_z = shape[0]
+    block_budget = _raw_block_budget(dset, budget_bytes)
+    # `volumeio._layers_per_block`'s arithmetic, mirrored rather than imported
+    # (it is private to that module): `block_layers` must be the blocking
+    # `iter_blocks` will actually choose, because `_fits_in_core` reads it to
+    # decide which colour-limit rung runs. Pinned against the real blocking by
+    # `test_raw_stream_reports_the_blocking_iter_blocks_uses`.
+    per_layer = max(1, volumeio.volume_bytes(dset) // max(1, n_z))
+    block_layers = max(1, min(n_z, block_budget // per_layer)) if n_z else 1
+    return A.StreamedAlignment(
+        shape=shape,
+        dtype=np.dtype(dset.dtype),
+        z_uniform_um=np.asarray(z_um),
+        scale_z_um=float(scale_z),
+        pad_left=0,
+        pad_right=0,
+        center_offset=0.0,
+        block_layers=block_layers,
+        working_set_bytes=int(block_layers * per_layer),
+        blocks=lambda: volumeio.iter_blocks(dset, budget_bytes=block_budget),
+    )
+
+
+def _raw_meta(f, dset, p):
+    """``(z_um, scale_z, (scale_x, scale_y), frame_idx)`` for an aligned raw volume.
+
+    Read from the file's own attributes, **not** from this stage's form: a
+    written volume carries the calibration it was built with, and honouring that
+    is what keeps the render true to scale when the two stages were configured
+    differently. The form's pixel sizes are the fallback for a file written
+    before the attributes existed.
+    """
+    a = dict(f.attrs)
+    n_z = int(dset.shape[0])
+    scale_z = float(a.get("scale_z_um_per_px", _NO_MOTOR_Z_STEP_UM))
+    z_um = np.asarray(f["z_uniform_um"][:], dtype=float) if "z_uniform_um" in f else None
+    if z_um is None or len(z_um) != n_z:
+        z_um = np.arange(n_z) * scale_z
+    scales = (
+        float(a.get("scale_x_um_per_px", p["pixel_size_x_um"])),
+        float(a.get("scale_y_um_per_px", p["pixel_size_y_um"])),
+    )
+    return z_um, scale_z, scales, int(a.get("specific_frame_idx", -1))
+
+
+def _raw_scales_and_frame(cfg: dict, p: dict):
+    """``(frame_idx, (scale_x, scale_y))`` for one raw config, from its own file.
+
+    The read-it-now wrapper over :func:`_raw_meta` for the callers that want the
+    metadata without the volume — :func:`figures` needs the physical extent and
+    the frame index to label a spec, long before any ``build()`` reads a voxel.
+
+    Falls back to the form's calibration and an unnumbered title when the file
+    cannot be read. Listing specs must not raise on a result whose input file has
+    since moved: the failure belongs in the ``build()`` that needs the voxels,
+    not in the catalog, which is exactly how the mosaicity and strain branches
+    behave.
+    """
+    fallback = (None, (float(p["pixel_size_x_um"]), float(p["pixel_size_y_um"])))
+    try:
+        with h5py.File(cfg["path"], "r") as f:
+            dset = f.get(cfg["dataset"])
+            if dset is None:
+                return fallback
+            _z, _sz, scales, frame_idx = _raw_meta(f, dset, p)
+            return frame_idx, scales
+    except OSError:
+        return fallback
+
+
+def _raw_configs(p: dict) -> list[dict]:
+    """The raw volumes this run should render: enabled, configured, and on disk.
+
+    In :data:`_RAW_VOLUMES` order, so ``VisualizeResult.datasets`` is
+    deterministic. A configured-but-missing file is not this function's problem
+    — :func:`run` reports it in ``skipped`` once per file rather than once per
+    dataset.
+    """
+    out: list[dict] = []
+    for toggle, file_param, dataset, kind in _RAW_VOLUMES:
+        path = str(p.get(file_param) or "")
+        if not p.get(toggle, True) or not path or not os.path.exists(path):
+            continue
+        out.append({"kind": kind, "path": path, "dataset": dataset})
+    return out
+
+
+def _raw_config_for(kind: str, p: dict) -> dict | None:
+    """The :data:`_RAW_VOLUMES` row for *kind*, **ignoring its toggle**.
+
+    :func:`figures` and :func:`aligned_field` are asked about a dataset a
+    *previous* run produced, and its toggle may have been switched off since.
+    What they need is which file that dataset came from, not whether the next
+    run would render it again — routing it by the toggle would send a raw
+    dataset down the mosaicity branch and fail at build time. ``None`` when no
+    file is configured for it at all, which is the case they cannot serve.
+    """
+    for _toggle, file_param, dataset, k in _RAW_VOLUMES:
+        if k != kind:
+            continue
+        path = str(p.get(file_param) or "")
+        return {"kind": kind, "path": path, "dataset": dataset} if path else None
+    return None
+
+
+def _raw_mismatch_note(kind, shape, aligned_shape) -> str | None:
+    """A note when a raw volume's ``(Y, X)`` differs from the stacked volumes'.
+
+    The two are only co-registered when the rocking run's detector ROI covers
+    the same window as this run's Map ROI. When it does not, nothing raises and
+    nothing looks wrong in the individual pictures — they simply do not overlay,
+    which is the whole point of aligning them. So say it where the user will see
+    it, next to the dataset it applies to.
+    """
+    if aligned_shape is None or tuple(shape[1:]) == tuple(aligned_shape):
+        return None
+    return (
+        f"{kind} is {shape[1]}x{shape[2]} (Y x X) but the aligned mosaicity/strain volumes "
+        f"are {aligned_shape[0]}x{aligned_shape[1]} — these volumes will NOT overlay; "
+        "re-run rocking with the detector ROI matching this stage's Map ROI"
+    )
+
+
 class _LayerSource:
     """An aligned volume as ascending per-layer reads, materialised only if asked.
 
@@ -1103,12 +1399,17 @@ def _process_dataset(
     style=None,
     group=None,
     progress=None,
+    scales=None,
 ):
     """Render one aligned dataset's products.
 
     *source* is the aligned volume: either a plain ``(Z, Y, X)`` array or a
     :class:`_LayerSource` presenting one as ascending per-layer reads. The
     products are identical either way.
+
+    *scales* is the ``(x, y)`` µm-per-pixel pair to render at, defaulting to the
+    form's calibration. The already-aligned raw volumes pass their file's own
+    scales instead — see :func:`_raw_meta`.
 
     *progress* takes a **local** 0..1 fraction covering this dataset's products;
     `run` wraps it with `sub_progress` so each dataset owns a slice of the run's
@@ -1117,7 +1418,7 @@ def _process_dataset(
     """
     ds_dir = os.path.join(out_dir, name)
     os.makedirs(ds_dir, exist_ok=True)
-    sx, sy = float(p["pixel_size_x_um"]), float(p["pixel_size_y_um"])
+    sx, sy = scales if scales else (float(p["pixel_size_x_um"]), float(p["pixel_size_y_um"]))
     # The 3-D products upload the entire grid to VTK and so cannot stream at
     # all. When one is wanted, materialise the volume ONCE up front and let the
     # per-layer products read that array too: streaming them as well would
@@ -1334,7 +1635,18 @@ def run(params: dict, progress: ProgressFn | None = None) -> VisualizeResult:
     mosa_file = p["mosa_volume_file"]
     strain_file = p["strain_volume_file"]
     mosa_names = mosa_field_names(mosa_file) if mosa_file and os.path.exists(mosa_file) else []
-    n_datasets = len(mosa_names) + (1 if strain_file and os.path.exists(strain_file) else 0)
+    raw_cfgs = _raw_configs(p)
+    # The strain section's own index, and where the raw section starts. Counting
+    # from `len(mosa_names)` rather than backwards from the end — the strain
+    # slice used to be `n_datasets - 1`, which was only the strain index while
+    # strain was the last dataset in the run. It no longer is.
+    strain_index = len(mosa_names)
+    n_before_raw = strain_index + (1 if strain_file and os.path.exists(strain_file) else 0)
+    n_datasets = n_before_raw + len(raw_cfgs)
+    # (Y, X) of the first stacked volume this run aligns — what the raw volumes
+    # must match to overlay it. None when the run renders no stacked volume, in
+    # which case there is nothing to compare against and no note to make.
+    aligned_shape: tuple[int, int] | None = None
     WORK_LO, WORK_HI = 0.05, 0.99
 
     # --- mosaicity ---
@@ -1402,6 +1714,8 @@ def run(params: dict, progress: ProgressFn | None = None) -> VisualizeResult:
                 )
             if clim_note:
                 prod.notes.append(clim_note)
+            if aligned_shape is None:
+                aligned_shape = (int(prod.shape[1]), int(prod.shape[2]))
             result.datasets.append(prod)
         # And release the last field's source before the strain section aligns
         # its own, for the same reason: on the in-core rung both would otherwise
@@ -1413,9 +1727,9 @@ def run(params: dict, progress: ProgressFn | None = None) -> VisualizeResult:
     elif mosa_file:
         result.skipped.append(f"mosaicity volume not found: {mosa_file}")
 
-    # --- strain --- (the last dataset slice, not half the bar)
+    # --- strain --- (one dataset slice, not half the bar)
     if strain_file and os.path.exists(strain_file):
-        st_lo, st_hi = _progress_mod.slice_for(n_datasets - 1, n_datasets, WORK_LO, WORK_HI)
+        st_lo, st_hi = _progress_mod.slice_for(strain_index, n_datasets, WORK_LO, WORK_HI)
         progress(st_lo, "loading strain volume")
         samy, samz = _read_motors(raw_root, p["strain_pattern"], p["samy_path"], p["samz_path"])
         with h5py.File(strain_file, "r") as f:
@@ -1455,9 +1769,64 @@ def run(params: dict, progress: ProgressFn | None = None) -> VisualizeResult:
                 )
                 if clim_note:
                     prod.notes.append(clim_note)
+                if aligned_shape is None:
+                    aligned_shape = (int(prod.shape[1]), int(prod.shape[2]))
                 result.datasets.append(prod)
     elif strain_file:
         result.skipped.append(f"strain volume not found: {strain_file}")
+
+    # --- already-aligned raw volumes --- (no motors, no ROI, no alignment)
+    # Reported once per configured-but-missing FILE, not once per dataset: the
+    # two rows sharing a file would otherwise say the same thing twice.
+    for file_param in ("aligned_rocking_file", "aligned_mosa_file"):
+        path = str(p.get(file_param) or "")
+        if path and not os.path.exists(path):
+            result.skipped.append(f"aligned volume not found: {path}")
+    for j, cfg in enumerate(raw_cfgs):
+        kind = cfg["kind"]
+        ds_lo, ds_hi = _progress_mod.slice_for(n_before_raw + j, n_datasets, WORK_LO, WORK_HI)
+        progress(ds_lo, f"raw: {kind}")
+        source = None
+        with h5py.File(cfg["path"], "r") as f:
+            dset = f.get(cfg["dataset"])
+            if dset is None:
+                result.skipped.append(f"{cfg['dataset']} not found in {cfg['path']}")
+                continue
+            z_pos, scale_z, scales, frame_idx = _raw_meta(f, dset, p)
+            title, cbar, group = _display_info(kind, frame_idx=frame_idx)
+            cmap = resolve_cmap(style, group)
+            streamed = _raw_streamed(dset, z_um=z_pos, scale_z=scale_z, budget_bytes=budget_bytes)
+            # `kind="fwhm"` is the *colour convention*, not a claim about the
+            # quantity: the 1st/99th percentile limits with no centring, which
+            # is what `slices` gives its own `raw_*` volumes.
+            source, vmin, vmax = _source_and_clim(streamed, kind="fwhm")
+            vmin, vmax, clim_note = apply_round_clim(vmin, vmax, style)
+            if clim_note:
+                progress(ds_lo, f"{kind}: {clim_note}")
+            prod = _process_dataset(
+                source,
+                z_pos,
+                scale_z,
+                kind,
+                vmin,
+                vmax,
+                cmap,
+                title,
+                cbar,
+                p,
+                out_dir,
+                style=style,
+                group=group,
+                progress=_progress_mod.sub_progress(progress, ds_lo, ds_hi),
+                scales=scales,
+            )
+        if clim_note:
+            prod.notes.append(clim_note)
+        note = _raw_mismatch_note(kind, prod.shape, aligned_shape)
+        if note:
+            prod.notes.append(note)
+        result.datasets.append(prod)
+    source = prod = None
 
     progress(1.0, f"visualized {len(result.datasets)} datasets -> {out_dir}")
     return result
@@ -1474,6 +1843,7 @@ def available_fields(params: dict) -> list[str]:
         out.extend(mosa_field_names(p["mosa_volume_file"]))
     if p["strain_volume_file"] and os.path.exists(p["strain_volume_file"]):
         out.append("strain")
+    out.extend(cfg["kind"] for cfg in _raw_configs(p))
     return out
 
 
@@ -1505,6 +1875,29 @@ def aligned_field(params: dict, name: str):
     roi_x, roi_y = _parse_pair(p["roi_x"]), _parse_pair(p["roi_y"])
     raw_root = (p["raw_root"] or "").rstrip("/")
     budget_bytes = _run_budget_bytes(p)
+
+    if name in _RAW_TITLES:
+        # Already aligned: read it, do not align it. Its spacing is the file's,
+        # so the viewer draws it at the size the rocking stage recorded.
+        cfg = _raw_config_for(name, p)
+        if cfg is None:
+            raise KeyError(name)
+        with h5py.File(cfg["path"], "r") as f:
+            dset = f.get(cfg["dataset"])
+            if dset is None:
+                raise KeyError(f"{cfg['dataset']} not found in {cfg['path']}")
+            z_um, scale_z, (sx_raw, sy_raw), frame_idx = _raw_meta(f, dset, p)
+            streamed = _raw_streamed(dset, z_um=z_um, scale_z=scale_z, budget_bytes=budget_bytes)
+            source, vmin, vmax = _source_and_clim(streamed, kind="fwhm")
+            data = _materialise(source)
+        _t, label, group = _display_info(name, frame_idx=frame_idx)
+        return (
+            data,
+            (sx_raw, sy_raw, scale_z),
+            resolve_cmap(None, group),
+            (float(vmin), float(vmax)),
+            {"cbar_label": label, "group": group},
+        )
 
     if name == "strain":
         samy, samz = _read_motors(raw_root, p["strain_pattern"], p["samy_path"], p["samz_path"])
@@ -1617,16 +2010,33 @@ def figures(result: "VisualizeResult", params: dict) -> list[FigureSpec]:
 
     for ds in result.datasets:
         is_strain = ds.name == "strain"
-        title, cbar_label, group = _display_info(ds.name, is_strain=is_strain)
+        # By the dataset's own name, not by what the form would render now: the
+        # result being catalogued is one a past run made.
+        raw_cfg = _raw_config_for(ds.name, p) if ds.name in _RAW_TITLES else None
+        # A raw volume is drawn at ITS file's scales, not the form's — the same
+        # rule `run()` follows, so an exported figure matches the saved PNG.
+        frame_idx, (dsx, dsy) = (
+            _raw_scales_and_frame(raw_cfg, p) if raw_cfg is not None else (None, (sx, sy))
+        )
+        title, cbar_label, group = _display_info(ds.name, is_strain=is_strain, frame_idx=frame_idx)
         n_z = ds.shape[0]
-        ext_x = ds.shape[2] * sx
-        ext_y = ds.shape[1] * sy
+        ext_x = ds.shape[2] * dsx
+        ext_y = ds.shape[1] * dsy
 
         # Per-dataset lazy cache: shared across all layer builds for THIS dataset.
         # First build() call fills cache["vol"]; the rest reuse it.
         cache: dict = {}
 
-        if is_strain:
+        if raw_cfg is not None:
+            # No alignment, no ROI, no motors: the file already holds the aligned
+            # volume, so the "loader" is a read.
+            def _aligned_vol(_cfg=raw_cfg, _cache=cache):
+                if "vol" not in _cache:
+                    with h5py.File(_cfg["path"], "r") as f:
+                        _cache["vol"] = np.asarray(f[_cfg["dataset"]][:])
+                return _cache["vol"]
+
+        elif is_strain:
             src_file = p["strain_volume_file"]
             pattern = p["strain_pattern"]
 
@@ -1715,6 +2125,8 @@ def _main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Visualize aligned mosaicity/strain volumes.")
     ap.add_argument("--mosa-volume-file", default="")
     ap.add_argument("--strain-volume-file", default="")
+    ap.add_argument("--aligned-rocking-file", default="")
+    ap.add_argument("--aligned-mosa-file", default="")
     ap.add_argument("--raw-root", default="")
     ap.add_argument("--mosa-pattern", default="*")
     ap.add_argument("--strain-pattern", default="*")
@@ -1731,6 +2143,8 @@ def _main(argv: list[str] | None = None) -> int:
         dict(
             mosa_volume_file=args.mosa_volume_file,
             strain_volume_file=args.strain_volume_file,
+            aligned_rocking_file=args.aligned_rocking_file,
+            aligned_mosa_file=args.aligned_mosa_file,
             raw_root=args.raw_root,
             mosa_pattern=args.mosa_pattern,
             strain_pattern=args.strain_pattern,

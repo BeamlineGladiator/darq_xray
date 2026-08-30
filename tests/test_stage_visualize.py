@@ -1088,3 +1088,256 @@ def test_no_budget_override_note_when_the_volume_fits_in_core(tmp_path, monkeypa
     )
     notes = [n for d in result.datasets for n in d.notes]
     assert not [n for n in notes if "ignored the streaming budget" in n]
+
+
+# -- already-aligned raw volumes ----------------------------------------------
+# The rocking stage writes these files AFTER its own ROI crop, samy X-shift and
+# uniform-Z interpolation, so visualize renders them as-is. Every assertion
+# below is ultimately about that one word: as-is.
+RAW_SCALES = (0.3, 0.4, 1.5)
+RAW_FRAME_IDX = 7
+
+
+def _write_aligned_raw(path, shape=(L, NY, NX), *, frame_idx=RAW_FRAME_IDX, scales=RAW_SCALES):
+    """A rocking-stage aligned volume file: both datasets plus the alignment attrs.
+
+    The scales deliberately differ from the stage defaults (0.152 / 0.385) so a
+    render that silently used the form's pixel sizes instead of the file's own
+    is visible rather than coincidentally right.
+    """
+    rng = np.random.default_rng(2)
+    sx, sy, sz = scales
+    with h5py.File(path, "w") as f:
+        for name in ("sum_intensity", "specific_frame"):
+            f.create_dataset(name, data=np.abs(rng.standard_normal(shape)).astype(np.float32))
+        f.create_dataset("z_uniform_um", data=(np.arange(shape[0]) * sz).astype(np.float32))
+        f.attrs["scale_x_um_per_px"] = sx
+        f.attrs["scale_y_um_per_px"] = sy
+        f.attrs["scale_z_um_per_px"] = sz
+        f.attrs["specific_frame_idx"] = frame_idx
+
+
+def _raw_params(tmp_path, out, **over):
+    rock = tmp_path / "aligned_raw_rocking_volumes.h5"
+    mosa = tmp_path / "aligned_raw_mosa_volumes.h5"
+    _write_aligned_raw(str(rock))
+    _write_aligned_raw(str(mosa))
+    p = {
+        "aligned_rocking_file": str(rock),
+        "aligned_mosa_file": str(mosa),
+        "output_dir": str(out),
+        "save_layers": False,
+        "save_animation": False,
+        "save_topview": False,
+    }
+    p.update(over)
+    return p
+
+
+ALL_RAW_KINDS = {"raw_sum", "raw_specific", "raw_mosa_sum", "raw_mosa_specific"}
+
+
+def test_raw_volumes_render_without_being_realigned(tmp_path):
+    """All four raw volumes render, at exactly their stored shape.
+
+    The ROI is set and the raw volumes must ignore it: they were cropped once
+    already, in the detector frame, and cropping them again would move them out
+    of the frame the other volumes share.
+    """
+    out = tmp_path / "viz"
+    res = V.run(_raw_params(tmp_path, out, roi_x="1,5", roi_y="1,4", save_layers=True))
+    assert {d.name for d in res.datasets} == ALL_RAW_KINDS
+    for d in res.datasets:
+        assert d.shape == (L, NY, NX), f"{d.name} was re-cropped or re-aligned"
+        assert d.layers_dir and len(os.listdir(d.layers_dir)) == L
+
+
+def test_raw_toggles_select_which_volumes_render(tmp_path):
+    res = V.run(
+        _raw_params(
+            tmp_path,
+            tmp_path / "viz",
+            include_raw_sum=False,
+            include_mosa_specific=False,
+        )
+    )
+    assert {d.name for d in res.datasets} == {"raw_specific", "raw_mosa_sum"}
+
+
+def test_raw_volume_renders_at_the_files_own_scales(tmp_path, monkeypatch):
+    """The pixel sizes come from the file's attrs, not from this stage's form."""
+    seen = {}
+
+    def _fake_pngs(data, z_pos, ds_dir, name, vmin, vmax, cmap, title, cbar, sx, sy, **kw):
+        seen[name] = (sx, sy)
+        return ds_dir
+
+    monkeypatch.setattr(V.Rnd, "save_layer_pngs", _fake_pngs)
+    V.run(
+        _raw_params(
+            tmp_path,
+            tmp_path / "viz",
+            save_layers=True,
+            pixel_size_x_um=0.152,
+            pixel_size_y_um=0.385,
+        )
+    )
+    assert seen and set(seen) == ALL_RAW_KINDS
+    for name, got in seen.items():
+        assert got == pytest.approx(RAW_SCALES[:2]), name
+
+
+def test_raw_shape_mismatch_becomes_a_note(tmp_path):
+    """A raw volume cropped differently from the stacked ones will not overlay."""
+    proc, raw = _setup(tmp_path)
+    out = tmp_path / "viz"
+    rock = tmp_path / "aligned_raw_rocking_volumes.h5"
+    _write_aligned_raw(str(rock), (L, NY + 3, NX + 3))
+    res = V.run(
+        {
+            "mosa_volume_file": str(proc / "stacked_volumes.h5"),
+            "raw_root": str(raw),
+            "mosa_pattern": "mosa__*",
+            "aligned_rocking_file": str(rock),
+            "output_dir": str(out),
+            "save_layers": False,
+            "save_animation": False,
+            "save_topview": False,
+        }
+    )
+    by_name = {d.name: d for d in res.datasets}
+    notes = " ".join(by_name["raw_sum"].notes)
+    assert "overlay" in notes, notes
+    assert not by_name["chi_FWHM"].notes  # the stacked volumes are the reference
+
+
+def test_no_shape_note_when_the_raw_volume_matches(tmp_path):
+    """Precondition guard: the note must not fire on a correctly-cropped volume."""
+    proc, raw = _setup(tmp_path)
+    rock = tmp_path / "aligned_raw_rocking_volumes.h5"
+    # The stacked volumes gain samy padding along X, so match what run() produces.
+    samy, _z = V._read_motors(
+        str(raw), "mosa__*", "1.1/instrument/positioners/samy", "1.1/instrument/positioners/samz"
+    )
+    nx = NX + V.A.compute_pad_left(samy, 0.152, -1) + V.A.compute_pad_right(samy, 0.152, -1)
+    _write_aligned_raw(str(rock), (L, NY, nx))
+    res = V.run(
+        {
+            "mosa_volume_file": str(proc / "stacked_volumes.h5"),
+            "raw_root": str(raw),
+            "mosa_pattern": "mosa__*",
+            "aligned_rocking_file": str(rock),
+            "output_dir": str(tmp_path / "viz"),
+            "save_layers": False,
+            "save_animation": False,
+            "save_topview": False,
+        }
+    )
+    raw_notes = [n for d in res.datasets if d.name.startswith("raw_") for n in d.notes]
+    assert not [n for n in raw_notes if "overlay" in n], raw_notes
+
+
+def test_raw_missing_file_is_recorded(tmp_path):
+    res = V.run({"aligned_rocking_file": str(tmp_path / "nope.h5"), "output_dir": str(tmp_path)})
+    assert any("not found" in s for s in res.skipped), res.skipped
+
+
+def test_raw_display_info_carries_the_frame_index_and_the_raw_group(tmp_path):
+    assert V._display_info("raw_sum") == (
+        "Background-subtracted Sum Intensity",
+        "Sum intensity (a.u.)",
+        "raw",
+    )
+    title, cbar, group = V._display_info("raw_mosa_specific", frame_idx=RAW_FRAME_IDX)
+    assert title == f"Mosa-integrated Frame {RAW_FRAME_IDX}"
+    assert (cbar, group) == ("Intensity (a.u.)", "raw")
+
+
+def test_available_fields_and_aligned_field_cover_the_raw_volumes(tmp_path):
+    """The pop-out 3-D viewer offers the raw volumes, unaligned and at file scale."""
+    p = _raw_params(tmp_path, tmp_path / "viz")
+    assert set(V.available_fields(p)) == ALL_RAW_KINDS
+    vol, spacing, _cmap, clim, meta = V.aligned_field(p, "raw_mosa_specific")
+    with h5py.File(p["aligned_mosa_file"], "r") as f:
+        stored = f["specific_frame"][:]
+    assert np.allclose(vol, stored)  # loaded, not aligned
+    assert spacing == pytest.approx(RAW_SCALES)
+    assert meta["group"] == "raw"
+    assert clim[0] <= clim[1]
+
+
+def test_figures_cover_the_raw_volumes(tmp_path):
+    p = _raw_params(tmp_path, tmp_path / "viz")
+    res = V.run(p)
+    specs = V.figures(res, p)
+    ids = [s.figure_id for s in specs]
+    assert sum(i.startswith("visualize_raw_mosa_sum_z") for i in ids) == L
+    spec = next(s for s in specs if s.figure_id == "visualize_raw_mosa_sum_z0000")
+    assert spec.build(None).axes  # renders without an alignment
+    assert "Mosa-integrated Sum Intensity" in spec.title
+
+
+def test_estimate_counts_the_aligned_raw_files(tmp_path):
+    p = _raw_params(tmp_path, tmp_path / "viz")
+    est = V.estimate({k: v for k, v in p.items() if k != "output_dir"})
+    assert est.peak_bytes > 0
+    assert est.chunkable
+
+
+def test_raw_stream_reports_the_blocking_iter_blocks_uses(tmp_path):
+    """`_fits_in_core` reads `block_layers`, so it must be the real blocking."""
+    path = str(tmp_path / "aligned_raw_rocking_volumes.h5")
+    _write_aligned_raw(path, (8, NY, NX))
+    with h5py.File(path, "r") as f:
+        dset = f["sum_intensity"]
+        per_layer = V.volumeio.volume_bytes(dset) // 8
+        for budget in (1, per_layer * 40, 1 << 30):
+            streamed = V._raw_streamed(dset, z_um=np.arange(8.0), scale_z=1.5, budget_bytes=budget)
+            first = next(iter(streamed.blocks()))[0]
+            assert streamed.block_layers == first.stop - first.start
+            assert sum(b.shape[0] for _sl, b in streamed.blocks()) == 8
+
+
+def test_visualize_prefills_the_aligned_files_from_the_experiment(tmp_path):
+    from dfxm.config.models import Experiment
+    from gui.bindings import experiment_overrides
+
+    proc = tmp_path / "proc"
+    proc.mkdir()
+    (proc / "aligned_raw_mosa_volumes.h5").write_bytes(b"")
+    ov = experiment_overrides("visualize", Experiment(processed_root=str(proc)))
+    assert ov["aligned_mosa_file"] == str(proc / "aligned_raw_mosa_volumes.h5")
+    # Not written yet -> blank, NOT a path. Both fields are `must_exist`, and
+    # `StageView._validate_inputs` blocks a run on any must_exist path that is
+    # set but absent — so pre-filling one before rocking has run would make
+    # visualize unrunnable for anyone who never runs rocking.
+    assert ov["aligned_rocking_file"] == ""
+    (proc / "aligned_raw_rocking_volumes.h5").write_bytes(b"")
+    ov = experiment_overrides("visualize", Experiment(processed_root=str(proc)))
+    assert ov["aligned_rocking_file"] == str(proc / "aligned_raw_rocking_volumes.h5")
+
+
+def test_figures_route_a_raw_dataset_by_name_not_by_the_toggle(tmp_path):
+    """A result outlives the form. Switching a toggle off must not misroute it.
+
+    `figures` and `aligned_field` are asked about datasets a PREVIOUS run made;
+    routing them through the toggle-respecting `_raw_configs` would send a raw
+    dataset down the mosaicity branch and fail at build time.
+    """
+    p = _raw_params(tmp_path, tmp_path / "viz")
+    res = V.run(p)
+    off = {**p, "include_mosa_sum": False, "include_raw_sum": False}
+    spec = next(s for s in V.figures(res, off) if s.figure_id == "visualize_raw_mosa_sum_z0000")
+    assert spec.build(None).axes
+    vol, _sp, _cm, _cl, meta = V.aligned_field(off, "raw_mosa_sum")
+    assert vol.shape == (L, NY, NX)
+    assert meta["group"] == "raw"
+
+
+def test_figures_do_not_raise_when_a_raw_file_has_moved(tmp_path):
+    """Listing specs is cheap and must stay so — the failure belongs in build()."""
+    p = _raw_params(tmp_path, tmp_path / "viz")
+    res = V.run(p)
+    os.remove(p["aligned_mosa_file"])
+    specs = V.figures(res, p)  # must not raise
+    assert any(s.figure_id.startswith("visualize_raw_mosa_sum_z") for s in specs)

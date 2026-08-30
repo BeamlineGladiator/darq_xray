@@ -63,6 +63,17 @@ _SLICES_SUBDIR = "oblique_slices"
 _SLICES_H5 = "oblique_slices.h5"
 
 
+def _existing(root: str, filename: str) -> str:
+    """``root/filename`` when it is on disk, else ``""``.
+
+    For pre-filling an optional `must_exist` input: the path is only useful once
+    the stage that writes it has run, and offering it before then would block the
+    Run button on a missing file.
+    """
+    path = os.path.join(root, filename) if root else ""
+    return path if path and os.path.exists(path) else ""
+
+
 def _base_overrides(stage_name: str, exp: Experiment) -> dict:
     """Experiment-derived defaults that pre-fill *stage_name*'s form."""
     if stage_name == "concat":
@@ -95,6 +106,15 @@ def _base_overrides(stage_name: str, exp: Experiment) -> dict:
         return dict(
             mosa_volume_file=os.path.join(proc, _MOSA_VOLUME) if proc else "",
             strain_volume_file=os.path.join(proc, _STRAIN_VOLUME) if proc else "",
+            # Both gated on the file actually being there. `must_exist` paths are
+            # checked before a run (`StageView._validate_inputs`), so a pre-filled
+            # path to a file nobody built would BLOCK the Run button — and unlike
+            # `slices`, which sits downstream of `rocking` and can assume it, this
+            # stage is routinely run without any rocking output at all. Gating
+            # keeps the auto-chaining (the path appears once rocking has written
+            # it) without ever blocking a run that does not want it.
+            aligned_rocking_file=_existing(proc, _ALIGNED_ROCKING),
+            aligned_mosa_file=_existing(proc, _ALIGNED_MOSA),
             raw_root=exp.raw_root,
             mosa_pattern=exp.mosa_pattern,
             strain_pattern=exp.folder_pattern,
