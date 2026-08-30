@@ -213,6 +213,7 @@ STAGE = StageSpec(
             ParamType.STR,
             "ROI X",
             default="",
+            roi_axis="x",
             roi_frame="detector",
             help=(
                 "Detector crop 'x0,x1' — START and END pixel columns on the raw detector, "
@@ -227,6 +228,7 @@ STAGE = StageSpec(
             ParamType.STR,
             "ROI Y",
             default="",
+            roi_axis="y",
             roi_frame="detector",
             help=(
                 "Detector crop 'y0,y1' — START and END pixel rows on the raw detector, "
@@ -466,6 +468,10 @@ def process_raw_scan(
         det = f[detector_path]
         n_frames = det.shape[0]
         h_full, w_full = det.shape[1], det.shape[2]
+        # Against the REAL detector, before a single frame is read: an ROI that
+        # crops to nothing would otherwise read an empty stack and carry it
+        # through the whole run, producing blank layers and a blank volume.
+        A.check_roi_crops_something(h_full, w_full, roi_x, roi_y)
         ys = roi_y[0] if roi_y else 0
         ye = roi_y[1] if roi_y else h_full
         xs = roi_x[0] if roi_x else 0
@@ -545,6 +551,13 @@ def build_raw_volumes(
                     scan_hi,
                 ),
             )
+        except StageUserError:
+            # An impossible ROI is an input problem affecting every scan the
+            # same way, so skip-and-continue would discard it once per folder
+            # and end at the generic "no rocking scans processed successfully",
+            # losing both the message and its hint. Same reasoning — and the
+            # same shape — as `strain.run`'s re-raise.
+            raise
         except (KeyError, OSError, ValueError):
             continue
         sum_slices.append(sum_2d)

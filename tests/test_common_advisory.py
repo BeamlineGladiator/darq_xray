@@ -586,3 +586,148 @@ def test_a_blank_rocking_pattern_prices_no_pad_because_no_run_can_happen():
         )
         is None
     )
+
+
+# -- ROI validation rides along with the advisory ----------------------------
+#
+# `Advisory.roi_problems` is what `StageView` disables Run on, so the invariant
+# that matters is that it survives every return path — an impossible ROI is a
+# fact about the typed text, not about whether an estimator could read a file.
+
+_ROI_SPEC_PARAMS = (
+    Param("roi_x", ParamType.STR, "ROI X", "", roi_axis="x", roi_frame="detector"),
+    Param("roi_y", ParamType.STR, "ROI Y", "", roi_axis="y", roi_frame="detector"),
+    Param("output_dir", ParamType.DIR, "Out"),
+)
+
+
+def _roi_spec(estimator_target: str | None) -> StageSpec:
+    return StageSpec(
+        name="demo",
+        label="Demo",
+        description="",
+        params=_ROI_SPEC_PARAMS,
+        estimate=estimator_target,
+    )
+
+
+def test_an_inverted_roi_is_reported_as_a_blocking_problem():
+    adv = advise_stage(
+        _roi_spec("tests.test_common_advisory:_cheap_estimate"),
+        {"roi_y": "1330,630"},
+        profile=workstation_sw_gl(),
+    )
+    assert [(p.param, p.blocking) for p in adv.roi_problems] == [("roi_y", True)]
+
+
+def test_a_good_roi_reports_no_problems():
+    adv = advise_stage(
+        _roi_spec("tests.test_common_advisory:_cheap_estimate"),
+        {"roi_x": "10,90", "roi_y": "10,90"},
+        profile=workstation_sw_gl(),
+    )
+    assert adv.roi_problems == ()
+
+
+def test_roi_problems_survive_an_estimator_that_raises():
+    """The path that matters most: a half-typed input path makes the estimator
+    throw, and that must not take the ROI verdict down with it — the whole
+    point is catching the mistake BEFORE anything is readable."""
+    adv = advise_stage(
+        _roi_spec("tests.test_common_advisory:_boom"),
+        {"roi_y": "1330,630"},
+        profile=workstation_sw_gl(),
+    )
+    assert adv.estimate is None and "cannot estimate cost" in adv.headline
+    assert [p.param for p in adv.roi_problems] == ["roi_y"]
+
+
+def test_roi_problems_survive_a_stage_with_no_estimator_at_all():
+    adv = advise_stage(_roi_spec(None), {"roi_y": "1330,630"}, profile=workstation_sw_gl())
+    assert adv.estimate is None
+    assert [p.param for p in adv.roi_problems] == ["roi_y"]
+
+
+def test_roi_problems_survive_an_unpriced_estimate():
+    adv = advise_stage(
+        _roi_spec("tests.test_common_advisory:_unpriced"),
+        {"roi_y": "1330,630"},
+        profile=workstation_sw_gl(),
+    )
+    assert adv.plan is None
+    assert [p.param for p in adv.roi_problems] == ["roi_y"]
+
+
+def test_the_extent_comes_from_the_last_two_axes_of_the_estimate_shape():
+    """`_cheap_estimate` reads (10, 100, 100): Z=10 is not an ROI axis, so a
+    `0,50` ROI is fine and `0,500` overruns — the check must not compare
+    against the layer count."""
+    spec = _roi_spec("tests.test_common_advisory:_cheap_estimate")
+    assert advise_stage(spec, {"roi_y": "0,50"}, profile=workstation_sw_gl()).roi_problems == ()
+    over = advise_stage(spec, {"roi_y": "0,500"}, profile=workstation_sw_gl()).roi_problems
+    assert len(over) == 1 and not over[0].blocking and "100 px" in over[0].message
+    past = advise_stage(spec, {"roi_y": "300,500"}, profile=workstation_sw_gl()).roi_problems
+    assert len(past) == 1 and past[0].blocking
+
+
+def test_a_four_axis_estimate_shape_still_yields_the_detector_extent():
+    """rocking reports (folders, frames, H, W). The ROI crops H and W — the last
+    two — so a 4-element shape must not be read as (Z, Y, X)."""
+    spec = _roi_spec("tests.test_common_advisory:_four_axis_estimate")
+    assert advise_stage(spec, {"roi_x": "105,1937"}, profile=workstation_sw_gl()).roi_problems == ()
+    past = advise_stage(spec, {"roi_x": "3000,4000"}, profile=workstation_sw_gl()).roi_problems
+    assert len(past) == 1 and past[0].blocking and "2048" in past[0].message
+
+
+def _four_axis_estimate(params):
+    return CostEstimate(1 * GB, 1 * GB, (76, 575, 2048, 2048), True)
+
+
+def test_strain_is_the_stage_whose_overrun_blocks():
+    """`advise_stage` picks the strictness from the stage, because the stage's
+    own `run()` is what decides — `strain.apply_roi` raises where the other
+    four let numpy clamp."""
+    lax = advise_stage(
+        _roi_spec("tests.test_common_advisory:_cheap_estimate"),
+        {"roi_y": "0,500"},
+        profile=workstation_sw_gl(),
+    )
+    assert not lax.roi_problems[0].blocking and not lax.roi_blockers
+
+    strict_spec = StageSpec(
+        name="strain",  # the name is the switch — see advisory._STRICT_END_STAGES
+        label="Demo",
+        description="",
+        params=_ROI_SPEC_PARAMS,
+        estimate="tests.test_common_advisory:_cheap_estimate",
+    )
+    strict = advise_stage(strict_spec, {"roi_y": "0,500"}, profile=workstation_sw_gl())
+    assert strict.roi_problems[0].blocking and strict.roi_blockers
+
+
+def test_slices_skips_the_extent_rules_because_its_shape_may_be_another_frame():
+    """slices attaches its ROI only to the stacked volumes, while its estimate
+    can size from an already-cropped `aligned_*` file — so an extent-based
+    verdict there could call a perfectly good ROI impossible. The data-free
+    rules must still fire."""
+    lax = advise_stage(
+        _roi_spec("tests.test_common_advisory:_cheap_estimate"),
+        {"roi_y": "300,500"},  # start past the (10, 100, 100) fixture's height
+        profile=workstation_sw_gl(),
+    )
+    assert lax.roi_blockers  # precondition: any other stage blocks this
+
+    slices_spec = StageSpec(
+        name="slices",  # the name is the switch — advisory._UNCERTAIN_ROI_FRAME_STAGES
+        label="Demo",
+        description="",
+        params=_ROI_SPEC_PARAMS,
+        estimate="tests.test_common_advisory:_cheap_estimate",
+    )
+    assert (
+        advise_stage(slices_spec, {"roi_y": "300,500"}, profile=workstation_sw_gl()).roi_problems
+        == ()
+    )
+    # ...but a reversed pair needs no extent and still blocks.
+    inverted = advise_stage(slices_spec, {"roi_y": "500,300"}, profile=workstation_sw_gl())
+    assert [p.blocking for p in inverted.roi_problems] == [True]

@@ -521,11 +521,11 @@ padding is measured from the **mosaicity** reference scan, the same anchor
 If the ROI crops the volume away entirely — a stale ROI carried over from
 another dataset, or a reversed pair — this note says **that** instead
 ("the analysis ROI leaves this volume empty …"), rather than going quiet
-and letting you discover it after the run. It rides on the same note, so
-it appears under the same conditions: a 3-D product actually being saved,
-in `volume` mode, after the one-time GL check has landed. Outside those —
-`surface` mode, or both 3-D toggles off — an empty ROI still shows up only
-in the run's own error, not on the form.
+and letting you discover it after the run. That is the 3-D note's own
+version of the message and it appears only under the 3-D note's conditions
+(a 3-D product being saved, `volume` mode, after the GL check has landed);
+the ROI check described next is the one that catches an impossible ROI on
+**every** stage, under no conditions at all, and stops the run.
 
 This note needs to know your GL stack's texture limit, which the app only
 checks once per session — quietly, in the background, the first time you open
@@ -534,6 +534,62 @@ delays opening any other stage or blocks the form while you type. Until that
 check lands, the note simply stays silent rather than guessing; the
 after-the-run notice described in visualize's own section below (dataset notes
 + the 3-D viewer's status line) still catches an oversized render either way.
+
+#### An impossible ROI stops the run
+
+Every stage with ROI fields — **strain**, **rocking**, **visualize**,
+**paraview** and **slices** — checks them as you type. An ROI that would
+crop your data to **nothing** turns the banner at the top of the stage red,
+puts a red ⚠ line under the offending field, and **greys out Run** until you
+fix it. Four things count as impossible:
+
+- **A reversed pair** — `1330,630` instead of `630,1330`. Easy to produce by
+  swapping the two numbers, and it reads as an empty slice, not an error.
+- **A negative start** — it would count backwards from the far edge and crop
+  a silently different region.
+- **A start past the data** — typically a stale ROI carried over from a
+  dataset with a bigger detector or a different darfix window.
+- **Text that is not a `start,end` pair** — `105,` half-typed, or `banana`.
+  Not literally an empty crop, but blocking it early is still the kindness:
+  every stage's own parser rejects it too, and it used to surface as a bare
+  `ValueError` from inside the run rather than as a message on the field you
+  mistyped. (It clears itself as soon as the second number is typed, so
+  mid-typing the banner may flash red and go away.)
+
+The banner names the field by its form label and quotes the numbers back at
+you, so you can fix it without hunting: *"✗ ROI Y: need 0 <= start < end, got
+1330,630 — this crops to nothing"*.
+
+An **end** past the data is a different case and on **rocking**, **visualize**,
+**paraview** and **slices** is deliberately **not** blocked: `105,4000` on a
+2048 px axis still gives you 1943 real columns, so the run works and produces
+a usable — if narrower than you asked — product. That gets the same red ⚠ line
+under the field, saying where the crop really lands (*"end 4000 is past this
+data's 2048 px extent — the run crops at 2048"*), while Run stays live.
+
+**strain is the exception**: it refuses an ROI that overruns its map rather
+than quietly shrinking it, because a window that does not fit is usually a
+window belonging to a *different dataset* — the misregistration this check
+exists to catch. So on strain an end past the map blocks the run like the
+other three cases, and the note says so instead of promising a crop.
+
+The check needs no data at all for the reversed, negative and malformed
+cases, so it works on a form you have only half filled in. The "past the
+data" comparisons need the size of your data, which the app learns from the
+same estimate that drives the cost line — so before a readable input is
+selected, only the other three are flagged.
+
+**slices is deliberately left out of the "past the data" comparison.** It
+applies its ROI only to the stacked mosaicity/strain volumes, while the size
+it reports can come from an `aligned_*` file that is already cropped and
+padded — so the comparison could call a perfectly good ROI impossible. There
+the three data-free checks still run, and an ROI that really does crop to
+nothing is caught by the run itself.
+
+The same rule is enforced inside the stages themselves: a run started from
+the command line, or one whose data turns out smaller than the estimate
+suggested, stops with *"roi_y (rows) 1330,630 crops this 700x2891 px data to
+nothing"* rather than writing blank layers for half an hour.
 
 #### Picking an ROI interactively
 

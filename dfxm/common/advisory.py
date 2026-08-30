@@ -17,7 +17,7 @@ import os
 from dataclasses import dataclass, field
 
 from ..config.models import CostEstimate, StageSpec
-from . import advice, alignment, machine
+from . import advice, alignment, machine, roi
 from .advice import RunPlan
 from .machine import MachineProfile
 
@@ -94,6 +94,17 @@ class Advisory:
     blocked: str | None = None
     conservative: bool = False
     hints: dict[str, str] = field(default_factory=dict)
+    # Impossible/overrunning ROI fields, worst first — see `roi.RoiProblem`.
+    # Distinct from `blocked`, which asks whether the MACHINE can finish the
+    # run: these say the run would compute nothing worth finishing, and the
+    # ones flagged `blocking` are the only thing in this dataclass that stops a
+    # run outright rather than asking.
+    roi_problems: tuple = ()
+
+    @property
+    def roi_blockers(self) -> tuple:
+        """Just the ROI problems that must stop a run (`()` = nothing does)."""
+        return tuple(p for p in self.roi_problems if p.blocking)
 
 
 def _headline(estimate: CostEstimate, plan: RunPlan, conservative: bool) -> str:
@@ -319,6 +330,54 @@ def _hints(
         return {}
 
 
+# Stages whose `run()` REFUSES an ROI overrunning the data instead of letting
+# numpy clamp it, so `validate_roi_params` must call the same input blocking
+# rather than promising a narrower crop. Only `strain`: its `apply_roi` raises
+# on `r1 > rows` / `c1 > cols`, which is how a stale window from a
+# differently-sized dataset gets caught before it misregisters a whole run. The
+# other four crop through `alignment.apply_roi_3d`, which clamps. Keyed by
+# stage name for the same reason `_hints` is — the behaviour lives in the
+# stage, and there is no schema field that would say it more honestly.
+_STRICT_END_STAGES = frozenset({"strain"})
+
+# Stages whose `estimate.shape` is NOT guaranteed to be in the frame their ROI
+# crops, so the range rules must be skipped rather than answered wrongly. Only
+# `slices`: it attaches the ROI to `source == "stacked"` volumes alone (the
+# mosa/strain files), while `slices.estimate` sizes from the first of its four
+# volume params with the most dims — which, when those two are blank (a
+# supported workflow: slicing only the raw/aligned fields), is an
+# `aligned_*_file` that is ALREADY cropped and samy-padded. On real STO2 that
+# is (76, 700, 2891) against a 1832-wide map frame, so a perfectly good
+# `align_roi_y` would be called impossible and grey out Run. The rules that
+# need no data still apply, and `alignment.check_roi_crops_something` still
+# catches a genuinely empty crop at run time against the real array — a
+# narrower pre-flight beats a confident wrong one.
+_UNCERTAIN_ROI_FRAME_STAGES = frozenset({"slices"})
+
+
+def _roi_extent(shape) -> tuple[int, int] | None:
+    """The ``(height, width)`` an ROI crops, out of an estimate's shape.
+
+    Every ROI-taking stage crops the LAST TWO axes and only those:
+    `alignment.apply_roi_3d` slices a ``(Z, Y, X)`` volume as
+    ``data[:, ys:ye, xs:xe]``, `strain.apply_roi` slices a 2-D map's
+    ``(rows, cols)``, and `rocking` slices raw frames as
+    ``det[:, ys:ye, xs:xe]``. So the leading axes differ in meaning between
+    stages — layers for `strain`, folders and frames for `rocking` — while the
+    trailing pair is always the plane the ROI addresses.
+
+    Returns None for a shape too short to carry one, which is the honest answer
+    when an estimator reported no shape at all: the caller then checks only the
+    rules that need no data.
+    """
+    try:
+        if shape is None or len(shape) < 2:
+            return None
+        return int(shape[-2]), int(shape[-1])
+    except (TypeError, ValueError):
+        return None
+
+
 def advise_stage(
     spec: StageSpec, params: dict, *, profile: MachineProfile | None = None
 ) -> Advisory:
@@ -341,15 +400,32 @@ def advise_stage(
     """
     probe_dir = disk_probe_dir(spec, params)
     prof = profile if profile is not None else machine.profile(output_dir=probe_dir)
+    # Parse-level ROI verdict FIRST, so every return path below carries one.
+    # An impossible ROI is a fact about the typed text, and the estimator that
+    # would sharpen it with a real extent is also the thing most likely to fail
+    # on a form still being filled in — computing it inside the `try` would
+    # lose the verdict in exactly the case the user most needs it.
+    roi_problems = roi.validate_roi_params(spec, params)
     try:
         estimator = spec.estimator()
         if estimator is None:
-            return Advisory(prof, None, None, "")
+            return Advisory(prof, None, None, "", roi_problems=roi_problems)
         estimate = estimator(dict(params))
+        extent = None if spec.name in _UNCERTAIN_ROI_FRAME_STAGES else _roi_extent(estimate.shape)
+        roi_problems = roi.validate_roi_params(
+            spec,
+            params,
+            extent=extent,
+            strict_end=spec.name in _STRICT_END_STAGES,
+        )
 
         if not estimate.peak_bytes:
             return Advisory(
-                prof, estimate, None, estimate.note or "not enough input to estimate cost"
+                prof,
+                estimate,
+                None,
+                estimate.note or "not enough input to estimate cost",
+                roi_problems=roi_problems,
             )
 
         plan = advice.plan_run(prof, estimate, scratch_dir=probe_dir)
@@ -363,6 +439,13 @@ def advise_stage(
             blocked=plan.blocked,
             conservative=conservative,
             hints=_hints(prof, estimate, params, spec.name),
+            roi_problems=roi_problems,
         )
     except Exception as exc:  # noqa: BLE001 — delivered to the user as text
-        return Advisory(prof, None, None, f"cannot estimate cost: {type(exc).__name__}")
+        return Advisory(
+            prof,
+            None,
+            None,
+            f"cannot estimate cost: {type(exc).__name__}",
+            roi_problems=roi_problems,
+        )

@@ -83,6 +83,7 @@ class ParamForm(QWidget):
         self._labels: dict[str, QLabel] = {}
         self._base_label: dict[str, str] = {}
         self._notes: dict[str, QLabel] = {}
+        self._errors: dict[str, QLabel] = {}
         self._see_also_labels: dict[str, QLabel] = {}
         self._see_also_by_param = {s.param_name: s for s in see_also if s.param_name}
         self._stage_see_also = tuple(s for s in see_also if not s.param_name)
@@ -147,13 +148,29 @@ class ParamForm(QWidget):
         return editor
 
     def _add_note_row(self, form: QFormLayout, p: Param) -> None:
-        """A hidden, full-width note row under *p*'s editor.
+        """Hidden, full-width note rows under *p*'s editor.
 
-        Only for params that declare an ``advice_key`` — a hidden row per field
-        would be dead weight on every form. The editor itself is NOT wrapped:
-        `self._editors[name]` must stay the real widget, which `gui_smoke` and
-        the wheel-guard tests reach into directly.
+        Up to two, and only for params that ask for one — a hidden row per
+        field would be dead weight on every form. An ``advice_key`` param gets
+        the advisory row (`apply_hints`), a ``roi_axis`` param the error row
+        (`apply_roi_problems`), and a param declaring both gets both. The
+        editor itself is NOT wrapped: `self._editors[name]` must stay the real
+        widget, which `gui_smoke` and the wheel-guard tests reach into directly.
         """
+        if p.roi_axis:
+            # A SECOND hidden row, not a restyled `_notes` one. The two carry
+            # different severities (advice vs "this run would compute
+            # nothing"), and a QLabel that swaps its `role` property mid-life
+            # needs an unpolish/polish that this project has already been
+            # bitten by — the pre-flight banner's cached geometry survived one
+            # (see `StageView._show_banner`). Two labels, two fixed roles, no
+            # restyling.
+            err = QLabel("")
+            err.setWordWrap(True)
+            err.setProperty("role", "error")
+            err.setVisible(False)
+            form.addRow(err)
+            self._errors[p.name] = err
         if not p.advice_key:
             return
         note = QLabel("")
@@ -270,6 +287,27 @@ class ParamForm(QWidget):
         for p in self._params:
             if p.advice_key:
                 self.set_field_note(p.name, hints.get(p.advice_key, ""))
+
+    def apply_roi_problems(self, problems) -> None:
+        """Show each :class:`~dfxm.common.roi.RoiProblem` under its own field.
+
+        Clearing every other row matters as much as setting these: the check
+        re-runs on each keystroke, and a message about an ROI the user has
+        already corrected is worse than none — it would keep pointing at a
+        field that is now right.
+
+        Several problems on one field (a four-int ``roi`` can have a bad row
+        range AND a bad column range) stack into one label, worst first, since
+        the caller hands them sorted.
+        """
+        texts: dict[str, list[str]] = {}
+        for problem in problems:
+            if problem.param in self._errors:
+                texts.setdefault(problem.param, []).append(problem.message)
+        for name, label in self._errors.items():
+            lines = texts.get(name, ())
+            label.setText("  ".join(f"⚠ {line}" for line in lines))
+            label.setVisible(bool(lines))
 
     def set_field_marker(self, name: str, marked: bool, tooltip: str = "") -> None:
         """Toggle a '⚠' suffix on *name*'s row label (deviates-from-experiment)."""

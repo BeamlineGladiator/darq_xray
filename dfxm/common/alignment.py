@@ -23,11 +23,48 @@ from scipy.interpolate import interp1d
 from scipy.ndimage import shift as ndi_shift
 
 from dfxm.common import raster, volumeio
+from dfxm.common.errors import StageUserError
+
+
+def check_roi_crops_something(
+    height: int, width: int, roi_x: tuple | None, roi_y: tuple | None
+) -> None:
+    """Raise :class:`StageUserError` if this ROI would leave no pixels at all.
+
+    The run-time half of `roi.validate_roi_params`, which says the same thing in
+    the form before a long run starts. Both are needed and neither replaces the
+    other: the form check runs against an *estimated* extent and cannot see a
+    volume that turns out smaller than the one the estimator sized, while this
+    one runs against the real array — and headless CLI users never see a form.
+
+    Only the empty cases raise. An end past the edge is left to numpy, which
+    clamps it: real pixels survive, the product is usable, and refusing it would
+    turn a narrower-than-asked crop into a failed run.
+    """
+    for pair, limit, axis in ((roi_y, height, "roi_y (rows)"), (roi_x, width, "roi_x (columns)")):
+        if pair is None:
+            continue
+        start, end = int(pair[0]), int(pair[1])
+        if end <= start or start < 0 or start >= limit:
+            raise StageUserError(
+                f"{axis} {start},{end} crops this {height}x{width} px data to nothing",
+                hint=(
+                    f"need 0 <= start < end <= {limit} on this axis; darfix shows its ROI as "
+                    "origin+size, so the END is origin + size, not the size itself"
+                ),
+            )
 
 
 def apply_roi_3d(data: np.ndarray, roi_x: tuple | None, roi_y: tuple | None) -> np.ndarray:
-    """Crop a (Z, Y, X) volume in pixel coordinates; ``None`` keeps the full axis."""
+    """Crop a (Z, Y, X) volume in pixel coordinates; ``None`` keeps the full axis.
+
+    Raises :class:`StageUserError` for an ROI that crops to nothing — see
+    :func:`check_roi_crops_something`. Every map-stage crop funnels through
+    here, so guarding it covers `visualize`, `paraview` and `slices` at once;
+    `rocking` slices the raw detector itself and calls the check directly.
+    """
     _z, y, x = data.shape
+    check_roi_crops_something(y, x, roi_x, roi_y)
     xs, xe = (roi_x[0], roi_x[1]) if roi_x else (0, x)
     ys, ye = (roi_y[0], roi_y[1]) if roi_y else (0, y)
     return data[:, ys:ye, xs:xe]

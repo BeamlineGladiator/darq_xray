@@ -140,3 +140,126 @@ def validate_rois(darfix_roi: str, analysis_roi_x: str, analysis_roi_y: str) -> 
                 "(analysis windows are map-frame, relative to the darfix window)"
             )
     return problems
+
+
+@dataclass(frozen=True)
+class RoiProblem:
+    """One thing wrong with one ROI parameter of a stage form.
+
+    ``blocking`` is the distinction every consumer acts on:
+
+    * **blocking** — the crop yields no pixels at all (an inverted pair, a
+      start past the data, unparseable text). The product would be blank and
+      the run is pure waste, so the GUI refuses to start it and ``run()``
+      raises :class:`StageUserError` rather than writing an empty volume.
+    * **advisory** — the crop yields fewer pixels than were asked for (an end
+      past the data, which numpy silently clamps). That is a real surprise
+      worth saying out loud, but the run still produces a usable product, so
+      it must never stand between the user and their data.
+    """
+
+    param: str
+    message: str
+    blocking: bool
+
+
+def _blocking_message(start: int, end: int, limit: int | None, label: str) -> str:
+    """Why this start,end range yields no pixels at all, or ``""`` if it does.
+
+    *limit* is the extent of the axis the range crops (``None`` when no data has
+    been read yet). *label* prefixes the message on the four-int ``both`` axis,
+    where one field carries two ranges and the reader needs to know which one is
+    wrong; a single-axis field is named by the form row it sits on and takes an
+    empty prefix.
+    """
+    if end <= start:
+        return f"{label}need 0 <= start < end, got {start},{end} — this crops to nothing"
+    if start < 0:
+        # Not clamped: `apply_roi_3d` hands the pair straight to numpy, where a
+        # negative start counts back from the far edge — a silently different
+        # region, not an error.
+        return f"{label}need 0 <= start < end, got {start},{end} — a negative start wraps around"
+    if limit is not None and start >= limit:
+        return f"{label}start {start} is past this data's {limit} px extent — nothing is left"
+    return ""
+
+
+def validate_roi_params(
+    spec, params: dict, *, extent: tuple[int, int] | None = None, strict_end: bool = False
+) -> tuple[RoiProblem, ...]:
+    """Everything wrong with *params*' ROI fields, worst first. ``()`` = fine.
+
+    Schema-driven: every :class:`~dfxm.config.models.Param` declaring a
+    ``roi_axis`` is a start,end range and is checked, which is why the axis is
+    declared independently of ``roi_group`` (see that field). Params outside
+    that marker — the ``*_darfix_origin_xy`` origins, for instance — are pairs
+    but not ranges, and are left alone.
+
+    *extent* is ``(height, width)`` of the data the ROI crops, or ``None`` when
+    no estimate has resolved yet. Without it only the parse-level rules apply,
+    which is the right degradation: they need no data and can never be wrong,
+    so a form being filled in still gets the check that matters most.
+
+    *strict_end* says what the stage does with an end past that extent. Four of
+    the five ROI stages crop through :func:`~dfxm.common.alignment.apply_roi_3d`
+    and let numpy clamp it, so the run succeeds on a narrower region and the
+    problem is advisory. ``strain`` does not: `strain.apply_roi` raises on
+    ``r1 > rows`` — deliberately, because a stale window from a differently-sized
+    dataset is exactly the misregistration it exists to catch — so for that stage
+    the same input is **blocking**, and saying "the run crops at N" there would
+    promise something the run then refuses.
+
+    **Never raises.** It runs on every keystroke; a half-typed ``"105,"`` is the
+    ordinary state of a form, and it is reported, not thrown.
+    """
+    height, width = extent if extent else (None, None)
+    problems: list[RoiProblem] = []
+    for p in getattr(spec, "params", ()):
+        axis = getattr(p, "roi_axis", "")
+        if not axis:
+            continue
+        text = params.get(p.name)
+        if text is None or not str(text).strip():
+            continue
+        try:
+            values = [int(s.strip()) for s in str(text).split(",")]
+        except (ValueError, TypeError, AttributeError):
+            problems.append(RoiProblem(p.name, f"cannot read {text!r} as whole numbers", True))
+            continue
+        wanted = 4 if axis == "both" else 2
+        if len(values) != wanted:
+            shape = "'r0,r1,c0,c1' (four integers)" if wanted == 4 else "'start,end' (two integers)"
+            problems.append(RoiProblem(p.name, f"expected {shape}, got {text!r}", True))
+            continue
+        if axis == "both":
+            ranges = [
+                (values[0], values[1], height, "rows: "),
+                (values[2], values[3], width, "columns: "),
+            ]
+        else:
+            # One axis, one extent: `roi_axis` says which half of (height,
+            # width) bounds it. Getting this pairing backwards would pass an
+            # ROI that crops to nothing on any non-square data.
+            ranges = [(values[0], values[1], height if axis == "y" else width, "")]
+        for start, end, limit, label in ranges:
+            message = _blocking_message(start, end, limit, label)
+            if message:
+                problems.append(RoiProblem(p.name, message, True))
+            elif limit is not None and end > limit:
+                # Reached only when the range is otherwise sound, so `start` is
+                # inside the data and real pixels survive. Whether that is a
+                # blocker depends on what the stage does next — see *strict_end*.
+                outcome = (
+                    "this stage refuses an ROI that overruns its map"
+                    if strict_end
+                    else f"the run crops at {limit}"
+                )
+                problems.append(
+                    RoiProblem(
+                        p.name,
+                        f"{label}end {end} is past this data's {limit} px extent — {outcome}",
+                        strict_end,
+                    )
+                )
+    problems.sort(key=lambda q: not q.blocking)
+    return tuple(problems)

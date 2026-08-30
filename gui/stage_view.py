@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from dfxm.common import roi as roi_mod
 from dfxm.common.advisory import HINT_3D_TEXTURE
 from dfxm.common.eta import EtaEstimator
 from dfxm.common.figures import FigureSpec, figures_for
@@ -215,6 +216,15 @@ class StageView(QWidget):
         # store (absent in unit tests), and the cost line must follow the form
         # either way.
         self._form.changed.connect(self._advisor.request)
+
+        # Run-gating state, both read by `_update_run_enabled`.
+        self._running = False
+        self._roi_problems: tuple = ()
+        self._roi_blockers: tuple = ()
+        # Which writer put the current text in `_banner`: "roi" means the ROI
+        # check owns it and may clear it again. Anyone else's banner (a run
+        # result, a pre-flight cost line) outlives a keystroke.
+        self._banner_owner = ""
 
         # ROI fields: mark any value that deviates from the experiment-derived one
         self._roi_param_names = tuple(p.name for p in spec.params if p.roi_group or p.roi_frame)
@@ -421,9 +431,14 @@ class StageView(QWidget):
         self._banner.style().polish(self._banner)
         self._banner.setText(html_text)
         self._banner.setVisible(True)
+        # Every banner starts unowned; `_apply_roi_problems` claims its own back
+        # immediately after calling this, so only the ROI check clears the ROI
+        # banner and nothing else's message disappears on a keystroke.
+        self._banner_owner = ""
 
     def _hide_banner(self) -> None:
         self._banner.setVisible(False)
+        self._banner_owner = ""
 
     def _show_advisory(self, advisory) -> None:
         """Render the live cost line. Empty headline -> hidden, never stale."""
@@ -432,6 +447,38 @@ class StageView(QWidget):
         self._advice_label.setToolTip("\n".join(advisory.details) if advisory else "")
         self._advice_label.setVisible(bool(text))
         self._form.apply_hints(advisory.hints if advisory is not None else {})
+        self._apply_roi_problems(advisory.roi_problems if advisory is not None else ())
+
+    def _apply_roi_problems(self, problems) -> None:
+        """Mark the offending fields, gate Run, and say why in the banner.
+
+        The banner is not decoration here: it is the only thing that explains a
+        greyed-out Run. Disabling the button on its own reads as the app being
+        broken, which is why the two are set together in one place and cleared
+        together too.
+
+        It clears only a banner it owns. `_on_run`'s pre-flight cost line and a
+        finished run's result both live in that same widget, and an ROI check
+        that re-runs on every keystroke would otherwise wipe them.
+        """
+        self._roi_problems = tuple(problems)
+        self._roi_blockers = tuple(p for p in self._roi_problems if p.blocking)
+        self._form.apply_roi_problems(self._roi_problems)
+        self._update_run_enabled()
+        if self._roi_blockers:
+            self._show_banner(self._roi_banner_html(), error=True)
+            self._banner_owner = "roi"
+        elif self._banner_owner == "roi":
+            self._hide_banner()  # which clears the ownership too
+
+    def _roi_banner_html(self) -> str:
+        """The blocking ROI problems, each named by its form label."""
+        labels = {p.name: p.label for p in self._spec.params}
+        lines = [
+            f"✗ {html.escape(labels.get(p.param, p.param))}: {html.escape(p.message)}"
+            for p in self._roi_blockers
+        ]
+        return "<br>".join(lines)
 
     def _validate_inputs(self, params: dict) -> tuple[str, str] | None:
         """First (param_name, message) whose must_exist path is set but absent.
@@ -465,6 +512,16 @@ class StageView(QWidget):
             self._show_banner(f"✗ {html.escape(message)}", error=True)
             self._form.focus_param(name)
             return
+        # The hard ROI gate. The disabled Run button is the visible half, but it
+        # follows a DEBOUNCED advisory — a click landing in that window would
+        # otherwise start a run whose product is guaranteed blank. Re-checked
+        # here against the values being submitted, so the answer cannot be stale.
+        roi_problems = roi_mod.validate_roi_params(self._spec, params)
+        blockers = tuple(p for p in roi_problems if p.blocking)
+        if blockers:
+            self._apply_roi_problems(roi_problems)
+            self._form.focus_param(blockers[0].param)
+            return
         self._hide_banner()
         self._last_params = dict(params)
         run_params = dict(params)
@@ -496,6 +553,13 @@ class StageView(QWidget):
         if advisory.blocked and not self._confirm_blocked(advisory.blocked):
             return
         self._show_advisory(advisory)
+        # `_show_advisory` has just applied the EXTENT-aware ROI verdict, which
+        # sees more than the data-free gate above it: an estimate resolved here
+        # can reveal a start past the real data. Without this second return the
+        # button would grey out and the run would start anyway.
+        if advisory.roi_blockers:
+            self._form.focus_param(advisory.roi_blockers[0].param)
+            return
         if advisory.headline:
             lines = [html.escape(advisory.headline)]
             lines += [html.escape(d) for d in advisory.details]
@@ -1103,9 +1167,21 @@ class StageView(QWidget):
         self.runFinished.emit(self._stage_name, False)
 
     def _set_running(self, running: bool) -> None:
-        self._run_btn.setEnabled(not running)
+        self._running = running
+        self._update_run_enabled()
         self._cancel_btn.setEnabled(running)
         self._form.setEnabled(not running)
+
+    def _update_run_enabled(self) -> None:
+        """Run is live only when nothing is running AND the ROI can crop.
+
+        The single writer of `_run_btn.setEnabled`, because the two conditions
+        arrive from unrelated directions: `_set_running` at each end of a run,
+        `_show_advisory` on each keystroke. Written separately, whichever fired
+        last would win — and the losing case is the dangerous one, a finished
+        run handing the button back while an impossible ROI still stands.
+        """
+        self._run_btn.setEnabled(not self._running and not self._roi_blockers)
 
 
 def style_stamp(style: PlotStyle | None) -> str:
