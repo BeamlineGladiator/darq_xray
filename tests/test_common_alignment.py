@@ -964,3 +964,35 @@ def test_aligned_elems_for_params_never_raises_on_junk():
         {"pixel_size_x_um": 0.15, "raw_root": "/definitely/not/here", "mosa_pattern": "*"},
     ):
         assert A.aligned_elems_for_params(junk, (4, 5, 6), pattern_key="mosa_pattern") == 0
+
+
+# -- an ROI that crops to nothing is a user error, not an empty array --------
+def test_apply_roi_3d_refuses_an_inverted_pair():
+    from dfxm.common.errors import StageUserError
+
+    vol = np.zeros((3, 40, 50))
+    with pytest.raises(StageUserError) as exc:
+        A.apply_roi_3d(vol, None, (30, 10))
+    assert "30,10" in str(exc.value)
+
+
+def test_apply_roi_3d_refuses_a_start_past_the_data():
+    from dfxm.common.errors import StageUserError
+
+    vol = np.zeros((3, 40, 50))
+    with pytest.raises(StageUserError):
+        A.apply_roi_3d(vol, (60, 80), None)
+
+
+def test_apply_roi_3d_still_clamps_a_partial_overrun():
+    """An end past the edge is numpy's business, not an error: real pixels
+    survive, and the pre-flight advisory is what says the crop is narrower."""
+    vol = np.zeros((3, 40, 50))
+    assert A.apply_roi_3d(vol, (10, 900), None).shape == (3, 40, 40)
+
+
+def test_apply_roi_3d_passes_a_good_roi_through_untouched():
+    vol = np.arange(3 * 40 * 50).reshape(3, 40, 50)
+    got = A.apply_roi_3d(vol, (5, 25), (10, 30))
+    assert got.shape == (3, 20, 20)
+    np.testing.assert_array_equal(got, vol[:, 10:30, 5:25])

@@ -70,6 +70,12 @@ class Param:
     must_exist: bool = False  # input path/dir: GUI checks existence before a run
     roi_group: str = ""  # params sharing a roi_group are one ROI-picker target
     roi_axis: str = ""  # "" | "x" | "y" | "both" ("both" = one 4-int "r0,r1,c0,c1" field)
+    # The two are independent. `roi_axis` describes the VALUE (which axis this
+    # start,end range crops), and every param carrying one is checked by
+    # `roi.validate_roi_params`; `roi_group` describes OWNERSHIP (which ROI
+    # picker writes it), and `StageView` grows a "Pick ROI…" button per distinct
+    # group. `rocking` declares axes without a group precisely because it wants
+    # the validation and not the button: it has no map to draw a picker on.
     roi_frame: str = ""  # "" | "detector" | "map" — the coordinate frame of a ROI param
     advice_key: str = ""  # key into Advisory.hints -> a note under this field
     editor: str = ""  # render hint: "" = by type; "summary_json" = summary + raw dialog
@@ -77,8 +83,6 @@ class Param:
     def __post_init__(self) -> None:
         if self.type is ParamType.ENUM and not self.choices:
             raise ValueError(f"enum param {self.name!r} needs a non-empty `choices`")
-        if self.roi_axis and not self.roi_group:
-            raise ValueError(f"roi param {self.name!r}: roi_axis set but roi_group is empty")
         if self.roi_axis not in ("", "x", "y", "both"):
             raise ValueError(f"roi param {self.name!r}: bad roi_axis {self.roi_axis!r}")
         if self.roi_frame not in ("", "detector", "map"):

@@ -86,12 +86,16 @@ def test_roi_fields_default_empty():
     assert p.roi_frame == ""
 
 
-def test_roi_axis_requires_group_and_valid_value():
+def test_roi_axis_is_independent_of_roi_group():
+    """`roi_axis` describes the VALUE (a start,end range, so `validate_roi_params`
+    checks it); `roi_group` describes OWNERSHIP (which picker writes it, and
+    whether StageView grows a Pick ROI… button). `rocking` needs the first
+    without the second — it has no map to draw a picker on — so an axis with no
+    group is legal, not an error."""
     from dfxm.config.models import Param, ParamType
 
     Param("roi_x", ParamType.STR, "ROI x", roi_group="align", roi_axis="x")  # ok
-    with pytest.raises(ValueError):
-        Param("roi_x", ParamType.STR, "ROI x", roi_axis="x")  # axis without group
+    Param("roi_x", ParamType.STR, "ROI x", roi_axis="x")  # ok: axis without group
     with pytest.raises(ValueError):
         Param("roi_x", ParamType.STR, "ROI x", roi_group="align", roi_axis="diagonal")  # bad value
 

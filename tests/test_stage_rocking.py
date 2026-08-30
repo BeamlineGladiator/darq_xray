@@ -662,3 +662,41 @@ def test_rocking_volume_downsample_auto_fits_the_texture_limit(tmp_path, monkeyp
     assert captured["scene"].downsample == 2
     assert any("coarsened 2x" in n for n in res.datasets[0].notes)
     assert not any("BLANK" in n for n in res.datasets[0].notes)
+
+
+def test_process_raw_scan_refuses_an_roi_that_crops_to_nothing(tmp_path):
+    """rocking crops the raw detector itself rather than through
+    `apply_roi_3d`, so it needs its own guard — without one an inverted pair
+    reads an empty frame stack and the whole run produces blank layers."""
+    from dfxm.common.errors import StageUserError
+
+    folder = _write_motor_folder(str(tmp_path), "rock__1", 0.0, 0.0, frames=_rng_frames(0))
+    h5p = os.path.join(folder, "rock__1.h5")
+    with pytest.raises(StageUserError) as exc:
+        RK.process_raw_scan(h5p, "1.1/measurement/pco_ff", None, (5, 1), None, False)
+    assert "5,1" in str(exc.value)
+    # The X axis is guarded too, and against the real detector width.
+    with pytest.raises(StageUserError):
+        RK.process_raw_scan(h5p, "1.1/measurement/pco_ff", (W + 10, W + 20), None, None, False)
+
+
+def test_build_raw_volumes_lets_the_roi_error_out_of_the_scan_loop(tmp_path):
+    """`StageUserError` subclasses `ValueError`, and the per-folder handler
+    catches `ValueError` — so without an explicit re-raise the ROI message is
+    discarded once per folder and the run ends at the generic 'no rocking scans
+    processed successfully', hint and all."""
+    from dfxm.common.errors import StageUserError
+
+    folder = _write_motor_folder(str(tmp_path), "rock__1", 0.0, 0.0, frames=_rng_frames(0))
+    with pytest.raises(StageUserError) as exc:
+        RK.build_raw_volumes(
+            [folder],
+            np.array([0.0]),
+            np.array([0.0]),
+            "1.1/measurement/pco_ff",
+            None,
+            (5, 1),
+            None,
+            False,
+        )
+    assert "5,1" in str(exc.value) and exc.value.hint

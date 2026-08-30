@@ -2280,6 +2280,13 @@ def run(params: dict, progress: ProgressFn | None = None) -> SlicesResult:
                         stack=open_files,
                         budget_bytes=budget_bytes,
                     )
+                except StageUserError:
+                    # Skip reasons are for per-volume data problems. An
+                    # impossible ROI is not one: it applies to every volume
+                    # equally, and reporting it as N skips hides the message
+                    # (and drops its hint) behind a "successful" run that wrote
+                    # nothing. Re-raised as `strain.run` does.
+                    raise
                 except (KeyError, OSError, ValueError) as exc:
                     result.skipped.append(f"{cfg['dataset_path']}: {exc}")
                     continue

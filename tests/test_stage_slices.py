@@ -2117,3 +2117,31 @@ def test_no_samz_prepare_volume_is_not_forced_in_core(tmp_path):
     assert in_core_limits == streamed_limits
     assert sz == sz2 == SL._NO_MOTOR_Z_STEP_UM
     assert np.array_equal(in_core, streamed, equal_nan=True)
+
+
+def test_run_stops_on_an_impossible_roi_instead_of_skipping_every_volume(tmp_path):
+    """The per-volume handler catches `ValueError`, which `StageUserError`
+    subclasses — so without an explicit re-raise an impossible ROI is reported
+    as one skip per volume behind a run that "succeeded" and wrote nothing,
+    with the hint dropped."""
+    from dfxm.common.errors import StageUserError
+
+    proc, raw = _setup(tmp_path)
+    out = tmp_path / "sl"
+    slices_json = (
+        '[{"name":"mid","normal":[0,0,1],"origin":[0.5,0.5,1.5],'
+        '"half_u":0.4,"half_v":0.4,"du":0.2,"dv":0.2,"sweep_step_um":null}]'
+    )
+    params = {
+        "mosa_volume_file": str(proc / "stacked_volumes.h5"),
+        "strain_volume_file": str(proc / "stacked_strain_volumes.h5"),
+        "raw_root": str(raw),
+        "mosa_pattern": "mosa__*",
+        "strain_pattern": "strain__*",
+        "slices_json": slices_json,
+        "output_dir": str(out),
+        "align_roi_y": "9,3",  # inverted: crops every volume to nothing
+    }
+    with pytest.raises(StageUserError) as exc:
+        SL.run(params)
+    assert "9,3" in str(exc.value) and exc.value.hint
