@@ -31,6 +31,7 @@ from ..common import progress as _progress_mod
 from ..common import render as Rnd
 from ..common import render3d as R3
 from ..common import volumeio
+from ..common.errors import StageUserError
 from ..common.figures import FigureSpec, register
 from ..common.h5io import sum_dataset_bytes
 from ..common.plotting import GROUP_BY_KIND, apply_round_clim, resolve_cmap, style_from_params
@@ -124,6 +125,91 @@ _RAW_TITLES: dict[str, tuple[str, str]] = {
     "raw_mosa_sum": ("Mosa-integrated Sum Intensity", "Sum intensity (a.u.)"),
     "raw_mosa_specific": ("Mosa-integrated Frame", "Intensity (a.u.)"),
 }
+
+# Every volume this stage can render: ``(key, dataset name, form label)``.
+#
+# The *key* names that volume's per-volume 3-D opacity parameters
+# (``volume_opacity_<key>`` / ``opacity_mapping_<key>``); the *dataset name* is
+# what `run` calls the product, i.e. the output sub-directory and the entry in
+# `VisualizeResult.datasets`; the *label* is what the form shows.
+#
+# The two differ only for the mosaicity fields, whose dataset names come from
+# the HDF5 layout (`mosa_field_names`) while their keys follow `slices`'
+# `include_mosa_com_chi` naming. Generating the 18 opacity params from this one
+# table is what keeps a key from ever naming a volume that does not exist.
+_VOLUME_KEYS: tuple[tuple[str, str, str], ...] = (
+    ("mosa_com_chi", "chi_Center_of_mass", "χ Misorientation"),
+    ("mosa_fwhm_chi", "chi_FWHM", "χ Peak broadening"),
+    ("mosa_com_mu", "mu_Center_of_mass", "μ Misorientation"),
+    ("mosa_fwhm_mu", "mu_FWHM", "μ Peak broadening"),
+    ("strain", "strain", "Strain"),
+    ("raw_sum", "raw_sum", "Raw sum"),
+    ("raw_specific", "raw_specific", "Raw specific frame"),
+    ("raw_mosa_sum", "raw_mosa_sum", "Raw mosa sum"),
+    ("raw_mosa_specific", "raw_mosa_specific", "Raw mosa specific frame"),
+)
+_KEY_BY_DATASET: dict[str, str] = {ds: key for key, ds, _label in _VOLUME_KEYS}
+
+# Mosaicity field name -> the toggle that gates it. Only the four STANDARD
+# fields are gated. A mosaicity file carrying anything else — this stage reads
+# whatever `mosa_field_names` finds, it does not impose a schema — has no toggle
+# and renders unconditionally, so adding this selection cannot silently drop a
+# dataset an existing run was producing.
+_STACKED_TOGGLE: dict[str, str] = {
+    "chi_Center_of_mass": "include_mosa_com_chi",
+    "chi_FWHM": "include_mosa_fwhm_chi",
+    "mu_Center_of_mass": "include_mosa_com_mu",
+    "mu_FWHM": "include_mosa_fwhm_mu",
+}
+
+# The `opacity_mapping_<key>` choice meaning "use the stage-wide setting". A
+# named choice rather than a blank one: an empty entry at the top of a dropdown
+# reads as a bug, and "default" cannot collide with a real mapping name.
+_INHERIT = "default"
+_OPACITY_MAPPINGS = ("linear", "sigmoid", "geom", "geom_r")
+
+
+def _opacity_params() -> tuple[Param, ...]:
+    """The per-volume 3-D opacity pair for every row of :data:`_VOLUME_KEYS`.
+
+    Generated rather than written out eighteen times: the table above is the
+    single source of which volumes exist, and hand-copying a block per volume is
+    how a key ends up naming a dataset that was renamed or removed.
+    """
+    out: list[Param] = []
+    for key, _ds, label in _VOLUME_KEYS:
+        out.append(
+            Param(
+                f"volume_opacity_{key}",
+                ParamType.STR,
+                f"{label} opacity",
+                default="",
+                advanced=True,
+                group="3-D opacity",
+                help=(
+                    f"3-D opacity for the {label} volume alone, 0–1 "
+                    "(blank = use '3D opacity' above). Lets a dense volume be "
+                    "rendered see-through while a sparse one stays solid."
+                ),
+            )
+        )
+        out.append(
+            Param(
+                f"opacity_mapping_{key}",
+                ParamType.ENUM,
+                f"{label} mapping",
+                default=_INHERIT,
+                choices=(_INHERIT, *_OPACITY_MAPPINGS),
+                advanced=True,
+                group="3-D opacity",
+                help=(
+                    f"Opacity transfer function for the {label} volume alone "
+                    f"('{_INHERIT}' = use '3D opacity mapping' above). Only "
+                    "volume render mode uses it."
+                ),
+            )
+        )
+    return tuple(out)
 
 
 def _noop(_frac: float, _msg: str) -> None:
@@ -341,12 +427,73 @@ STAGE = StageSpec(
             ),
         ),
         Param(
+            "include_mosa_com_chi",
+            ParamType.BOOL,
+            "Render χ misorientation",
+            default=True,
+            advanced=True,
+            group="Volumes",
+            help=(
+                "Render the χ Center-of-mass field from the stacked mosaicity volume. "
+                "Ignored when that file is blank."
+            ),
+        ),
+        Param(
+            "include_mosa_fwhm_chi",
+            ParamType.BOOL,
+            "Render χ peak broadening",
+            default=True,
+            advanced=True,
+            group="Volumes",
+            help=(
+                "Render the χ FWHM field from the stacked mosaicity volume. "
+                "Ignored when that file is blank."
+            ),
+        ),
+        Param(
+            "include_mosa_com_mu",
+            ParamType.BOOL,
+            "Render μ misorientation",
+            default=True,
+            advanced=True,
+            group="Volumes",
+            help=(
+                "Render the μ Center-of-mass field from the stacked mosaicity volume. "
+                "Ignored when that file is blank."
+            ),
+        ),
+        Param(
+            "include_mosa_fwhm_mu",
+            ParamType.BOOL,
+            "Render μ peak broadening",
+            default=True,
+            advanced=True,
+            group="Volumes",
+            help=(
+                "Render the μ FWHM field from the stacked mosaicity volume. "
+                "Ignored when that file is blank."
+            ),
+        ),
+        Param(
+            "include_strain",
+            ParamType.BOOL,
+            "Render strain",
+            default=True,
+            advanced=True,
+            group="Volumes",
+            help=(
+                "Render the stacked strain volume. Ignored when that file is blank. "
+                "Unticking this renders nothing from the strain file without having "
+                "to clear the path."
+            ),
+        ),
+        Param(
             "include_raw_sum",
             ParamType.BOOL,
             "Render raw sum",
             default=True,
             advanced=True,
-            group="Raw volumes",
+            group="Volumes",
             help=(
                 "Render the background-subtracted summed intensity from the aligned rocking "
                 "volume. Ignored when that file is blank."
@@ -358,7 +505,7 @@ STAGE = StageSpec(
             "Render raw specific frame",
             default=True,
             advanced=True,
-            group="Raw volumes",
+            group="Volumes",
             help=(
                 "Render the single-frame intensity from the aligned rocking volume — the one "
                 "angular position the rocking stage extracted. Ignored when that file is blank."
@@ -370,7 +517,7 @@ STAGE = StageSpec(
             "Render mosa sum",
             default=True,
             advanced=True,
-            group="Raw volumes",
+            group="Volumes",
             help=(
                 "Render the mosa-integrated summed intensity from the aligned mosa volume. "
                 "Ignored when that file is blank."
@@ -382,7 +529,7 @@ STAGE = StageSpec(
             "Render mosa specific frame",
             default=True,
             advanced=True,
-            group="Raw volumes",
+            group="Volumes",
             help=(
                 "Render the mosa-integrated single-frame intensity from the aligned mosa volume. "
                 "Ignored when that file is blank."
@@ -535,7 +682,8 @@ STAGE = StageSpec(
                 "zero or negative values."
             ),
         ),
-    ),
+    )
+    + _opacity_params(),
     see_also=(
         SeeAlso(
             "",
@@ -1210,6 +1358,78 @@ def _raw_configs(p: dict) -> list[dict]:
     return out
 
 
+def _parse_opacity(text, param_name: str) -> float | None:
+    """One ``volume_opacity_<key>`` override as a float, or ``None`` for blank.
+
+    A :class:`~dfxm.common.errors.StageUserError` rather than a bare
+    ``ValueError`` on anything unusable, so the GUI banner can say which field
+    is wrong and what it wants. Blank means inherit and is not an error — it is
+    the default for all nine.
+    """
+    if text is None or str(text).strip() == "":
+        return None
+    try:
+        value = float(str(text).strip())
+    except ValueError:
+        raise StageUserError(
+            f"'{param_name}' is not a number: {text!r}",
+            hint="Enter a 3-D opacity between 0 and 1, or leave it blank to use '3D opacity'.",
+        ) from None
+    if not 0.0 <= value <= 1.0:
+        raise StageUserError(
+            f"'{param_name}' is {value}, outside the 0–1 opacity range",
+            hint="Enter a 3-D opacity between 0 and 1, or leave it blank to use '3D opacity'.",
+        )
+    return value
+
+
+def _opacity_for(name: str, p: dict) -> tuple[float, str]:
+    """``(opacity, mapping)`` for one dataset: its own override, else the stage's.
+
+    Resolved here rather than at the call sites so every product of a dataset —
+    the 3-D top view and the rotation video both come off one
+    :class:`~dfxm.common.render3d.Scene3D` — cannot disagree about it, and so a
+    dataset with no row in :data:`_VOLUME_KEYS` (an unrecognised mosaicity
+    field) still renders, on the stage-wide settings.
+    """
+    opacity = float(p["volume_opacity"])
+    mapping = str(p["opacity_mapping"])
+    key = _KEY_BY_DATASET.get(name)
+    if key is None:
+        return opacity, mapping
+    own = _parse_opacity(p.get(f"volume_opacity_{key}", ""), f"volume_opacity_{key}")
+    if own is not None:
+        opacity = own
+    own_mapping = str(p.get(f"opacity_mapping_{key}") or _INHERIT)
+    if own_mapping != _INHERIT:
+        mapping = own_mapping
+    return opacity, mapping
+
+
+def _selected_mosa_names(p: dict, path) -> list[str]:
+    """The mosaicity fields this run should render, in `mosa_field_names` order.
+
+    Filtered here rather than in the render loop because the same list is the
+    progress bar's denominator: a dataset the run will not produce must not
+    reserve a slice of the bar. A field with no row in :data:`_STACKED_TOGGLE`
+    is kept — see the note there.
+    """
+    if not path or not os.path.exists(path):
+        return []
+    return [n for n in mosa_field_names(path) if p.get(_STACKED_TOGGLE.get(n, ""), True)]
+
+
+def _validate_opacities(p: dict) -> None:
+    """Parse every override up front, so a typo fails before a voxel is read.
+
+    Without this the bad value surfaces inside `_process_dataset`, i.e. after
+    the dataset it belongs to has been aligned — on a real volume, twenty
+    minutes into a run, and only for the datasets that come before it.
+    """
+    for key, _ds, _label in _VOLUME_KEYS:
+        _parse_opacity(p.get(f"volume_opacity_{key}", ""), f"volume_opacity_{key}")
+
+
 def _raw_config_for(kind: str, p: dict) -> dict | None:
     """The :data:`_RAW_VOLUMES` row for *kind*, **ignoring its toggle**.
 
@@ -1510,6 +1730,11 @@ def _process_dataset(
         prod.notes.append("log scale skipped: colour range includes non-positive values")
     scene = None
     if wants_3d:
+        # This dataset's opacity override, else the stage-wide setting. Resolved
+        # here, inside the one branch that builds the scene, so the top view and
+        # the rotation video cannot disagree about it and a run making neither
+        # never reads the fields at all.
+        scene_opacity, scene_mapping = _opacity_for(name, p)
         # `data` is a plain array here by construction (see the materialisation
         # above) — `Scene3D` slices and reshapes its volume, so it is not built
         # at all on the streaming path rather than built and left unused.
@@ -1520,8 +1745,8 @@ def _process_dataset(
             cmap=cmap,
             clim=(float(vmin), float(vmax)),
             log_scale=log_scale,
-            opacity=float(p["volume_opacity"]),
-            opacity_mapping=str(p["opacity_mapping"]),
+            opacity=scene_opacity,
+            opacity_mapping=scene_mapping,
         )
         # Two steps, not one: building the scene reshapes and re-scales the
         # whole volume, and `volume_texture_limit` runs an out-of-process GL
@@ -1620,6 +1845,7 @@ def run(params: dict, progress: ProgressFn | None = None) -> VisualizeResult:
         os.path.dirname(p["mosa_volume_file"] or p["strain_volume_file"] or "."),
         "aligned_volume_visualizations",
     )
+    _validate_opacities(p)
     result = VisualizeResult(output_dir=out_dir)
     os.makedirs(out_dir, exist_ok=True)
     raw_root = (p["raw_root"] or "").rstrip("/")
@@ -1634,14 +1860,15 @@ def run(params: dict, progress: ProgressFn | None = None) -> VisualizeResult:
     # both share one denominator.
     mosa_file = p["mosa_volume_file"]
     strain_file = p["strain_volume_file"]
-    mosa_names = mosa_field_names(mosa_file) if mosa_file and os.path.exists(mosa_file) else []
+    mosa_names = _selected_mosa_names(p, mosa_file)
     raw_cfgs = _raw_configs(p)
     # The strain section's own index, and where the raw section starts. Counting
     # from `len(mosa_names)` rather than backwards from the end — the strain
     # slice used to be `n_datasets - 1`, which was only the strain index while
     # strain was the last dataset in the run. It no longer is.
     strain_index = len(mosa_names)
-    n_before_raw = strain_index + (1 if strain_file and os.path.exists(strain_file) else 0)
+    strain_on = bool(p["include_strain"]) and bool(strain_file) and os.path.exists(strain_file)
+    n_before_raw = strain_index + (1 if strain_on else 0)
     n_datasets = n_before_raw + len(raw_cfgs)
     # (Y, X) of the first stacked volume this run aligns — what the raw volumes
     # must match to overlay it. None when the run renders no stacked volume, in
@@ -1728,7 +1955,7 @@ def run(params: dict, progress: ProgressFn | None = None) -> VisualizeResult:
         result.skipped.append(f"mosaicity volume not found: {mosa_file}")
 
     # --- strain --- (one dataset slice, not half the bar)
-    if strain_file and os.path.exists(strain_file):
+    if strain_on:
         st_lo, st_hi = _progress_mod.slice_for(strain_index, n_datasets, WORK_LO, WORK_HI)
         progress(st_lo, "loading strain volume")
         samy, samz = _read_motors(raw_root, p["strain_pattern"], p["samy_path"], p["samz_path"])
@@ -1772,7 +1999,7 @@ def run(params: dict, progress: ProgressFn | None = None) -> VisualizeResult:
                 if aligned_shape is None:
                     aligned_shape = (int(prod.shape[1]), int(prod.shape[2]))
                 result.datasets.append(prod)
-    elif strain_file:
+    elif strain_file and not os.path.exists(strain_file):
         result.skipped.append(f"strain volume not found: {strain_file}")
 
     # --- already-aligned raw volumes --- (no motors, no ROI, no alignment)
@@ -1839,9 +2066,8 @@ def available_fields(params: dict) -> list[str]:
     """Field ids that can be aligned for 3-D, given the configured volume files."""
     p = {**STAGE.defaults(), **params}
     out: list[str] = []
-    if p["mosa_volume_file"] and os.path.exists(p["mosa_volume_file"]):
-        out.extend(mosa_field_names(p["mosa_volume_file"]))
-    if p["strain_volume_file"] and os.path.exists(p["strain_volume_file"]):
+    out.extend(_selected_mosa_names(p, p["mosa_volume_file"]))
+    if p["include_strain"] and p["strain_volume_file"] and os.path.exists(p["strain_volume_file"]):
         out.append("strain")
     out.extend(cfg["kind"] for cfg in _raw_configs(p))
     return out

@@ -1003,8 +1003,12 @@ raw root, Map ROI X/Y, output dir
 |---|---|
 | `aligned_rocking_file` | `aligned_raw_rocking_volumes.h5` from the rocking stage; contributes `raw_sum` and `raw_specific` (blank = skip both). Pre-filled only once the file exists, so this stage stays runnable before you have run rocking |
 | `aligned_mosa_file` | `aligned_raw_mosa_volumes.h5` — the rocking stage run with **Source scan = mosaicity**; contributes `raw_mosa_sum` and `raw_mosa_specific` (blank = skip both). Pre-filled on the same terms |
+| `include_mosa_com_chi` / `include_mosa_fwhm_chi` / `include_mosa_com_mu` / `include_mosa_fwhm_mu` | render each field of the stacked **mosaicity** volume (all on by default) |
+| `include_strain` | render the stacked **strain** volume (on by default) — unticking renders nothing from it without clearing the path |
 | `include_raw_sum` / `include_raw_specific` | render the summed / single-frame volume from the aligned **rocking** file (both on by default) |
 | `include_mosa_sum` / `include_mosa_specific` | render the summed / single-frame volume from the aligned **mosa** file (both on by default) |
+| `volume_opacity_<volume>` | 3-D opacity for **one** volume, 0–1 (blank = use `volume_opacity`). One per volume: `mosa_com_chi`, `mosa_fwhm_chi`, `mosa_com_mu`, `mosa_fwhm_mu`, `strain`, `raw_sum`, `raw_specific`, `raw_mosa_sum`, `raw_mosa_specific` |
+| `opacity_mapping_<volume>` | opacity transfer function for **one** volume, same nine suffixes (`default` = use `opacity_mapping`) |
 | `center_method` | `midrange` / `mean` / `median` (CoM colour centring only) |
 | `roi_x` / `roi_y` | map-frame crop in map pixels (`c0,c1` / `r0,r1`), relative to the darfix window, NOT absolute detector pixels; pre-filled from the experiment's analysis window |
 | `output_format` | `mp4` / `gif` / `both` |
@@ -1048,6 +1052,29 @@ raw root, Map ROI X/Y, output dir
 > the warning. Once this session's one-time GL check has run, the same
 > information appears under the **3D downsample** field before you ever click
 > Run (see [[#Per-field notes]] above).
+
+> [!tip] Choosing what renders, and how transparent each volume is
+> **Advanced → Volumes** lists all nine volumes this stage can render — the four
+> mosaicity fields, strain, and the four raw ones — each with its own checkbox,
+> all ticked. Untick one and it is skipped entirely: no PNGs, no animation, no
+> 3-D, and it does not appear in the **3D** tab either. The progress bar shortens
+> to match rather than leaving a gap. A *non-standard* field in the mosaicity
+> file (anything other than the four named above) has no checkbox and always
+> renders, so this cannot silently drop a dataset you were already getting.
+>
+> **Advanced → 3-D opacity** then gives each of those nine its own **opacity**
+> and **mapping**, because a dense sum and a sparse single frame rarely look
+> right at the same settings. Both are *overrides*: leave the opacity blank and
+> leave the mapping on `default`, and the volume uses the stage-wide **3D
+> opacity** / **3D opacity mapping** fields under Appearance — which is what
+> every volume does until you change one, so nothing about an existing run
+> shifts. An override applies to that volume's 3-D top view **and** its rotation
+> video, which come off one shared render. An opacity that is not a number
+> between 0 and 1 blocks the run before any volume is read, naming the field.
+>
+> The pop-out [[#3-D volume viewer|3-D viewer]] has always had its own live
+> **Opacity** slider and mapping combo per volume; these fields are what carry
+> the same choice into the *saved* top view and rotation video.
 
 > [!note] The raw volumes are rendered **as stored** — the Map ROI does not touch them
 > The [[#4. Aligned rocking volumes (`rocking`)|rocking]] stage has already done

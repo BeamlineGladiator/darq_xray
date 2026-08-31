@@ -1341,3 +1341,167 @@ def test_figures_do_not_raise_when_a_raw_file_has_moved(tmp_path):
     os.remove(p["aligned_mosa_file"])
     specs = V.figures(res, p)  # must not raise
     assert any(s.figure_id.startswith("visualize_raw_mosa_sum_z") for s in specs)
+
+
+# -- per-volume selection + per-volume 3-D opacity ----------------------------
+def _stacked_params(proc, raw, out, **over):
+    p = {
+        "mosa_volume_file": str(proc / "stacked_volumes.h5"),
+        "strain_volume_file": str(proc / "stacked_strain_volumes.h5"),
+        "raw_root": str(raw),
+        "mosa_pattern": "mosa__*",
+        "strain_pattern": "strain__*",
+        "output_dir": str(out),
+        "save_layers": False,
+        "save_animation": False,
+        "save_topview": False,
+    }
+    p.update(over)
+    return p
+
+
+def test_stacked_toggles_select_which_volumes_render(tmp_path):
+    proc, raw = _setup(tmp_path)
+    res = V.run(
+        _stacked_params(
+            proc,
+            raw,
+            tmp_path / "viz",
+            include_mosa_com_chi=False,
+            include_mosa_fwhm_mu=False,
+            include_strain=False,
+        )
+    )
+    assert {d.name for d in res.datasets} == {"chi_FWHM", "mu_Center_of_mass"}
+
+
+def test_an_unknown_mosa_field_has_no_toggle_and_still_renders(tmp_path):
+    """No existing run may silently lose a dataset: only the four named fields
+    are gated, and anything else in the file keeps rendering."""
+    proc, raw = _setup(tmp_path)
+    with h5py.File(str(proc / "stacked_volumes.h5"), "a") as f:
+        f["chi"].create_dataset(
+            "Skew", data=np.abs(np.random.default_rng(9).standard_normal((L, NY, NX)))
+        )
+    res = V.run(
+        _stacked_params(
+            proc,
+            raw,
+            tmp_path / "viz",
+            include_mosa_com_chi=False,
+            include_mosa_fwhm_chi=False,
+            include_mosa_com_mu=False,
+            include_mosa_fwhm_mu=False,
+            include_strain=False,
+        )
+    )
+    assert {d.name for d in res.datasets} == {"chi_Skew"}
+
+
+def test_available_fields_respects_the_stacked_toggles(tmp_path):
+    """The pop-out viewer list must match what the run actually produced."""
+    proc, raw = _setup(tmp_path)
+    p = _stacked_params(
+        proc, raw, tmp_path / "viz", include_mosa_fwhm_chi=False, include_strain=False
+    )
+    assert set(V.available_fields(p)) == {"chi_Center_of_mass", "mu_Center_of_mass", "mu_FWHM"}
+
+
+def test_opacity_inherits_the_globals_when_nothing_is_overridden():
+    p = {**V.STAGE.defaults(), "volume_opacity": 0.7, "opacity_mapping": "sigmoid"}
+    for name in ("chi_FWHM", "strain", "raw_mosa_sum"):
+        assert V._opacity_for(name, p) == (0.7, "sigmoid")
+
+
+def test_per_dataset_opacity_and_mapping_override_the_globals():
+    p = {
+        **V.STAGE.defaults(),
+        "volume_opacity": 0.7,
+        "opacity_mapping": "sigmoid",
+        "volume_opacity_raw_sum": "0.25",
+        "opacity_mapping_raw_mosa_specific": "geom_r",
+    }
+    assert V._opacity_for("raw_sum", p) == (0.25, "sigmoid")  # opacity only
+    assert V._opacity_for("raw_mosa_specific", p) == (0.7, "geom_r")  # mapping only
+    assert V._opacity_for("mu_FWHM", p) == (0.7, "sigmoid")  # untouched
+
+
+def test_every_volume_has_its_own_opacity_pair():
+    """One pair per renderable dataset, and each keyed independently."""
+    names = {p.name for p in V.STAGE.params}
+    for key, _ds, _label in V._VOLUME_KEYS:
+        assert f"volume_opacity_{key}" in names
+        assert f"opacity_mapping_{key}" in names
+    # and every key maps back to a dataset run() can actually produce
+    assert set(V._KEY_BY_DATASET) == {ds for _k, ds, _l in V._VOLUME_KEYS}
+
+
+def test_per_dataset_opacity_reaches_the_scene(tmp_path, monkeypatch):
+    """The knob is worthless if it does not arrive at Scene3D."""
+    captured = _capture_scene(monkeypatch, None)
+    p = {
+        **_oversize_params(),
+        "volume_opacity": 0.9,
+        "opacity_mapping": "linear",
+        "volume_opacity_mosa_fwhm_chi": "0.3",
+        "opacity_mapping_mosa_fwhm_chi": "geom",
+    }
+    V._process_dataset(
+        np.zeros((2, 4, 5)),
+        [0.0, 1.0],
+        1.0,
+        "chi_FWHM",
+        0.0,
+        1.0,
+        "viridis",
+        "chi",
+        "deg",
+        p,
+        str(tmp_path),
+    )
+    assert captured["scene"].opacity == pytest.approx(0.3)
+    assert captured["scene"].opacity_mapping == "geom"
+
+
+def test_a_dataset_without_an_override_still_gets_the_globals_at_the_scene(tmp_path, monkeypatch):
+    captured = _capture_scene(monkeypatch, None)
+    p = {**_oversize_params(), "volume_opacity": 0.42, "opacity_mapping": "geom_r"}
+    V._process_dataset(
+        np.zeros((2, 4, 5)),
+        [0.0, 1.0],
+        1.0,
+        "strain",
+        0.0,
+        1.0,
+        "RdBu_r",
+        "strain",
+        "eps",
+        p,
+        str(tmp_path),
+    )
+    assert captured["scene"].opacity == pytest.approx(0.42)
+    assert captured["scene"].opacity_mapping == "geom_r"
+
+
+@pytest.mark.parametrize("bad", ["abc", "1.5", "-0.2", "0,5"])
+def test_an_unusable_opacity_override_is_a_user_error(tmp_path, bad):
+    """Fail before a voxel is read, with a hint — not 20 minutes into a run."""
+    from dfxm.common.errors import StageUserError
+
+    proc, raw = _setup(tmp_path)
+    with pytest.raises(StageUserError) as exc:
+        V.run(_stacked_params(proc, raw, tmp_path / "viz", volume_opacity_strain=bad))
+    assert exc.value.hint
+    assert "strain" in str(exc.value) or "strain" in exc.value.hint
+
+
+def test_the_opacity_check_runs_before_any_volume_is_read(tmp_path, monkeypatch):
+    """Precondition guard for the test above: it must not be a late failure."""
+    from dfxm.common.errors import StageUserError
+
+    proc, raw = _setup(tmp_path)
+    monkeypatch.setattr(
+        V, "_align_streamed", lambda *a, **kw: pytest.fail("a volume was read before validation")
+    )
+    with pytest.raises(StageUserError):
+        V.run(_stacked_params(proc, raw, tmp_path / "viz", volume_opacity_mosa_com_chi="nope"))
