@@ -1105,7 +1105,11 @@ raw root, Map ROI X/Y, output dir
 > [[#7. Oblique slices (`slices`)|slices]], and they carry the same four names
 > and titles there — `raw_sum`, `raw_specific`, `raw_mosa_sum`,
 > `raw_mosa_specific`. Run the rocking stage twice to get all four: once with
-> **Source scan = rocking**, once with **Source scan = mosaicity**.
+> **Source scan = rocking**, once with **Source scan = mosaicity**. A
+> single-frame volume is titled with the frame index the rocking run pulled out,
+> read from the file itself ("Background-subtracted Frame 7"); an older file
+> that never recorded which frame it was is titled without a number rather than
+> with a made-up one.
 >
 > Clearing one of the two file fields is how you skip that file on the next run
 > — but the *previous* run's raw figures are still listed in the figure builder

@@ -1276,6 +1276,20 @@ def _raw_block_budget(dset, budget_bytes: int) -> int:
     return max(1, int(budget_bytes) * itemsize // (itemsize + _QUANTILE_BYTES_PER_ELEMENT))
 
 
+def _raw_working_set(dset, block_bytes: int) -> int:
+    """*block_bytes* of stored-dtype block, as the working set holding it costs.
+
+    The inverse of :func:`_raw_block_budget`, and the reason both exist: the two
+    quantities differ by ``_QUANTILE_BYTES_PER_ELEMENT`` per element, so a block
+    sized in one currency must be reported in the other. Keeping the pair
+    mutually inverse is what makes ``working_set_bytes <= budget_bytes`` hold —
+    the invariant `StreamedAlignment` promises, and the one a caller sizing a run
+    off the field is entitled to.
+    """
+    itemsize = max(1, int(np.dtype(dset.dtype).itemsize))
+    return int(block_bytes) * (itemsize + _QUANTILE_BYTES_PER_ELEMENT) // itemsize
+
+
 def _raw_streamed(dset, *, z_um, scale_z, budget_bytes):
     """An ALREADY-aligned volume presented as a :class:`~.alignment.StreamedAlignment`.
 
@@ -1316,7 +1330,17 @@ def _raw_streamed(dset, *, z_um, scale_z, budget_bytes):
         pad_right=0,
         center_offset=0.0,
         block_layers=block_layers,
-        working_set_bytes=int(block_layers * per_layer),
+        # The MODELLED PEAK, which is what the field means everywhere else — "the
+        # peak the working-set model says producing one block costs", the number
+        # `budget_bytes` was checked against. The block's stored-dtype bytes alone
+        # are not that: `_raw_block_budget` shrank the budget by
+        # `(itemsize + 41) / itemsize` precisely because the reductions consuming
+        # the block hold 41 B more per element, so reporting the bare block bytes
+        # under-states the peak by that same factor (~11x for float32) and makes
+        # this rung's working set a false floor. Undoing the same conversion is
+        # what keeps `working_set_bytes <= budget_bytes` true here as it is for
+        # the alignment path.
+        working_set_bytes=_raw_working_set(dset, block_layers * per_layer),
         blocks=lambda: volumeio.iter_blocks(dset, budget_bytes=block_budget),
     )
 
@@ -1329,6 +1353,13 @@ def _raw_meta(f, dset, p):
     is what keeps the render true to scale when the two stages were configured
     differently. The form's pixel sizes are the fallback for a file written
     before the attributes existed.
+
+    ``frame_idx`` is ``None`` — not ``-1`` — when the file carries no
+    ``specific_frame_idx``, which is what :func:`_display_info` and
+    :func:`_raw_scales_and_frame` both already document and handle: the title
+    then reads "Background-subtracted Frame" with no number, rather than
+    claiming frame **-1**. Every file `rocking` writes has the attribute
+    (`rocking.py` writes it unconditionally), so this is the legacy-file path.
     """
     a = dict(f.attrs)
     n_z = int(dset.shape[0])
@@ -1340,7 +1371,8 @@ def _raw_meta(f, dset, p):
         float(a.get("scale_x_um_per_px", p["pixel_size_x_um"])),
         float(a.get("scale_y_um_per_px", p["pixel_size_y_um"])),
     )
-    return z_um, scale_z, scales, int(a.get("specific_frame_idx", -1))
+    raw_idx = a.get("specific_frame_idx")
+    return z_um, scale_z, scales, None if raw_idx is None else int(raw_idx)
 
 
 def _raw_scales_and_frame(cfg: dict, p: dict):

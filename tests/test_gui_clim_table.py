@@ -81,6 +81,21 @@ def test_seeding_leaves_unlisted_volumes_blank():
     assert section.clim_by_group() == {"strain": (-1.0, 1.0)}
 
 
+def test_reseeding_a_section_drops_the_limits_the_new_mapping_omits():
+    """`set_clim_by_group` is a SET: rows the mapping does not name are blanked.
+
+    The one caller today builds a fresh section per dialog, so the two readings
+    are indistinguishable there — but the class keeps a persistent `_values`
+    cache precisely so a section can be reused, and an update-only seed would
+    then collect limits its mapping never contained.
+    """
+    section = ClimGroupSection()
+    section.set_groups(ClimTableEditor.groups())
+    section.set_clim_by_group({"strain": (-1.0, 1.0), "raw_sum": (0.0, 9.0)})
+    section.set_clim_by_group({"strain": (-2.0, 2.0)})
+    assert section.clim_by_group() == {"strain": (-2.0, 2.0)}
+
+
 def test_param_form_renders_the_clim_editor_for_the_hint():
     """The `editor="clim_table"` hint must actually reach ParamForm."""
     from gui.widgets.param_form import ParamForm

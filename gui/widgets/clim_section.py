@@ -98,11 +98,21 @@ class ClimGroupSection(QWidget):
         ``volume_clim_json`` param). ``None`` or a blank bound leaves that box
         empty, i.e. automatic. A key with no row is ignored: the value outlives
         any one set of groups, exactly as ``_values`` does.
+
+        Blanking the rest is the half that makes this a *set* rather than an
+        update, and it only shows on a **reused** section: the one caller today
+        (``ClimTableEditor._on_edit``) builds a fresh one per dialog, whose rows
+        are empty already. On a section seeded twice, leaving unlisted rows alone
+        would show — and then collect — limits the mapping does not contain,
+        which is exactly what the persistent ``_values`` cache makes possible.
+        An entry that is not a two-element pair is not a limit and blanks its row
+        with the others.
         """
-        for key, pair in dict(mapping or {}).items():
-            edits = self._edits.get(key)
-            if edits is None or not isinstance(pair, (list, tuple)) or len(pair) != 2:
-                continue
+        pairs = dict(mapping or {})
+        for key, edits in self._edits.items():
+            pair = pairs.get(key)
+            if not isinstance(pair, (list, tuple)) or len(pair) != 2:
+                pair = (None, None)
             for edit, bound in zip(edits, pair):
                 edit.setText("" if bound is None else str(bound))
 

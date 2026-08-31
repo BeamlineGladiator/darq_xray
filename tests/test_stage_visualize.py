@@ -1298,6 +1298,52 @@ def test_raw_stream_reports_the_blocking_iter_blocks_uses(tmp_path):
             assert sum(b.shape[0] for _sl, b in streamed.blocks()) == 8
 
 
+def test_the_raw_rung_reports_the_working_set_its_budget_bought(tmp_path):
+    """`working_set_bytes` is the modelled PEAK, not the block's stored bytes.
+
+    `_raw_block_budget` shrinks the budget by `(itemsize + 41) / itemsize`
+    because the colour-limit reductions hold 41 B per element on top of the
+    block. Reporting the bare block bytes therefore under-states the peak by that
+    same factor (~11x for float32) and makes this rung's working set a false
+    floor for anything sizing a run off the field — every other producer of a
+    `StreamedAlignment` reports the modelled peak.
+    """
+    path = str(tmp_path / "aligned_raw_rocking_volumes.h5")
+    _write_aligned_raw(path, (8, NY, NX))
+    with h5py.File(path, "r") as f:
+        dset = f["sum_intensity"]
+        itemsize = dset.dtype.itemsize
+        per_layer = V.volumeio.volume_bytes(dset) // 8
+        for budget in (per_layer * 40, 1 << 30):
+            streamed = V._raw_streamed(dset, z_um=np.arange(8.0), scale_z=1.5, budget_bytes=budget)
+            block_bytes = streamed.block_layers * per_layer
+            assert streamed.working_set_bytes == (
+                block_bytes * (itemsize + V._QUANTILE_BYTES_PER_ELEMENT) // itemsize
+            )
+            assert streamed.working_set_bytes > block_bytes
+            # The invariant the field exists for: what a block costs never
+            # exceeds the budget that sized it.
+            assert streamed.working_set_bytes <= budget
+
+
+def test_a_raw_file_without_a_frame_index_is_titled_without_a_number(tmp_path):
+    """`_raw_meta` returns None, not -1, for a file predating the attribute.
+
+    `_display_info`'s documented fallback ("without it the title is the bare
+    '… Frame'") was unreachable while `_raw_meta` defaulted to -1, and the
+    unnumbered title it exists for came out as "Frame **-1**" — a frame index
+    that cannot exist, presented as if it were read from the file.
+    """
+    p = _raw_params(tmp_path, tmp_path / "viz", include_mosa_sum=False, include_mosa_specific=False)
+    with h5py.File(p["aligned_rocking_file"], "r+") as f:
+        del f.attrs["specific_frame_idx"]
+    res = V.run(p)
+    spec = next(s for s in V.figures(res, p) if s.figure_id == "visualize_raw_specific_z0000")
+    assert spec.title == "Background-subtracted Frame — layer 0"
+    _v, _sp, _cm, _cl, meta = V.aligned_field(p, "raw_specific")
+    assert "-1" not in meta["cbar_label"]
+
+
 def test_visualize_prefills_the_aligned_files_from_the_experiment(tmp_path):
     from dfxm.config.models import Experiment
     from gui.bindings import experiment_overrides
