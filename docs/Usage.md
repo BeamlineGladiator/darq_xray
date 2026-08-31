@@ -2257,7 +2257,17 @@ Clicking **Add panels…** opens a two-step dialog:
    planes/profile fields you want, then click **Next** (or **OK** to skip
    arranging and add the checked panels flat, in tree order, exactly as
    before). Clicking **Next** with nothing checked stays on step 1 with a
-   "check at least one item first" status message.
+   "check at least one item first" status message. The stage dropdown pre-fills
+   each stage's own output h5, but **Browse…** accepts any file that stage's
+   catalog can read — in particular, the **rocking** entry pointed at
+   `aligned_raw_mosa_volumes.h5` (the rocking stage run with **Source scan =
+   mosaicity**) lists the aligned raw **mosa** layers, so a raw mosa layer joins
+   the figure as an ordinary map panel, drawn in the shared **raw** colormap
+   group. One caveat: the picker stamps every map panel with the experiment's
+   **Pixel size X/Y**, while a `raw_mosa_*` volume typically carries its own,
+   different pixel scale (see [[#7. Oblique slices (`slices`)|slices]]) — if
+   they differ, correct that panel's `"sx"`/`"sy"` in the saved recipe's
+   selector so its extent and scale bar stay true.
 2. **Step 2 — arrange (optional).** A drag grid seeded with one column per
    staged panel — each tile a schematic chip (colour-coded by quantity group:
    strain/raw/mosa FWHM/mosa COM/trace) labelled with the panel's captured
@@ -2532,7 +2542,17 @@ far you scroll the sections — see the Export bullet at the end of this list):
     **pinned width**, cm, 0 = off), one-colorbar checkbox, and shared colour
     limits as Row, plus a **Shared x axis (bottom labels only)** checkbox
     (`shared_x`).
-  - **Spacer** — its width and height in cm.
+  - **Spacer** — its width and height in cm. Besides plain breathing room,
+    this is the way to reserve an exact-size **empty spot for content the
+    builder cannot draw** — typically a panel reproduced from another paper
+    (external images cannot be added as panels): size the spacer to that
+    panel's printed size, export the figure as SVG or PDF, and lay the cited
+    image over the gap in a vector editor or your LaTeX/slide layer. Two
+    caveats: keep spacers out of a pinned-height Row / pinned-width Col (a
+    spacer keeps its fixed size regardless of the pin, so the container drifts
+    from the pin by that amount — see **Rows/Cols** above), and **Arrange…**
+    rebuilds the layout as a plain grid **without** spacers, so arrange first
+    and add the spacer last.
   - **Text** — its text string plus its box's width and height in cm.
   - **Scale bar** — a stand-alone scale-bar cell (outline button **Scale
     bar**), width/height in cm; place it anywhere — e.g. between two stacked
