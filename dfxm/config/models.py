@@ -79,10 +79,21 @@ class Param:
     roi_frame: str = ""  # "" | "detector" | "map" — the coordinate frame of a ROI param
     advice_key: str = ""  # key into Advisory.hints -> a note under this field
     editor: str = ""  # render hint: "" = by type; "summary_json" / "clim_table" = dialogs
+    # Display text for `choices`, one per entry. The dropdown SHOWS these and
+    # STORES the matching `choices` entry, so a self-describing label
+    # ("geom — high intensities") never reaches the value that
+    # `pyvista.opacity_transfer_function` and every saved config expect.
+    # Empty = show the raw choices, which is what every other ENUM does.
+    choice_labels: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if self.type is ParamType.ENUM and not self.choices:
             raise ValueError(f"enum param {self.name!r} needs a non-empty `choices`")
+        if self.choice_labels and len(self.choice_labels) != len(self.choices or ()):
+            raise ValueError(
+                f"param {self.name!r}: {len(self.choice_labels)} choice_labels "
+                f"for {len(self.choices or ())} choices"
+            )
         if self.roi_axis not in ("", "x", "y", "both"):
             raise ValueError(f"roi param {self.name!r}: bad roi_axis {self.roi_axis!r}")
         if self.roi_frame not in ("", "detector", "map"):

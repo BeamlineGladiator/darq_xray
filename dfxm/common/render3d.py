@@ -20,6 +20,38 @@ PRESETS = ("front", "top", "side", "iso")
 OPACITY_MAPPINGS = ("linear", "sigmoid", "geom", "geom_r")
 RENDER_MODES = ("volume", "surface", "isosurface")
 
+# What each choice actually does, for the dropdowns that offer it. The label
+# always STARTS with the value, so a screenshot, a log line and the stored
+# config still read alike, and `test_a_label_table_covers_every_choice_it_
+# describes` pins both halves of that.
+#
+# They live here, in the Qt-free core beside the tuples they describe, because
+# the same four mappings are offered by three different widgets — the stage
+# form's `opacity_mapping`, its nine per-volume siblings, and the pop-out 3-D
+# viewer's own combo. A second copy of the wording is a second thing to forget
+# when a mapping is added.
+OPACITY_MAPPING_LABELS: dict[str, str] = {
+    "linear": "linear — even ramp",
+    "sigmoid": "sigmoid — mid-range values",
+    "geom": "geom — high intensities",
+    "geom_r": "geom_r — low intensities",
+}
+RENDER_MODE_LABELS: dict[str, str] = {
+    "volume": "volume — true volumetric",
+    "surface": "surface — NaN-thresholded mesh",
+    "isosurface": "isosurface — contour shells",
+}
+
+
+def labels_for(values, table) -> tuple[str, ...]:
+    """*values* rendered through *table*, falling back to the bare value.
+
+    The fallback is what keeps a newly added choice visible rather than blank;
+    the test above is what stops it staying undescribed.
+    """
+    return tuple(table.get(v, v) for v in values)
+
+
 # Volume mode's opacity transfer function: 256 steps (pyvista's LookupTable size,
 # so the curve is used verbatim — no resampling), of which the bottom few are
 # forced to zero alpha to give the NaN sentinel a fully transparent band. See

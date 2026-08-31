@@ -167,7 +167,10 @@ _STACKED_TOGGLE: dict[str, str] = {
 # named choice rather than a blank one: an empty entry at the top of a dropdown
 # reads as a bug, and "default" cannot collide with a real mapping name.
 _INHERIT = "default"
-_OPACITY_MAPPINGS = ("linear", "sigmoid", "geom", "geom_r")
+_OPACITY_MAPPINGS = R3.OPACITY_MAPPINGS
+# The inherit choice describes itself too; the four real ones come from
+# `render3d`, so the stage form and the 3-D viewer word them identically.
+_INHERIT_LABEL = f"{_INHERIT} — use the stage setting"
 
 
 def _opacity_params() -> tuple[Param, ...]:
@@ -201,6 +204,10 @@ def _opacity_params() -> tuple[Param, ...]:
                 f"{label} mapping",
                 default=_INHERIT,
                 choices=(_INHERIT, *_OPACITY_MAPPINGS),
+                choice_labels=(
+                    _INHERIT_LABEL,
+                    *R3.labels_for(_OPACITY_MAPPINGS, R3.OPACITY_MAPPING_LABELS),
+                ),
                 advanced=True,
                 group="3-D opacity",
                 help=(
@@ -616,7 +623,8 @@ STAGE = StageSpec(
             ParamType.ENUM,
             "3D render mode",
             default="volume",
-            choices=("volume", "surface", "isosurface"),
+            choices=R3.RENDER_MODES,
+            choice_labels=R3.labels_for(R3.RENDER_MODES, R3.RENDER_MODE_LABELS),
             advanced=True,
             group="Appearance",
             advice_key="3d_texture",
@@ -652,7 +660,8 @@ STAGE = StageSpec(
             ParamType.ENUM,
             "3D opacity mapping",
             default="linear",
-            choices=("linear", "sigmoid", "geom", "geom_r"),
+            choices=_OPACITY_MAPPINGS,
+            choice_labels=R3.labels_for(_OPACITY_MAPPINGS, R3.OPACITY_MAPPING_LABELS),
             advanced=True,
             group="Appearance",
             help=(

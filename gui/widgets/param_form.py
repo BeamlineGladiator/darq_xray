@@ -16,6 +16,10 @@ A param may override that mapping with a ``Param.editor`` render hint:
 :class:`~gui.widgets.clim_table.ClimTableEditor` (one-line summary + a labelled
 per-volume vmin/vmax dialog). An unknown hint falls back to the type's editor.
 
+An ``ENUM`` param carrying ``choice_labels`` shows those labels and stores the
+matching ``choices`` entry (``currentData``, not ``currentText``), so a
+self-describing row like "geom — high intensities" never leaks into the value.
+
 Calibration parameters (``param.calibration``) get a highlighted label and a
 "⚠ calibration" suffix, because their values are physically meaningful.
 """
@@ -379,12 +383,34 @@ class ParamForm(QWidget):
         box = QComboBox()
         install_wheel_guard(box)
         choices = [str(c) for c in (p.choices or ())]
-        box.addItems(choices)
-        if value is not None and str(value) in choices:
-            box.setCurrentText(str(value))
-        self._register(
-            p.name, box.currentText, lambda v: box.setCurrentText(str(v)), box.currentTextChanged
-        )
+        if not p.choice_labels:
+            box.addItems(choices)
+            if value is not None and str(value) in choices:
+                box.setCurrentText(str(value))
+            self._register(
+                p.name,
+                box.currentText,
+                lambda v: box.setCurrentText(str(v)),
+                box.currentTextChanged,
+            )
+            return box
+        # Labelled: the row SHOWS the description and STORES the bare choice.
+        # Only params that opt in take this path — every other ENUM keeps the
+        # `currentText` getter above, so the change cannot reach a value that
+        # already round-trips through saved form state.
+        for choice, label in zip(choices, p.choice_labels):
+            box.addItem(str(label), choice)
+        if value is not None:
+            index = box.findData(str(value))
+            if index >= 0:
+                box.setCurrentIndex(index)
+
+        def _set(v, _box=box) -> None:
+            index = _box.findData(str(v))
+            if index >= 0:
+                _box.setCurrentIndex(index)
+
+        self._register(p.name, box.currentData, _set, box.currentTextChanged)
         return box
 
     def _bool_editor(self, p: Param, value: Any) -> QWidget:

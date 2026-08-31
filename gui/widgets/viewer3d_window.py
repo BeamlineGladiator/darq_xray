@@ -46,6 +46,17 @@ _BACKGROUNDS = ("theme", "white", "black")
 _CLIM_RANGE = (-1.0e12, 1.0e12)
 
 
+def fill_mapping_combo(box) -> None:
+    """Fill *box* with the opacity mappings: label shown, bare value as item data.
+
+    A free function rather than a method so the window and its test agree on one
+    filling, and so the wording comes from `render3d.OPACITY_MAPPING_LABELS` —
+    the same table the stage form reads.
+    """
+    for value in R3.OPACITY_MAPPINGS:
+        box.addItem(R3.OPACITY_MAPPING_LABELS.get(value, value), value)
+
+
 class Viewer3DWindow(QWidget):
     """Interactive 3-D view of ONE volume with ParaView-style controls."""
 
@@ -144,9 +155,12 @@ class Viewer3DWindow(QWidget):
         form.addRow("Opacity", self._opacity_slider)
 
         self._mapping_combo = QComboBox()
-        self._mapping_combo.addItems(list(R3.OPACITY_MAPPINGS))
+        fill_mapping_combo(self._mapping_combo)
         install_wheel_guard(self._mapping_combo)
-        self._mapping_combo.currentTextChanged.connect(self._on_mapping)
+        # currentINDEXChanged, not currentTextChanged: the combo now shows the
+        # description and carries the bare mapping name as item data, so the
+        # text is no longer the value `Scene3D` needs.
+        self._mapping_combo.currentIndexChanged.connect(self._on_mapping)
         form.addRow("Opacity mapping", self._mapping_combo)
 
         self._bg_combo = QComboBox()
@@ -256,7 +270,9 @@ class Viewer3DWindow(QWidget):
         with QSignalBlocker(self._opacity_slider):
             self._opacity_slider.setValue(round(scene.opacity * 100))
         with QSignalBlocker(self._mapping_combo):
-            self._mapping_combo.setCurrentText(scene.opacity_mapping)
+            index = self._mapping_combo.findData(scene.opacity_mapping)
+            if index >= 0:
+                self._mapping_combo.setCurrentIndex(index)
         # Default to the app theme's background (matches the canvas's own
         # themed background at creation, instead of Scene3D's plain "white").
         scene.background = ThemeController.instance().palette.pv_background
@@ -320,8 +336,11 @@ class Viewer3DWindow(QWidget):
         self.scene.opacity = value / 100.0
         self.rebuild()
 
-    def _on_mapping(self, text: str) -> None:
-        self.scene.opacity_mapping = text
+    def _on_mapping(self, _index: int) -> None:
+        mapping = self._mapping_combo.currentData()
+        if not mapping:
+            return
+        self.scene.opacity_mapping = str(mapping)
         self.rebuild()
 
     def _on_background(self, text: str) -> None:
