@@ -1505,3 +1505,152 @@ def test_the_opacity_check_runs_before_any_volume_is_read(tmp_path, monkeypatch)
     )
     with pytest.raises(StageUserError):
         V.run(_stacked_params(proc, raw, tmp_path / "viz", volume_opacity_mosa_com_chi="nope"))
+
+
+# -- per-volume colour limits --------------------------------------------------
+def _clim_json(**by_key):
+    import json
+
+    return json.dumps({k: list(v) for k, v in by_key.items()})
+
+
+def test_clim_override_reaches_the_recorded_limits(tmp_path):
+    proc, raw = _setup(tmp_path)
+    res = V.run(
+        _stacked_params(
+            proc,
+            raw,
+            tmp_path / "viz",
+            volume_clim_json=_clim_json(strain=(-3e-4, 3e-4), mosa_fwhm_chi=(0.1, 0.9)),
+        )
+    )
+    by_name = {d.name: d for d in res.datasets}
+    assert (by_name["strain"].vmin, by_name["strain"].vmax) == pytest.approx((-3e-4, 3e-4))
+    assert (by_name["chi_FWHM"].vmin, by_name["chi_FWHM"].vmax) == pytest.approx((0.1, 0.9))
+
+
+def test_an_unlisted_volume_keeps_its_automatic_limits(tmp_path):
+    """Precondition guard: the override must not leak onto other volumes."""
+    proc, raw = _setup(tmp_path)
+    common = dict(save_layers=False, save_animation=False, save_topview=False)
+    auto = V.run(_stacked_params(proc, raw, tmp_path / "a", **common))
+    over = V.run(
+        _stacked_params(
+            proc, raw, tmp_path / "b", volume_clim_json=_clim_json(strain=(-3e-4, 3e-4)), **common
+        )
+    )
+    a = {d.name: (d.vmin, d.vmax) for d in auto.datasets}
+    b = {d.name: (d.vmin, d.vmax) for d in over.datasets}
+    assert b["strain"] != a["strain"]
+    for name in ("chi_Center_of_mass", "chi_FWHM", "mu_Center_of_mass", "mu_FWHM"):
+        assert b[name] == pytest.approx(a[name]), name
+
+
+def test_a_half_open_clim_keeps_the_automatic_side(tmp_path):
+    import json
+
+    proc, raw = _setup(tmp_path)
+    common = dict(save_layers=False, save_animation=False, save_topview=False)
+    auto = V.run(_stacked_params(proc, raw, tmp_path / "a", **common))
+    auto_fwhm = next(d for d in auto.datasets if d.name == "chi_FWHM")
+    over = V.run(
+        _stacked_params(
+            proc,
+            raw,
+            tmp_path / "b",
+            volume_clim_json=json.dumps({"mosa_fwhm_chi": [None, 5.0]}),
+            **common,
+        )
+    )
+    got = next(d for d in over.datasets if d.name == "chi_FWHM")
+    assert got.vmax == pytest.approx(5.0)
+    assert got.vmin == pytest.approx(auto_fwhm.vmin)  # the blank side is untouched
+
+
+def test_round_clim_leaves_an_explicit_limit_alone(tmp_path):
+    """Explicit wins: a typed limit is used as typed, an automatic one still rounds."""
+    import json as _json
+
+    from dfxm.common.plotting import PlotStyle, style_to_json
+
+    proc, raw = _setup(tmp_path)
+    style = _json.loads(style_to_json(PlotStyle(round_clim=True)))
+    res = V.run(
+        _stacked_params(
+            proc,
+            raw,
+            tmp_path / "viz",
+            plot_style=style,
+            volume_clim_json=_clim_json(mosa_fwhm_chi=(0.123456, 0.987654)),
+        )
+    )
+    by_name = {d.name: d for d in res.datasets}
+    got = by_name["chi_FWHM"]
+    assert (got.vmin, got.vmax) == pytest.approx((0.123456, 0.987654))
+    assert not [n for n in got.notes if "round_clim" in n]
+    # and rounding is genuinely on for a volume that did not opt out
+    assert any("round_clim" in n for d in res.datasets for n in d.notes if d.name != "chi_FWHM")
+
+
+def test_clim_override_reaches_the_3d_scene(tmp_path, monkeypatch):
+    captured = _capture_scene(monkeypatch, None)
+    p = {**_oversize_params(), "volume_clim_json": _clim_json(strain=(-1.0, 4.0))}
+    V._process_dataset(
+        np.zeros((2, 4, 5)),
+        [0.0, 1.0],
+        1.0,
+        "strain",
+        -9.0,
+        9.0,
+        "RdBu_r",
+        "strain",
+        "eps",
+        p,
+        str(tmp_path),
+    )
+    # _process_dataset is handed the ALREADY-resolved limits, so the scene must
+    # carry what run() computed rather than re-reading the override itself.
+    assert captured["scene"].clim == (-9.0, 9.0)
+
+
+def test_aligned_field_applies_the_same_override(tmp_path):
+    """The pop-out 3-D viewer must show the limits the PNGs were drawn with."""
+    proc, raw = _setup(tmp_path)
+    p = _stacked_params(
+        proc, raw, tmp_path / "viz", volume_clim_json=_clim_json(mosa_com_mu=(-0.5, 0.5))
+    )
+    _vol, _sp, _cmap, clim, _meta = V.aligned_field(p, "mu_Center_of_mass")
+    assert clim == pytest.approx((-0.5, 0.5))
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "{not json}",
+        '{"no_such_volume": [0, 1]}',
+        '{"strain": [1, 0]}',
+        '{"strain": ["a", 1]}',
+        '{"strain": [0, 1, 2]}',
+        '{"strain": 5}',
+    ],
+)
+def test_an_unusable_clim_override_is_a_user_error(tmp_path, bad, monkeypatch):
+    """Every failure mode names the problem and fires before any volume is read."""
+    from dfxm.common.errors import StageUserError
+
+    proc, raw = _setup(tmp_path)
+    monkeypatch.setattr(
+        V, "_align_streamed", lambda *a, **kw: pytest.fail("a volume was read before validation")
+    )
+    with pytest.raises(StageUserError) as exc:
+        V.run(_stacked_params(proc, raw, tmp_path / "viz", volume_clim_json=bad))
+    assert exc.value.hint
+
+
+def test_a_blank_or_empty_clim_json_is_not_an_error(tmp_path):
+    proc, raw = _setup(tmp_path)
+    for blank in ("", "{}", "   "):
+        res = V.run(
+            _stacked_params(proc, raw, tmp_path / f"viz{len(blank)}", volume_clim_json=blank)
+        )
+        assert len(res.datasets) == 5, blank

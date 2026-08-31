@@ -1009,6 +1009,7 @@ raw root, Map ROI X/Y, output dir
 | `include_mosa_sum` / `include_mosa_specific` | render the summed / single-frame volume from the aligned **mosa** file (both on by default) |
 | `volume_opacity_<volume>` | 3-D opacity for **one** volume, 0–1 (blank = use `volume_opacity`). One per volume: `mosa_com_chi`, `mosa_fwhm_chi`, `mosa_com_mu`, `mosa_fwhm_mu`, `strain`, `raw_sum`, `raw_specific`, `raw_mosa_sum`, `raw_mosa_specific` |
 | `opacity_mapping_<volume>` | opacity transfer function for **one** volume, same nine suffixes (`default` = use `opacity_mapping`) |
+| `volume_clim_json` | fixed colour limits per volume — edited with the **Edit colour limits…** button, not typed. Display only |
 | `center_method` | `midrange` / `mean` / `median` (CoM colour centring only) |
 | `roi_x` / `roi_y` | map-frame crop in map pixels (`c0,c1` / `r0,r1`), relative to the darfix window, NOT absolute detector pixels; pre-filled from the experiment's analysis window |
 | `output_format` | `mp4` / `gif` / `both` |
@@ -1075,6 +1076,16 @@ raw root, Map ROI X/Y, output dir
 > The pop-out [[#3-D volume viewer|3-D viewer]] has always had its own live
 > **Opacity** slider and mapping combo per volume; these fields are what carry
 > the same choice into the *saved* top view and rotation video.
+>
+> **Colour limits** works the same way, one row up in Appearance. Click
+> **Edit colour limits…** for a dialog with the same nine labelled `vmin`/`vmax`
+> rows the [[#Replotting mosaicity layers without re-running|replot dialogs]] use — "Mosaicity COM
+> (χ)", "Raw mosa frame" and so on. Leave a box blank and that limit stays
+> automatic, so you can pin a floor and let the ceiling follow the data. A limit
+> you set is used **exactly as given**: `round_clim` still tidies the automatic
+> limits of every other volume, but never touches one you typed. The limits
+> apply to the layer PNGs, the animation, the 3-D top view, the rotation video
+> and the pop-out viewer alike, and they are what the figure builder exports.
 
 > [!note] The raw volumes are rendered **as stored** — the Map ROI does not touch them
 > The [[#4. Aligned rocking volumes (`rocking`)|rocking]] stage has already done

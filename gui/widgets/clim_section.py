@@ -90,6 +90,22 @@ class ClimGroupSection(QWidget):
             self._layout.addWidget(container)
             self._edits[key] = (vmin, vmax)
 
+    def set_clim_by_group(self, mapping) -> None:
+        """Fill the rows from a ``{key: (vmin, vmax)}`` mapping, blanking the rest.
+
+        The inverse of :meth:`clim_by_group`, for a caller that stores its limits
+        rather than collecting them fresh each time (the visualize stage's
+        ``volume_clim_json`` param). ``None`` or a blank bound leaves that box
+        empty, i.e. automatic. A key with no row is ignored: the value outlives
+        any one set of groups, exactly as ``_values`` does.
+        """
+        for key, pair in dict(mapping or {}).items():
+            edits = self._edits.get(key)
+            if edits is None or not isinstance(pair, (list, tuple)) or len(pair) != 2:
+                continue
+            for edit, bound in zip(edits, pair):
+                edit.setText("" if bound is None else str(bound))
+
     def clim_by_group(self):
         """Return ``{key: (vmin, vmax)}`` for groups with at least one box filled.
 

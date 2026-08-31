@@ -19,6 +19,7 @@ Qt GUI process.
 
 from __future__ import annotations
 
+import json
 import os
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -682,12 +683,29 @@ STAGE = StageSpec(
                 "zero or negative values."
             ),
         ),
+        Param(
+            "volume_clim_json",
+            ParamType.TEXT,
+            "Colour limits",
+            default="{}",
+            advanced=True,
+            group="Appearance",
+            editor="clim_table",
+            help=(
+                'Fixed colour limits per volume, as {"volume": [vmin, vmax]} — click '
+                "\u2018Edit colour limits\u2026\u2019 rather than typing it. A volume with no entry "
+                "keeps its automatic limits, and null keeps one side automatic. A limit "
+                "you set is used exactly as given: 'Round colour limits' does not touch "
+                "it. Display only \u2014 it does not affect the saved data."
+            ),
+        ),
     )
     + _opacity_params(),
     see_also=(
         SeeAlso(
             "",
-            "Colormaps are set per quantity group in “Publication style…” (left panel), not here.",
+            "Colormaps are set per quantity group in “Publication style…” (left panel); "
+            "the colour-limit fields in Advanced below are this stage's own.",
         ),
     ),
     estimate="dfxm.stages.visualize:estimate",
@@ -1419,8 +1437,88 @@ def _selected_mosa_names(p: dict, path) -> list[str]:
     return [n for n in mosa_field_names(path) if p.get(_STACKED_TOGGLE.get(n, ""), True)]
 
 
-def _validate_opacities(p: dict) -> None:
-    """Parse every override up front, so a typo fails before a voxel is read.
+def _clim_overrides(p: dict) -> dict[str, tuple[float | None, float | None]]:
+    """``{volume key: (vmin, vmax)}`` from ``volume_clim_json``; ``{}`` when unset.
+
+    Either bound may be ``None`` — the half-open convention `profiles` already
+    uses, meaning "leave that side automatic". A key absent from the mapping is
+    fully automatic, which is why the default is an empty object: nothing about
+    a run changes until a limit is actually typed.
+
+    Every rejection is a :class:`~dfxm.common.errors.StageUserError` with a
+    hint, because every one of them is a thing the user typed.
+    """
+    raw = str(p.get("volume_clim_json") or "").strip()
+    if not raw or raw == "{}":
+        return {}
+    hint = (
+        'Colour limits are {"volume": [vmin, vmax]} over '
+        f"{', '.join(k for k, _d, _l in _VOLUME_KEYS)}; use null for a limit that "
+        "should stay automatic. Edit them with the Colour limits… button rather "
+        "than by hand."
+    )
+    try:
+        data = json.loads(raw)
+    except ValueError as exc:
+        raise StageUserError(f"'Colour limits' is not valid JSON: {exc}", hint=hint) from None
+    if not isinstance(data, dict):
+        raise StageUserError(
+            f"'Colour limits' must be an object, got {type(data).__name__}", hint=hint
+        )
+    known = {key for key, _ds, _label in _VOLUME_KEYS}
+    out: dict[str, tuple[float | None, float | None]] = {}
+    for key, pair in data.items():
+        if key not in known:
+            raise StageUserError(f"'Colour limits' names no such volume: {key!r}", hint=hint)
+        if not isinstance(pair, (list, tuple)) or len(pair) != 2:
+            raise StageUserError(
+                f"'Colour limits' for {key!r} must be a [vmin, vmax] pair, got {pair!r}", hint=hint
+            )
+        bounds: list[float | None] = []
+        for bound in pair:
+            if bound is None or (isinstance(bound, str) and not bound.strip()):
+                bounds.append(None)
+                continue
+            try:
+                bounds.append(float(bound))
+            except (TypeError, ValueError):
+                raise StageUserError(
+                    f"'Colour limits' for {key!r} has a non-numeric bound: {bound!r}", hint=hint
+                ) from None
+        lo, hi = bounds
+        if lo is not None and hi is not None and lo >= hi:
+            raise StageUserError(
+                f"'Colour limits' for {key!r} is empty: vmin {lo:g} is not below vmax {hi:g}",
+                hint=hint,
+            )
+        if lo is not None or hi is not None:
+            out[key] = (lo, hi)
+    return out
+
+
+def _apply_clim_override(name, vmin, vmax, overrides):
+    """``(vmin, vmax, overridden)`` for one dataset, given the parsed overrides.
+
+    *overridden* says whether either bound came from the user, which is what
+    :func:`run` uses to skip `apply_round_clim`: rounding a limit that was typed
+    would contradict it, and rounding only the automatic half of a half-open
+    pair would make a helper whose whole job is tidy symmetric pairs emit an
+    asymmetric one.
+    """
+    key = _KEY_BY_DATASET.get(name)
+    pair = overrides.get(key) if key else None
+    if pair is None:
+        return float(vmin), float(vmax), False
+    lo, hi = pair
+    return (
+        float(vmin if lo is None else lo),
+        float(vmax if hi is None else hi),
+        True,
+    )
+
+
+def _validate_display(p: dict) -> None:
+    """Parse every display override up front, so a typo fails before a voxel is read.
 
     Without this the bad value surfaces inside `_process_dataset`, i.e. after
     the dataset it belongs to has been aligned — on a real volume, twenty
@@ -1428,6 +1526,7 @@ def _validate_opacities(p: dict) -> None:
     """
     for key, _ds, _label in _VOLUME_KEYS:
         _parse_opacity(p.get(f"volume_opacity_{key}", ""), f"volume_opacity_{key}")
+    _clim_overrides(p)
 
 
 def _raw_config_for(kind: str, p: dict) -> dict | None:
@@ -1845,11 +1944,12 @@ def run(params: dict, progress: ProgressFn | None = None) -> VisualizeResult:
         os.path.dirname(p["mosa_volume_file"] or p["strain_volume_file"] or "."),
         "aligned_volume_visualizations",
     )
-    _validate_opacities(p)
+    _validate_display(p)
     result = VisualizeResult(output_dir=out_dir)
     os.makedirs(out_dir, exist_ok=True)
     raw_root = (p["raw_root"] or "").rstrip("/")
     budget_bytes = _run_budget_bytes(p, out_dir)
+    clim_overrides = _clim_overrides(p)
 
     # --- how the bar is divided -------------------------------------------
     # One equal slice per DATASET across both halves, rather than the old fixed
@@ -1920,7 +2020,10 @@ def run(params: dict, progress: ProgressFn | None = None) -> VisualizeResult:
                     center_method=p["center_method"],
                     range_pct=float(p["range_pct"]),
                 )
-                vmin, vmax, clim_note = apply_round_clim(vmin, vmax, style)
+                vmin, vmax, forced = _apply_clim_override(name, vmin, vmax, clim_overrides)
+                vmin, vmax, clim_note = (
+                    (vmin, vmax, None) if forced else apply_round_clim(vmin, vmax, style)
+                )
                 if clim_note:
                     progress(ds_lo, f"{name}: {clim_note}")
                 prod = _process_dataset(
@@ -1975,7 +2078,10 @@ def run(params: dict, progress: ProgressFn | None = None) -> VisualizeResult:
                     budget_bytes=budget_bytes,
                 )
                 source, vmin, vmax = _source_and_clim(streamed, kind="strain")
-                vmin, vmax, clim_note = apply_round_clim(vmin, vmax, style)
+                vmin, vmax, forced = _apply_clim_override("strain", vmin, vmax, clim_overrides)
+                vmin, vmax, clim_note = (
+                    (vmin, vmax, None) if forced else apply_round_clim(vmin, vmax, style)
+                )
                 if clim_note:
                     progress(st_lo, f"strain: {clim_note}")
                 prod = _process_dataset(
@@ -2027,7 +2133,10 @@ def run(params: dict, progress: ProgressFn | None = None) -> VisualizeResult:
             # quantity: the 1st/99th percentile limits with no centring, which
             # is what `slices` gives its own `raw_*` volumes.
             source, vmin, vmax = _source_and_clim(streamed, kind="fwhm")
-            vmin, vmax, clim_note = apply_round_clim(vmin, vmax, style)
+            vmin, vmax, forced = _apply_clim_override(kind, vmin, vmax, clim_overrides)
+            vmin, vmax, clim_note = (
+                (vmin, vmax, None) if forced else apply_round_clim(vmin, vmax, style)
+            )
             if clim_note:
                 progress(ds_lo, f"{kind}: {clim_note}")
             prod = _process_dataset(
@@ -2101,6 +2210,9 @@ def aligned_field(params: dict, name: str):
     roi_x, roi_y = _parse_pair(p["roi_x"]), _parse_pair(p["roi_y"])
     raw_root = (p["raw_root"] or "").rstrip("/")
     budget_bytes = _run_budget_bytes(p)
+    # The same override the run applied, so the viewer shows the limits the
+    # PNGs were drawn with rather than its own recomputed ones.
+    clim_overrides = _clim_overrides(p)
 
     if name in _RAW_TITLES:
         # Already aligned: read it, do not align it. Its spacing is the file's,
@@ -2117,6 +2229,7 @@ def aligned_field(params: dict, name: str):
             source, vmin, vmax = _source_and_clim(streamed, kind="fwhm")
             data = _materialise(source)
         _t, label, group = _display_info(name, frame_idx=frame_idx)
+        vmin, vmax, _forced = _apply_clim_override(name, vmin, vmax, clim_overrides)
         return (
             data,
             (sx_raw, sy_raw, scale_z),
@@ -2171,6 +2284,7 @@ def aligned_field(params: dict, name: str):
         _t, label, group = _display_info(name)
         cmap = resolve_cmap(None, group)
         meta = {"cbar_label": label, "group": group}
+    vmin, vmax, _forced = _apply_clim_override(name, vmin, vmax, clim_overrides)
     return data, (scale_x, scale_y, scale_z), cmap, (float(vmin), float(vmax)), meta
 
 

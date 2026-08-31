@@ -78,7 +78,7 @@ class Param:
     # the validation and not the button: it has no map to draw a picker on.
     roi_frame: str = ""  # "" | "detector" | "map" — the coordinate frame of a ROI param
     advice_key: str = ""  # key into Advisory.hints -> a note under this field
-    editor: str = ""  # render hint: "" = by type; "summary_json" = summary + raw dialog
+    editor: str = ""  # render hint: "" = by type; "summary_json" / "clim_table" = dialogs
 
     def __post_init__(self) -> None:
         if self.type is ParamType.ENUM and not self.choices:

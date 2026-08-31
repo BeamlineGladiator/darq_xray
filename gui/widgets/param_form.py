@@ -12,7 +12,9 @@ Maps each parameter type to an editor widget:
 A param may override that mapping with a ``Param.editor`` render hint:
 ``"summary_json"`` renders a ``TEXT`` param as a
 :class:`~gui.widgets.jobs_summary.JobsSummaryEditor` (one-line summary + an
-"Edit raw JSON…" dialog). An unknown hint falls back to the type's editor.
+"Edit raw JSON…" dialog); ``"clim_table"`` renders one as a
+:class:`~gui.widgets.clim_table.ClimTableEditor` (one-line summary + a labelled
+per-volume vmin/vmax dialog). An unknown hint falls back to the type's editor.
 
 Calibration parameters (``param.calibration``) get a highlighted label and a
 "⚠ calibration" suffix, because their values are physically meaningful.
@@ -361,6 +363,8 @@ class ParamForm(QWidget):
             return self._path_editor(p, value)
         if p.type is ParamType.TEXT and p.editor == "summary_json":
             return self._summary_json_editor(p, value)
+        if p.type is ParamType.TEXT and p.editor == "clim_table":
+            return self._clim_table_editor(p, value)
         if p.type is ParamType.TEXT:
             return self._text_editor(p, value)
         return self._str_editor(p, value)
@@ -428,6 +432,13 @@ class ParamForm(QWidget):
         from .jobs_summary import JobsSummaryEditor
 
         ed = JobsSummaryEditor("" if value is None else str(value), p.label)
+        self._register(p.name, ed.text, ed.setText, ed.textChanged)
+        return ed
+
+    def _clim_table_editor(self, p: Param, value: Any) -> QWidget:
+        from .clim_table import ClimTableEditor
+
+        ed = ClimTableEditor("" if value is None else str(value), p.label)
         self._register(p.name, ed.text, ed.setText, ed.textChanged)
         return ed
 
