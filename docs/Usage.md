@@ -1012,6 +1012,7 @@ raw root, Map ROI X/Y, output dir
 | `volume_clim_json` | fixed colour limits per volume — edited with the **Edit colour limits…** button, not typed. Display only |
 | `center_method` | `midrange` / `mean` / `median` (CoM colour centring only) |
 | `roi_x` / `roi_y` | map-frame crop in map pixels (`c0,c1` / `r0,r1`), relative to the darfix window, NOT absolute detector pixels; pre-filled from the experiment's analysis window |
+| `output_dir` | where the products are written. Leave it blank and the stage writes to an `aligned_volume_visualizations/` folder **beside the first volume file you gave it** — the stacked mosaicity/strain file if you set one, otherwise the aligned raw file — as an absolute path |
 | `output_format` | `mp4` / `gif` / `both` |
 | `save_rotation` | write a 360° orbiting movie of the 3-D volume render (same look and opacity as the top view; container follows `output_format`). Slow — off by default |
 | `render_mode` | how the 3-D top view and rotation video draw the volume: `volume` (default — true volumetric rendering, shaded, transfer-function opacity), `surface` (the legacy NaN-thresholded mesh), or `isosurface` (stacked contour shells) |
@@ -1105,6 +1106,14 @@ raw root, Map ROI X/Y, output dir
 > and titles there — `raw_sum`, `raw_specific`, `raw_mosa_sum`,
 > `raw_mosa_specific`. Run the rocking stage twice to get all four: once with
 > **Source scan = rocking**, once with **Source scan = mosaicity**.
+>
+> Clearing one of the two file fields is how you skip that file on the next run
+> — but the *previous* run's raw figures are still listed in the figure builder
+> and the export dialog. Rebuilding one of those now says so by name ("'Aligned
+> rocking volume' is blank, so `raw_sum` cannot be rebuilt"); point the field
+> back at the file it was rendered from, or re-run the stage. Same for a file
+> that has since **moved**: listing the figures always works, and only the
+> rebuild that needs the voxels fails.
 
 > [!warning] "these volumes will NOT overlay"
 > The raw and stacked volumes are co-registered only when the rocking run's

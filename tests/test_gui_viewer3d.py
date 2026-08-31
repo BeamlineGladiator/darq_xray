@@ -225,7 +225,10 @@ def test_controls_mutate_scene_and_trigger_rebuild(monkeypatch):
     assert w.scene.clim == (0.2, 0.8)
     w._opacity_slider.setValue(40)
     assert w.scene.opacity == pytest.approx(0.4)
-    w._mapping_combo.setCurrentText("sigmoid")
+    # By item DATA, not text: the mapping combo shows a self-describing label
+    # ("sigmoid — …") with the bare value behind it, so `setCurrentText` finds
+    # no matching item and silently does nothing on a non-editable combo.
+    w._mapping_combo.setCurrentIndex(w._mapping_combo.findData("sigmoid"))
     assert w.scene.opacity_mapping == "sigmoid"
     assert len(calls) >= 4
     w.close()

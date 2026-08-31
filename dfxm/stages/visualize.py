@@ -1556,6 +1556,18 @@ def _raw_config_for(kind: str, p: dict) -> dict | None:
     return None
 
 
+def _raw_file_label(kind: str) -> str:
+    """The form label of the file param a raw *kind* is read from.
+
+    So the failure a cleared path causes can name the field the user cleared,
+    in the words the form uses for it, rather than the internal kind.
+    """
+    for _toggle, file_param, _dataset, k in _RAW_VOLUMES:
+        if k == kind:
+            return STAGE.get(file_param).label
+    return kind
+
+
 def _raw_mismatch_note(kind, shape, aligned_shape) -> str | None:
     """A note when a raw volume's ``(Y, X)`` differs from the stacked volumes'.
 
@@ -1942,6 +1954,30 @@ def _run_budget_bytes(p: dict, out_dir: str | None = None) -> int:
     )
 
 
+def _default_out_dir(p: dict) -> str:
+    """Where the run writes when 'Output directory' is left blank.
+
+    Beside the first volume file the run is given, trying the stacked pair
+    before the aligned raw files. The raw files have to be in the fallback
+    because they render *independently* of the stacked pair: "only
+    `aligned_rocking_file` set" is a first-class configuration now, and
+    ``os.path.dirname("")`` is ``""``, which used to put the whole output
+    directory in the stage child's working directory — wherever the GUI happened
+    to be launched from — and hand a *relative* ``output_dir`` to the summary,
+    to "open output folder", and to whatever the result is chained into.
+
+    Absolute for the same reason: the path outlives the process that made it.
+    """
+    raw_params = dict.fromkeys(file_param for _t, file_param, _d, _k in _RAW_VOLUMES)
+    for key in ("mosa_volume_file", "strain_volume_file", *raw_params):
+        path = str(p.get(key) or "")
+        if path:
+            return os.path.abspath(
+                os.path.join(os.path.dirname(path), "aligned_volume_visualizations")
+            )
+    return os.path.abspath("aligned_volume_visualizations")
+
+
 def run(params: dict, progress: ProgressFn | None = None) -> VisualizeResult:
     progress = progress or _noop
     p = {**STAGE.defaults(), **params}
@@ -1949,10 +1985,7 @@ def run(params: dict, progress: ProgressFn | None = None) -> VisualizeResult:
     scale_x = float(p["pixel_size_x_um"])
     samy_dir = int(p["samy_direction"])
     roi_x, roi_y = _parse_pair(p["roi_x"]), _parse_pair(p["roi_y"])
-    out_dir = p["output_dir"] or os.path.join(
-        os.path.dirname(p["mosa_volume_file"] or p["strain_volume_file"] or "."),
-        "aligned_volume_visualizations",
-    )
+    out_dir = p["output_dir"] or _default_out_dir(p)
     _validate_display(p)
     result = VisualizeResult(output_dir=out_dir)
     os.makedirs(out_dir, exist_ok=True)
@@ -2361,7 +2394,8 @@ def figures(result: "VisualizeResult", params: dict) -> list[FigureSpec]:
         is_strain = ds.name == "strain"
         # By the dataset's own name, not by what the form would render now: the
         # result being catalogued is one a past run made.
-        raw_cfg = _raw_config_for(ds.name, p) if ds.name in _RAW_TITLES else None
+        is_raw = ds.name in _RAW_TITLES
+        raw_cfg = _raw_config_for(ds.name, p) if is_raw else None
         # A raw volume is drawn at ITS file's scales, not the form's — the same
         # rule `run()` follows, so an exported figure matches the saved PNG.
         frame_idx, (dsx, dsy) = (
@@ -2376,10 +2410,28 @@ def figures(result: "VisualizeResult", params: dict) -> list[FigureSpec]:
         # First build() call fills cache["vol"]; the rest reuse it.
         cache: dict = {}
 
-        if raw_cfg is not None:
+        if is_raw:
             # No alignment, no ROI, no motors: the file already holds the aligned
             # volume, so the "loader" is a read.
-            def _aligned_vol(_cfg=raw_cfg, _cache=cache):
+            #
+            # Branched on the NAME, not on `raw_cfg is not None`: a raw dataset
+            # whose file param the form no longer carries must still fail as a
+            # raw one. Falling through to the mosaicity branch instead built a
+            # spec that died in `spec.build` with a bare `TypeError: expected
+            # str, bytes or os.PathLike object, not NoneType` — and clearing the
+            # path is exactly what a user does to skip that file on a re-run,
+            # while the previous result is still on screen. Same contract as a
+            # file that has MOVED: listing specs stays cheap and total, the
+            # failure lands in build() and says what to do about it.
+            def _aligned_vol(_cfg=raw_cfg, _name=ds.name, _cache=cache):
+                if _cfg is None:
+                    raise StageUserError(
+                        f"'{_raw_file_label(_name)}' is blank, so {_name} cannot be rebuilt",
+                        hint=(
+                            "This figure came from an earlier run. Point that field back at "
+                            "the file it was rendered from, or re-run the stage."
+                        ),
+                    )
                 if "vol" not in _cache:
                     with h5py.File(_cfg["path"], "r") as f:
                         _cache["vol"] = np.asarray(f[_cfg["dataset"]][:])

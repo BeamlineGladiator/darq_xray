@@ -1343,6 +1343,52 @@ def test_figures_do_not_raise_when_a_raw_file_has_moved(tmp_path):
     assert any(s.figure_id.startswith("visualize_raw_mosa_sum_z") for s in specs)
 
 
+def test_figures_fail_by_name_when_a_raw_path_has_been_cleared(tmp_path):
+    """A CLEARED path is not a moved file — but it must fail just as legibly.
+
+    Blanking the field is how a user skips that file on a re-run, and the
+    previous result is still on screen while they do it. Routing the dataset by
+    `raw_cfg is not None` sent it down the *mosaicity* branch, which built a
+    spec that died in `build()` with a bare `TypeError: expected str, bytes or
+    os.PathLike object, not NoneType`. Datasets from the file that is still
+    named must keep building.
+    """
+    from dfxm.common.errors import StageUserError
+
+    p = _raw_params(tmp_path, tmp_path / "viz")
+    res = V.run(p)
+    cleared = {**p, "aligned_rocking_file": ""}
+    specs = V.figures(res, cleared)  # listing still must not raise
+    spec = next(s for s in specs if s.figure_id == "visualize_raw_sum_z0000")
+    with pytest.raises(StageUserError) as exc:
+        spec.build(None)
+    assert "Aligned rocking volume" in str(exc.value)
+    intact = next(s for s in specs if s.figure_id == "visualize_raw_mosa_sum_z0000")
+    assert intact.build(None).axes
+
+
+def test_a_raw_only_run_writes_beside_its_volume_not_into_the_cwd(tmp_path, monkeypatch):
+    """A blank 'Output directory' must never resolve against the process CWD.
+
+    The default was derived from the stacked pair alone, so a run given only the
+    aligned raw volumes joined `os.path.dirname("")` — the empty string — and
+    wrote its whole output tree wherever `python3 -m gui.app` had been launched
+    from, then handed a RELATIVE `output_dir` to the summary, to "open output
+    folder" and to anything the result was chained into. Rendering raw volumes
+    without a stacked one is a first-class configuration now.
+    """
+    elsewhere = tmp_path / "launch_dir"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+    vols = tmp_path / "processed"
+    vols.mkdir()
+    p = _raw_params(vols, "", include_mosa_sum=False, include_mosa_specific=False)
+    res = V.run(p)
+    assert res.output_dir == str(vols / "aligned_volume_visualizations")
+    assert os.path.isabs(res.output_dir)
+    assert list(elsewhere.iterdir()) == []
+
+
 # -- per-volume selection + per-volume 3-D opacity ----------------------------
 def _stacked_params(proc, raw, out, **over):
     p = {
