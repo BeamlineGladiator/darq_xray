@@ -2513,6 +2513,10 @@ far you scroll the sections — see the Export bullet at the end of this list):
     rid of the blank frame around an aligned map or oblique slice without
     typing pixel bounds; when an ROI is also given, the box is searched inside
     that ROI; trace panels ignore it),
+    a **Y-axis numbers** checkbox (trace panels only — untick it to print the
+    line-shape's sum-intensity axis without tick numbers or a ×10ⁿ offset; the
+    tick marks, the grid and the y-label stay, and the panel's left margin
+    shrinks to match; greyed out on map panels),
     **colour limits** as `lo,hi` (either half may be left blank to keep that
     bound automatic), **colormap** (blank = follow the style), a three-state
     **Label** control — *Auto letter* (the automatic sequence letter, the

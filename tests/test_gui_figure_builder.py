@@ -1705,3 +1705,23 @@ def test_default_save_dir_survives_a_broken_defaults_provider():
 
     w = _track(FigureBuilderWindow(boom, PlotStyle(scale_um_per_cm=10.0)))
     assert w._default_save_dir() == ""
+
+
+def test_override_y_tick_labels_checkbox_trace_only():
+    import json
+
+    from dfxm.compose.recipe import recipe_to_json
+
+    w = _win()
+    trace = PanelDef("t", PanelSource("/x.h5", "profiles_trace", {"job": {}, "field": "strain"}))
+    w.add_panels([_panel("a"), trace])
+    w._select_outline_panel("t")
+    assert w._ov_ynums.isEnabled() and w._ov_ynums.isChecked()
+    w._ov_ynums.setChecked(False)  # real widget signal path
+    assert trace.y_tick_labels is False and w.is_dirty()
+    assert json.loads(recipe_to_json(w.recipe()))["panels"][1]["y_tick_labels"] is False
+    trace.y_tick_labels = True
+    w._load_panel_page(trace)
+    assert w._ov_ynums.isChecked()
+    w._select_outline_panel("a")
+    assert not w._ov_ynums.isEnabled()  # map panels have no such switch

@@ -970,6 +970,14 @@ class FigureBuilderWindow(QMainWindow):
         self._ov_crop.toggled.connect(lambda _c: self._on_override_field_edited("crop_to_data"))
         form.addRow("", self._ov_crop)
 
+        self._ov_ynums = QCheckBox("Y-axis numbers")
+        self._ov_ynums.setToolTip(
+            "Untick to drop the tick numbers (and any ×10ⁿ offset) from this trace's "
+            "y-axis; the tick marks and the y-label stay. Trace panels only."
+        )
+        self._ov_ynums.toggled.connect(lambda _c: self._on_override_field_edited("y_tick_labels"))
+        form.addRow("", self._ov_ynums)
+
         self._ov_clim = QLineEdit()
         self._ov_clim.setPlaceholderText("lo,hi (blank half ok; blank both = stored)")
         self._ov_clim.textChanged.connect(lambda _t: self._on_override_field_edited("clim"))
@@ -1038,6 +1046,7 @@ class FigureBuilderWindow(QMainWindow):
         widgets = (
             self._ov_roi,
             self._ov_crop,
+            self._ov_ynums,
             self._ov_clim,
             self._ov_cmap,
             self._ov_label_mode,
@@ -1050,6 +1059,8 @@ class FigureBuilderWindow(QMainWindow):
             w.blockSignals(True)
         self._ov_roi.setText(",".join(str(v) for v in panel.roi) if panel.roi else "")
         self._ov_crop.setChecked(bool(panel.crop_to_data))
+        self._ov_ynums.setChecked(bool(panel.y_tick_labels))
+        self._ov_ynums.setEnabled(panel.source.kind == "profiles_trace")
         if panel.clim is not None:
             lo, hi = panel.clim
             lo_s = "" if lo is None else f"{lo:g}"
@@ -1189,6 +1200,7 @@ class FigureBuilderWindow(QMainWindow):
         getters = {
             "roi": self._ov_roi.text,
             "crop_to_data": self._ov_crop.isChecked,
+            "y_tick_labels": self._ov_ynums.isChecked,
             "clim": self._ov_clim.text,
             "cmap": self._ov_cmap.currentText,
             "label": self._label_override_value,
@@ -1272,6 +1284,8 @@ class FigureBuilderWindow(QMainWindow):
             changes["roi"] = new_roi
         if "crop_to_data" in values:
             changes["crop_to_data"] = bool(values["crop_to_data"])
+        if "y_tick_labels" in values:
+            changes["y_tick_labels"] = bool(values["y_tick_labels"])
         if "clim" in values:
             changes["clim"] = new_clim
         if "cmap" in values:
