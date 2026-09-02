@@ -461,6 +461,10 @@ def draw_panel(
             ax.set_title("")
         if not show_xlabel:
             ax.tick_params(labelbottom=False)
+        if not panel.y_tick_labels:
+            # numbers only: tick marks, grid and the y-label stay
+            ax.tick_params(labelleft=False)
+            ax.yaxis.get_offset_text().set_visible(False)
         return None
     raise StageUserError(f"unknown panel kind {data.kind!r}", hint="Recipe is corrupt.")
 

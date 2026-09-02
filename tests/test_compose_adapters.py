@@ -405,3 +405,28 @@ def test_panel_preview_full_frame_for_roi_picking(tmp_path):
     gone = PanelDef("g", PanelSource(str(tmp_path / "nope.h5"), "profiles_ref", {"job": JOB}))
     with pytest.raises(ValueError):
         panel_preview(gone)
+
+
+def test_draw_panel_trace_y_tick_labels_off_hides_numbers_keeps_label(tmp_path):
+    h5 = _write_obl(tmp_path / "obl.h5")
+    fig = Figure(figsize=(6, 4))
+    ax = fig.add_subplot(111)
+    p = PanelDef(
+        "t", PanelSource(h5, "profiles_trace", {"job": JOB, "field": "strain"}), y_tick_labels=False
+    )
+    draw_panel(ax, p, load_panel(p), None)
+    assert ax.get_yticklabels() == []  # matplotlib drops invisible labels from this list
+    assert ax.yaxis.get_offset_text().get_visible() is False
+    assert ax.get_ylabel() and ax.yaxis.label.get_visible()
+    assert ax.yaxis.get_major_ticks()[0].tick1line.get_visible()  # tick marks stay
+    assert ax.get_xticklabels()  # x numbers untouched
+
+
+def test_draw_panel_y_tick_labels_ignored_by_non_trace_kinds(tmp_path):
+    h5 = _write_obl(tmp_path / "obl.h5")
+    fig = Figure(figsize=(6, 4))
+    ax = fig.add_subplot(111)
+    sel = {"volume_id": "strain", "slice_name": "obl", "plane": 0}
+    p = PanelDef("s", PanelSource(h5, "slice_plane", sel), y_tick_labels=False)
+    draw_panel(ax, p, load_panel(p), None, colorbar=False, scale_bar=False)
+    assert ax.yaxis.get_offset_text().get_visible() is True

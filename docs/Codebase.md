@@ -1271,6 +1271,10 @@ so `import dfxm.compose` stays light.
   dict for trace panels (`None` = derive from a default `ComposeStyle` and
   *style*, i.e. fonts follow `style.font_scale`); before 2026-08-18 traces were
   hard-coded to `linewidth=1.8, font_scale=1.0` regardless of the style.
+  When `panel.y_tick_labels` is `False` the trace branch also calls
+  `ax.tick_params(labelleft=False)` and hides `ax.yaxis.get_offset_text()` —
+  the tick marks, grid and y-label are untouched, and `layout.measure_cells`
+  shrinks the left margin on its own because it measures what was drawn.
 - `panel_preview(panel) -> (array2d, sx_um, sy_um)` (2026-08-19) — the FULL
   frame of an image panel for the figure builder's ROI picker: reloads the
   source with `roi=None`/`crop_to_data=False` (so the picker's pixel
