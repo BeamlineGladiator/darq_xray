@@ -20,6 +20,7 @@ Selector shapes (per ``PanelSource.kind``):
 - ``profiles_ref``: ``{"job": dict, "field": str | None}`` (``None`` picks the
   job's reference field).
 - ``profiles_trace``: ``{"job": dict, "field": str}``.
+- ``image``: ``{}`` — no selector; ``h5_path`` is the PNG/JPEG/TIFF file itself.
 """
 
 from __future__ import annotations
@@ -347,6 +348,17 @@ def draw_panel(
     if data.kind == "placeholder":
         draw_placeholder(ax, data.payload["reason"])
         return None
+    if data.kind == "image":
+        img = data.payload["image"]
+        # the cell already has the image's aspect, so "auto" fills it edge to
+        # edge; no title, colourbar or scale bar for an external image. A 2-D
+        # (greyscale) file is drawn AS STORED on the loader's [0, 1] scale —
+        # without a fixed norm imshow would autoscale to the array's min/max
+        # and contrast-stretch it (imshow ignores vmin/vmax for RGB(A)).
+        grey = {"cmap": "gray", "vmin": 0.0, "vmax": 1.0} if img.ndim == 2 else {}
+        ax.imshow(img, interpolation="none", aspect="auto", **grey)
+        ax.set_axis_off()
+        return None
     from ..common.plotting import resolve_cmap
 
     titled = panel.show_title if panel.show_title is not None else show_title
@@ -461,6 +473,13 @@ def draw_panel(
             ax.set_title("")
         if not show_xlabel:
             ax.tick_params(labelbottom=False)
+        if not panel.y_tick_labels:
+            # numbers only: tick marks, grid and the y-label stay
+            ax.tick_params(labelleft=False)
+            ax.yaxis.get_offset_text().set_visible(False)
+            for t in ax.texts:  # apply_axis_tickfmt's static "scientific" x10^n
+                if t.get_gid() == "tickfmt-exponent-y":
+                    t.set_visible(False)
         return None
     raise StageUserError(f"unknown panel kind {data.kind!r}", hint="Recipe is corrupt.")
 
@@ -473,6 +492,8 @@ def panel_preview(panel: PanelDef):
     and for unavailable data (the placeholder reason)."""
     if panel.source.kind == "profiles_trace":
         raise ValueError("a trace panel has no ROI to pick")
+    if panel.source.kind == "image":
+        raise ValueError("an image panel's ROI is a pixel crop — type it in the ROI box")
     full = PanelDef(panel.id, panel.source)  # roi=None, crop_to_data=False
     data = load_panel(full)
     if data.kind == "placeholder":
@@ -515,9 +536,31 @@ def draw_placeholder(ax, reason: str) -> None:
     )
 
 
+def _load_image(path, sel, roi, *, crop_to_data=False) -> PanelData:
+    """An external raster (PNG/JPEG/TIFF) as a lettered panel.
+
+    ``ext_x_um``/``ext_y_um`` carry PIXELS — used only for the aspect ratio by
+    ``layout._image_cell``, never as a physical scale. ``roi`` is a plain
+    ``(r0, r1, c0, c1)`` pixel crop; ``crop_to_data`` is ignored. A missing or
+    undecodable file raises and becomes a placeholder in ``load_panel``.
+    """
+    import numpy as np
+    from matplotlib.image import imread
+
+    arr = np.asarray(imread(path))
+    if arr.dtype.kind in "ui":
+        arr = arr.astype("f4") / float(np.iinfo(arr.dtype).max)
+    cropped = crop_roi_2d(arr, roi)
+    if cropped is None or cropped.shape[0] == 0 or cropped.shape[1] == 0:
+        raise ValueError(f"ROI {roi} leaves no pixels")  # roi may be None on a 0-size file
+    h, w = cropped.shape[:2]
+    return PanelData(kind="image", ext_x_um=float(w), ext_y_um=float(h), payload={"image": cropped})
+
+
 _LOADERS = {
     "map_layer": _load_map_layer,
     "slice_plane": _load_slice_plane,
     "profiles_ref": _load_profiles_ref,
     "profiles_trace": _load_profiles_trace,
+    "image": _load_image,
 }

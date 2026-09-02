@@ -405,3 +405,152 @@ def test_panel_preview_full_frame_for_roi_picking(tmp_path):
     gone = PanelDef("g", PanelSource(str(tmp_path / "nope.h5"), "profiles_ref", {"job": JOB}))
     with pytest.raises(ValueError):
         panel_preview(gone)
+
+
+def test_draw_panel_trace_y_tick_labels_off_hides_numbers_keeps_label(tmp_path):
+    h5 = _write_obl(tmp_path / "obl.h5")
+    fig = Figure(figsize=(6, 4))
+    ax = fig.add_subplot(111)
+    p = PanelDef(
+        "t", PanelSource(h5, "profiles_trace", {"job": JOB, "field": "strain"}), y_tick_labels=False
+    )
+    draw_panel(ax, p, load_panel(p), None)
+    assert ax.get_yticklabels() == []  # matplotlib drops invisible labels from this list
+    assert ax.yaxis.get_offset_text().get_visible() is False
+    assert ax.get_ylabel() and ax.yaxis.label.get_visible()
+    assert ax.yaxis.get_major_ticks()[0].tick1line.get_visible()  # tick marks stay
+    assert ax.get_xticklabels()  # x numbers untouched
+
+
+def test_draw_panel_y_tick_labels_ignored_by_non_trace_kinds(tmp_path):
+    h5 = _write_obl(tmp_path / "obl.h5")
+    fig = Figure(figsize=(6, 4))
+    ax = fig.add_subplot(111)
+    sel = {"volume_id": "strain", "slice_name": "obl", "plane": 0}
+    p = PanelDef("s", PanelSource(h5, "slice_plane", sel), y_tick_labels=False)
+    draw_panel(ax, p, load_panel(p), None, colorbar=False, scale_bar=False)
+    assert ax.yaxis.get_offset_text().get_visible() is True
+
+
+def test_draw_panel_trace_y_tick_labels_off_hides_scientific_exponent(tmp_path):
+    from dfxm.common.plotting import PlotStyle
+
+    h5 = _write_obl(tmp_path / "obl.h5")
+    with h5py.File(h5, "r+") as f:
+        f["strain/obl/slices"][...] = f["strain/obl/slices"][...] * 1e-3  # strain-sized values
+    st = PlotStyle(tickfmt_strain="scientific")
+    src = PanelSource(h5, "profiles_trace", {"job": JOB, "field": "strain"})
+
+    def exponent_visible(ax):
+        return any(t.get_visible() and "10^" in t.get_text() for t in ax.texts)
+
+    # control: with the flag on, the scientific format really draws a x10^n text
+    ax_on = Figure(figsize=(6, 4)).add_subplot(111)
+    p_on = PanelDef("t1", src)
+    draw_panel(ax_on, p_on, load_panel(p_on), st)
+    assert exponent_visible(ax_on)
+    ax_off = Figure(figsize=(6, 4)).add_subplot(111)
+    p_off = PanelDef("t2", src, y_tick_labels=False)
+    draw_panel(ax_off, p_off, load_panel(p_off), st)
+    assert not exponent_visible(ax_off)
+    assert ax_off.get_ylabel() and ax_off.yaxis.label.get_visible()  # y-label stays
+
+
+def _write_png(path, w=40, h=20):
+    from matplotlib.image import imsave
+
+    rgb = np.zeros((h, w, 3), "f4")
+    rgb[..., 0] = np.linspace(0.0, 1.0, w)[None, :]
+    imsave(str(path), rgb)
+    return str(path)
+
+
+def test_load_image_pixels_as_extent_and_float_rgb_payload(tmp_path):
+    png = _write_png(tmp_path / "ref.png")
+    d = load_panel(PanelDef("i", PanelSource(png, "image", {})))
+    assert d.kind == "image" and (d.ext_x_um, d.ext_y_um) == (40.0, 20.0)
+    img = d.payload["image"]
+    assert img.shape[:2] == (20, 40) and img.dtype.kind == "f"
+    assert 0.0 <= float(img.min()) and float(img.max()) <= 1.0
+    assert d.group is None and d.vmin is None
+
+
+@pytest.mark.parametrize("fmt", ["jpeg_rgb_u8", "tiff_grey_u16"])
+def test_load_image_integer_formats_normalised_to_unit_floats(tmp_path, fmt):
+    # PNG comes back from matplotlib already as float32 in 0-1; JPEG and TIFF
+    # arrive as uint8/uint16 and go through the loader's /max normalisation
+    from PIL import Image
+
+    if fmt == "jpeg_rgb_u8":
+        arr = np.zeros((20, 40, 3), "u1")
+        arr[..., 0] = np.linspace(0, 255, 40).astype("u1")[None, :]
+        path = tmp_path / "ref.jpg"
+        Image.fromarray(arr, mode="RGB").save(str(path))
+        ndim = 3
+    else:
+        arr16 = np.linspace(0, 65535, 40).astype("u2")[None, :].repeat(20, axis=0)
+        path = tmp_path / "ref.tif"
+        Image.fromarray(arr16, mode="I;16").save(str(path))
+        ndim = 2
+    d = load_panel(PanelDef("i", PanelSource(str(path), "image", {})))
+    assert d.kind == "image"
+    img = d.payload["image"]
+    assert img.dtype.kind == "f" and img.ndim == ndim
+    assert 0.0 <= float(img.min()) and float(img.max()) <= 1.0
+    assert float(img.max()) > 0.5  # actually normalised by the dtype max, not squashed
+    assert (d.ext_x_um, d.ext_y_um) == (40.0, 20.0)
+
+
+def test_load_image_roi_is_a_pixel_crop_and_empty_crop_is_placeholder(tmp_path):
+    png = _write_png(tmp_path / "ref.png")
+    d = load_panel(PanelDef("i", PanelSource(png, "image", {}), roi=(5, 15, 10, 30)))
+    assert (d.ext_x_um, d.ext_y_um) == (20.0, 10.0)
+    assert d.payload["image"].shape[:2] == (10, 20)
+    d2 = load_panel(PanelDef("i", PanelSource(png, "image", {}), roi=(5, 5, 10, 30)))
+    assert d2.kind == "placeholder" and "ref.png" in d2.payload["reason"]
+
+
+def test_load_image_missing_file_is_placeholder_not_error(tmp_path):
+    d = load_panel(PanelDef("i", PanelSource(str(tmp_path / "gone.png"), "image", {})))
+    assert d.kind == "placeholder" and "gone.png" in d.payload["reason"]
+
+
+def test_load_image_crop_to_data_is_ignored(tmp_path):
+    png = _write_png(tmp_path / "ref.png")
+    d = load_panel(PanelDef("i", PanelSource(png, "image", {}), crop_to_data=True))
+    assert (d.ext_x_um, d.ext_y_um) == (40.0, 20.0)
+
+
+def test_panel_preview_refuses_image_panel(tmp_path):
+    from dfxm.compose.adapters import panel_preview
+
+    png = _write_png(tmp_path / "ref.png")
+    with pytest.raises(ValueError, match="pixel crop"):
+        panel_preview(PanelDef("i", PanelSource(png, "image", {})))
+
+
+def test_draw_panel_image_axis_off_no_title(tmp_path):
+    png = _write_png(tmp_path / "ref.png")
+    fig = Figure(figsize=(6, 4))
+    ax = fig.add_subplot(111)
+    p = PanelDef("i", PanelSource(png, "image", {}), show_title=True)
+    assert draw_panel(ax, p, load_panel(p), None) is None
+    assert len(ax.images) == 1 and not ax.axison and ax.get_title() == ""
+
+
+def test_draw_panel_greyscale_image_drawn_as_stored_not_contrast_stretched(tmp_path):
+    from PIL import Image
+
+    # two mid greys (100, 128 of 255): an autoscaled norm would render them
+    # as pure black and pure white
+    arr = np.full((20, 40), 100, "u1")
+    arr[:, 20:] = 128
+    path = tmp_path / "grey.png"
+    Image.fromarray(arr, "L").save(path)
+    fig = Figure(figsize=(6, 4))
+    ax = fig.add_subplot(111)
+    p = PanelDef("i", PanelSource(str(path), "image", {}))
+    assert draw_panel(ax, p, load_panel(p), None) is None
+    im = ax.images[0]
+    assert im.get_array().ndim == 2
+    assert im.get_clim() == (0.0, 1.0)

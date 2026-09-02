@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 from dataclasses import asdict, dataclass
 
 from ..common.errors import StageUserError
 
 RECIPE_VERSION = 1
-PANEL_KINDS = ("map_layer", "slice_plane", "profiles_ref", "profiles_trace")
+PANEL_KINDS = ("map_layer", "slice_plane", "profiles_ref", "profiles_trace", "image")
+IMAGE_DEFAULT_WIDTH_CM = 6.0  # printed width of an "image" panel when PanelDef.width_cm is None
 SCALE_BAR_MODES = ("per-panel", "one-panel", "gutter")
 COLORBAR_MODES = ("per-panel", "united")
 COLORBAR_POSITIONS = ("right", "bottom")
@@ -39,7 +41,7 @@ class ComposeStyle:
 
 @dataclass
 class PanelSource:
-    h5_path: str
+    h5_path: str  # source file: an .h5 for the data kinds, a PNG/JPEG/TIFF for "image"
     kind: str  # one of PANEL_KINDS
     selector: dict  # kind-specific selection key (see Task 4)
 
@@ -59,6 +61,12 @@ class PanelDef:
     # Auto-crop to the finite-data bounding box (+3 % margin), searched inside
     # `roi` when one is set; ignored by trace panels.
     crop_to_data: bool = False
+    # Trace panels only: False hides the y tick labels and the ×10ⁿ offset
+    # text (tick marks, grid and the y-label stay); ignored by other kinds.
+    y_tick_labels: bool = True
+    # Image panels only: printed width in cm; None = IMAGE_DEFAULT_WIDTH_CM.
+    # Height always follows the image's pixel aspect (never a µm/cm scale).
+    width_cm: float | None = None
 
 
 @dataclass
@@ -260,6 +268,8 @@ def _panel_def_to_dict(p, rel):
         "colorbar": p.colorbar,
         "title": p.title,
         "crop_to_data": bool(p.crop_to_data),
+        "y_tick_labels": bool(p.y_tick_labels),
+        "width_cm": p.width_cm,
     }
 
 
@@ -278,6 +288,8 @@ def _panel_def_from_dict(d, base_dir):
         colorbar=d.get("colorbar"),
         title=d.get("title"),
         crop_to_data=bool(d.get("crop_to_data", False)),
+        y_tick_labels=bool(d.get("y_tick_labels", True)),
+        width_cm=d.get("width_cm"),
     )
 
 
@@ -459,4 +471,20 @@ def validate_recipe(recipe: FigureRecipe) -> None:
                 f"compose.{field} must be positive, got {val!r}",
                 hint=f"Set {field} to a positive number ({unit}) or leave it blank to derive "
                 "it from the style's Font scale.",
+            )
+
+    for p in recipe.panels:
+        if p.width_cm is None:
+            continue
+        # a hand-edited recipe may carry a string or a non-finite number here;
+        # neither may escape as a bare TypeError/ValueError (cf. _validate_scale)
+        try:
+            v = float(p.width_cm)
+        except (TypeError, ValueError):
+            v = math.nan
+        if not (math.isfinite(v) and v > 0):
+            raise StageUserError(
+                f"panel {p.id!r}: width_cm must be a positive number, got {p.width_cm!r}",
+                hint="Set the image panel's Width (cm) to a positive number, or leave it at "
+                "the default.",
             )

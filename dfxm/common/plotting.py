@@ -1125,6 +1125,24 @@ def apply_axis_tickfmt(
     size = max(size * style.offset_scale_for(group), 0.1)
     exp = r"$\times\mathdefault{10^{%d}}$" % oom
     if axis == "y":
-        ax.text(0.0, 1.01, exp, transform=ax.transAxes, ha="left", va="bottom", fontsize=size)
+        ax.text(
+            0.0,
+            1.01,
+            exp,
+            transform=ax.transAxes,
+            ha="left",
+            va="bottom",
+            fontsize=size,
+            gid="tickfmt-exponent-y",
+        )
     else:
-        ax.text(1.01, 0.0, exp, transform=ax.transAxes, ha="left", va="bottom", fontsize=size)
+        ax.text(
+            1.01,
+            0.0,
+            exp,
+            transform=ax.transAxes,
+            ha="left",
+            va="bottom",
+            fontsize=size,
+            gid="tickfmt-exponent-x",
+        )

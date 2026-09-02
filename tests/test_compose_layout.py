@@ -670,3 +670,83 @@ def test_fill_flags_round_trip_and_pinned_or_map_cells_untouched():
     measure_cells(fig, list(cells.values()))
     place_tree(fig, layout, cells, gutter_in=0.2, pad_in=0.0)
     assert ct.h_in == 1.0
+
+
+def _image_data(w=40.0, h=20.0):
+    return PanelData(kind="image", ext_x_um=w, ext_y_um=h)
+
+
+def test_image_cell_default_width_and_aspect_no_scale_needed():
+    layout = PanelRef("i")
+    cells = size_cells(
+        _recipe(layout, [_panel("i", "image")]), PlotStyle(), {"i": _image_data()}, notes := []
+    )
+    c = cells[id(layout)]
+    assert c.kind == "image"
+    assert abs(c.w_in - 6.0 / 2.54) < 1e-9 and abs(c.h_in - 3.0 / 2.54) < 1e-9
+    assert notes == []
+
+
+def test_image_cell_width_cm_override():
+    p = _panel("i", "image")
+    p.width_cm = 3.0
+    layout = PanelRef("i")
+    c = size_cells(_recipe(layout, [p]), PlotStyle(), {"i": _image_data()}, [])[id(layout)]
+    assert abs(c.w_in - 3.0 / 2.54) < 1e-9 and abs(c.h_in - 1.5 / 2.54) < 1e-9
+
+
+def test_image_cell_width_cm_string_from_hand_edited_recipe_is_cast():
+    # validate_recipe accepts a float-castable string (cf. _validate_scale);
+    # the cell must then be sized from float(width_cm), not crash on str * float
+    p = _panel("i", "image")
+    p.width_cm = "3"
+    layout = PanelRef("i")
+    c = size_cells(_recipe(layout, [p]), PlotStyle(), {"i": _image_data()}, [])[id(layout)]
+    assert abs(c.w_in - 3.0 / 2.54) < 1e-9 and abs(c.h_in - 1.5 / 2.54) < 1e-9
+
+
+def test_image_cell_pinned_row_height_sets_width_from_aspect():
+    layout = Row([PanelRef("i")], pinned_height_cm=4.0)
+    cells = size_cells(
+        _recipe(layout, [_panel("i", "image")]), PlotStyle(), {"i": _image_data()}, notes := []
+    )
+    c = cells[id(layout.children[0])]
+    assert abs(c.h_in - 4.0 / 2.54) < 1e-9 and abs(c.w_in - 8.0 / 2.54) < 1e-9
+    assert any("pinned row height" in n for n in notes)
+
+
+def test_image_cell_pinned_col_width_sets_height_from_aspect():
+    layout = Col([PanelRef("i")], pinned_width_cm=2.0)
+    c = size_cells(_recipe(layout, [_panel("i", "image")]), PlotStyle(), {"i": _image_data()}, [])[
+        id(layout.children[0])
+    ]
+    assert abs(c.w_in - 2.0 / 2.54) < 1e-9 and abs(c.h_in - 1.0 / 2.54) < 1e-9
+
+
+def test_image_cell_double_pin_height_wins_with_note():
+    layout = Row([Col([PanelRef("i")], pinned_width_cm=1.0)], pinned_height_cm=4.0)
+    cells = size_cells(
+        _recipe(layout, [_panel("i", "image")]), PlotStyle(), {"i": _image_data()}, notes := []
+    )
+    c = cells[id(layout.children[0].children[0])]
+    assert abs(c.h_in - 4.0 / 2.54) < 1e-9 and abs(c.w_in - 8.0 / 2.54) < 1e-9
+    assert any("height pin wins" in n for n in notes)
+
+
+def test_image_cell_degenerate_pixels_is_placeholder():
+    layout = PanelRef("i")
+    cells = size_cells(
+        _recipe(layout, [_panel("i", "image")]),
+        PlotStyle(),
+        {"i": _image_data(0.0, 5.0)},
+        notes := [],
+    )
+    assert cells[id(layout)].kind == "placeholder" and any("degenerate image" in n for n in notes)
+
+
+def test_image_cell_is_never_a_trace_autoscale_target():
+    style = PlotStyle(trace_scale_um_per_cm=5.0, trace_height_cm=2.0)
+    layout = Col([PanelRef("i"), PanelRef("t")])
+    r = _recipe(layout, [_panel("i", "image"), _panel("t", "profiles_trace")])
+    cells = size_cells(r, style, {"i": _image_data(), "t": _trace_data()}, [])
+    assert trace_column_targets(r, cells)[id(layout.children[1])] is None

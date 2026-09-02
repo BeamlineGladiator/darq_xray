@@ -42,12 +42,14 @@ from PySide6.QtWidgets import (
 
 from dfxm.common.plotting import CMAP_CHOICES, SCALE_BAR_LOCS, PlotStyle, style_from_params
 from dfxm.compose.recipe import (
+    IMAGE_DEFAULT_WIDTH_CM,
     SCALE_BAR_MODES,
     Col,
     ComposeStyle,
     FigureRecipe,
     PanelDef,
     PanelRef,
+    PanelSource,
     Row,
     ScaleBarCell,
     Spacer,
@@ -91,6 +93,11 @@ TRACE_COLOR_CHOICES = ("", "black", "C0", "C1", "C2", "C3", "red", "gray", "whit
 # Tri-state (Follow/On/Off) combo choices shared by show_title/colorbar override
 # rows — display label -> stored value (None = follow the composed default).
 _TRI_STATE = (("Follow", None), ("On", True), ("Off", False))
+
+# Panel kinds that are a picture of the sample: they have an ROI picker,
+# colour limits, a colormap, a colourbar and a µm/cm scale. Traces and
+# external images are not.
+_MAP_KINDS = ("map_layer", "slice_plane", "profiles_ref")
 
 
 class _ComposeWorker(QThread):
@@ -256,6 +263,15 @@ class FigureBuilderWindow(QMainWindow):
         add_btn = QPushButton("Add panels…")
         add_btn.clicked.connect(self._on_add_panels)
         layout.addWidget(add_btn)
+
+        add_img_btn = QPushButton("Add image…")
+        add_img_btn.setToolTip(
+            "Place a PNG/JPEG/TIFF — e.g. a panel reproduced from another paper — as a "
+            "lettered panel. Set its printed width in the inspector; the height follows "
+            "the image's own proportions."
+        )
+        add_img_btn.clicked.connect(self._on_add_image)
+        layout.addWidget(add_img_btn)
 
         self._arrange_btn = QPushButton("Arrange…")
         self._arrange_btn.clicked.connect(self._on_arrange)
@@ -970,6 +986,14 @@ class FigureBuilderWindow(QMainWindow):
         self._ov_crop.toggled.connect(lambda _c: self._on_override_field_edited("crop_to_data"))
         form.addRow("", self._ov_crop)
 
+        self._ov_ynums = QCheckBox("Y-axis numbers")
+        self._ov_ynums.setToolTip(
+            "Untick to drop the tick numbers (and any ×10ⁿ offset) from this trace's "
+            "y-axis; the tick marks and the y-label stay. Trace panels only."
+        )
+        self._ov_ynums.toggled.connect(lambda _c: self._on_override_field_edited("y_tick_labels"))
+        form.addRow("", self._ov_ynums)
+
         self._ov_clim = QLineEdit()
         self._ov_clim.setPlaceholderText("lo,hi (blank half ok; blank both = stored)")
         self._ov_clim.textChanged.connect(lambda _t: self._on_override_field_edited("clim"))
@@ -1011,6 +1035,18 @@ class FigureBuilderWindow(QMainWindow):
         )
         form.addRow("Panel scale", self._ov_scale)
 
+        self._ov_width = QDoubleSpinBox()
+        self._ov_width.setRange(0.0, 30.0)
+        self._ov_width.setDecimals(2)
+        self._ov_width.setSuffix(" cm")
+        self._ov_width.setSpecialValueText(f"default ({IMAGE_DEFAULT_WIDTH_CM:g} cm)")
+        self._ov_width.setToolTip(
+            "Printed width of an image panel; its height follows the image's own "
+            f"proportions. 0 = the default {IMAGE_DEFAULT_WIDTH_CM:g} cm. Image panels only."
+        )
+        self._ov_width.valueChanged.connect(lambda _v: self._on_override_field_edited("width_cm"))
+        form.addRow("Width", self._ov_width)
+
         self._ov_colorbar = QComboBox()
         for text, value in _TRI_STATE:
             self._ov_colorbar.addItem(text, value)
@@ -1038,18 +1074,21 @@ class FigureBuilderWindow(QMainWindow):
         widgets = (
             self._ov_roi,
             self._ov_crop,
+            self._ov_ynums,
             self._ov_clim,
             self._ov_cmap,
             self._ov_label_mode,
             self._ov_label,
             self._ov_show_title,
             self._ov_scale,
+            self._ov_width,
             self._ov_colorbar,
         )
         for w in widgets:
             w.blockSignals(True)
         self._ov_roi.setText(",".join(str(v) for v in panel.roi) if panel.roi else "")
         self._ov_crop.setChecked(bool(panel.crop_to_data))
+        self._ov_ynums.setChecked(bool(panel.y_tick_labels))
         if panel.clim is not None:
             lo, hi = panel.clim
             lo_s = "" if lo is None else f"{lo:g}"
@@ -1067,11 +1106,30 @@ class FigureBuilderWindow(QMainWindow):
             next(i for i, (_t, v) in enumerate(_TRI_STATE) if v is panel.show_title)
         )
         self._ov_scale.setValue(panel.scale_um_per_cm or 0.0)
+        self._ov_width.setValue(panel.width_cm or 0.0)
         self._ov_colorbar.setCurrentIndex(
             next(i for i, (_t, v) in enumerate(_TRI_STATE) if v is panel.colorbar)
         )
         for w in widgets:
             w.blockSignals(False)
+        # Which overrides mean anything for this kind (see docs/Usage.md, Panel page)
+        kind = panel.source.kind
+        is_trace, is_image = kind == "profiles_trace", kind == "image"
+        is_map = kind in _MAP_KINDS
+        self._ov_roi.setEnabled(not is_trace)  # images: a plain pixel crop
+        for w in (
+            self._ov_roi_pick,
+            self._ov_roi_all,
+            self._ov_crop,
+            self._ov_clim,
+            self._ov_cmap,
+            self._ov_colorbar,
+        ):
+            w.setEnabled(is_map)
+        self._ov_scale.setEnabled(not is_image)  # traces use it as their trace scale
+        self._ov_show_title.setEnabled(not is_image)
+        self._ov_width.setEnabled(is_image)
+        self._ov_ynums.setEnabled(is_trace)
 
     # -- selection dispatcher -----------------------------------------------------
     def _on_tree_selection_changed(self, *_args) -> None:
@@ -1107,8 +1165,8 @@ class FigureBuilderWindow(QMainWindow):
             return
         from dfxm.compose.adapters import panel_preview
 
-        if panel.source.kind == "profiles_trace":
-            self._notes_label.setText("a trace panel has no ROI to pick")
+        if panel.source.kind not in _MAP_KINDS:
+            self._notes_label.setText("only map, slice and reference panels have an ROI to pick")
             return
         import sys
 
@@ -1121,7 +1179,7 @@ class FigureBuilderWindow(QMainWindow):
         # checked — and moved separately — on each map before accepting; "Keep
         # size" in the dialog locks the px size while doing so
         panels = [panel] + [
-            p for p in self._recipe.panels if p is not panel and p.source.kind != "profiles_trace"
+            p for p in self._recipe.panels if p is not panel and p.source.kind in _MAP_KINDS
         ]
         previews = [(p.title or p.id, lambda p=p: panel_preview(p)) for p in panels]
         dlg = _mod.ROIPickerDialog(previews, initial=panel.roi, parent=self, per_preview=True)
@@ -1157,7 +1215,7 @@ class FigureBuilderWindow(QMainWindow):
             return
         n = 0
         for p in self._recipe.panels:
-            if p is src or p.source.kind == "profiles_trace":
+            if p is src or p.source.kind not in _MAP_KINDS:
                 continue
             if p.roi != src.roi or p.crop_to_data != src.crop_to_data:
                 p.roi = src.roi
@@ -1189,11 +1247,13 @@ class FigureBuilderWindow(QMainWindow):
         getters = {
             "roi": self._ov_roi.text,
             "crop_to_data": self._ov_crop.isChecked,
+            "y_tick_labels": self._ov_ynums.isChecked,
             "clim": self._ov_clim.text,
             "cmap": self._ov_cmap.currentText,
             "label": self._label_override_value,
             "show_title": self._ov_show_title.currentData,
             "scale_um_per_cm": self._ov_scale.value,
+            "width_cm": self._ov_width.value,
             "colorbar": self._ov_colorbar.currentData,
         }
         self._apply_panel_overrides(self._override_panel, {key: getters[key]()})
@@ -1272,6 +1332,8 @@ class FigureBuilderWindow(QMainWindow):
             changes["roi"] = new_roi
         if "crop_to_data" in values:
             changes["crop_to_data"] = bool(values["crop_to_data"])
+        if "y_tick_labels" in values:
+            changes["y_tick_labels"] = bool(values["y_tick_labels"])
         if "clim" in values:
             changes["clim"] = new_clim
         if "cmap" in values:
@@ -1283,6 +1345,9 @@ class FigureBuilderWindow(QMainWindow):
         if "scale_um_per_cm" in values:
             scale = values["scale_um_per_cm"]
             changes["scale_um_per_cm"] = float(scale) if scale else None
+        if "width_cm" in values:
+            width = values["width_cm"]
+            changes["width_cm"] = float(width) if width else None
         if "colorbar" in values:
             changes["colorbar"] = values["colorbar"]
         if all(getattr(panel, k) == v for k, v in changes.items()):
@@ -1424,6 +1489,14 @@ class FigureBuilderWindow(QMainWindow):
     def add_scale_bar(self) -> None:
         self._current_container().children.append(ScaleBarCell())
         self._after_mutation()
+
+    def add_image(self, path: str) -> dict[str, str]:
+        """Append *path* (a PNG/JPEG/TIFF) as a lettered ``"image"`` panel, titled
+        with the file name; ids run ``image_1``, ``image_2``, … (``add_panels``
+        still uniquifies on a collision). Returns ``add_panels``'s rename map."""
+        n = 1 + sum(1 for p in self._recipe.panels if p.source.kind == "image")
+        panel = PanelDef(f"image_{n}", PanelSource(path, "image", {}), title=os.path.basename(path))
+        return self.add_panels([panel])
 
     def add_panels(self, panels: list[PanelDef], layout=None) -> dict[str, str]:
         """Append *panels* (ids uniquified) and either flat PanelRefs (default)
@@ -1716,6 +1789,17 @@ class FigureBuilderWindow(QMainWindow):
         if dlg.exec() == QDialog.DialogCode.Accepted:
             renames = self.add_panels(dlg.selected_panels, dlg.selected_layout)
             self._apply_scale_bar_pick(dlg.scale_bar_pick, renames)
+
+    def _on_add_image(self) -> None:
+        start = os.path.dirname(self._current_path) if self._current_path else ""
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Add image panel",
+            start,
+            "Images (*.png *.jpg *.jpeg *.tif *.tiff);;All files (*)",
+        )
+        if path:
+            self.add_image(path)
 
     def _apply_scale_bar_pick(self, pick: tuple[str, str] | None, renames: dict[str, str]) -> None:
         """Apply a (panel_id, corner) scale-bar pick from the Add-panels dialog's

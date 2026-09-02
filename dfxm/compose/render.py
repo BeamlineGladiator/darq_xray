@@ -241,6 +241,10 @@ def _make_cax_sync(cax, style, cell):
     return _sync
 
 
+# Member kinds a shared colourbar ignores: no quantity group, no clim to unify.
+_NO_SHARED_BAR_KINDS = ("placeholder", "image")
+
+
 def _apply_shared_colorbars(recipe, style, panels_by_id, data_by_id, cells, fig):
     """Unify clim across each shared-colorbar group and build its bar cell.
 
@@ -256,7 +260,10 @@ def _apply_shared_colorbars(recipe, style, panels_by_id, data_by_id, cells, fig)
         members = _panel_leaves(node)
         pids = [m.panel_id for m in members]
         member_data = [data_by_id[pid] for pid in pids]
-        groups = {d.group for d in member_data if d.kind != "placeholder"}
+        # An image member has no quantity (group None) and no clim: it is
+        # skipped everywhere a placeholder is, so it neither trips the
+        # mixed-group check nor takes part in the unified clim.
+        groups = {d.group for d in member_data if d.kind not in _NO_SHARED_BAR_KINDS}
         if len(groups) > 1:
             raise StageUserError(
                 f"shared colorbar mixes quantity groups {sorted(g for g in groups if g)}",
@@ -266,7 +273,7 @@ def _apply_shared_colorbars(recipe, style, panels_by_id, data_by_id, cells, fig)
 
         vmins, vmaxs = [], []
         for pid, d in zip(pids, member_data):
-            if d.kind == "placeholder":
+            if d.kind in _NO_SHARED_BAR_KINDS:
                 continue
             p = panels_by_id[pid]
             lo, hi = p.clim if p.clim is not None else (None, None)
@@ -275,16 +282,17 @@ def _apply_shared_colorbars(recipe, style, panels_by_id, data_by_id, cells, fig)
         unified = node.shared_clim or ((min(vmins), max(vmaxs)) if vmins else None)
         if unified is not None:
             for pid, d in zip(pids, member_data):
-                if d.kind != "placeholder":
+                if d.kind not in _NO_SHARED_BAR_KINDS:
                     panels_by_id[pid] = dc_replace(panels_by_id[pid], clim=unified)
                     no_colorbar_pids.add(pid)
 
         member_cells = [cells[id(m)] for m in members]
-        # Basis for the bar's cross-dimension: the first non-placeholder member
-        # when one exists (a placeholder's box is the fixed PLACEHOLDER_CM
-        # fallback, not representative of the group's real content size).
+        # Basis for the bar's cross-dimension: the first map member when one
+        # exists (a placeholder's box is the fixed PLACEHOLDER_CM fallback and
+        # an image's is its own printed width — neither is representative of
+        # the group's real content size).
         first = next(
-            (c for c, d in zip(member_cells, member_data) if d.kind != "placeholder"),
+            (c for c, d in zip(member_cells, member_data) if d.kind not in _NO_SHARED_BAR_KINDS),
             member_cells[0],
         )
         # This box only reserves the solver's PROVISIONAL space for the bar
@@ -754,6 +762,12 @@ def _resolve_scale_bar_kwargs(recipe, panels_by_id, data_by_id, cell_by_pid, not
                 "a scale bar needs a map panel",
                 hint=_NO_SCALE_BAR_PANEL_HINT,
             )
+        if target_kind == "image":
+            raise StageUserError(
+                f"compose.scale_bar_panel {target!r} is an image panel — "
+                "a scale bar needs a map panel",
+                hint=_NO_SCALE_BAR_PANEL_HINT,
+            )
         if target_kind == "placeholder":
             # data-availability, not authoring: degrade with a note, no bar anywhere
             notes.append(
@@ -968,7 +982,7 @@ def render_recipe(
                 show_title=False,
                 trace_opts=trace_opts,
             )
-        else:  # placeholder
+        else:  # image or placeholder — no colourbar, no scale bar
             draw_panel(ax, panel, data, style, show_title=False)
 
     labels = _assign_labels(recipe.layout, panels_by_id, recipe.compose)

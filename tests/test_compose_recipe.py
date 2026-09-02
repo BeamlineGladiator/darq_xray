@@ -281,3 +281,59 @@ def test_scale_bar_cell_round_trips():
     leaf = r2.layout.children[-1]
     assert isinstance(leaf, ScaleBarCell) and (leaf.w_cm, leaf.h_cm) == (3.5, 1.25)
     assert [type(x).__name__ for x in iter_leaves(r2.layout)][-1] == "ScaleBarCell"
+
+
+def test_y_tick_labels_round_trips_and_old_recipe_defaults_true():
+    import json
+
+    r = _mini_recipe()
+    r.panels[1].y_tick_labels = False  # the trace panel
+    r2 = recipe_from_json(recipe_to_json(r))
+    assert r2.panels[1].y_tick_labels is False and r2.panels[0].y_tick_labels is True
+    d = json.loads(recipe_to_json(_mini_recipe()))
+    for p in d["panels"]:
+        p.pop("y_tick_labels")  # a recipe written before the field existed
+    r3 = recipe_from_json(json.dumps(d))
+    assert all(p.y_tick_labels is True for p in r3.panels)
+
+
+def test_image_panel_width_round_trips_relative_path_and_defaults():
+    import json
+    import os
+
+    r = _mini_recipe()
+    r.panels.append(PanelDef("i0", __src("/data/figs/ref.png", "image", {}), width_cm=4.5))
+    r.layout.children.append(PanelRef("i0"))
+    txt = recipe_to_json(r, base_dir="/data")
+    d = json.loads(txt)
+    assert d["panels"][2]["source"]["h5_path"] == os.path.join("figs", "ref.png")
+    r2 = recipe_from_json(txt, base_dir="/data")
+    img = r2.panels[2]
+    assert img.source.kind == "image" and img.source.h5_path == "/data/figs/ref.png"
+    assert img.width_cm == 4.5 and r2.panels[0].width_cm is None
+    validate_recipe(r2)  # "image" is a legal kind
+    for p in d["panels"]:
+        p.pop("width_cm")
+    r3 = recipe_from_json(json.dumps(d), base_dir="/data")
+    assert all(p.width_cm is None for p in r3.panels)
+
+
+@pytest.mark.parametrize("bad", [0.0, -1.0, "abc", float("inf"), float("nan")])
+def test_image_panel_width_validated(bad):
+    # a hand-edited recipe must never produce a bare TypeError/ValueError: a
+    # non-number and a non-finite value are refused the same way as a
+    # non-positive one
+    r = _mini_recipe()
+    r.panels.append(PanelDef("i0", __src("/data/ref.png", "image", {}), width_cm=bad))
+    r.layout.children.append(PanelRef("i0"))
+    with pytest.raises(StageUserError) as e:
+        validate_recipe(r)
+    assert "width_cm" in str(e.value) and e.value.hint
+
+
+def test_image_panel_width_numeric_string_is_accepted():
+    # float-castable, like layout._validate_scale; layout casts it when sizing
+    r = _mini_recipe()
+    r.panels.append(PanelDef("i0", __src("/data/ref.png", "image", {}), width_cm="3"))
+    r.layout.children.append(PanelRef("i0"))
+    validate_recipe(r)

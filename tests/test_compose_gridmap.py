@@ -97,3 +97,4 @@ def test_panel_group_hint_covers_kinds():
     assert panel_group_hint(p("slice_plane", {"volume_id": "strain"})) == "strain"
     assert panel_group_hint(p("slice_plane", {"volume_id": "mosa_com_chi"})) == "mosa_com"
     assert panel_group_hint(p("profiles_ref", {"job": {}, "field": None})) is None
+    assert panel_group_hint(p("image", {})) is None  # neutral grey chip

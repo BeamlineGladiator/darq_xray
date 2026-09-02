@@ -110,6 +110,8 @@ def panel_group_hint(panel) -> str | None:
         if stage == "mosaicity":
             return "mosa_fwhm" if "FWHM" in str(src.selector.get("dataset", "")) else "mosa_com"
         return None
+    if src.kind == "image":
+        return None  # an external image belongs to no quantity group: neutral chip
     key = "volume_id" if src.kind == "slice_plane" else "field"
     v = str(src.selector.get(key) or "").lower()
     if "raw" in v:
