@@ -160,3 +160,4 @@ def test_cli_renders_recipe_with_image_panel(tmp_path, capsys):
     out = tmp_path / "out"
     assert _main(["render", str(rp), "-o", str(out), "--formats", "png"]) == 0
     assert os.path.exists(out / "demo.png")
+    assert "placeholder" not in capsys.readouterr().out  # the image really rendered

@@ -510,3 +510,21 @@ def test_draw_panel_image_axis_off_no_title(tmp_path):
     p = PanelDef("i", PanelSource(png, "image", {}), show_title=True)
     assert draw_panel(ax, p, load_panel(p), None) is None
     assert len(ax.images) == 1 and not ax.axison and ax.get_title() == ""
+
+
+def test_draw_panel_greyscale_image_drawn_as_stored_not_contrast_stretched(tmp_path):
+    from PIL import Image
+
+    # two mid greys (100, 128 of 255): an autoscaled norm would render them
+    # as pure black and pure white
+    arr = np.full((20, 40), 100, "u1")
+    arr[:, 20:] = 128
+    path = tmp_path / "grey.png"
+    Image.fromarray(arr, "L").save(path)
+    fig = Figure(figsize=(6, 4))
+    ax = fig.add_subplot(111)
+    p = PanelDef("i", PanelSource(str(path), "image", {}))
+    assert draw_panel(ax, p, load_panel(p), None) is None
+    im = ax.images[0]
+    assert im.get_array().ndim == 2
+    assert im.get_clim() == (0.0, 1.0)

@@ -351,8 +351,12 @@ def draw_panel(
     if data.kind == "image":
         img = data.payload["image"]
         # the cell already has the image's aspect, so "auto" fills it edge to
-        # edge; no title, colourbar or scale bar for an external image
-        ax.imshow(img, interpolation="none", aspect="auto", cmap="gray" if img.ndim == 2 else None)
+        # edge; no title, colourbar or scale bar for an external image. A 2-D
+        # (greyscale) file is drawn AS STORED on the loader's [0, 1] scale —
+        # without a fixed norm imshow would autoscale to the array's min/max
+        # and contrast-stretch it (imshow ignores vmin/vmax for RGB(A)).
+        grey = {"cmap": "gray", "vmin": 0.0, "vmax": 1.0} if img.ndim == 2 else {}
+        ax.imshow(img, interpolation="none", aspect="auto", **grey)
         ax.set_axis_off()
         return None
     from ..common.plotting import resolve_cmap

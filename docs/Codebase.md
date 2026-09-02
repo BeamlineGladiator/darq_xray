@@ -1579,7 +1579,11 @@ anywhere (`fig.set_layout_engine("none")` throughout, same as `layout.py`).
      `Row`/`Col` node with `shared_colorbar=True` found anywhere in the
      layout: gather its `PanelRef` leaves (any depth) as members; refuse
      (`StageUserError`, hint) when the non-placeholder members' quantity
-     `group`s aren't all equal ("shared colorbar mixes quantity groups …");
+     `group`s aren't all equal ("shared colorbar mixes quantity groups …") —
+     `"image"` members are skipped exactly like placeholders throughout this
+     function (`_NO_SHARED_BAR_KINDS`, 2026-09-02: an image has `group=None`
+     and no clim, so counting it would report a bogus mixed-group error and it
+     must neither take the unified clim nor size the bar);
      unify colour limits as `node.shared_clim` or `(min(vmins), max(vmaxs))`
      over the members with each panel's own `clim` override applied first,
      then replace each non-placeholder member's `PanelDef` (a local copy —
@@ -1587,7 +1591,8 @@ anywhere (`fig.set_layout_engine("none")` throughout, same as `layout.py`).
      it colorbar-off. The bar itself is a synthetic solver cell: a `Spacer`
      leaf whose PROVISIONAL box (`colorbar_fraction * first_member.w_in + 0.1`,
      or `.h_in` for a `Row` group, by the members' summed content-box extent —
-     `first_member` is the first *non-placeholder* member) only reserves it a
+     `first_member` is the first *map* member — neither a placeholder nor an
+     image) only reserves it a
      slot in the tree — it omits each member's own decoration margins, which
      `place_tree`'s per-Row/Col margin-sharing can make asymmetric besides, so
      it under-counts the group's real span. `_build_working_layout` rebuilds

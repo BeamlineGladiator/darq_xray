@@ -1216,3 +1216,31 @@ def test_one_panel_scale_bar_image_target_refused(tmp_path):
     with pytest.raises(StageUserError) as e:
         render_recipe(r)
     assert "image panel" in str(e.value) and e.value.hint
+
+
+def test_shared_colorbar_skips_image_member_between_maps(tmp_path):
+    h5 = _write_obl(tmp_path / "obl.h5")
+    png = _write_png(tmp_path / "ref.png")
+
+    def strain(pid):
+        return PanelDef(
+            pid,
+            PanelSource(
+                h5, "slice_plane", {"volume_id": "strain", "slice_name": "obl", "plane": 0}
+            ),
+        )
+
+    r = FigureRecipe(
+        "shared",
+        {"scale_um_per_cm": 10.0, "show_title": False, "colorbar": True},
+        ComposeStyle(),
+        Row([PanelRef("a"), PanelRef("i"), PanelRef("c")], shared_colorbar=True),
+        [strain("a"), PanelDef("i", PanelSource(png, "image", {})), strain("c")],
+    )
+    res = render_recipe(r)  # no "mixes quantity groups" error
+    assert res.n_rendered == 3
+    extra = [ax for ax in res.figure.axes if ax not in res.axes_by_id.values()]
+    assert len(extra) == 1  # the one shared bar; nothing for the image
+    im_a, im_c = (res.axes_by_id[p].images[0] for p in ("a", "c"))
+    assert im_a.get_clim() == im_c.get_clim() == (-10.0, 10.0)
+    assert res.axes_by_id["i"].images[0].get_clim() != im_a.get_clim()  # image not unified
