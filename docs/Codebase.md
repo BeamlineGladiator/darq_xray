@@ -1197,7 +1197,7 @@ arranger dialogs (never by anything else in `dfxm/`).
   panel's quantity group (`strain`/`raw`/`mosa_fwhm`/`mosa_com`/`trace`/
   `None`) from its `PanelSource.kind`/`selector` alone, for the arranger's
   tile chips only — real rendering always uses the loaded `PanelData.group`,
-  never this guess.
+  never this guess. `"image"` → `None` (neutral chip).
 
 #### `adapters.py`
 
@@ -1283,7 +1283,11 @@ so `import dfxm.compose` stays light.
   defaults first. Titles are OFF by default in composed figures
   (`panel.show_title=True`, or the `show_title` kwarg, re-enables); returns
   the `AxesImage` for `map_layer`/`slice_plane`/`profiles_ref`, or `None` for
-  `profiles_trace` and `"placeholder"`. `trace_opts` is `resolve_trace_opts`'s
+  `profiles_trace` and `"placeholder"`. `image` (2026-09-02):
+  `ax.imshow(payload["image"], interpolation="none", aspect="auto")` (grey
+  colormap for a 2-D file), `ax.set_axis_off()`, returns `None`;
+  `show_title`/`titled`, `clim`, `cmap`, `colorbar` and `scale_bar` are ignored
+  — an external image has none of those. `trace_opts` is `resolve_trace_opts`'s
   dict for trace panels (`None` = derive from a default `ComposeStyle` and
   *style*, i.e. fonts follow `style.font_scale`); before 2026-08-18 traces were
   hard-coded to `linewidth=1.8, font_scale=1.0` regardless of the style.
@@ -1664,7 +1668,11 @@ anywhere (`fig.set_layout_engine("none")` throughout, same as `layout.py`).
      `StageUserError` ("is not placed in the layout"); a known, placed id whose
      `PanelData.kind == "profiles_trace"` → `StageUserError` ("is a trace panel
      — a scale bar needs a map panel", since a trace has no µm/cm map extent to
-     size a bar from). A known, placed, non-trace target that is itself a
+     size a bar from), and likewise a known, placed `"image"` target →
+     `StageUserError` ("is an image panel — a scale bar needs a map panel";
+     its extent is pixels, not µm — without this refusal the target would
+     fall through and silently draw no bar anywhere). A known, placed,
+     non-trace, non-image target that is itself a
      `"placeholder"` (data unavailable, e.g. a missing h5) is not an authoring
      error — it **degrades**: no panel gets a bar, and a note is appended
      (`"scale-bar panel {id}: data unavailable (placeholder) — no scale bar
@@ -1701,9 +1709,14 @@ anywhere (`fig.set_layout_engine("none")` throughout, same as `layout.py`).
      (no `cax`) reshapes `ax` itself, which would corrupt the exact-box
      contract the moment it ran after `place_tree`'s absolute `set_position`;
      `"trace"` panels get `show_xlabel=False` (label+tick-labels suppressed)
-     for every leaf but the last under a `shared_x` `Col`; `"placeholder"`
-     cells just draw the hatch. `show_title` is always `False` here (per-panel
-     `PanelDef.show_title` still re-enables it). Every map panel's scale bar
+     for every leaf but the last under a `shared_x` `Col`; the `else` branch
+     serves both `"placeholder"` cells (just the hatch) and `"image"` cells
+     (2026-09-02: the plain `draw_panel` call is all an external image needs —
+     no colourbar axes is created for it, it is excluded from the
+     `("map_layer", "slice_plane", "profiles_ref")` scale-bar tuples, and its
+     `group=None` keeps it out of united colourbars). `show_title` is always
+     `False` here (per-panel `PanelDef.show_title` still re-enables it). Every
+     map panel's scale bar
      is drawn with `scale_bar=False` HERE regardless of `compose.scale_bar_mode`
      — whether one is wanted is only recorded (`scale_bar_wanted[pid]`); the
      bar itself is drawn later (step 13) once the panel's box has its FINAL

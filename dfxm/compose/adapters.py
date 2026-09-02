@@ -348,6 +348,13 @@ def draw_panel(
     if data.kind == "placeholder":
         draw_placeholder(ax, data.payload["reason"])
         return None
+    if data.kind == "image":
+        img = data.payload["image"]
+        # the cell already has the image's aspect, so "auto" fills it edge to
+        # edge; no title, colourbar or scale bar for an external image
+        ax.imshow(img, interpolation="none", aspect="auto", cmap="gray" if img.ndim == 2 else None)
+        ax.set_axis_off()
+        return None
     from ..common.plotting import resolve_cmap
 
     titled = panel.show_title if panel.show_title is not None else show_title

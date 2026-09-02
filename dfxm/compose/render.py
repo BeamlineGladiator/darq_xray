@@ -754,6 +754,12 @@ def _resolve_scale_bar_kwargs(recipe, panels_by_id, data_by_id, cell_by_pid, not
                 "a scale bar needs a map panel",
                 hint=_NO_SCALE_BAR_PANEL_HINT,
             )
+        if target_kind == "image":
+            raise StageUserError(
+                f"compose.scale_bar_panel {target!r} is an image panel — "
+                "a scale bar needs a map panel",
+                hint=_NO_SCALE_BAR_PANEL_HINT,
+            )
         if target_kind == "placeholder":
             # data-availability, not authoring: degrade with a note, no bar anywhere
             notes.append(
@@ -968,7 +974,7 @@ def render_recipe(
                 show_title=False,
                 trace_opts=trace_opts,
             )
-        else:  # placeholder
+        else:  # image or placeholder — no colourbar, no scale bar
             draw_panel(ax, panel, data, style, show_title=False)
 
     labels = _assign_labels(recipe.layout, panels_by_id, recipe.compose)

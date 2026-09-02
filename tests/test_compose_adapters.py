@@ -501,3 +501,12 @@ def test_panel_preview_refuses_image_panel(tmp_path):
     png = _write_png(tmp_path / "ref.png")
     with pytest.raises(ValueError, match="pixel crop"):
         panel_preview(PanelDef("i", PanelSource(png, "image", {})))
+
+
+def test_draw_panel_image_axis_off_no_title(tmp_path):
+    png = _write_png(tmp_path / "ref.png")
+    fig = Figure(figsize=(6, 4))
+    ax = fig.add_subplot(111)
+    p = PanelDef("i", PanelSource(png, "image", {}), show_title=True)
+    assert draw_panel(ax, p, load_panel(p), None) is None
+    assert len(ax.images) == 1 and not ax.axison and ax.get_title() == ""

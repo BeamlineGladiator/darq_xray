@@ -35,6 +35,15 @@ def _write_obl(path):
     return str(path)
 
 
+def _write_png(path, w=40, h=20):
+    from matplotlib.image import imsave
+
+    rgb = np.zeros((h, w, 3), "f4")
+    rgb[..., 0] = np.linspace(0.0, 1.0, w)[None, :]
+    imsave(str(path), rgb)
+    return str(path)
+
+
 JOB = {"name": "obl", "offset_um": 0.0, "start_uv": [-5.0, -3.0], "end_uv": [5.0, 3.0]}
 
 
@@ -138,3 +147,16 @@ def test_cli_multi_bad_formats_quoted_individually(tmp_path, capsys):
     rc = _main(["render", str(rp), "-o", str(tmp_path / "out"), "--formats", "png,jpg,tiff"])
     assert rc == 2
     assert "'jpg', 'tiff'" in capsys.readouterr().err
+
+
+def test_cli_renders_recipe_with_image_panel(tmp_path, capsys):
+    h5 = _write_obl(tmp_path / "obl.h5")
+    png = _write_png(tmp_path / "ref.png")
+    r = _two_panel_recipe(h5)
+    r.panels.append(PanelDef("i", PanelSource(png, "image", {}), width_cm=2.0))
+    r.layout.children.append(PanelRef("i"))
+    rp = tmp_path / "r.json"
+    rp.write_text(recipe_to_json(r, base_dir=str(tmp_path)))  # image path stored relative
+    out = tmp_path / "out"
+    assert _main(["render", str(rp), "-o", str(out), "--formats", "png"]) == 0
+    assert os.path.exists(out / "demo.png")

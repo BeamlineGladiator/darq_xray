@@ -70,6 +70,15 @@ def _write_obl(path):
     return str(path)
 
 
+def _write_png(path, w=40, h=20):
+    from matplotlib.image import imsave
+
+    rgb = np.zeros((h, w, 3), "f4")
+    rgb[..., 0] = np.linspace(0.0, 1.0, w)[None, :]
+    imsave(str(path), rgb)
+    return str(path)
+
+
 JOB = {"name": "obl", "offset_um": 0.0, "start_uv": [-5.0, -3.0], "end_uv": [5.0, 3.0]}
 
 
@@ -1153,3 +1162,57 @@ def test_scale_bar_cell_without_maps_leaves_note(tmp_path):
     )
     res = render_recipe(r)  # no crash
     assert any("scale-bar cell" in n and "blank" in n for n in res.notes)
+
+
+def test_image_panel_lettered_between_maps_sized_by_width_no_colorbar(tmp_path):
+    from dfxm.common.plotting import measured_box_in
+
+    h5 = _write_obl(tmp_path / "obl.h5")
+    png = _write_png(tmp_path / "ref.png")
+    base = render_recipe(_two_panel_recipe(h5, colorbar=True))
+    r = _two_panel_recipe(h5, colorbar=True)
+    r.panels.append(PanelDef("i", PanelSource(png, "image", {}), width_cm=3.0))
+    r.layout.children.insert(1, PanelRef("i"))
+    res = render_recipe(r)
+    assert res.n_panels == 3 and res.n_rendered == 3
+    ax_i = res.axes_by_id["i"]
+    assert [t.get_text() for t in ax_i.texts] == ["B"]  # lettered in reading order
+    assert [t.get_text() for t in res.axes_by_id["b"].texts] == ["C"]
+    w, h = measured_box_in(res.figure, ax_i)
+    assert abs(w - 3.0 / 2.54) < 0.005 * w and abs(h - 1.5 / 2.54) < 0.005 * h
+    # exactly one extra axes (the image itself): no colourbar axes for it
+    assert len(res.figure.axes) == len(base.figure.axes) + 1
+
+
+def test_image_panel_missing_file_is_placeholder_with_note(tmp_path):
+    h5 = _write_obl(tmp_path / "obl.h5")
+    r = _two_panel_recipe(h5)
+    r.panels.append(PanelDef("i", PanelSource(str(tmp_path / "gone.png"), "image", {})))
+    r.layout.children.append(PanelRef("i"))
+    res = render_recipe(r)
+    assert res.n_rendered == 2 and any("gone.png" in n and "placeholder" in n for n in res.notes)
+
+
+def test_united_colorbar_ignores_image_panel_between_maps(tmp_path):
+    h5 = _write_obl(tmp_path / "obl.h5")
+    png = _write_png(tmp_path / "ref.png")
+    base = render_recipe(_united_recipe(h5))
+    r = _united_recipe(h5)
+    r.panels.append(PanelDef("i", PanelSource(png, "image", {})))
+    r.layout.children.insert(1, PanelRef("i"))
+    res = render_recipe(r)
+    assert res.n_rendered == base.n_rendered + 1
+    assert len(res.figure.axes) == len(base.figure.axes) + 1
+
+
+def test_one_panel_scale_bar_image_target_refused(tmp_path):
+    h5 = _write_obl(tmp_path / "obl.h5")
+    png = _write_png(tmp_path / "ref.png")
+    r = _two_panel_recipe(h5)
+    r.panels.append(PanelDef("i", PanelSource(png, "image", {})))
+    r.layout.children.append(PanelRef("i"))
+    r.compose.scale_bar_mode = "one-panel"
+    r.compose.scale_bar_panel = "i"
+    with pytest.raises(StageUserError) as e:
+        render_recipe(r)
+    assert "image panel" in str(e.value) and e.value.hint
