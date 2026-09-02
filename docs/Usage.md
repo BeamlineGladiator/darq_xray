@@ -2219,7 +2219,9 @@ a composed figure looks consistent with the per-stage exports above.
   own.
 - **Panels** — each panel (`PanelDef`) points at one dataset inside a stage's
   output h5 (`strain`/`mosaicity`/`rocking` map layer, an `oblique_slices.h5`
-  plane, or a `profiles` job's reference image/line trace) plus optional
+  plane, or a `profiles` job's reference image/line trace), or — since
+  2026-09-02 — an external **image file** (PNG/JPEG/TIFF, see **Add image…**
+  below), plus optional
   per-panel overrides (ROI crop or crop-to-data, colour limits, colormap, label
   text, its own physical scale). A recipe can mix panels from several different h5 files.
   A `profiles_ref` panel's ROI crop only trims the displayed image — the
@@ -2295,6 +2297,21 @@ through the same id-uniquification, so a picked panel that got renamed for a
 collision still resolves to the right id) and moves the Style pane's Bar
 location — and the Compose pane's Corner combo — to that corner, the same
 handoff Arrange…'s Apply performs (below).
+
+**Add image…**
+
+Places a picture file — typically a panel reproduced from another paper, or a
+schematic drawn elsewhere — as an ordinary panel. Pick a PNG/JPEG/TIFF; it
+joins the current container titled with its file name, takes the next letter
+in reading order like any panel, and is sized by its printed **Width** (cm,
+inspector; default 6 cm) with the height following the picture's own
+proportions. A pinned row height or column width overrides that width the
+same way it does for a map. It never gets a title, colourbar or scale bar,
+and it takes no part in united colourbars or trace autoscaling. The **ROI
+crop** box still works as a plain pixel crop (type `r0,r1,c0,c1`; the
+picker is not offered). The recipe stores the image path relative to the
+`.json`, so keep the picture beside the recipe; a missing file renders as a
+placeholder rather than failing the figure.
 
 **Arrange…**
 
@@ -2496,7 +2513,8 @@ far you scroll the sections — see the Export bullet at the end of this list):
     or click **Pick…** next to it to draw the rectangle on the panel's full
     image with the same interactive ROI picker the replot dialogs use (the
     current ROI is pre-drawn; *Use* writes the pixel bounds back; trace panels
-    have no ROI). The picker's **Preview** dropdown offers *every* image panel
+    have no ROI; image panels accept the text box only). The picker's
+    **Preview** dropdown offers *every* image panel
     in the recipe (the selected panel first), and **each map you place or move
     the rectangle on gets its own ROI** when you click *Use* — flip to another
     map (the rectangle carries over between same-sized maps as a starting
@@ -2526,7 +2544,12 @@ far you scroll the sections — see the Export bullet at the end of this list):
     state, and deleting all the text again keeps the last typed label) —
     **show title** and
     **colourbar** (Follow/On/Off — Follow defers to the composed default),
-    and **panel scale** in µm/cm (0 = follow the style's own scale).
+    and **panel scale** in µm/cm (0 = follow the style's own scale) and, for
+    image panels, **Width** in cm (0 = the 6 cm default). Controls that mean
+    nothing for the selected kind are greyed out: maps get everything except
+    Width and Y-axis numbers; traces get ROI-less Label, Show title, Panel
+    scale (their trace scale) and Y-axis numbers; images get ROI text, Label
+    and Width.
   - **Row** — a **Group label** control with three states — *Not a group*,
     *Auto letter* (the panel-group bracket/letter is auto-assigned; this is
     the same "auto" bookkeeping value `toggle_group_selected`/the outline's
@@ -2546,12 +2569,10 @@ far you scroll the sections — see the Export bullet at the end of this list):
     **pinned width**, cm, 0 = off), one-colorbar checkbox, and shared colour
     limits as Row, plus a **Shared x axis (bottom labels only)** checkbox
     (`shared_x`).
-  - **Spacer** — its width and height in cm. Besides plain breathing room,
-    this is the way to reserve an exact-size **empty spot for content the
-    builder cannot draw** — typically a panel reproduced from another paper
-    (external images cannot be added as panels): size the spacer to that
-    panel's printed size, export the figure as SVG or PDF, and lay the cited
-    image over the gap in a vector editor or your LaTeX/slide layer. Two
+  - **Spacer** — its width and height in cm. Besides plain breathing room, a
+    spacer reserves an exact-size empty spot — for content you will overlay
+    in a vector editor. A picture you already have as a file no longer needs
+    this: **Add image…** places it as a real, lettered panel. Two
     caveats: keep spacers out of a pinned-height Row / pinned-width Col (a
     spacer keeps its fixed size regardless of the pin, so the container drifts
     from the pin by that amount — see **Rows/Cols** above), and **Arrange…**

@@ -1725,3 +1725,89 @@ def test_override_y_tick_labels_checkbox_trace_only():
     assert w._ov_ynums.isChecked()
     w._select_outline_panel("a")
     assert not w._ov_ynums.isEnabled()  # map panels have no such switch
+
+
+# -- image panels: Add image…, Width (cm), per-kind inspector enable rule ------
+def _write_png(path, w=40, h=20):
+    import numpy as np
+    from matplotlib.image import imsave
+
+    rgb = np.zeros((h, w, 3), "f4")
+    rgb[..., 0] = np.linspace(0.0, 1.0, w)[None, :]
+    imsave(str(path), rgb)
+    return str(path)
+
+
+def test_add_image_appends_panel_and_inspector_enables_only_width(tmp_path):
+    png = _write_png(tmp_path / "ref.png")
+    w = _win()
+    w.add_panels([_panel("a")])
+    w.add_image(png)
+    r = w.recipe()
+    img = r.panels[-1]
+    assert img.source.kind == "image" and img.source.h5_path == png and img.title == "ref.png"
+    assert img.id == "image_1"
+    leaf = r.layout.children[-1]
+    assert isinstance(leaf, PanelRef) and leaf.panel_id == img.id
+    w._select_outline_panel(img.id)
+    assert w._ov_width.isEnabled() and w._ov_roi.isEnabled()
+    for widget in (
+        w._ov_clim,
+        w._ov_cmap,
+        w._ov_colorbar,
+        w._ov_scale,
+        w._ov_crop,
+        w._ov_roi_pick,
+        w._ov_roi_all,
+        w._ov_show_title,
+        w._ov_ynums,
+    ):
+        assert not widget.isEnabled()
+    assert w._ov_label_mode.isEnabled()
+    w._ov_width.setValue(4.0)  # real widget signal path
+    assert img.width_cm == 4.0
+    w._ov_width.setValue(0.0)  # special value = default
+    assert img.width_cm is None
+    w.add_image(png)
+    assert w.recipe().panels[-1].id == "image_2"
+    w._select_outline_panel("a")
+    assert not w._ov_width.isEnabled() and w._ov_clim.isEnabled() and w._ov_roi_pick.isEnabled()
+
+
+def test_trace_panel_inspector_keeps_scale_and_title_enabled():
+    w = _win()
+    w.add_panels([PanelDef("t", PanelSource("/x.h5", "profiles_trace", {"job": {}, "field": "s"}))])
+    w._select_outline_panel("t")
+    assert w._ov_scale.isEnabled() and w._ov_show_title.isEnabled() and w._ov_ynums.isEnabled()
+    for widget in (
+        w._ov_roi,
+        w._ov_roi_pick,
+        w._ov_roi_all,
+        w._ov_crop,
+        w._ov_clim,
+        w._ov_cmap,
+        w._ov_colorbar,
+        w._ov_width,
+    ):
+        assert not widget.isEnabled()
+
+
+def test_copy_roi_to_all_skips_image_panels(tmp_path):
+    png = _write_png(tmp_path / "ref.png")
+    w = _win()
+    w.add_panels([_panel("a"), _panel("b")])
+    w.add_image(png)
+    r = w.recipe()
+    r.panels[0].roi = (0, 2, 0, 3)
+    w._select_outline_panel("a")
+    w._on_copy_roi_to_all()
+    assert r.panels[1].roi == (0, 2, 0, 3) and r.panels[2].roi is None
+
+
+def test_image_panel_renders_in_builder_preview(tmp_path):
+    png = _write_png(tmp_path / "ref.png")
+    w = _win()
+    w.add_panels(_obl_recipe_panels(tmp_path))
+    w.add_image(png)
+    res = render_and_wait(w)
+    assert res is not None and res.n_rendered == 2
