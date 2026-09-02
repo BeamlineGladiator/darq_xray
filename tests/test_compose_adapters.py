@@ -475,6 +475,32 @@ def test_load_image_pixels_as_extent_and_float_rgb_payload(tmp_path):
     assert d.group is None and d.vmin is None
 
 
+@pytest.mark.parametrize("fmt", ["jpeg_rgb_u8", "tiff_grey_u16"])
+def test_load_image_integer_formats_normalised_to_unit_floats(tmp_path, fmt):
+    # PNG comes back from matplotlib already as float32 in 0-1; JPEG and TIFF
+    # arrive as uint8/uint16 and go through the loader's /max normalisation
+    from PIL import Image
+
+    if fmt == "jpeg_rgb_u8":
+        arr = np.zeros((20, 40, 3), "u1")
+        arr[..., 0] = np.linspace(0, 255, 40).astype("u1")[None, :]
+        path = tmp_path / "ref.jpg"
+        Image.fromarray(arr, mode="RGB").save(str(path))
+        ndim = 3
+    else:
+        arr16 = np.linspace(0, 65535, 40).astype("u2")[None, :].repeat(20, axis=0)
+        path = tmp_path / "ref.tif"
+        Image.fromarray(arr16, mode="I;16").save(str(path))
+        ndim = 2
+    d = load_panel(PanelDef("i", PanelSource(str(path), "image", {})))
+    assert d.kind == "image"
+    img = d.payload["image"]
+    assert img.dtype.kind == "f" and img.ndim == ndim
+    assert 0.0 <= float(img.min()) and float(img.max()) <= 1.0
+    assert float(img.max()) > 0.5  # actually normalised by the dtype max, not squashed
+    assert (d.ext_x_um, d.ext_y_um) == (40.0, 20.0)
+
+
 def test_load_image_roi_is_a_pixel_crop_and_empty_crop_is_placeholder(tmp_path):
     png = _write_png(tmp_path / "ref.png")
     d = load_panel(PanelDef("i", PanelSource(png, "image", {}), roi=(5, 15, 10, 30)))

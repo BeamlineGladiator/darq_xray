@@ -225,7 +225,7 @@ def size_cells(recipe, style, data_by_id, notes):
         if pinned_w_in is not None:
             w = pinned_w_in
             return SizedCell(leaf, panel, "image", w, w * h_px / w_px)
-        w = (panel.width_cm or IMAGE_DEFAULT_WIDTH_CM) * _IN_PER_CM
+        w = (float(panel.width_cm) if panel.width_cm else IMAGE_DEFAULT_WIDTH_CM) * _IN_PER_CM
         return SizedCell(leaf, panel, "image", w, w * h_px / w_px)
 
     def _trace_cell(leaf, panel, data, pinned_h_in, pinned_w_in):

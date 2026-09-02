@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 from dataclasses import asdict, dataclass
 
@@ -473,9 +474,17 @@ def validate_recipe(recipe: FigureRecipe) -> None:
             )
 
     for p in recipe.panels:
-        if p.width_cm is not None and not (float(p.width_cm) > 0):
+        if p.width_cm is None:
+            continue
+        # a hand-edited recipe may carry a string or a non-finite number here;
+        # neither may escape as a bare TypeError/ValueError (cf. _validate_scale)
+        try:
+            v = float(p.width_cm)
+        except (TypeError, ValueError):
+            v = math.nan
+        if not (math.isfinite(v) and v > 0):
             raise StageUserError(
-                f"panel {p.id!r}: width_cm must be positive, got {p.width_cm!r}",
+                f"panel {p.id!r}: width_cm must be a positive number, got {p.width_cm!r}",
                 hint="Set the image panel's Width (cm) to a positive number, or leave it at "
                 "the default.",
             )

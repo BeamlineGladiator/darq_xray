@@ -42,6 +42,7 @@ from PySide6.QtWidgets import (
 
 from dfxm.common.plotting import CMAP_CHOICES, SCALE_BAR_LOCS, PlotStyle, style_from_params
 from dfxm.compose.recipe import (
+    IMAGE_DEFAULT_WIDTH_CM,
     SCALE_BAR_MODES,
     Col,
     ComposeStyle,
@@ -96,7 +97,7 @@ _TRI_STATE = (("Follow", None), ("On", True), ("Off", False))
 # Panel kinds that are a picture of the sample: they have an ROI picker,
 # colour limits, a colormap, a colourbar and a µm/cm scale. Traces and
 # external images are not.
-_IMAGE_KINDS = ("map_layer", "slice_plane", "profiles_ref")
+_MAP_KINDS = ("map_layer", "slice_plane", "profiles_ref")
 
 
 class _ComposeWorker(QThread):
@@ -1038,10 +1039,10 @@ class FigureBuilderWindow(QMainWindow):
         self._ov_width.setRange(0.0, 30.0)
         self._ov_width.setDecimals(2)
         self._ov_width.setSuffix(" cm")
-        self._ov_width.setSpecialValueText("default (6 cm)")
+        self._ov_width.setSpecialValueText(f"default ({IMAGE_DEFAULT_WIDTH_CM:g} cm)")
         self._ov_width.setToolTip(
             "Printed width of an image panel; its height follows the image's own "
-            "proportions. 0 = the default 6 cm. Image panels only."
+            f"proportions. 0 = the default {IMAGE_DEFAULT_WIDTH_CM:g} cm. Image panels only."
         )
         self._ov_width.valueChanged.connect(lambda _v: self._on_override_field_edited("width_cm"))
         form.addRow("Width", self._ov_width)
@@ -1114,7 +1115,7 @@ class FigureBuilderWindow(QMainWindow):
         # Which overrides mean anything for this kind (see docs/Usage.md, Panel page)
         kind = panel.source.kind
         is_trace, is_image = kind == "profiles_trace", kind == "image"
-        is_map = kind in _IMAGE_KINDS
+        is_map = kind in _MAP_KINDS
         self._ov_roi.setEnabled(not is_trace)  # images: a plain pixel crop
         for w in (
             self._ov_roi_pick,
@@ -1164,7 +1165,7 @@ class FigureBuilderWindow(QMainWindow):
             return
         from dfxm.compose.adapters import panel_preview
 
-        if panel.source.kind not in _IMAGE_KINDS:
+        if panel.source.kind not in _MAP_KINDS:
             self._notes_label.setText("only map, slice and reference panels have an ROI to pick")
             return
         import sys
@@ -1178,7 +1179,7 @@ class FigureBuilderWindow(QMainWindow):
         # checked — and moved separately — on each map before accepting; "Keep
         # size" in the dialog locks the px size while doing so
         panels = [panel] + [
-            p for p in self._recipe.panels if p is not panel and p.source.kind in _IMAGE_KINDS
+            p for p in self._recipe.panels if p is not panel and p.source.kind in _MAP_KINDS
         ]
         previews = [(p.title or p.id, lambda p=p: panel_preview(p)) for p in panels]
         dlg = _mod.ROIPickerDialog(previews, initial=panel.roi, parent=self, per_preview=True)
@@ -1214,7 +1215,7 @@ class FigureBuilderWindow(QMainWindow):
             return
         n = 0
         for p in self._recipe.panels:
-            if p is src or p.source.kind not in _IMAGE_KINDS:
+            if p is src or p.source.kind not in _MAP_KINDS:
                 continue
             if p.roi != src.roi or p.crop_to_data != src.crop_to_data:
                 p.roi = src.roi

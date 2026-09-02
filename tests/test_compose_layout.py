@@ -695,6 +695,16 @@ def test_image_cell_width_cm_override():
     assert abs(c.w_in - 3.0 / 2.54) < 1e-9 and abs(c.h_in - 1.5 / 2.54) < 1e-9
 
 
+def test_image_cell_width_cm_string_from_hand_edited_recipe_is_cast():
+    # validate_recipe accepts a float-castable string (cf. _validate_scale);
+    # the cell must then be sized from float(width_cm), not crash on str * float
+    p = _panel("i", "image")
+    p.width_cm = "3"
+    layout = PanelRef("i")
+    c = size_cells(_recipe(layout, [p]), PlotStyle(), {"i": _image_data()}, [])[id(layout)]
+    assert abs(c.w_in - 3.0 / 2.54) < 1e-9 and abs(c.h_in - 1.5 / 2.54) < 1e-9
+
+
 def test_image_cell_pinned_row_height_sets_width_from_aspect():
     layout = Row([PanelRef("i")], pinned_height_cm=4.0)
     cells = size_cells(

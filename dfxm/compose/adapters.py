@@ -552,7 +552,7 @@ def _load_image(path, sel, roi, *, crop_to_data=False) -> PanelData:
         arr = arr.astype("f4") / float(np.iinfo(arr.dtype).max)
     cropped = crop_roi_2d(arr, roi)
     if cropped is None or cropped.shape[0] == 0 or cropped.shape[1] == 0:
-        raise ValueError(f"ROI {tuple(roi)} leaves no pixels")
+        raise ValueError(f"ROI {roi} leaves no pixels")  # roi may be None on a 0-size file
     h, w = cropped.shape[:2]
     return PanelData(kind="image", ext_x_um=float(w), ext_y_um=float(h), payload={"image": cropped})
 

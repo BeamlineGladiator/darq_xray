@@ -318,10 +318,22 @@ def test_image_panel_width_round_trips_relative_path_and_defaults():
     assert all(p.width_cm is None for p in r3.panels)
 
 
-def test_image_panel_width_validated():
+@pytest.mark.parametrize("bad", [0.0, -1.0, "abc", float("inf"), float("nan")])
+def test_image_panel_width_validated(bad):
+    # a hand-edited recipe must never produce a bare TypeError/ValueError: a
+    # non-number and a non-finite value are refused the same way as a
+    # non-positive one
     r = _mini_recipe()
-    r.panels.append(PanelDef("i0", __src("/data/ref.png", "image", {}), width_cm=0.0))
+    r.panels.append(PanelDef("i0", __src("/data/ref.png", "image", {}), width_cm=bad))
     r.layout.children.append(PanelRef("i0"))
     with pytest.raises(StageUserError) as e:
         validate_recipe(r)
     assert "width_cm" in str(e.value) and e.value.hint
+
+
+def test_image_panel_width_numeric_string_is_accepted():
+    # float-castable, like layout._validate_scale; layout casts it when sizing
+    r = _mini_recipe()
+    r.panels.append(PanelDef("i0", __src("/data/ref.png", "image", {}), width_cm="3"))
+    r.layout.children.append(PanelRef("i0"))
+    validate_recipe(r)
