@@ -1223,7 +1223,13 @@ so `import dfxm.compose` stays light.
   crop_to_data)` — `roi` as-is, or when the flag is on the `data_bbox_roi`
   finite-data box searched inside `roi`, falling back to `roi` when nothing
   is finite — before `crop_roi_2d`/`_crop_uv`; the trace loader accepts and
-  ignores the flag). **Never raises**
+  ignores the flag; the `image` loader (`_load_image`, 2026-09-02) reads the
+  file with `matplotlib.image.imread` (PNG natively, JPEG/TIFF via the Pillow
+  that matplotlib already depends on — no new dependency), normalises integer
+  arrays to float 0–1, applies `roi` as a plain `crop_roi_2d` pixel crop,
+  ignores `crop_to_data`, and returns `ext_x_um`/`ext_y_um` in **pixels**
+  (aspect only), `group=None`, `payload={"image": array}`; a missing/unreadable
+  file or an empty crop is a placeholder like any other data failure). **Never raises**
   for missing DATA (a file/dataset/field gone at render time) — those become
   `kind="placeholder"` with `payload["reason"]` describing why (the composed
   figure keeps going with a hatched cell instead of crashing on one stale
@@ -1259,6 +1265,7 @@ so `import dfxm.compose` stays light.
     axes.
   - `profiles_trace`: `{"job": dict, "field": str}` — the named field's line
     profile from the same `_collect` call.
+  - `image`: `{}` — no selector; `h5_path` is the image file.
 - `resolve_trace_opts(compose, style) -> dict` — the trace look for
   `profiles_trace` panels as `{"linewidth", "color", "font_scale"}`:
   `font_scale` = `compose.trace_font_scale` or, when `None`,
@@ -1294,7 +1301,9 @@ so `import dfxm.compose` stays light.
   coordinates are the ROI's own), returning the layer + pixel sizes for
   `map_layer`, or the plane + u/v step for `slice_plane`/`profiles_ref`;
   `ValueError` for a trace panel ("no ROI to pick") or unavailable data (the
-  placeholder reason) — the picker shows that text instead of crashing.
+  placeholder reason) — the picker shows that text instead of crashing — and
+  `ValueError("…pixel crop…")` for `image` panels (the picker has no preview
+  for them; the ROI text box still works).
 - `draw_placeholder(ax, reason: str) -> None` — a hatched grey cell (no ticks,
   a centred "unavailable" caption) for a panel whose data could not be
   loaded — the never-crash fallback `load_panel`/`draw_panel` route to.

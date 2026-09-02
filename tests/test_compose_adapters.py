@@ -454,3 +454,50 @@ def test_draw_panel_trace_y_tick_labels_off_hides_scientific_exponent(tmp_path):
     draw_panel(ax_off, p_off, load_panel(p_off), st)
     assert not exponent_visible(ax_off)
     assert ax_off.get_ylabel() and ax_off.yaxis.label.get_visible()  # y-label stays
+
+
+def _write_png(path, w=40, h=20):
+    from matplotlib.image import imsave
+
+    rgb = np.zeros((h, w, 3), "f4")
+    rgb[..., 0] = np.linspace(0.0, 1.0, w)[None, :]
+    imsave(str(path), rgb)
+    return str(path)
+
+
+def test_load_image_pixels_as_extent_and_float_rgb_payload(tmp_path):
+    png = _write_png(tmp_path / "ref.png")
+    d = load_panel(PanelDef("i", PanelSource(png, "image", {})))
+    assert d.kind == "image" and (d.ext_x_um, d.ext_y_um) == (40.0, 20.0)
+    img = d.payload["image"]
+    assert img.shape[:2] == (20, 40) and img.dtype.kind == "f"
+    assert 0.0 <= float(img.min()) and float(img.max()) <= 1.0
+    assert d.group is None and d.vmin is None
+
+
+def test_load_image_roi_is_a_pixel_crop_and_empty_crop_is_placeholder(tmp_path):
+    png = _write_png(tmp_path / "ref.png")
+    d = load_panel(PanelDef("i", PanelSource(png, "image", {}), roi=(5, 15, 10, 30)))
+    assert (d.ext_x_um, d.ext_y_um) == (20.0, 10.0)
+    assert d.payload["image"].shape[:2] == (10, 20)
+    d2 = load_panel(PanelDef("i", PanelSource(png, "image", {}), roi=(5, 5, 10, 30)))
+    assert d2.kind == "placeholder" and "ref.png" in d2.payload["reason"]
+
+
+def test_load_image_missing_file_is_placeholder_not_error(tmp_path):
+    d = load_panel(PanelDef("i", PanelSource(str(tmp_path / "gone.png"), "image", {})))
+    assert d.kind == "placeholder" and "gone.png" in d.payload["reason"]
+
+
+def test_load_image_crop_to_data_is_ignored(tmp_path):
+    png = _write_png(tmp_path / "ref.png")
+    d = load_panel(PanelDef("i", PanelSource(png, "image", {}), crop_to_data=True))
+    assert (d.ext_x_um, d.ext_y_um) == (40.0, 20.0)
+
+
+def test_panel_preview_refuses_image_panel(tmp_path):
+    from dfxm.compose.adapters import panel_preview
+
+    png = _write_png(tmp_path / "ref.png")
+    with pytest.raises(ValueError, match="pixel crop"):
+        panel_preview(PanelDef("i", PanelSource(png, "image", {})))
