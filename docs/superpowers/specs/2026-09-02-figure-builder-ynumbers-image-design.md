@@ -140,7 +140,7 @@ in `_LOADERS["image"]`:
 - `_cache_key` already includes `h5_path`, `kind`, `selector`, `roi`, so the
   per-render cache works without change.
 
-`panel_preview` raises `StageUserError` for `"image"` the way it does for
+`panel_preview` raises `ValueError` for `"image"` the way it does for
 traces (*"an image panel's ROI is a pixel crop — type it in the ROI box"*).
 The ROI picker preview for images is **out of scope**.
 
@@ -177,9 +177,9 @@ image has no physical scale to autoscale a trace to. A test pins this.
   they are (an image is not a map). `_cbar_label` is never reached. A
   `colorbar=True` override on an image panel is ignored silently.
 - Lettering: no change — `_assign_labels` sees the `PanelRef`.
-- `gridmap.panel_group_hint` returns `"image"` for the kind so the arranger
-  chip gets a neutral colour (add the key to whatever colour table the
-  arranger uses; grey).
+- `gridmap.panel_group_hint` returns `None` for the kind: the arranger's
+  `GROUP_COLORS[None]` is already the neutral grey chip, and its colourbar
+  strip skips `None` groups, so no colour-table change is needed.
 
 ### GUI (`gui/figure_builder.py`, `gui/widgets/layout_arranger.py`)
 
@@ -206,7 +206,7 @@ image has no physical scale to autoscale a trace to. A test pins this.
   | Colour limits, Colormap, Colourbar | on | off | off |
   | Label | on | on | on |
   | Show title | on | on | off |
-  | Panel scale | on | off | off |
+  | Panel scale | on | on (it is the trace scale) | off |
   | Width (cm) | off | off | on |
   | Y-axis numbers | off | on | off |
 
