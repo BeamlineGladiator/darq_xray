@@ -1065,7 +1065,8 @@ render/export modules; the GUI-facing recipe editor is `gui/figure_builder.py`
 
 The recipe data model + JSON (de)serialization + validation — the schema every
 other `dfxm/compose` module builds on.
-- `RECIPE_VERSION = 1`, `PANEL_KINDS = ("map_layer", "slice_plane", "profiles_ref", "profiles_trace")`,
+- `RECIPE_VERSION = 1`, `PANEL_KINDS = ("map_layer", "slice_plane", "profiles_ref", "profiles_trace", "image")`,
+  `IMAGE_DEFAULT_WIDTH_CM = 6.0` (printed width of an `"image"` panel when `PanelDef.width_cm` is `None`),
   `SCALE_BAR_MODES = ("per-panel", "one-panel", "gutter")`,
   `COLORBAR_MODES = ("per-panel", "united")`, `COLORBAR_POSITIONS = ("right", "bottom")`.
 - `ComposeStyle` — composer-level look knobs: `label_template`, `label_font_scale`,
@@ -1087,11 +1088,14 @@ other `dfxm/compose` module builds on.
   hint). The look trio is resolved by `adapters.resolve_trace_opts` (below). All of these are additive fields:
   absent in old recipe JSON → the defaults above via
   `ComposeStyle(**d.get("compose", {}))`, no loader change needed.
-- `PanelSource` — `h5_path`, `kind` (one of `PANEL_KINDS`), `selector` (kind-specific
-  selection key, e.g. stage/field/plane).
+- `PanelSource` — `h5_path` (the source file path — an `.h5` for the four data
+  kinds, a PNG/JPEG/TIFF for `"image"` (2026-09-02; the JSON key keeps its
+  historical name so v1 recipes stay readable, and `_rel_path`/`_resolve_path`
+  relativise it on save/load whatever the kind)), `kind` (one of `PANEL_KINDS`),
+  `selector` (kind-specific selection key, e.g. stage/field/plane).
 - `PanelDef` — one panel: `id`, `source: PanelSource`, plus per-panel overrides
   (`roi`, `clim`, `cmap`, `label`, `show_title`, `scale_um_per_cm`, `colorbar`,
-  `title`, `crop_to_data`, `y_tick_labels`). `crop_to_data` (bool, default `False`, 2026-08-18)
+  `title`, `crop_to_data`, `y_tick_labels`, `width_cm`). `crop_to_data` (bool, default `False`, 2026-08-18)
   asks the loaders to auto-crop the panel to the bounding box of its finite
   pixels (+3 % margin, `dfxm.common.figures.data_bbox_roi`), searched inside
   `roi` when one is set; ignored by `profiles_trace`; additive in JSON
@@ -1099,7 +1103,12 @@ other `dfxm/compose` module builds on.
   `y_tick_labels` (bool, default `True`, 2026-09-02) applies to `profiles_trace`
   panels only: `False` makes `adapters.draw_panel` hide the y tick labels and
   the y offset text (tick marks, grid and y-label stay); other kinds ignore it;
-  additive in JSON (`bool(d.get("y_tick_labels", True))`). `title` is an optional human-readable data name captured by the
+  additive in JSON (`bool(d.get("y_tick_labels", True))`).
+  `width_cm` (`float | None`, image panels only, 2026-09-02): printed width in
+  cm, `None` = `IMAGE_DEFAULT_WIDTH_CM`; height follows the pixel aspect in
+  `layout._image_cell`; `validate_recipe` rejects a non-positive value
+  (`StageUserError` + hint); additive in JSON (`d.get("width_cm")`).
+  `title` is an optional human-readable data name captured by the
   panel picker at pick time (e.g. `"strain: Strain map / z=3"`); display-only
   (outline tree, scale-bar combo, arranger tiles show `title or id`), never
   part of identity; absent in old recipes → `None`; `RECIPE_VERSION` stays 1
@@ -1155,8 +1164,8 @@ other `dfxm/compose` module builds on.
   a panel id that doesn't exist (a "ghost" reference), a panel referenced by
   the layout more than once, an unknown `PanelSource.kind`, an unknown
   `ComposeStyle.scale_bar_mode`, an unknown `colorbar_mode`/`colorbar_pos`, a
-  `label_template` with no `A`/`a` placeholder, or a non-positive
-  `gutter_cm`/`padding_cm`.
+  `label_template` with no `A`/`a` placeholder, a non-positive
+  `gutter_cm`/`padding_cm`, or a non-positive `PanelDef.width_cm`.
 
 #### `gridmap.py`
 
