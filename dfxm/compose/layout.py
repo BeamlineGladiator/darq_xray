@@ -23,7 +23,16 @@ from ..common.plotting import (
     trace_fixed_scale,
     trace_height_cm,
 )
-from .recipe import Col, PanelRef, Row, ScaleBarCell, Spacer, TextCell, iter_leaves
+from .recipe import (
+    IMAGE_DEFAULT_WIDTH_CM,
+    Col,
+    PanelRef,
+    Row,
+    ScaleBarCell,
+    Spacer,
+    TextCell,
+    iter_leaves,
+)
 
 _IN_PER_CM = 1.0 / 2.54
 PLACEHOLDER_CM = (4.0, 3.0)
@@ -68,7 +77,7 @@ def _validate_scale(value, panel_id: str, what: str) -> float:
 class SizedCell:
     leaf: object  # the layout leaf (PanelRef/Spacer/TextCell)
     panel: object | None  # PanelDef, or None for Spacer/TextCell
-    kind: str  # "map"|"trace"|"spacer"|"text"|"scalebar"|"placeholder"
+    kind: str  # "map"|"trace"|"image"|"spacer"|"text"|"scalebar"|"placeholder"
     w_in: float
     h_in: float
     # True when size_cells sized this TRACE cell from a pinned row height /
@@ -133,6 +142,8 @@ def size_cells(recipe, style, data_by_id, notes):
                 PLACEHOLDER_CM[0] * _IN_PER_CM,
                 PLACEHOLDER_CM[1] * _IN_PER_CM,
             )
+        if data.kind == "image":
+            return _image_cell(leaf, panel, data, pinned_h_in, pinned_w_in)
         if data.kind == "profiles_trace":
             return _trace_cell(leaf, panel, data, pinned_h_in, pinned_w_in)
         return _map_cell(leaf, panel, data, pinned_h_in, pinned_w_in)
@@ -184,6 +195,38 @@ def size_cells(recipe, style, data_by_id, notes):
                 f"panel {panel.id}: box clamped to 30 in — effective scale {box[2]:.4g} µm/cm"
             )
         return SizedCell(leaf, panel, "map", box[0], box[1])
+
+    def _image_cell(leaf, panel, data, pinned_h_in, pinned_w_in):
+        # ext_* are PIXELS here — only the aspect matters; no µm/cm scale is
+        # ever consulted for an image.
+        w_px, h_px = data.ext_x_um, data.ext_y_um
+        if not (_finite_positive(w_px) and _finite_positive(h_px)):
+            notes.append(f"panel {panel.id}: degenerate image size — rendered as placeholder")
+            return SizedCell(
+                leaf,
+                panel,
+                "placeholder",
+                PLACEHOLDER_CM[0] * _IN_PER_CM,
+                PLACEHOLDER_CM[1] * _IN_PER_CM,
+            )
+        if pinned_h_in is not None:
+            h = pinned_h_in
+            w = h * w_px / h_px
+            notes.append(
+                f"panel {panel.id}: pinned row height — image width {w / _IN_PER_CM:.4g} cm "
+                "follows its aspect"
+            )
+            if pinned_w_in is not None:
+                notes.append(
+                    f"panel {panel.id}: both row height and column width pinned — "
+                    "height pin wins (image aspect is fixed); width pin ignored"
+                )
+            return SizedCell(leaf, panel, "image", w, h)
+        if pinned_w_in is not None:
+            w = pinned_w_in
+            return SizedCell(leaf, panel, "image", w, w * h_px / w_px)
+        w = (panel.width_cm or IMAGE_DEFAULT_WIDTH_CM) * _IN_PER_CM
+        return SizedCell(leaf, panel, "image", w, w * h_px / w_px)
 
     def _trace_cell(leaf, panel, data, pinned_h_in, pinned_w_in):
         length = data.length_um

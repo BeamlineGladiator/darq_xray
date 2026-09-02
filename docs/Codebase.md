@@ -1326,7 +1326,7 @@ engine" section below, also in `layout.py`).
   (in cm) for a panel that has no usable data or a degenerate extent.
 - `SizedCell` — dataclass keyed by `id(leaf)`: `leaf` (the `PanelRef`/`Spacer`/
   `TextCell`), `panel` (its `PanelDef`, or `None` for `Spacer`/`TextCell`),
-  `kind` (`"map"`/`"trace"`/`"spacer"`/`"text"`/`"placeholder"`), `w_in`/
+  `kind` (`"map"`/`"trace"`/`"image"`/`"spacer"`/`"text"`/`"placeholder"`), `w_in`/
   `h_in`, `pinned` (bool, default `False` — set by `size_cells` when a TRACE
   cell's size came from a pinned row height / column width, i.e. both pin
   branches of `_trace_cell`; `autoscale_traces` skips pinned cells — pins
@@ -1361,6 +1361,13 @@ engine" section below, also in `layout.py`).
     `dataclasses.replace(style, trace_scale_um_per_cm=...)` before sizing. A
     clamp (`box[2] != trace_fixed_scale(style)`) appends a matching note (this
     is the path the `test_trace_clamp_note_surfaces` case exercises).
+  - `PanelData(kind="image")` (2026-09-02, `_image_cell`): box from **pixels**,
+    never a scale — a pinned row height sets the height and the width follows
+    the pixel aspect (note; with a column width also pinned, the height pin
+    wins, note); else a pinned column width sets the width and the height
+    follows; else `panel.width_cm or IMAGE_DEFAULT_WIDTH_CM` wide. Degenerate
+    pixel dimensions → `PLACEHOLDER_CM` + note. `trace_column_targets.widest_map`
+    keys on `kind == "map"`, so an image is never a trace-autoscale target.
   - A per-panel `scale_um_per_cm` override (map or trace) is validated by
     `_validate_scale(value, panel_id, what)` before use: it must be
     float-castable, finite, and `> 0`, else `StageUserError` (never a bare
