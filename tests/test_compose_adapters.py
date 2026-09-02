@@ -430,3 +430,27 @@ def test_draw_panel_y_tick_labels_ignored_by_non_trace_kinds(tmp_path):
     p = PanelDef("s", PanelSource(h5, "slice_plane", sel), y_tick_labels=False)
     draw_panel(ax, p, load_panel(p), None, colorbar=False, scale_bar=False)
     assert ax.yaxis.get_offset_text().get_visible() is True
+
+
+def test_draw_panel_trace_y_tick_labels_off_hides_scientific_exponent(tmp_path):
+    from dfxm.common.plotting import PlotStyle
+
+    h5 = _write_obl(tmp_path / "obl.h5")
+    with h5py.File(h5, "r+") as f:
+        f["strain/obl/slices"][...] = f["strain/obl/slices"][...] * 1e-3  # strain-sized values
+    st = PlotStyle(tickfmt_strain="scientific")
+    src = PanelSource(h5, "profiles_trace", {"job": JOB, "field": "strain"})
+
+    def exponent_visible(ax):
+        return any(t.get_visible() and "10^" in t.get_text() for t in ax.texts)
+
+    # control: with the flag on, the scientific format really draws a x10^n text
+    ax_on = Figure(figsize=(6, 4)).add_subplot(111)
+    p_on = PanelDef("t1", src)
+    draw_panel(ax_on, p_on, load_panel(p_on), st)
+    assert exponent_visible(ax_on)
+    ax_off = Figure(figsize=(6, 4)).add_subplot(111)
+    p_off = PanelDef("t2", src, y_tick_labels=False)
+    draw_panel(ax_off, p_off, load_panel(p_off), st)
+    assert not exponent_visible(ax_off)
+    assert ax_off.get_ylabel() and ax_off.yaxis.label.get_visible()  # y-label stays

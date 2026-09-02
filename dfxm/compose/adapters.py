@@ -465,6 +465,9 @@ def draw_panel(
             # numbers only: tick marks, grid and the y-label stay
             ax.tick_params(labelleft=False)
             ax.yaxis.get_offset_text().set_visible(False)
+            for t in ax.texts:  # apply_axis_tickfmt's static "scientific" x10^n
+                if t.get_gid() == "tickfmt-exponent-y":
+                    t.set_visible(False)
         return None
     raise StageUserError(f"unknown panel kind {data.kind!r}", hint="Recipe is corrupt.")
 
