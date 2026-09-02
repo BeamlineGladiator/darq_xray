@@ -1091,11 +1091,15 @@ other `dfxm/compose` module builds on.
   selection key, e.g. stage/field/plane).
 - `PanelDef` — one panel: `id`, `source: PanelSource`, plus per-panel overrides
   (`roi`, `clim`, `cmap`, `label`, `show_title`, `scale_um_per_cm`, `colorbar`,
-  `title`, `crop_to_data`). `crop_to_data` (bool, default `False`, 2026-08-18)
+  `title`, `crop_to_data`, `y_tick_labels`). `crop_to_data` (bool, default `False`, 2026-08-18)
   asks the loaders to auto-crop the panel to the bounding box of its finite
   pixels (+3 % margin, `dfxm.common.figures.data_bbox_roi`), searched inside
   `roi` when one is set; ignored by `profiles_trace`; additive in JSON
-  (`bool(d.get("crop_to_data", False))`). `title` is an optional human-readable data name captured by the
+  (`bool(d.get("crop_to_data", False))`).
+  `y_tick_labels` (bool, default `True`, 2026-09-02) applies to `profiles_trace`
+  panels only: `False` makes `adapters.draw_panel` hide the y tick labels and
+  the y offset text (tick marks, grid and y-label stay); other kinds ignore it;
+  additive in JSON (`bool(d.get("y_tick_labels", True))`). `title` is an optional human-readable data name captured by the
   panel picker at pick time (e.g. `"strain: Strain map / z=3"`); display-only
   (outline tree, scale-bar combo, arranger tiles show `title or id`), never
   part of identity; absent in old recipes → `None`; `RECIPE_VERSION` stays 1

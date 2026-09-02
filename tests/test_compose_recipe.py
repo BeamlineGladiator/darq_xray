@@ -281,3 +281,17 @@ def test_scale_bar_cell_round_trips():
     leaf = r2.layout.children[-1]
     assert isinstance(leaf, ScaleBarCell) and (leaf.w_cm, leaf.h_cm) == (3.5, 1.25)
     assert [type(x).__name__ for x in iter_leaves(r2.layout)][-1] == "ScaleBarCell"
+
+
+def test_y_tick_labels_round_trips_and_old_recipe_defaults_true():
+    import json
+
+    r = _mini_recipe()
+    r.panels[1].y_tick_labels = False  # the trace panel
+    r2 = recipe_from_json(recipe_to_json(r))
+    assert r2.panels[1].y_tick_labels is False and r2.panels[0].y_tick_labels is True
+    d = json.loads(recipe_to_json(_mini_recipe()))
+    for p in d["panels"]:
+        p.pop("y_tick_labels")  # a recipe written before the field existed
+    r3 = recipe_from_json(json.dumps(d))
+    assert all(p.y_tick_labels is True for p in r3.panels)

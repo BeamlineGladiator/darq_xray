@@ -59,6 +59,9 @@ class PanelDef:
     # Auto-crop to the finite-data bounding box (+3 % margin), searched inside
     # `roi` when one is set; ignored by trace panels.
     crop_to_data: bool = False
+    # Trace panels only: False hides the y tick labels and the ×10ⁿ offset
+    # text (tick marks, grid and the y-label stay); ignored by other kinds.
+    y_tick_labels: bool = True
 
 
 @dataclass
@@ -260,6 +263,7 @@ def _panel_def_to_dict(p, rel):
         "colorbar": p.colorbar,
         "title": p.title,
         "crop_to_data": bool(p.crop_to_data),
+        "y_tick_labels": bool(p.y_tick_labels),
     }
 
 
@@ -278,6 +282,7 @@ def _panel_def_from_dict(d, base_dir):
         colorbar=d.get("colorbar"),
         title=d.get("title"),
         crop_to_data=bool(d.get("crop_to_data", False)),
+        y_tick_labels=bool(d.get("y_tick_labels", True)),
     )
 
 
