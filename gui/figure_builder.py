@@ -57,6 +57,7 @@ from dfxm.compose.recipe import (
     iter_leaves,
     recipe_from_json,
     recipe_to_json,
+    sanitize_stem,
 )
 
 from .widgets.busy import BusyOverlay, busy_cursor, keep_alive
@@ -72,6 +73,23 @@ def _ensure_json_suffix(path: str) -> str:
     return path if ext else path + ".json"
 
 
+# Extensions an export save-dialog filename may end in that are a *format*, not
+# part of the name: the enabled formats plus the other image suffixes a user
+# might type by hand. Anything else after a dot is kept ("fig.v2" stays
+# "fig.v2"), so only a real extension is stripped before it becomes the stem.
+_FORMAT_SUFFIXES = ("png", "pdf", "svg", "eps", "ps", "jpg", "jpeg", "tif", "tiff", "webp")
+
+
+def _export_stem_from_filename(base: str, fmts: tuple[str, ...]) -> str:
+    """Filename from the export save dialog -> the stem to write every format
+    under. Qt appends the filter's suffix to a name typed without one, so the
+    extension is a hint, never the user's choice of name."""
+    root, ext = os.path.splitext(base)
+    if root and ext[1:].lower() in {*_FORMAT_SUFFIXES, *(f.lower() for f in fmts)}:
+        return root
+    return base
+
+
 # The one sentence that separates the window's two kinds of file action, so the
 # recipe buttons and the export button can each point at the other. Both halves
 # name the object AND the format — "recipe (.json)" vs "image files" — because
@@ -81,7 +99,8 @@ RECIPE_VS_EXPORT_TIP = (
 )
 EXPORT_FIGURE_TIP = (
     "Render the composed figure to image files (PNG/PDF/SVG, per the Style settings) "
-    "in a directory you pick. To save the layout itself instead, use Save recipe."
+    "under a name and in a directory you pick — one file per enabled format, all "
+    "sharing that name. To save the layout itself instead, use Save recipe."
 )
 
 # Row/Col gap spin sentinel: the spinbox minimum shown as "follow gutter" (gap_cm=None).
@@ -105,15 +124,21 @@ class _ComposeWorker(QThread):
 
     Holds NO Qt widgets — only the JSON snapshot, the shared loader cache
     (serialized: at most one worker at a time, the GUI thread rebinds rather
-    than mutates it) and an output dir for exports. Results/exceptions are
-    delivered via ``resultReady`` connected to a BOUND METHOD of the window,
-    so delivery is queued onto the GUI thread.
+    than mutates it) and an output dir + filename stem for exports.
+    Results/exceptions are delivered via ``resultReady`` connected to a BOUND
+    METHOD of the window, so delivery is queued onto the GUI thread.
     """
 
     resultReady = Signal(int, str, object, object)  # (generation, kind, payload, exception)
 
     def __init__(
-        self, generation: int, kind: str, recipe_json: str, cache: dict, out_dir: str | None
+        self,
+        generation: int,
+        kind: str,
+        recipe_json: str,
+        cache: dict,
+        out_dir: str | None,
+        stem: str | None = None,
     ) -> None:
         super().__init__()
         self._generation = generation
@@ -121,6 +146,7 @@ class _ComposeWorker(QThread):
         self._recipe_json = recipe_json
         self._cache = cache
         self._out_dir = out_dir
+        self._stem = stem
 
     def run(self) -> None:  # worker thread — no Qt widgets in here
         from dfxm.compose.render import export_recipe, render_recipe
@@ -133,13 +159,15 @@ class _ComposeWorker(QThread):
             # matplotlib mathtext parser — never render on two threads at once).
             with _RENDER_LOCK:
                 if self._kind == "export":
-                    paths, res = export_recipe(recipe, self._out_dir, loader_cache=self._cache)
-                    # Carry the requested out_dir through explicitly (not derived
-                    # from paths[0]) so the result slot reports the directory the
+                    paths, res = export_recipe(
+                        recipe, self._out_dir, stem=self._stem, loader_cache=self._cache
+                    )
+                    # Carry the requested out_dir/stem through explicitly (not
+                    # derived from paths[0]) so the result slot reports what the
                     # user chose even when nothing was written (e.g. every format
                     # unchecked -> paths == []) — parity with the old synchronous
                     # export_now, which always printed the chosen dir.
-                    payload = (paths, res, self._out_dir)
+                    payload = (paths, res, self._out_dir, self._stem)
                 else:
                     payload = render_recipe(recipe, loader_cache=self._cache)
         except Exception as exc:  # noqa: BLE001 — delivered to the GUI as data
@@ -189,7 +217,13 @@ class FigureBuilderWindow(QMainWindow):
         # is already queued just overwrites it (there is nothing to lose,
         # both would render the same final recipe state).
         self._pending_render: bool = False
-        self._pending_export: str | None = None  # out_dir, or None = nothing queued
+        # (out_dir, stem), or None = nothing queued
+        self._pending_export: tuple[str, str] | None = None
+        # Last export target, remembered for this window's session only: an
+        # export names the *files*, never the recipe (recipe.name and the .json
+        # stay untouched), so the suggestion has to live here.
+        self._export_dir: str | None = None
+        self._export_stem: str | None = None
         self._last_outcome = None
         self._preview_host = QWidget()
         self._preview_layout = QVBoxLayout(self._preview_host)
@@ -1358,15 +1392,63 @@ class FigureBuilderWindow(QMainWindow):
 
     # -- export -------------------------------------------------------------------
     def export_now(self) -> None:
-        """Ask for an export directory, then run ``export_recipe`` on the
-        shared compose worker (spinner text "Exporting…"). Export re-renders
-        rather than reusing the preview result — simplest correct thing; the
-        result slot reports "wrote N file(s) → dir" or the failure text.
+        """Ask for an export name + directory, then run ``export_recipe`` on
+        the shared compose worker (spinner text "Exporting…").
+
+        One save dialog does both: the file name comes pre-filled from
+        :meth:`_default_export_stem`, and the extension on it is only a hint —
+        every format enabled in Style is written beside it under the same
+        stem, so the suffix is stripped back off before it becomes the stem.
+        Export re-renders rather than reusing the preview result — simplest
+        correct thing; the result slot reports "wrote N file(s) → dir/stem.*"
+        or the failure text.
         """
-        out = QFileDialog.getExistingDirectory(self, "Export directory")
-        if not out:
+        fmts = tuple(self._style.formats) or ("png",)
+        pattern = " ".join(f"*.{f}" for f in fmts)
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export figure",
+            self._default_export_target(),
+            f"Figure image ({pattern});;All files (*)",
+        )
+        if not path:
             return
-        self._request_work("export", out)
+        out, base = os.path.split(path)
+        stem = sanitize_stem(_export_stem_from_filename(base, fmts))
+        self._export_dir, self._export_stem = out, stem
+        self._request_work("export", (out, stem))
+
+    def _default_export_stem(self) -> str:
+        """File name the export dialog pre-fills, already sanitized so what is
+        shown is what gets written.
+
+        Preference order: the name of the last export in this session, then the
+        recipe's own ``.json`` basename (what the user calls this figure — the
+        recipe buttons and the window title name that file), then
+        ``recipe.name``. Never ``""``: :func:`sanitize_stem` falls back to
+        ``"figure"``.
+        """
+        if self._export_stem:
+            return self._export_stem
+        if self._current_path:
+            return sanitize_stem(os.path.splitext(os.path.basename(self._current_path))[0])
+        return sanitize_stem(self._recipe.name)
+
+    def _default_export_target(self) -> str:
+        """``<dir>/<stem>`` pre-selected in the export dialog: the directory of
+        the last export in this session, else where Save-as would open (the
+        recipe's own folder, or the source data's — see
+        :meth:`_default_save_dir`, whose result is a recipe *file* when the
+        recipe has been saved). With no directory to offer it falls back to the
+        bare stem — Qt resolves that against the process's working directory,
+        which is only ever the folder the dialog *opens* in, never where
+        anything is written unattended."""
+        out = self._export_dir or ""
+        if not out:
+            start = self._default_save_dir()
+            out = os.path.dirname(start) if start and os.path.isfile(start) else start
+        stem = self._default_export_stem()
+        return os.path.join(out, stem) if out else stem
 
     # -- recipe access ------------------------------------------------------------
     def recipe(self) -> FigureRecipe:
@@ -1636,22 +1718,24 @@ class FigureBuilderWindow(QMainWindow):
             return
         self._request_work("render", None)
 
-    def _request_work(self, kind: str, out_dir: str | None) -> None:
+    def _request_work(self, kind: str, target: tuple[str, str] | None) -> None:
+        """*target* is ``(out_dir, stem)`` for an export, None for a render."""
         self._generation += 1
         if self._worker is not None:
             if kind == "export":
-                self._pending_export = out_dir
+                self._pending_export = target
             else:
                 self._pending_render = True
             return
-        self._start_worker(kind, out_dir)
+        self._start_worker(kind, target)
 
-    def _start_worker(self, kind: str, out_dir: str | None) -> None:
+    def _start_worker(self, kind: str, target: tuple[str, str] | None) -> None:
         self._overlay.start("Exporting…" if kind == "export" else "Rendering…")
         self._refresh_btn.setEnabled(False)
         self._export_btn.setEnabled(False)
+        out_dir, stem = target if target is not None else (None, None)
         worker = _ComposeWorker(
-            self._generation, kind, recipe_to_json(self._recipe), self._cache, out_dir
+            self._generation, kind, recipe_to_json(self._recipe), self._cache, out_dir, stem
         )
         worker.resultReady.connect(self._on_worker_result)  # bound method -> queued to GUI thread
         worker.finished.connect(self._on_worker_finished)
@@ -1677,9 +1761,13 @@ class FigureBuilderWindow(QMainWindow):
             self._last_outcome = None
             return
         if kind == "export":
-            paths, res, out = payload  # out = the dir the user chose, not derived from paths
+            # out/stem = what the user chose, not derived from paths (empty when
+            # every format is unchecked). stem is pre-sanitized, so "dir/stem.*"
+            # names the files that were actually written.
+            paths, res, out, stem = payload
             notes = f"; {'; '.join(res.notes)}" if res.notes else ""
-            self._notes_label.setText(f"wrote {len(paths)} file(s) → {out}{notes}")
+            target = f"{os.path.join(out, stem)}.*" if stem else out
+            self._notes_label.setText(f"wrote {len(paths)} file(s) → {target}{notes}")
             self._last_outcome = res
             return
         self._show_figure(payload.figure)
@@ -1696,8 +1784,8 @@ class FigureBuilderWindow(QMainWindow):
         # be set alongside the other — both surviving the wait is the point
         # (see the F2 fix note on self._pending_render/_pending_export above).
         if self._pending_export is not None:
-            out_dir, self._pending_export = self._pending_export, None
-            self._start_worker("export", out_dir)
+            target, self._pending_export = self._pending_export, None
+            self._start_worker("export", target)
             return
         if self._pending_render:
             self._pending_render = False

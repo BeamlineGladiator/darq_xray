@@ -368,6 +368,24 @@ def test_export_no_tightcrop_all_formats(tmp_path):
     assert img.shape[1] == int(fw * 120) and img.shape[0] == int(fh * 120)  # exact canvas
 
 
+def test_export_stem_overrides_the_recipe_name(tmp_path):
+    """``stem`` names the files instead of ``recipe.name`` (the GUI's Export
+    figure… dialog), and is sanitized the same way — the recipe is untouched."""
+    h5 = _write_obl(tmp_path / "obl.h5")
+    r = _two_panel_recipe(h5)  # recipe.name == "demo"
+    paths, _res = export_recipe(r, str(tmp_path / "out"), stem="my figure", formats=("png", "pdf"))
+    assert sorted(os.path.basename(p) for p in paths) == ["my_figure.pdf", "my_figure.png"]
+    assert r.name == "demo"
+
+
+def test_export_falls_back_to_the_recipe_name_when_stem_is_empty(tmp_path):
+    h5 = _write_obl(tmp_path / "obl.h5")
+    paths, _res = export_recipe(
+        _two_panel_recipe(h5), str(tmp_path / "out"), stem="", formats=("png",)
+    )
+    assert os.path.basename(paths[0]) == "demo.png"
+
+
 def test_orphaned_panel_def_not_loaded_at_all(tmp_path):
     """Item 7: an orphaned PanelDef is skipped WITHOUT an h5 read and reported."""
     h5 = _write_obl(tmp_path / "obl.h5")

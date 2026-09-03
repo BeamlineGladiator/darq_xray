@@ -75,6 +75,16 @@ def test_cli_renders_and_exits_zero(tmp_path, capsys):
     assert os.path.exists(out / "demo.png")
 
 
+def test_cli_name_overrides_the_recipe_name(tmp_path, capsys):
+    h5 = _write_obl(tmp_path / "obl.h5")
+    rp = tmp_path / "r.json"
+    rp.write_text(recipe_to_json(_two_panel_recipe(h5)))  # recipe.name == "demo"
+    out = tmp_path / "out"
+    rc = _main(["render", str(rp), "-o", str(out), "--formats", "png", "--name", "figure 3"])
+    assert rc == 0
+    assert os.path.exists(out / "figure_3.png") and not os.path.exists(out / "demo.png")
+
+
 def test_cli_all_placeholders_exits_one(tmp_path, capsys):
     h5 = _write_obl(tmp_path / "obl.h5")
     r = _two_panel_recipe(h5)

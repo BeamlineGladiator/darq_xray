@@ -2614,7 +2614,20 @@ far you scroll the sections — see the Export bullet at the end of this list):
 - **Export figure…** — the accent-coloured button pinned to the **bottom of the right
   pane**, always in view: it sits outside the scrolling column, so you never
   have to scroll past Style/Compose/Selected node to reach it. It opens a
-  directory picker and, like the live preview, runs on
+  **save dialog — you pick the folder AND type the file name there**; the name
+  comes pre-filled, so you can just press Save. Every enabled format is written
+  side by side under that one name (`strain_overview.png` +
+  `strain_overview.pdf`, …), which is why the extension shown in the dialog is
+  only a hint — change the name, not the extension, to change what you get.
+  Spaces and anything else a filename can't carry become `_`.
+
+  **The suggested name** is, in order: whatever you called the *last* export in
+  this session, else the recipe's own `.json` file name, else the figure's name
+  in the window title. Naming an export never renames the recipe — `.json`
+  untouched, no unsaved-changes star — so Export names the picture and **Save
+  recipe** names the layout, exactly as their tooltips say.
+
+  Like the live preview, it runs on
   the same background compose thread (spinner overlay text "Exporting…";
   **Refresh data**/**Export figure…** disable for the duration and re-enable when it
   lands) — it writes the recipe with `dfxm.compose.render.export_recipe` (the
@@ -2623,8 +2636,9 @@ far you scroll the sections — see the Export bullet at the end of this list):
   into the recipe file — reusing the preview's loader cache so nothing
   already read is re-read from disk; export re-renders the recipe rather than
   reusing the on-screen preview figure); the notes bar reports how many files
-  were written and where, or the error and its hint if the recipe couldn't be
-  exported (including an output directory that couldn't be created). An
+  were written and where — `wrote 2 file(s) → /data/STO2/strain_overview.*` —
+  or the error and its hint if the recipe couldn't be exported (including an
+  output directory that couldn't be created). An
   export request made while a render (or another export) is already running
   is queued in its own slot, separate from a queued render — the two never
   clobber each other, and a queued export always starts before a queued
@@ -2636,6 +2650,7 @@ far you scroll the sections — see the Export bullet at the end of this list):
 ```bash
 python3 -m dfxm.compose render recipe.json -o outdir
 python3 -m dfxm.compose render recipe.json -o outdir --formats png,pdf,svg --dpi 300
+python3 -m dfxm.compose render recipe.json -o outdir --name figure_3
 ```
 
 - `recipe.json` — the recipe file. Relative `h5_path`s inside it resolve
@@ -2646,8 +2661,13 @@ python3 -m dfxm.compose render recipe.json -o outdir --formats png,pdf,svg --dpi
   recipe's own style specifies); any other value is rejected before
   anything renders.
 - `--dpi` — overrides the recipe's own DPI.
-- The output filename is the recipe's `name` (sanitised) plus the format
-  extension, e.g. `recipe.json` named `"demo"` → `outdir/demo.png`.
+- `--name` — the output filename stem, without an extension; every format is
+  written under it. Same job as the name box in the GUI's **Export figure…**
+  dialog, and like it, the recipe file is never modified.
+- The output filename is `--name`, or the recipe's own `name` when you don't
+  pass one — sanitised either way (anything a filename can't carry becomes
+  `_`), plus the format extension: `recipe.json` named `"demo"` →
+  `outdir/demo.png`, and `--name "figure 3"` → `outdir/figure_3.png`.
 
 Any implied-scale, drift, or placeholder note is printed to stdout as
 `note: …` — these are informational, not failures. The command's **exit

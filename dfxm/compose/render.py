@@ -6,7 +6,6 @@ the figure geometry. No matplotlib auto-layout."""
 from __future__ import annotations
 
 import os
-import re
 from dataclasses import dataclass, field
 from dataclasses import replace as dc_replace
 
@@ -39,6 +38,7 @@ from .recipe import (
     Spacer,
     TextCell,
     iter_leaves,
+    sanitize_stem,
     validate_recipe,
 )
 
@@ -1268,11 +1268,19 @@ def export_recipe(
     recipe,
     out_dir,
     *,
+    stem=None,
     formats=None,
     dpi=None,
     style_overrides: dict | None = None,
     loader_cache: dict | None = None,
 ):
+    """Render *recipe* and write one file per format into *out_dir*.
+
+    *stem* overrides the filename stem, which otherwise comes from
+    ``recipe.name``; either way it is passed through :func:`sanitize_stem`.
+    The GUI's Export figure… dialog uses it to let the user name the export
+    without renaming the recipe.
+    """
     try:
         os.makedirs(out_dir, exist_ok=True)
     except OSError as exc:
@@ -1288,10 +1296,10 @@ def export_recipe(
     )
     fmts = tuple(formats) if formats else tuple(style.formats)
     the_dpi = int(dpi) if dpi else int(style.dpi)
-    stem = re.sub(r"[^\w.-]+", "_", recipe.name or "figure").strip("_") or "figure"
+    the_stem = sanitize_stem(stem if stem else recipe.name)
     paths = []
     for fmt in fmts:
-        path = os.path.join(out_dir, f"{stem}.{fmt}")
+        path = os.path.join(out_dir, f"{the_stem}.{fmt}")
         res.figure.savefig(path, dpi=the_dpi, facecolor="white")  # NO bbox_inches
         paths.append(path)
     return paths, res

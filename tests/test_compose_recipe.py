@@ -14,8 +14,29 @@ from dfxm.compose.recipe import (
     iter_leaves,
     recipe_from_json,
     recipe_to_json,
+    sanitize_stem,
     validate_recipe,
 )
+
+
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [
+        ("figure 3", "figure_3"),  # spaces are not filename material
+        ("strain/mosaicity", "strain_mosaicity"),  # a separator can never survive
+        ("../../etc/passwd", "etc_passwd"),  # ...so a typed name cannot escape out_dir
+        (".", "figure"),  # nor become a path component
+        ("..", "figure"),
+        (".hidden", "hidden"),  # a typed name must not make a hidden file
+        ("fig.v2", "fig.v2"),  # a dotted name is kept as-is
+        ("", "figure"),
+        (None, "figure"),
+        ("   ", "figure"),
+    ],
+)
+def test_sanitize_stem(name, expected):
+    assert sanitize_stem(name) == expected
+    assert sanitize_stem(sanitize_stem(name)) == expected  # idempotent
 
 
 def _mini_recipe():

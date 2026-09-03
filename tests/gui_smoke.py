@@ -1143,14 +1143,17 @@ def main() -> int:
     _bout = os.path.join(_bdir, "export")
     import gui.figure_builder as _fbmod
 
-    _orig_dir = _fbmod.QFileDialog.getExistingDirectory
-    _fbmod.QFileDialog.getExistingDirectory = staticmethod(lambda *a, **k: _bout)
+    _orig_save = _fbmod.QFileDialog.getSaveFileName
+    # the export dialog names the file too — a typed name, not the recipe's
+    _fbmod.QFileDialog.getSaveFileName = staticmethod(
+        lambda *a, **k: (os.path.join(_bout, "smoke figure.png"), "")
+    )
     try:
         fb.export_now()
         wait_builder_idle(fb)
     finally:
-        _fbmod.QFileDialog.getExistingDirectory = _orig_dir
-    assert os.path.exists(os.path.join(_bout, "untitled.png"))
+        _fbmod.QFileDialog.getSaveFileName = _orig_save
+    assert os.path.exists(os.path.join(_bout, "smoke_figure.png")), fb._notes_label.text()
     _rp = os.path.join(_bdir, "r.json")
     fb.save_recipe_file(_rp)
     fb.load_recipe_file(_rp)

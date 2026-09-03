@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import re
 from dataclasses import asdict, dataclass
 
 from ..common.errors import StageUserError
@@ -15,6 +16,18 @@ IMAGE_DEFAULT_WIDTH_CM = 6.0  # printed width of an "image" panel when PanelDef.
 SCALE_BAR_MODES = ("per-panel", "one-panel", "gutter")
 COLORBAR_MODES = ("per-panel", "united")
 COLORBAR_POSITIONS = ("right", "bottom")
+
+
+def sanitize_stem(name: str | None) -> str:
+    r"""Filename stem (no extension) from a free-text figure/recipe name.
+
+    Anything outside ``[\w.-]`` collapses to ``_`` (so a typed name can never
+    escape the output directory via a separator), then leading/trailing ``.``
+    and ``_`` go — a name of ``"."`` or ``".."`` must not become a path, and a
+    typed name must not silently produce a hidden file. Empty in, ``"figure"``
+    out.
+    """
+    return re.sub(r"[^\w.-]+", "_", name or "").strip("._") or "figure"
 
 
 @dataclass

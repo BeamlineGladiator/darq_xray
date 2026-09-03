@@ -356,13 +356,81 @@ def test_panel_override_editor_malformed_clim_no_mutation(tmp_path):
 def test_export_now_writes_files(tmp_path, monkeypatch):
     w = _win()
     w.add_panels(_obl_recipe_panels(tmp_path))
+    # A preview render landing after the export would overwrite the export's
+    # notes-bar text with its own (empty) notes — disarm the debounce so this
+    # test reads the export's own outcome, not whatever ran last.
+    w._debounce.stop()
     out = tmp_path / "out"
     monkeypatch.setattr(
-        "gui.figure_builder.QFileDialog.getExistingDirectory", lambda *a, **k: str(out)
+        "gui.figure_builder.QFileDialog.getSaveFileName",
+        lambda *a, **k: (str(out / "untitled.png"), ""),
     )
     export_and_wait(w)
     assert os.path.exists(out / "untitled.png")
     assert "wrote" in w._notes_label.text()
+
+
+def test_export_now_uses_the_typed_name_and_never_renames_the_recipe(tmp_path, monkeypatch):
+    """The name typed into the export save dialog names the written files
+    (sanitized on the way through), while ``recipe.name``, the recipe file and
+    the dirty flag stay untouched — Export names the picture, Save names the
+    layout."""
+    w = _win()
+    w.add_panels(_obl_recipe_panels(tmp_path))
+    # A preview render landing after the export would overwrite the export's
+    # notes-bar text with its own (empty) notes — disarm the debounce so this
+    # test reads the export's own outcome, not whatever ran last.
+    w._debounce.stop()
+    out = tmp_path / "out"
+    monkeypatch.setattr(
+        "gui.figure_builder.QFileDialog.getSaveFileName",
+        lambda *a, **k: (str(out / "strain overview.png"), ""),
+    )
+    w._dirty = False
+    export_and_wait(w)
+    assert os.path.exists(out / "strain_overview.png")  # spaces -> underscores
+    assert not os.path.exists(out / "untitled.png")  # NOT the recipe's name
+    assert w.recipe().name == "untitled" and not w.is_dirty()
+    assert w._notes_label.text().startswith(f"wrote 1 file(s) → {out / 'strain_overview'}.*")
+
+
+def test_export_dialog_prefills_recipe_name_then_the_last_export_name(tmp_path, monkeypatch):
+    """The dialog's default suggestion: the recipe's own ``.json`` basename
+    once it has one, then — for the rest of the session — whatever the last
+    export was called. Remembered on the window, never written into the
+    recipe."""
+    w = _win()
+    w.add_panels(_obl_recipe_panels(tmp_path))
+    assert w._default_export_stem() == "untitled"  # fresh recipe: recipe.name
+    w.save_recipe_file(str(tmp_path / "figure 3.json"))
+    assert w._default_export_stem() == "figure_3"  # the recipe file's own name
+    assert w._default_export_target() == str(tmp_path / "figure_3")
+
+    seen = []
+
+    def _dlg(parent, title, path, filt, *a, **k):
+        seen.append((path, filt))
+        return (str(tmp_path / "out" / "panel_a.pdf"), "")
+
+    monkeypatch.setattr("gui.figure_builder.QFileDialog.getSaveFileName", _dlg)
+    export_and_wait(w)
+    assert seen[0][0] == str(tmp_path / "figure_3")  # pre-filled from the recipe
+    assert "*.png" in seen[0][1]  # filter lists the enabled formats
+    assert w._default_export_stem() == "panel_a"  # ...then from the last export
+    assert w._default_export_target() == str(tmp_path / "out" / "panel_a")
+    assert w.recipe().name == "untitled"  # still never renamed
+
+
+def test_export_stem_from_filename_strips_only_a_real_extension():
+    """Qt appends the filter's suffix to a name typed without one, so the
+    extension is a hint — but a dotted *name* must survive intact."""
+    from gui.figure_builder import _export_stem_from_filename as stem_of
+
+    assert stem_of("fig.png", ("png",)) == "fig"
+    assert stem_of("fig.PDF", ("png",)) == "fig"  # any image suffix, any case
+    assert stem_of("fig.tiff", ("png",)) == "fig"
+    assert stem_of("fig.v2", ("png",)) == "fig.v2"  # a dotted name is not an extension
+    assert stem_of("fig", ("png",)) == "fig"
 
 
 def test_export_now_zero_files_written_still_reports_chosen_dir(tmp_path, monkeypatch):
@@ -378,16 +446,21 @@ def test_export_now_zero_files_written_still_reports_chosen_dir(tmp_path, monkey
 
     w = _win()
     w.add_panels(_obl_recipe_panels(tmp_path))
+    # A preview render landing after the export would overwrite the export's
+    # notes-bar text with its own (empty) notes — disarm the debounce so this
+    # test reads the export's own outcome, not whatever ran last.
+    w._debounce.stop()
     out = tmp_path / "out"
     monkeypatch.setattr(
-        "gui.figure_builder.QFileDialog.getExistingDirectory", lambda *a, **k: str(out)
+        "gui.figure_builder.QFileDialog.getSaveFileName",
+        lambda *a, **k: (str(out / "untitled.png"), ""),
     )
     monkeypatch.setattr(
         "dfxm.compose.render.export_recipe",
         lambda *a, **k: ([], ComposeResult(figure=Figure())),
     )
     export_and_wait(w)
-    assert w._notes_label.text() == f"wrote 0 file(s) → {out}"
+    assert w._notes_label.text() == f"wrote 0 file(s) → {out / 'untitled'}.*"
 
 
 # -- fix wave 1: partial-submit override editor + export never crashes -------
@@ -436,9 +509,14 @@ def test_override_crop_to_data_checkbox_writes_field_and_reloads(tmp_path):
 def test_export_now_unexpected_error_reports_to_notes_bar_not_crash(tmp_path, monkeypatch):
     w = _win()
     w.add_panels(_obl_recipe_panels(tmp_path))
+    # A preview render landing after the export would overwrite the export's
+    # notes-bar text with its own (empty) notes — disarm the debounce so this
+    # test reads the export's own outcome, not whatever ran last.
+    w._debounce.stop()
     out = tmp_path / "out"
     monkeypatch.setattr(
-        "gui.figure_builder.QFileDialog.getExistingDirectory", lambda *a, **k: str(out)
+        "gui.figure_builder.QFileDialog.getSaveFileName",
+        lambda *a, **k: (str(out / "untitled.png"), ""),
     )
 
     def _raise(*_a, **_k):
@@ -1308,7 +1386,8 @@ def test_pending_export_survives_a_pending_render_export_then_render(tmp_path, m
     release, render_calls, export_calls = _gate_render_and_export(monkeypatch)
     out = tmp_path / "out"
     monkeypatch.setattr(
-        "gui.figure_builder.QFileDialog.getExistingDirectory", lambda *a, **k: str(out)
+        "gui.figure_builder.QFileDialog.getSaveFileName",
+        lambda *a, **k: (str(out / "untitled.png"), ""),
     )
 
     w = _win()
@@ -1318,7 +1397,7 @@ def test_pending_export_survives_a_pending_render_export_then_render(tmp_path, m
     assert w._worker is not None
     w.export_now()  # queued in the export slot
     w.render_now()  # queued in the render slot — must NOT clobber the export
-    assert w._pending_export == str(out) and w._pending_render is True
+    assert w._pending_export == (str(out), "untitled") and w._pending_render is True
     release.set()
     wait_builder_idle(w)
     # 3 render_recipe calls: the initial (gated) render, export_recipe's own
@@ -1338,7 +1417,8 @@ def test_pending_render_survives_a_pending_export_render_then_export(tmp_path, m
     release, render_calls, export_calls = _gate_render_and_export(monkeypatch)
     out = tmp_path / "out"
     monkeypatch.setattr(
-        "gui.figure_builder.QFileDialog.getExistingDirectory", lambda *a, **k: str(out)
+        "gui.figure_builder.QFileDialog.getSaveFileName",
+        lambda *a, **k: (str(out / "untitled.png"), ""),
     )
 
     w = _win()

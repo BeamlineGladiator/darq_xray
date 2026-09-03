@@ -21,6 +21,11 @@ def _main(argv: list[str] | None = None) -> int:
     r.add_argument("-o", "--out", required=True, help="output directory")
     r.add_argument("--formats", default="", help="comma list, e.g. png,pdf,svg (default: style)")
     r.add_argument(
+        "--name",
+        default="",
+        help="output filename stem, no extension (default: the recipe's own name)",
+    )
+    r.add_argument(
         "--dpi", type=int, default=None, help="output resolution (default: style's own dpi)"
     )
     args = ap.parse_args(argv)
@@ -49,7 +54,9 @@ def _main(argv: list[str] | None = None) -> int:
 
     try:
         recipe = recipe_from_json(text, base_dir=os.path.dirname(os.path.abspath(args.recipe)))
-        paths, res = export_recipe(recipe, args.out, formats=fmts, dpi=args.dpi)
+        paths, res = export_recipe(
+            recipe, args.out, stem=args.name or None, formats=fmts, dpi=args.dpi
+        )
     except StageUserError as exc:
         print(f"error: {exc}", file=sys.stderr)
         if exc.hint:
