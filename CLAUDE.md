@@ -82,7 +82,8 @@ enables MP4 export (GIF fallback without it).
 
 ## Conventions & gotchas
 
-- **Keep `darq_xray/` Qt-free.** Never import PySide6/pyvista there.
+- **Keep the core Qt-free.** Never import PySide6/pyvista anywhere in
+  `darq_xray/` outside the `darq_xray/gui/` subpackage.
 - **Lazy heavy deps.** `pyvista`/`vtk` are imported only inside the functions
   that render/write 3-D, so GUI startup stays light and headless-safe. The 3-D
   viewer (`pv_canvas`/`volume3d`) and the profiles line picker build nothing —
@@ -122,8 +123,8 @@ enables MP4 export (GIF fallback without it).
   `pkill -f <pattern>` with a pattern matching your own command line; collect PIDs
   first (`pgrep -f <pattern> | grep -v $$`). The GUI smoke test is
   `tests/gui_smoke.py` (no `test_` prefix; it is not a pytest file).
-- `stage_view.py` and all Qt code live under `darq_xray/gui/`, never `darq_xray/` — grep for a
-  filename before Read if unsure which tree it's in.
+- `stage_view.py` and all Qt code live under `darq_xray/gui/`, never elsewhere in
+  `darq_xray/` — grep for a filename before Read if unsure which tree it's in.
 - **Check for a git remote before any push/PR step.** The repo was developed
   entirely locally; if `git remote -v` is empty, skip pull/push/PR in any
   branch flow rather than trying to create one.

@@ -1,7 +1,7 @@
 """Persist per-experiment stage-form values across restarts (Qt-side).
 
-Sibling to :mod:`darq_xray.gui.window_state`; both use the app-wide ``QSettings`` (org
-``darq_xray``, app ``pipeline``). Each stage's :meth:`~darq_xray.gui.widgets.param_form.ParamForm.values`
+Sibling to :mod:`darq_xray.gui.window_state`; both use the app-wide ``QSettings``
+(org ``dfxm``, app ``pipeline`` — pinned, see that module). Each stage's :meth:`~darq_xray.gui.widgets.param_form.ParamForm.values`
 dict is stored under ``formState/<slug(experiment)>/<stage>`` as a JSON string —
 JSON keeps value types stable across QSettings backends (an INI backend would
 otherwise stringify ints/bools), and ``ParamForm.set_values`` + ``Param.coerce``

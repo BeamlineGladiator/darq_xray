@@ -1,6 +1,8 @@
 """Persist and share window/splitter geometry (Qt-side; core stays Qt-free).
 
-Uses the app-wide QSettings (org ``darq_xray``, app ``pipeline``):
+Uses the app-wide QSettings (org ``dfxm``, app ``pipeline``) — that org name
+is **pinned** and deliberately not renamed with the project: changing it
+orphans every user's saved geometry and form state. See ``app.py``.
   - ``geometry``      : QMainWindow.saveGeometry() (size, position, maximized)
   - ``mainSplitter``  : the top-level (left rail | stack) splitter state
   - ``stageSplitter`` : the shared middle|right split applied to every stage
