@@ -39,7 +39,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-test = ["pytest>=7.0"]
+test = ["pytest>=7.0", "pytest-timeout>=2.1"]
 
 # NOTE: install editable (`pip install -e .`). The shipped experiment
 # presets live in `experiments/` beside the package, not inside it, so a

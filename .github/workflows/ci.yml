@@ -36,9 +36,20 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Lower bound of the supported range and a current release. The suite is
-        # kept green across the numpy 1.x / 2.x split (see README > Dependencies).
-        python-version: ["3.10", "3.12"]
+        # The two ENDS of the supported dependency span, so the numpy 1.x / 2.x
+        # split is genuinely exercised (see README > Dependencies).
+        #
+        # `pins` is load-bearing. A bare `python-version: "3.10"` does NOT give
+        # the lower bound — pip resolves the newest compatible wheel, which on
+        # the first run meant numpy 2.2.6 / scipy 1.15.3: an untested middle
+        # set that belongs to neither end. That failed five tests, including
+        # `VERIFIED_SCIPY_VERSIONS` doing exactly its job. Pinning the floor is
+        # what makes "both ends are exercised" true rather than aspirational.
+        include:
+          - python-version: "3.10"
+            pins: "numpy==1.26.4 scipy==1.11.4 matplotlib==3.6.3"
+          - python-version: "3.12"
+            pins: ""          # newest compatible: the upper end
     env:
       # The GUI tests each call os.environ.setdefault("QT_QPA_PLATFORM", …);
       # setting it here covers anything that forgets to.
@@ -70,11 +81,29 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[test]"
 
+      # Downgrade to the declared floor on the lower-bound leg. After
+      # `pip install -e .`, so it overrides whatever the resolver just chose.
+      - name: Pin the lower-bound dependency set
+        if: matrix.pins != ''
+        run: pip install ${{ matrix.pins }}
+
+      - name: Record the resolved dependency set
+        run: pip list | grep -Ei '^(numpy|scipy|matplotlib|pyside6|h5py|vtk|pyvista) '
+
       # Two checks are deliberately NOT gated here, because both abort the
       # interpreter (not fail a test) without a real GL context, and would make
       # CI red for a reason unrelated to the change under test:
       #   - tests/test_gui_viewer3d.py  (excluded below)
       #   - tests/gui_smoke.py          (segfaults at step [24])
       # Run both locally on a machine with a GPU; see CLAUDE.md.
+      #
+      # `--timeout` names a hang instead of letting it burn the job's 45 minutes
+      # and die as an anonymous "operation was canceled": the first run wedged
+      # after 720 tests and the log identified nothing. 1200 s is deliberately
+      # far above the longest a test legitimately takes — some allow their own
+      # subprocess 900 s — so it fires only on a genuine wedge, never on a slow
+      # runner.
       - name: Run tests
-        run: python -m pytest -q --ignore=tests/test_gui_viewer3d.py
+        run: >
+          python -m pytest -q --ignore=tests/test_gui_viewer3d.py
+          --timeout=1200 --timeout-method=signal
