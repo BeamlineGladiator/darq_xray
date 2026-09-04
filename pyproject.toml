@@ -41,6 +41,10 @@ dependencies = [
 [project.optional-dependencies]
 test = ["pytest>=7.0"]
 
+# NOTE: install editable (`pip install -e .`). The shipped experiment
+# presets live in `experiments/` beside the package, not inside it, so a
+# non-editable install leaves this script launching an app with an empty
+# preset dropdown (see darq_xray/config/presets.py::experiments_dir).
 [project.scripts]
 darq_xray = "darq_xray.gui.app:main"
 

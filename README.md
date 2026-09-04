@@ -102,6 +102,11 @@ quietly: `tests/test_common_alignment.py::VERIFIED_SCIPY_VERSIONS` and
 The app **runs in place** from the checkout — the editable install above adds
 its dependencies, not a launcher.
 
+> **Editable is not optional.** The shipped experiment presets live in
+> `experiments/`, beside the package rather than inside it, so they are not
+> installed as package data. After a plain `pip install .` the app starts with
+> an empty preset dropdown and no calibration. Use `pip install -e`.
+
 ```bash
 cd darq_xray
 python3 -m darq_xray.gui.app     # or just `darq_xray` after the editable install

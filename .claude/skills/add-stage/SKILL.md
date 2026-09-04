@@ -24,4 +24,7 @@ description: Use when adding a new pipeline stage to darq_xray — the 6-step ch
    reference output exists).
 6. Document it: add a section to `docs/Usage.md` (Stage reference) and update the
    pipeline diagram, and add the module/functions to `docs/Codebase.md`
-   (`darq_xray/stages` + the data-flow table).
+   (`darq_xray/stages` + the data-flow table). **Every param must be named in
+   both docs** — `tests/test_docs_stage_params.py` fails otherwise. Essentials
+   belong in the stage's `| Param | Meaning |` table; `advanced` fields can go
+   in the collapsed "Advanced fields" table that every stage section carries.

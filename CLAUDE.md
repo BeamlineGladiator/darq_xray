@@ -160,6 +160,12 @@ prints a reminder whenever you edit `darq_xray/stages/` or `darq_xray/gui/`. Tre
 that alters behaviour or structure without the matching `docs/` update as
 incomplete.
 
+Two parts of the contract are **enforced by tests**, so they fail the suite
+rather than rotting quietly: `tests/test_docs_dependencies.py` (the dependency
+lists vs `pyproject.toml`) and `tests/test_docs_stage_params.py` (every
+`StageSpec` param must be named in BOTH docs — by identifier, by GUI label, or
+by a family form like `volume_opacity_<key>`). The rest is still judgement.
+
 ## Adding a stage
 
 Follow the `add-stage` skill (`.claude/skills/add-stage/SKILL.md`) — the 6-step

@@ -56,6 +56,12 @@ still runs from this folder and your edits take effect immediately. On a
 Debian/Ubuntu system Python without a venv, pip refuses to install (PEP 668)
 unless you add `--break-system-packages`.
 
+> [!warning] Keep the `-e`
+> The shipped experiment presets live in `experiments/`, beside the package
+> rather than inside it, so they are **not** installed as package data. Drop
+> the `-e` and the app starts with an empty preset dropdown and no
+> calibration.
+
 For reference, that pulls in:
 
 <!-- deps:start -->
@@ -710,6 +716,18 @@ Combine the `*.1` entries of BLISS scan files into a single darfix-compatible
 > If you move/delete them, the concatenated file breaks. Use `copy_data = True`
 > for an archival, self-contained file.
 
+> [!note]- Advanced fields
+> Collapsed in the form under **Advanced**; defaults are right for ESRF ID03
+> data as darfix writes it. Text is the field's own hover help.
+> 
+> | Field | Parameter | Meaning |
+> |---|---|---|
+> | Detector read path | `detector_read_path` | HDF5 path to the detector frames inside each scan entry. Only change if your beamline files use a different detector or layout. |
+> | Detector write path | `detector_write_path` | HDF5 path where the merged detector data is written inside the output entry (darfix reads this location). |
+> | H5 filename override | `h5_filename_override` | Name of the .h5 file inside the input folder, if it is not '<folder name>.h5'. Leave blank to auto-detect (single mode). |
+> | Output entry | `output_entry` | Name of the single merged entry in the output file. darfix expects 'entry_0000'. |
+> | Positioners path | `positioners_path` | HDF5 path to the motor-position group inside each scan entry; positions are merged across scans. |
+
 ### 2. Axial strain (`strain`)
 
 Per-pixel axial strain (cot method) from darfix `maps.h5`, then stacked into a
@@ -819,6 +837,17 @@ is passed to the core as a `{kind: (vmin, vmax)}` mapping.
 > c1) are filled automatically. The preview is oriented exactly like the exported
 > maps (rows = Y, columns = X), so the coordinates transfer directly.
 
+> [!note]- Advanced fields
+> Collapsed in the form under **Advanced**; defaults are right for ESRF ID03
+> data as darfix writes it. Text is the field's own hover help.
+> 
+> | Field | Parameter | Meaning |
+> |---|---|---|
+> | Save plots | `save_plots` | Write the per-layer diagnostic PNGs (raw, detrended, strain). Turn off for a faster volume-only run. |
+> | ccmth COM path | `ccmth_com_path` | HDF5 path of the ccmth centre-of-mass dataset inside maps.h5, as written by darfix. Only change for a non-standard darfix export. |
+> | maps filename | `maps_filename` | Filename of the darfix output inside each layer folder (normally maps.h5). |
+> | Stacked filename | `stacked_filename` | Filename of the stacked 3-D strain volume written to the input/root folder. Downstream stages expect stacked_strain_volumes.h5. |
+
 ### 3. Mosaicity volume (`mosaicity`)
 
 Stack per-layer χ/μ **Center-of-mass** and **FWHM** maps into a 3-D volume.
@@ -873,6 +902,19 @@ h5 and follows the file on Browse/Load (until edited by hand). Click **Pick
 ROI…** (beside the four pixel boxes) to open a visual picker showing the middle
 Z-layer of each dataset; drag a rectangle and click **OK** to fill the boxes
 automatically. The preview is oriented exactly like the exported maps.
+
+> [!note]- Advanced fields
+> Collapsed in the form under **Advanced**; defaults are right for ESRF ID03
+> data as darfix writes it. Text is the field's own hover help.
+> 
+> | Field | Parameter | Meaning |
+> |---|---|---|
+> | chi COM path | `chi_com_path` | HDF5 path of the χ centre-of-mass map inside maps.h5 (darfix layout). χ CoM is the local lattice tilt about the rocking axis. |
+> | chi FWHM path | `chi_fwhm_path` | HDF5 path of the χ FWHM map — the local rocking-curve width, a measure of mosaic spread. |
+> | maps filename | `maps_filename` | Filename of the darfix output inside each layer folder (normally maps.h5). |
+> | mu COM path | `mu_com_path` | HDF5 path of the μ centre-of-mass map — the local lattice tilt about the second tilt axis. |
+> | mu FWHM path | `mu_fwhm_path` | HDF5 path of the μ FWHM map — the local curve width about the second tilt axis. |
+> | Stacked filename | `stacked_filename` | Filename of the stacked mosaicity volume. Downstream stages expect stacked_volumes.h5. |
 
 ### 4. Aligned rocking volumes (`rocking`)
 
@@ -980,6 +1022,22 @@ preview is oriented exactly like the exported maps.
 > **Typing vmin and vmax in by hand skips the computation entirely** — the same
 > 202 MB replot takes 0.44 s instead of 15.4 s. Leave one box blank and the
 > percentile still runs, because the blank side needs a default.
+
+> [!note]- Advanced fields
+> Collapsed in the form under **Advanced**; defaults are right for ESRF ID03
+> data as darfix writes it. Text is the field's own hover help.
+> 
+> | Field | Parameter | Meaning |
+> |---|---|---|
+> | samz tolerance | `samz_tol_mm` | Extra tolerance in mm when deciding which rocking scans fall inside the mosaicity/strain Z range. |
+> | Colorbar pct high | `cbar_pct_hi` | Upper intensity percentile for the colour scale of the rendered images. |
+> | Colorbar pct low | `cbar_pct_lo` | Lower intensity percentile for the colour scale of the rendered images. |
+> | Detector path | `detector_path` | HDF5 path to the detector frames inside each rocking scan file. |
+> | samy path | `samy_path` | HDF5 path to the sample-Y motor position inside each scan file (under the first BLISS entry). Only change for a different beamline file layout. |
+> | samz path | `samz_path` | HDF5 path to the sample-Z motor position inside each scan file (under the first BLISS entry). Only change for a different beamline file layout. |
+> | Save aligned HDF5 | `save_aligned_h5` | Write the aligned volume file (needed by the slices stage). |
+> | Save animation | `save_animation` | Write the layer-by-layer animation. |
+> | Save layer PNGs | `save_layers` | Write one PNG per layer. |
 
 ### 5. Visualize volumes (`visualize`)
 
@@ -1206,6 +1264,17 @@ raw root, Map ROI X/Y, output dir
 > defaults to ParaView's `fast`, FWHM to `magma`, strain to diverging `RdBu_r`
 > pinned at ε = 0).
 
+> [!note]- Advanced fields
+> Collapsed in the form under **Advanced**; defaults are right for ESRF ID03
+> data as darfix writes it. Text is the field's own hover help.
+> 
+> | Field | Parameter | Meaning |
+> |---|---|---|
+> | samy path | `samy_path` | HDF5 path to the sample-Y motor position inside each scan file (under the first BLISS entry). Only change for a different beamline file layout. |
+> | samz path | `samz_path` | HDF5 path to the sample-Z motor position inside each scan file (under the first BLISS entry). Only change for a different beamline file layout. |
+> | Save animation | `save_animation` | Write the layer-by-layer animation. |
+> | Save layer PNGs | `save_layers` | Write one PNG per layer of each volume. |
+
 ### 6. ParaView export (`paraview`)
 
 Align the volumes and write a partitioned **PVTI** dataset for parallel ParaView
@@ -1307,6 +1376,23 @@ rendering, with a `valid_mask` and NaN sentinels.
 > paraview                      # terminal 2 → Connect cs://localhost:11111 → open the .pvti
 > ```
 > Then Threshold on `valid_mask` in (0.5, 1.5) and set Representation = Volume.
+
+> [!note]- Advanced fields
+> Collapsed in the form under **Advanced**; defaults are right for ESRF ID03
+> data as darfix writes it. Text is the field's own hover help.
+> 
+> | Field | Parameter | Meaning |
+> |---|---|---|
+> | abs() FWHM | `abs_mosa_fwhm` | Export FWHM as absolute values (darfix fits can produce negative widths). |
+> | Centre mosa CoM | `center_mosa_com` | Subtract the centre statistic from the χ/μ CoM volumes so misorientation is relative to the bulk orientation. |
+> | Centre strain | `center_strain` | Also centre the strain volume (usually off — strain is already relative to the reference angle). |
+> | samy path | `samy_path` | HDF5 path to the sample-Y motor position inside each scan file (under the first BLISS entry). Only change for a different beamline file layout. |
+> | samz path | `samz_path` | HDF5 path to the sample-Z motor position inside each scan file (under the first BLISS entry). Only change for a different beamline file layout. |
+> | Export mosaicity | `export_mosaicity` | Export the mosaicity (χ/μ) volumes. |
+> | Export strain | `export_strain` | Export the strain volume. |
+> | Compress pieces | `piece_compression` | Compress the .vti pieces (smaller files, slower write). |
+> | Replace NaN | `replace_nan` | Replace NaN padding with a sentinel value so ParaView's volume renderer behaves. |
+> | Write valid_mask | `write_valid_mask` | Write a 0/1 valid_mask field — threshold on it in ParaView to hide the padding. |
 
 ### 7. Oblique slices (`slices`)
 
@@ -1637,6 +1723,17 @@ already flagged interesting.
 Re-running the slices stage rewrites `oblique_slices.h5` from scratch, so
 marks don't survive a fresh sweep — mark planes again after re-running.
 
+> [!note]- Advanced fields
+> Collapsed in the form under **Advanced**; defaults are right for ESRF ID03
+> data as darfix writes it. Text is the field's own hover help.
+> 
+> | Field | Parameter | Meaning |
+> |---|---|---|
+> | abs() FWHM | `abs_fwhm` | Use absolute FWHM values (darfix fits can produce negative widths). |
+> | samy path | `samy_path` | HDF5 path to the sample-Y motor position inside each scan file (under the first BLISS entry). Only change for a different beamline file layout. |
+> | samz path | `samz_path` | HDF5 path to the sample-Z motor position inside each scan file (under the first BLISS entry). Only change for a different beamline file layout. |
+> | Save PNGs | `save_png` | Write a PNG per plane in addition to the HDF5. |
+
 ### 8. Line profiles (`profiles`)
 
 Profile a straight line (or a band of parallel lines) across one slice plane —
@@ -1845,6 +1942,16 @@ reference-only job in a run — see
 unchecked and is skipped if left that way; there is nothing to re-render for
 it here — run the stage itself to reproduce that job's reference-only output.
 
+> [!note]- Advanced fields
+> Collapsed in the form under **Advanced**; defaults are right for ESRF ID03
+> data as darfix writes it. Text is the field's own hover help.
+> 
+> | Field | Parameter | Meaning |
+> |---|---|---|
+> | Figure DPI | `fig_dpi` | Resolution of the saved figures, in dots per inch. |
+> | Geometry tol | `geom_tol_um` | Maximum allowed geometry mismatch between fields sharing a plane, in µm — guards against profiling mis-registered slices. |
+> | Save CSV | `save_csv` | Write one CSV per profiled field. |
+
 ### 9. Rocking-matched layers (`matched`)
 
 For each strain layer, find the nearest rocking scan by `(samy, samz)`, load a
@@ -1919,6 +2026,18 @@ pixel-aligned with the strain/mosaicity layer images.
 > memory it promised, and the frames it writes do not change.
 
 ---
+
+> [!note]- Advanced fields
+> Collapsed in the form under **Advanced**; defaults are right for ESRF ID03
+> data as darfix writes it. Text is the field's own hover help.
+> 
+> | Field | Parameter | Meaning |
+> |---|---|---|
+> | Auto pct high | `auto_pct_hi` | Percentile used for the automatic upper intensity limit. |
+> | Auto pct low | `auto_pct_lo` | Percentile used for the automatic lower intensity limit. |
+> | Detector path | `pco_ff_path` | HDF5 path to the detector frames inside each rocking scan file. |
+> | samy path | `samy_path` | HDF5 path to the sample-Y motor position inside each scan file (under the first BLISS entry). Only change for a different beamline file layout. |
+> | samz path | `samz_path` | HDF5 path to the sample-Z motor position inside each scan file (under the first BLISS entry). Only change for a different beamline file layout. |
 
 ## Publication export
 

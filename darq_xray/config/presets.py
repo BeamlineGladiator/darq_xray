@@ -5,6 +5,15 @@ Presets live in the ``experiments/`` folder at the project root (one
 constants for that beamtime. The GUI lists them in a dropdown; "Save as"
 writes a new YAML here.
 
+**This requires an editable install.** ``experiments/`` sits beside the
+package rather than inside it and is deliberately not shipped as package
+data, so :func:`experiments_dir` only resolves to real files when
+``darq_xray`` is imported from a checkout (``pip install -e .``). After a
+plain ``pip install .`` the directory lands inside ``site-packages`` and
+does not exist, :func:`discover_experiments` returns ``{}``, and the app
+starts with an empty preset dropdown. Pass *directory* explicitly to read
+presets from anywhere else.
+
 Comments in a hand-written preset (e.g. per-field unit notes) are
 ignored on load and not regenerated on save — machine-relevant caveats should
 also live in the :attr:`Experiment.notes` field so they survive a round-trip.
