@@ -54,7 +54,7 @@ darq_xray/                  # the repository
 One command, from a clone:
 
 ```bash
-git clone https://github.com/<you>/darq_xray.git && cd darq_xray
+git clone https://github.com/BeamlineGladiator/darq_xray.git && cd darq_xray
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[test]"
 ```

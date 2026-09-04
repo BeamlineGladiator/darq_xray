@@ -1141,7 +1141,7 @@ raw root, Map ROI X/Y, output dir
 > [!info] Volumes too big for this machine are streamed — same images, more patience
 > It measures the machine's free memory first and takes whichever of two routes
 > fits — the same ladder the [[#6. ParaView export (`paraview`)|ParaView export]]
-> and [[#8. Oblique slices (`slices`)|slices]] use:
+> and [[#7. Oblique slices (`slices`)|slices]] use:
 >
 > - **It fits.** The volume is aligned in one piece and everything runs exactly
 >   as it always has, at the same speed. This is the normal case on a
@@ -1197,9 +1197,9 @@ raw root, Map ROI X/Y, output dir
 > cannot be aligned and the run falls back to loading it whole — unbounded, as
 > it always did. Such a run produces an *unaligned* volume, which is not a
 > usable product, so the fix is the pattern rather than the memory: check
-> **Raw root** and the mosaicity/strain pattern. [[#8. Oblique slices
-> (`slices`)|Slices]] does bound this fallback; this stage and the ParaView
-> export deliberately do not.
+> **Raw root** and the mosaicity/strain pattern.
+> [[#7. Oblique slices (`slices`)|Slices]] does bound this fallback; this stage
+> and the ParaView export deliberately do not.
 
 > [!note]
 > Colourmaps follow the publication-style **Colormaps** dropdowns (misorientation
