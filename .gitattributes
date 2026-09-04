@@ -1,0 +1,8 @@
+# Normalise line endings in the repository; check out native.
+* text=auto eol=lf
+
+# Keep GitHub's language stats about the code. Without this the repo reads as
+# "Markdown" — docs/Codebase.md, docs/Usage.md and the plan/spec archive under
+# docs/superpowers/ together outweigh every .py file.
+*.md         linguist-documentation
+docs/**      linguist-documentation

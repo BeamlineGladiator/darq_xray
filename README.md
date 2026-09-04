@@ -6,12 +6,13 @@ products (strain/mosaicity maps, aligned volumes, ParaView PVTI, oblique slices,
 line profiles, rocking-matched layers).
 
 Parameters are entered in forms or chosen from dropdowns; calibration constants
-and paths are saved as reusable, named **experiment presets**. The app reproduces
-the behaviour of the existing standalone scripts — those scripts are left
-untouched in the parent repo and serve as reference oracles for the ports here.
+and paths are saved as reusable, named **experiment presets**.
 
-> **Nothing existing is modified or deleted.** This is a new, self-contained
-> subfolder. The legacy flat scripts keep working exactly as before.
+> **Origin.** The pipeline began as a collection of standalone per-analysis
+> scripts (the `Scripts2` set). Each is reproduced here as one stage, and the
+> originals were used as reference oracles while porting. Those scripts are
+> *not* vendored into this repository, so the parity tests that compare against
+> them self-skip on a fresh clone; everything else in the suite runs.
 
 ## Architecture
 
@@ -30,17 +31,22 @@ it) makes the "core never imports Qt" invariant easy to enforce and test.
 
 ```
 dfxm_pipeline/
-  pyproject.toml            # metadata + ruff/pytest config (inherits repo ruff rules)
+  pyproject.toml            # metadata + dependencies + ruff/pytest config
+  LICENSE                   # MIT
   experiments/              # named presets (YAML): paths, patterns, angles, scales
     STO2_overnight.yaml
   dfxm/                     # Qt-FREE core
     config/                 # Experiment model + per-stage param schemas; preset I/O
     common/                 # natural sort, HDF5 I/O, alignment, raster, plotting helpers
     stages/                 # one module per script family; each exposes run(params, progress)
+    compose/                # publication figure composer (also Qt-free)
     runner.py               # child-process execution + progress/log/cancel protocol
   gui/                      # PySide6 app (entry point: python3 -m gui.app)
     widgets/                # param-form, matplotlib canvas, pyvista canvas, log console
   tests/                    # synthetic-fixture unit tests + golden reproduction tests
+  docs/                     # Usage.md (user guide) + Codebase.md (code reference)
+  tools/                    # small standalone helpers
+  .github/workflows/        # CI: ruff + pytest on push and PR
 ```
 
 ## Install
@@ -48,7 +54,7 @@ dfxm_pipeline/
 One command, from a clone:
 
 ```bash
-git clone <this repo> && cd dfxm_pipeline
+git clone https://github.com/<you>/dfxm_pipeline.git && cd dfxm_pipeline
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[test]"
 ```
@@ -120,18 +126,22 @@ The app **brackets darfix**: it prepares input (concat), you run darfix yourself
 then the app resumes from darfix's `maps.h5`. It validates `maps.h5` before the
 downstream stages; it does **not** launch darfix.
 
-| Stage | Status | Ported from |
+| Stage | What it does | Ported from |
 |---|---|---|
-| `concat` | implemented (Phase 0) | `concatenate_h5_scans_v3` + `batch_concatenate_h5_scans_v1` |
-| *(darfix)* | external — run yourself | → produces `maps.h5` |
-| `strain` | Phase 1 | `y_calc_axial_strain_v6_batch` (ccmth+mu) / `calc_axial_strain_v7_batch` (ccmth-only) |
-| `mosaicity` | Phase 1 | `stack_h5_darfix_volumes` |
-| `visualize` | Phase 1 | `visualize_aligned_volumes_v6` |
-| `rocking` | Phase 2 | `build_aligned_raw_rocking_volumes_v3` |
-| `paraview` | Phase 2 | `export_aligned_volumes_to_paraview_v6_pvti` |
-| `slices` | Phase 3 | `extract_oblique_slices_v5` |
-| `profiles` | Phase 3 | `line_profile_oblique_slices_v2` |
-| `matched` | Phase 3 | `plot_rocking_matched_layers_v3` |
+| `concat` | join per-scan `.h5` into one darfix input | `concatenate_h5_scans_v3` + `batch_concatenate_h5_scans_v1` |
+| *(darfix)* | **external — you run it** | → produces `maps.h5` |
+| `strain` | axial strain maps from `maps.h5` | `y_calc_axial_strain_v6_batch` (ccmth+mu) / `calc_axial_strain_v7_batch` (ccmth-only) |
+| `mosaicity` | stack darfix volumes into mosaicity maps | `stack_h5_darfix_volumes` |
+| `visualize` | aligned-volume figures & animations | `visualize_aligned_volumes_v6` |
+| `rocking` | aligned raw rocking volumes | `build_aligned_raw_rocking_volumes_v3` |
+| `paraview` | PVTI export in the shared world frame | `export_aligned_volumes_to_paraview_v6_pvti` |
+| `slices` | oblique slices through the volumes | `extract_oblique_slices_v5` |
+| `profiles` | line profiles across those slices | `line_profile_oblique_slices_v2` |
+| `matched` | rocking-matched layer plots | `plot_rocking_matched_layers_v3` |
+
+All nine are implemented. A **figure builder** on top of them composes the
+resulting maps, traces and images into publication-ready multi-panel figures at
+a fixed µm-per-cm scale.
 
 ## Domain constraints carried into the core
 
@@ -147,3 +157,24 @@ downstream stages; it does **not** launch darfix.
   original `.h5` files; a `copy_data` toggle makes a self-contained copy.
 - **Motor paths.** `samy`/`samz` are read from `…/instrument/positioners/`; the
   detector lives at `…/measurement/pco_ff`. These are overridable constants.
+
+## Documentation
+
+- **[`docs/Usage.md`](docs/Usage.md)** — the user guide: how to drive each stage,
+  viewer and the figure builder.
+- **[`docs/Codebase.md`](docs/Codebase.md)** — the code reference: every module,
+  class and public function.
+- **[`CLAUDE.md`](CLAUDE.md)** — contributor conventions and the invariants the
+  suite enforces (Qt-free core, one alignment implementation, docs-in-the-same-change).
+
+Both docs are Obsidian-flavoured (`[[wiki links]]`, `> [!note]` callouts); they
+render fine on GitHub, and fully in Obsidian.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
+
+The dependencies keep their own licenses; note in particular that **PySide6 is
+LGPLv3**. Running and modifying this source is unaffected, but if you
+redistribute a *bundled binary* of the app, LGPL relinking obligations apply to
+the Qt part.

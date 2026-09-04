@@ -2121,12 +2121,19 @@ auto-fill from the experiment + the previous stage's outputs.
 |---|---|
 | `pyproject.toml` | Project metadata + deps; **ruff** config (line 100, py310, E/F/I) and **pytest** config (`pythonpath=["."]` so `dfxm`/`gui` import without installing). |
 | `.claude/settings.json` | `PostToolUse` hooks: ruff format+check on `.py` edits, and a reminder to update the `docs/` guides when `dfxm/stages/` or `gui/` changes. |
-| `.gitignore` | Ignores `__pycache__/`, `*.pyc`, `.ruff_cache/`, `.pytest_cache/`. |
+| `.claude/hooks/ruff_format_notify.py` | The format half of that hook: runs `ruff format` on the edited file (resolved from `PATH`, so it works on any clone) and reports back when the bytes changed. |
+| `.gitignore` | Ignores caches (`__pycache__/`, `*.pyc`, `.ruff_cache/`, `.pytest_cache/`), build/venv artefacts, editor and OS files, `.env`/`.claude/settings.local.json`, and data or generated products (`*.h5`, `*.pvti`, `*.mp4`, …) so beamline data can never be committed by accident. |
+| `.gitattributes` | `eol=lf` normalisation, plus `linguist-documentation` on `*.md` and `docs/**` so GitHub reports the repository's language as Python rather than Markdown. |
+| `.github/workflows/ci.yml` | CI on push/PR: a `ruff check` + `ruff format --check` job, and a `pytest` job on Python 3.10 and 3.12 that installs the Qt/VTK system libraries and runs headless (`QT_QPA_PLATFORM=offscreen`). `tests/test_gui_viewer3d.py` and `tests/gui_smoke.py` are excluded — both abort the interpreter without a real GL context. |
+| `LICENSE` | MIT. |
 | `CLAUDE.md` | Contributor/AI guide: architecture, conventions, add-a-stage checklist, doc-sync rule. |
 | `README.md` | Short project summary. |
 | `docs/Usage.md` | The user-facing how-to ([[Usage]]). |
 | `docs/Codebase.md` | This file. |
-| `experiments/STO2_overnight.yaml` | The shipped preset (paths, calibrated angles, pixel scales). |
+| `docs/examples/figure5_style_recipe.json` | A worked figure-builder recipe. |
+| `docs/superpowers/` | Development archive: the implementation plans, design specs and session handoffs the pipeline was built from. Not part of the running code. |
+| `experiments/STO2_overnight.yaml` | The shipped preset (paths, calibrated angles, pixel scales). Its `raw_root`/`processed_root` point at the machine the dataset was analysed on — repoint them, or use **Initialize from data…**, on any other machine. |
+| `tools/pin_slice.py` | Standalone helper, outside the stage pipeline. |
 
 ---
 

@@ -3,6 +3,7 @@ the bytes changed so its cached Read of the file is known-stale."""
 
 import json
 import pathlib
+import shutil
 import subprocess
 import sys
 
@@ -11,10 +12,11 @@ try:
     f = d.get("tool_input", {}).get("file_path", "") or d.get("tool_response", {}).get(
         "filePath", ""
     )
-    if f.endswith(".py") and pathlib.Path(f).exists():
+    ruff = shutil.which("ruff")
+    if ruff and f.endswith(".py") and pathlib.Path(f).exists():
         before = pathlib.Path(f).read_bytes()
         subprocess.run(
-            ["/home/albert/.local/bin/ruff", "format", f],
+            [ruff, "format", f],
             capture_output=True,
             timeout=25,
         )

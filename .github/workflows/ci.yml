@@ -1,0 +1,74 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: ruff (lint + format)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/ruff-action@v3
+        with:
+          args: check .
+      - uses: astral-sh/ruff-action@v3
+        with:
+          args: format --check .
+
+  tests:
+    name: pytest (py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        # Lower bound of the supported range and a current release. The suite is
+        # kept green across the numpy 1.x / 2.x split (see README > Dependencies).
+        python-version: ["3.10", "3.12"]
+    env:
+      # The GUI tests each call os.environ.setdefault("QT_QPA_PLATFORM", …);
+      # setting it here covers anything that forgets to.
+      QT_QPA_PLATFORM: offscreen
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      # PySide6 and VTK are wheels, but they dlopen system GL/X libraries that
+      # the bare runner image does not ship. Without these the Qt "offscreen"
+      # platform plugin fails to load and every GUI test errors at import.
+      - name: Install Qt/VTK runtime libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libegl1 libgl1 libglx-mesa0 libopengl0 \
+            libxkbcommon-x11-0 libxcb-cursor0 libxcb-icccm4 libxcb-image0 \
+            libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 libxcb-shape0 \
+            libxcb-xinerama0 libxcb-xfixes0 \
+            libdbus-1-3 libfontconfig1 libxrender1 libxt6 \
+            ffmpeg
+
+      - name: Install project
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[test]"
+
+      # Two checks are deliberately NOT gated here, because both abort the
+      # interpreter (not fail a test) without a real GL context, and would make
+      # CI red for a reason unrelated to the change under test:
+      #   - tests/test_gui_viewer3d.py  (excluded below)
+      #   - tests/gui_smoke.py          (segfaults at step [24])
+      # Run both locally on a machine with a GPU; see CLAUDE.md.
+      - name: Run tests
+        run: python -m pytest -q --ignore=tests/test_gui_viewer3d.py

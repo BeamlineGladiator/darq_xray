@@ -6,7 +6,24 @@ build-backend = "setuptools.build_meta"
 name = "dfxm-pipeline"
 version = "0.1.0"
 description = "GUI-driven DFXM (Dark-Field X-ray Microscopy) analysis pipeline for ESRF ID03 data"
+readme = "README.md"
 requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Albert" }]
+keywords = ["dfxm", "esrf", "id03", "x-ray", "microscopy", "strain", "mosaicity"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: X11 Applications :: Qt",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Physics",
+    "Topic :: Scientific/Engineering :: Visualization",
+]
 
 dependencies = [
     "numpy>=1.26.4",

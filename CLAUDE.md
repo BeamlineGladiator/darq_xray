@@ -123,7 +123,9 @@ enables MP4 export (GIF fallback without it).
   `tests/gui_smoke.py` (no `test_` prefix; it is not a pytest file).
 - `stage_view.py` and all Qt code live under `gui/`, never `dfxm/` — grep for a
   filename before Read if unsure which tree it's in.
-- **This repo has no git remote** — skip pull/push/PR in any branch flow.
+- **Check for a git remote before any push/PR step.** The repo was developed
+  entirely locally; if `git remote -v` is empty, skip pull/push/PR in any
+  branch flow rather than trying to create one.
 - `~/.claude/projects/.../memory/` is not git-tracked; writing the file is the save.
 - Custom agent-type files (`~/.claude/agents/*.md`) load at **session start**
   only — don't test-dispatch a just-written type; tell the user it needs a restart.

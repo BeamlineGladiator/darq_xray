@@ -14,3 +14,22 @@ dist/
 # virtualenvs
 .venv/
 venv/
+
+# editors / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# local secrets / machine-specific settings
+.env
+.claude/settings.local.json
+
+# data & analysis output — never commit beamline data or generated products
+*.h5
+*.nxs
+*.pvti
+*.vti
+*.mp4
+*.gif

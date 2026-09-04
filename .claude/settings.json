@@ -24,7 +24,7 @@
           },
           {
             "type": "command",
-            "command": "python3 -c \"import sys,json,subprocess; d=json.load(sys.stdin); f=d.get('tool_input',{}).get('file_path','') or d.get('tool_response',{}).get('filePath',''); f.endswith('.py') and subprocess.run(['/home/albert/.local/bin/ruff','check',f])\" || true",
+            "command": "python3 -c \"import sys,json,subprocess; d=json.load(sys.stdin); f=d.get('tool_input',{}).get('file_path','') or d.get('tool_response',{}).get('filePath',''); f.endswith('.py') and subprocess.run(['ruff','check',f])\" || true",
             "timeout": 30,
             "statusMessage": "Linting Python file..."
           },
