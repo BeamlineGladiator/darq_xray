@@ -9,8 +9,8 @@ import importlib
 
 import pytest
 
-from dfxm.config.models import EXPERIMENT_SCHEMA, Param, ParamType
-from dfxm.stages.registry import STAGE_TARGETS
+from darq_xray.config.models import EXPERIMENT_SCHEMA, Param, ParamType
+from darq_xray.stages.registry import STAGE_TARGETS
 
 
 def test_param_metadata_fields_default_off():
@@ -78,7 +78,7 @@ def test_experiment_schema_has_help():
 
 
 def test_roi_fields_default_empty():
-    from dfxm.config.models import Param, ParamType
+    from darq_xray.config.models import Param, ParamType
 
     p = Param("x", ParamType.STR, "X")
     assert p.roi_group == ""
@@ -92,7 +92,7 @@ def test_roi_axis_is_independent_of_roi_group():
     whether StageView grows a Pick ROI… button). `rocking` needs the first
     without the second — it has no map to draw a picker on — so an axis with no
     group is legal, not an error."""
-    from dfxm.config.models import Param, ParamType
+    from darq_xray.config.models import Param, ParamType
 
     Param("roi_x", ParamType.STR, "ROI x", roi_group="align", roi_axis="x")  # ok
     Param("roi_x", ParamType.STR, "ROI x", roi_axis="x")  # ok: axis without group
@@ -108,7 +108,7 @@ def test_roi_frame_validated():
 
 def test_roi_params_declare_frame():
     """Every ROI param states its coordinate frame — and says so in its help."""
-    from gui.bindings import STAGE_SPECS
+    from darq_xray.gui.bindings import STAGE_SPECS
 
     for stage_name, spec in STAGE_SPECS.items():
         for p in spec.params:
@@ -121,7 +121,7 @@ def test_roi_params_declare_frame():
 
 
 def test_rocking_roi_params_are_detector_frame():
-    from dfxm.stages import rocking
+    from darq_xray.stages import rocking
 
     assert rocking.STAGE.get("roi_x").roi_frame == "detector"
     assert rocking.STAGE.get("roi_y").roi_frame == "detector"
@@ -138,6 +138,6 @@ def test_param_editor_hint_defaults_off_and_is_settable():
 
 
 def test_profiles_declares_the_summary_editor_for_its_job_list():
-    from gui.bindings import STAGE_SPECS
+    from darq_xray.gui.bindings import STAGE_SPECS
 
     assert STAGE_SPECS["profiles"].get("jobs_json").editor == "summary_json"

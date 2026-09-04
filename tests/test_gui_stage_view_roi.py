@@ -13,14 +13,14 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 
 
 def test_pick_roi_writes_pair_encoding(monkeypatch):
-    from gui.main_window import MainWindow
+    from darq_xray.gui.main_window import MainWindow
 
     _ = QApplication.instance() or QApplication([])
     win = MainWindow()
     view = win._views["visualize"]  # roi_x/roi_y, roi_axis x/y
     assert view._roi_buttons, "expected a Pick ROI… button for the crop group"
 
-    import gui.stage_view as SV
+    import darq_xray.gui.stage_view as SV
 
     class _FakePicker:
         def __init__(self, *a, **k):
@@ -39,13 +39,13 @@ def test_pick_roi_writes_pair_encoding(monkeypatch):
 
 
 def test_pick_roi_writes_both_encoding(monkeypatch):
-    from gui.main_window import MainWindow
+    from darq_xray.gui.main_window import MainWindow
 
     _ = QApplication.instance() or QApplication([])
     win = MainWindow()
     view = win._views["strain"]  # single 'roi', roi_axis both
 
-    import gui.stage_view as SV
+    import darq_xray.gui.stage_view as SV
 
     class _FakePicker:
         def __init__(self, *a, **k):
@@ -62,7 +62,7 @@ def test_pick_roi_writes_both_encoding(monkeypatch):
 
 
 def _exp_sto2_rois():
-    from dfxm.config.models import Experiment
+    from darq_xray.config.models import Experiment
 
     return Experiment(
         darfix_roi="105,230,1832,1266", analysis_roi_x="0,1832", analysis_roi_y="400,1100"
@@ -70,8 +70,8 @@ def _exp_sto2_rois():
 
 
 def test_roi_deviation_marker_toggles():
-    from dfxm.stages import visualize
-    from gui.stage_view import StageView
+    from darq_xray.gui.stage_view import StageView
+    from darq_xray.stages import visualize
 
     _ = QApplication.instance() or QApplication([])
     view = StageView("visualize", visualize.STAGE, _exp_sto2_rois())
@@ -85,8 +85,8 @@ def test_roi_deviation_marker_toggles():
 
 
 def test_rocking_marker_catches_the_incident_entry():
-    from dfxm.stages import rocking
-    from gui.stage_view import StageView
+    from darq_xray.gui.stage_view import StageView
+    from darq_xray.stages import rocking
 
     _ = QApplication.instance() or QApplication([])
     view = StageView("rocking", rocking.STAGE, _exp_sto2_rois())
@@ -96,9 +96,9 @@ def test_rocking_marker_catches_the_incident_entry():
 
 
 def test_no_marker_without_experiment_rois():
-    from dfxm.config.models import Experiment
-    from dfxm.stages import visualize
-    from gui.stage_view import StageView
+    from darq_xray.config.models import Experiment
+    from darq_xray.gui.stage_view import StageView
+    from darq_xray.stages import visualize
 
     _ = QApplication.instance() or QApplication([])
     view = StageView("visualize", visualize.STAGE, Experiment())

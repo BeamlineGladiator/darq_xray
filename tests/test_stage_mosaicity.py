@@ -1,4 +1,4 @@
-"""Tests for dfxm.stages.mosaicity, incl. golden equivalence vs the legacy
+"""Tests for darq_xray.stages.mosaicity, incl. golden equivalence vs the legacy
 stack_h5_darfix_volumes script.
 """
 
@@ -12,7 +12,7 @@ import h5py
 import numpy as np
 import pytest
 
-from dfxm.stages import mosaicity as M
+from darq_xray.stages import mosaicity as M
 
 PATHS = {
     "/entry/chi/Center of mass/Center of mass": "chi_com",

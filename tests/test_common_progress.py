@@ -15,7 +15,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from dfxm.common import progress as P
+from darq_xray.common import progress as P
 from tests.progress_trace import MAX_FRAC_GAP, assert_progress_wellformed
 
 
@@ -179,7 +179,7 @@ def test_save_layer_pngs_reports_once_per_layer(tmp_path):
     the gaps small. On a real volume it is the difference between a bar that
     advances ~78 times per dataset and one that advances four times.
     """
-    from dfxm.common import render as Rnd
+    from darq_xray.common import render as Rnd
 
     n_layers = 5
     vol = np.random.default_rng(0).standard_normal((n_layers, 4, 6))
@@ -219,7 +219,7 @@ def test_save_layer_animation_reports_the_frame_it_names(tmp_path, fmt, n_layers
     purpose — and `gif`, the value an earlier version of this test used alone,
     is the one value where the naive arithmetic happens to come out right.
     """
-    from dfxm.common import render as Rnd
+    from darq_xray.common import render as Rnd
 
     vol = np.random.default_rng(0).standard_normal((n_layers, 4, 6))
     seen: list[tuple[float, str]] = []
@@ -258,7 +258,7 @@ def test_save_layer_animation_survives_a_container_it_did_not_predict(tmp_path):
     """
     from matplotlib import animation as manim
 
-    from dfxm.common import render as Rnd
+    from darq_xray.common import render as Rnd
 
     n_layers = 6
     real_writer = manim.writers["ffmpeg"] if manim.writers.is_available("ffmpeg") else None

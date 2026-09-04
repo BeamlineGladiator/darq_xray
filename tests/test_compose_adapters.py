@@ -1,13 +1,13 @@
-"""Panel adapters: pure loaders + draw-into-axes dispatch — dfxm.compose.adapters."""
+"""Panel adapters: pure loaders + draw-into-axes dispatch — darq_xray.compose.adapters."""
 
 import h5py
 import numpy as np
 import pytest
 from matplotlib.figure import Figure
 
-from dfxm.common.errors import StageUserError
-from dfxm.compose.adapters import draw_panel, load_panel
-from dfxm.compose.recipe import PanelDef, PanelSource
+from darq_xray.common.errors import StageUserError
+from darq_xray.compose.adapters import draw_panel, load_panel
+from darq_xray.compose.recipe import PanelDef, PanelSource
 
 
 def _write_mosa(path):
@@ -218,7 +218,7 @@ def test_draw_panel_dispatch(tmp_path):
 
 
 def test_draw_placeholder_hatched(tmp_path):
-    from dfxm.compose.adapters import draw_placeholder
+    from darq_xray.compose.adapters import draw_placeholder
 
     fig = Figure()
     ax = fig.add_subplot(111)
@@ -252,9 +252,9 @@ def test_slice_plane_roi_clamps_out_of_range_indices(tmp_path):
 
 
 def test_resolve_trace_opts_follows_style_font_scale_by_default():
-    from dfxm.common.plotting import PlotStyle
-    from dfxm.compose.adapters import resolve_trace_opts
-    from dfxm.compose.recipe import ComposeStyle
+    from darq_xray.common.plotting import PlotStyle
+    from darq_xray.compose.adapters import resolve_trace_opts
+    from darq_xray.compose.recipe import ComposeStyle
 
     st = PlotStyle(font_scale=2.5)
     o = resolve_trace_opts(ComposeStyle(), st)
@@ -289,7 +289,7 @@ def test_draw_panel_trace_honours_trace_opts(tmp_path):
 
 
 def test_data_bbox_roi_finite_box_with_margin_and_within_roi():
-    from dfxm.common.figures import data_bbox_roi
+    from darq_xray.common.figures import data_bbox_roi
 
     a = np.full((40, 60), np.nan)
     a[10:20, 20:35] = 1.0  # rows 10..19, cols 20..34
@@ -310,7 +310,7 @@ def test_data_bbox_roi_finite_box_with_margin_and_within_roi():
 
 
 def test_load_panel_crop_to_data_crops_all_image_kinds(tmp_path):
-    from dfxm.compose.recipe import PanelDef, PanelSource
+    from darq_xray.compose.recipe import PanelDef, PanelSource
 
     # map layer: strain with NaN border
     h5 = str(tmp_path / "strain.h5")
@@ -328,13 +328,13 @@ def test_load_panel_crop_to_data_crops_all_image_kinds(tmp_path):
     p0 = PanelDef("m0", PanelSource(h5, "map_layer", {"stage": "strain", "z": 0}))
     assert load_panel(p0).payload["layer"].shape == (20, 30)
     # crop_to_data changes the loader cache key
-    from dfxm.compose.adapters import _cache_key
+    from darq_xray.compose.adapters import _cache_key
 
     assert _cache_key(p) != _cache_key(p0)
 
 
 def test_load_panel_crop_to_data_slice_and_ref(tmp_path):
-    from dfxm.compose.recipe import PanelDef, PanelSource
+    from darq_xray.compose.recipe import PanelDef, PanelSource
 
     u = np.linspace(-10.0, 10.0, 41)
     v = np.linspace(-8.0, 8.0, 33)
@@ -374,8 +374,8 @@ def test_load_panel_crop_to_data_slice_and_ref(tmp_path):
 
 
 def test_panel_preview_full_frame_for_roi_picking(tmp_path):
-    from dfxm.compose.adapters import panel_preview
-    from dfxm.compose.recipe import PanelDef, PanelSource
+    from darq_xray.compose.adapters import panel_preview
+    from darq_xray.compose.recipe import PanelDef, PanelSource
 
     h5 = _write_obl(tmp_path / "obl.h5")
     # slice plane: full frame even when the panel itself is cropped
@@ -433,7 +433,7 @@ def test_draw_panel_y_tick_labels_ignored_by_non_trace_kinds(tmp_path):
 
 
 def test_draw_panel_trace_y_tick_labels_off_hides_scientific_exponent(tmp_path):
-    from dfxm.common.plotting import PlotStyle
+    from darq_xray.common.plotting import PlotStyle
 
     h5 = _write_obl(tmp_path / "obl.h5")
     with h5py.File(h5, "r+") as f:
@@ -522,7 +522,7 @@ def test_load_image_crop_to_data_is_ignored(tmp_path):
 
 
 def test_panel_preview_refuses_image_panel(tmp_path):
-    from dfxm.compose.adapters import panel_preview
+    from darq_xray.compose.adapters import panel_preview
 
     png = _write_png(tmp_path / "ref.png")
     with pytest.raises(ValueError, match="pixel crop"):

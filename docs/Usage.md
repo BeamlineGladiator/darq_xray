@@ -1,10 +1,10 @@
 ---
-title: DFXM Pipeline — Usage Guide
-tags: [dfxm, esrf, id03, documentation, usage, pipeline]
-aliases: [DFXM Pipeline Usage, Pipeline Guide, How to use the pipeline]
+title: DARQ — Usage Guide
+tags: [darq, dfxm, esrf, id03, documentation, usage, pipeline]
+aliases: [DARQ Usage, Pipeline Guide, How to use the pipeline]
 ---
 
-# DFXM Pipeline — Usage Guide
+# DARQ — Usage Guide
 
 > [!info] What this is
 > A desktop (PySide6) application that takes **Dark-Field X-ray Microscopy**
@@ -38,9 +38,9 @@ aliases: [DFXM Pipeline Usage, Pipeline Guide, How to use the pipeline]
 
 > [!example] Launch the app
 > ```bash
-> cd dfxm_pipeline
+> cd darq_xray
 > source .venv/bin/activate    # only if you installed into a venv (see below)
-> python3 -m gui.app
+> python3 -m darq_xray.gui.app   # or just `darq_xray`
 > ```
 
 **Install** — one command, run once from the project folder:
@@ -271,7 +271,7 @@ maps-derived rows. On *OK*, if you applied anything, the dialog offers to
 save the preset YAML — otherwise the values live only in this session.
 
 The same detection runs headless:
-`python3 -m dfxm.config.detect RAW_ROOT --processed-root PROC_ROOT`.
+`python3 -m darq_xray.config.detect RAW_ROOT --processed-root PROC_ROOT`.
 
 ### Regions of interest — two windows, two frames
 
@@ -1886,7 +1886,7 @@ pixel-aligned with the strain/mosaicity layer images.
 >
 > The rule in one line: **the publication style wins whenever there is one, and
 > the `Colormap` dropdown decides when there is not.** A headless
-> `python3 -m dfxm.stages.matched` run has no style, so `--colormap` keeps
+> `python3 -m darq_xray.stages.matched` run has no style, so `--colormap` keeps
 > working exactly as it always did (and its `gray` default keeps matched's
 > historical look, plain automatic colourbar ticks included). Exports follow the
 > same rule, so an exported figure still matches the PNG the run saved **given
@@ -2187,7 +2187,7 @@ and why your next matched run will not look like your last one.
 > panel's h5, or (for a recipe with no panels yet) the folder of the first h5
 > the stage forms currently point at, falling back to the last folder you used.
 
-The figure builder (`dfxm/compose/`) assembles a **multi-panel publication
+The figure builder (`darq_xray/compose/`) assembles a **multi-panel publication
 figure** — several map/slice/trace panels from one or more stage outputs,
 laid out together, sized to an exact physical page size — from a single
 **recipe file**, independent of any one stage's own export. It reuses the
@@ -2196,7 +2196,7 @@ a composed figure looks consistent with the per-stage exports above.
 
 **Concepts**
 
-- **Recipe** — one JSON file (`dfxm.compose.recipe.FigureRecipe`) describing
+- **Recipe** — one JSON file (`darq_xray.compose.recipe.FigureRecipe`) describing
   a figure: a name, a `PlotStyle` override dict, composer-level settings
   (label lettering, gutter/padding, scale-bar mode, a colourbar mode, an
   optional pinned total width), a **layout tree**, and the list of **panels**
@@ -2630,7 +2630,7 @@ far you scroll the sections — see the Export bullet at the end of this list):
   Like the live preview, it runs on
   the same background compose thread (spinner overlay text "Exporting…";
   **Refresh data**/**Export figure…** disable for the duration and re-enable when it
-  lands) — it writes the recipe with `dfxm.compose.render.export_recipe` (the
+  lands) — it writes the recipe with `darq_xray.compose.render.export_recipe` (the
   same formats/DPI the recipe's current style specifies — exactly what the
   live preview is showing you, including any style-pane edits not yet saved
   into the recipe file — reusing the preview's loader cache so nothing
@@ -2648,9 +2648,9 @@ far you scroll the sections — see the Export bullet at the end of this list):
 **Rendering from the command line**
 
 ```bash
-python3 -m dfxm.compose render recipe.json -o outdir
-python3 -m dfxm.compose render recipe.json -o outdir --formats png,pdf,svg --dpi 300
-python3 -m dfxm.compose render recipe.json -o outdir --name figure_3
+python3 -m darq_xray.compose render recipe.json -o outdir
+python3 -m darq_xray.compose render recipe.json -o outdir --formats png,pdf,svg --dpi 300
+python3 -m darq_xray.compose render recipe.json -o outdir --name figure_3
 ```
 
 - `recipe.json` — the recipe file. Relative `h5_path`s inside it resolve
@@ -2780,7 +2780,7 @@ rest of the window's controls:
 | --- | --- |
 | **Save figure…** | A publication-styled PNG: prompts for a save path, then a width×height in pixels (default 1920×1080), off-screen re-renders the current scene at that size from the *live* camera pose, and composites it through the same colorbar/scale-bar figure builder the visualize/rocking top-view and rotation-video exports use — so it looks like the interactive view, on a white background, with the session's publication style |
 | **Save screenshot…** | A raw PNG of exactly what's on screen right now (`plotter.screenshot`) — no compositing, no colorbar, fastest option |
-| **Save rotation video…** | A 360° orbit MP4/GIF, prompting for a base path, format, frame count (default 180) and FPS (default 15). Rendering runs in a **child process** (`dfxm.viewer_jobs.rotation_video_job` via `StageRunner`, the same mechanism stage runs use) so the GUI stays responsive; a progress dialog tracks it and **Cancel** terminates the child. The orbit starts from the live camera pose if the canvas is available, otherwise from the `front` preset — including how far you have zoomed/dollied in, so the movie is framed like the view (and like **Save figure…**). The video reuses the window's current appearance/structure settings and the session's publication style. If the scene turns out to be empty, the status line says "nothing to export"; a failed job shows the error and its hint |
+| **Save rotation video…** | A 360° orbit MP4/GIF, prompting for a base path, format, frame count (default 180) and FPS (default 15). Rendering runs in a **child process** (`darq_xray.viewer_jobs.rotation_video_job` via `StageRunner`, the same mechanism stage runs use) so the GUI stays responsive; a progress dialog tracks it and **Cancel** terminates the child. The orbit starts from the live camera pose if the canvas is available, otherwise from the `front` preset — including how far you have zoomed/dollied in, so the movie is framed like the view (and like **Save figure…**). The video reuses the window's current appearance/structure settings and the session's publication style. If the scene turns out to be empty, the status line says "nothing to export"; a failed job shows the error and its hint |
 
 ### Line picker (profiles)
 
@@ -2855,14 +2855,14 @@ offsets:
 Every stage is also a headless command (handy for batch/scripting):
 
 ```bash
-python3 -m dfxm.stages.strain --help
-python3 -m dfxm.stages.mosaicity --root-folder /path/to/processed --folder-pattern '*_mosa__*'
-python3 -m dfxm.compose render recipe.json -o outdir --formats png,pdf,svg
+python3 -m darq_xray.stages.strain --help
+python3 -m darq_xray.stages.mosaicity --root-folder /path/to/processed --folder-pattern '*_mosa__*'
+python3 -m darq_xray.compose render recipe.json -o outdir --formats png,pdf,svg
 python3 -m pytest -q          # run the test suite
 ruff check . && ruff format . # lint + format
 ```
 
-`python3 -m dfxm.compose render` re-renders a **figure recipe** (see
+`python3 -m darq_xray.compose render` re-renders a **figure recipe** (see
 [[#Figure builder]]) without launching the GUI — handy for CI or a batch of
 figures from a script. Exit code `0` means at least one panel rendered
 (placeholder/drift notes still print); `1` means every panel was a
@@ -2880,7 +2880,7 @@ stderr.
 > stage's parameters, behaviour, inputs/outputs, add or remove a stage, or change
 > how a viewer works, update the matching section here in the same change.** The
 > repo's `CLAUDE.md` records this as a standing rule, and a PostToolUse hook
-> reminds you when you edit `dfxm/stages/` or `gui/`.
+> reminds you when you edit `darq_xray/stages/` or `darq_xray/gui/`.
 
 ## See also
 

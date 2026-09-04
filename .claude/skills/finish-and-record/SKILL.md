@@ -1,6 +1,6 @@
 ---
 name: finish-and-record
-description: Use when a feature branch in dfxm_pipeline is complete and the user says "wrap up", "merge it", "finish this", or picks a finish-branch option
+description: Use when a feature branch in darq_xray is complete and the user says "wrap up", "merge it", "finish this", or picks a finish-branch option
 ---
 
 # Finish and Record

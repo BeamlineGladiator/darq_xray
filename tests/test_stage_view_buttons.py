@@ -11,9 +11,9 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
-from dfxm.config.models import Experiment  # noqa: E402
-from gui.bindings import STAGE_SPECS  # noqa: E402
-from gui.stage_view import StageView  # noqa: E402
+from darq_xray.config.models import Experiment  # noqa: E402
+from darq_xray.gui.bindings import STAGE_SPECS  # noqa: E402
+from darq_xray.gui.stage_view import StageView  # noqa: E402
 
 _app = QApplication.instance() or QApplication([])
 

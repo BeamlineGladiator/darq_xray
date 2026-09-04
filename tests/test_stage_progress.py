@@ -20,7 +20,7 @@ from tests.progress_trace import assert_progress_wellformed, trace
 
 def test_visualize_progress_is_smooth(tmp_path):
     import tests.test_stage_visualize as T
-    from dfxm.stages import visualize
+    from darq_xray.stages import visualize
 
     proc, raw = T._setup(tmp_path)
     params = T._stream_params(proc, raw, tmp_path / "viz")
@@ -37,7 +37,7 @@ def test_visualize_progress_is_smooth_with_a_product_switched_off(tmp_path):
     allocated over the enabled products only.
     """
     import tests.test_stage_visualize as T
-    from dfxm.stages import visualize
+    from darq_xray.stages import visualize
 
     proc, raw = T._setup(tmp_path)
     base = T._stream_params(proc, raw, tmp_path / "viz_no_layers")
@@ -77,7 +77,7 @@ def test_visualize_progress_is_smooth_with_only_the_3d_products(tmp_path):
     GL, so the two together cover it end to end.
     """
     import tests.test_stage_visualize as T
-    from dfxm.stages import visualize
+    from darq_xray.stages import visualize
 
     def fake_top_view(scene, path, **kw):
         report = kw.get("progress")
@@ -112,7 +112,7 @@ def test_visualize_progress_is_smooth_with_only_the_3d_products(tmp_path):
 
 def test_paraview_progress_is_smooth(tmp_path):
     import tests.test_stage_paraview as T
-    from dfxm.stages import paraview
+    from darq_xray.stages import paraview
 
     proc, raw = T._setup(tmp_path)
     params = {
@@ -152,7 +152,7 @@ def test_paraview_progress_is_smooth_with_a_single_export(tmp_path):
     and ends — which is what the defect this test exists for actually broke.
     """
     import tests.test_stage_paraview as T
-    from dfxm.stages import paraview
+    from darq_xray.stages import paraview
 
     proc, raw = T._setup(tmp_path, layers=12)
     params = {
@@ -178,7 +178,7 @@ def test_paraview_progress_skips_the_slot_of_a_missing_volume(tmp_path):
     so the run's very first report was 0.495.
     """
     import tests.test_stage_paraview as T
-    from dfxm.stages import paraview
+    from darq_xray.stages import paraview
 
     proc, raw = T._setup(tmp_path, layers=12)
     missing = proc / "no_such_mosa_volumes.h5"
@@ -216,7 +216,7 @@ def _assert_export_spans_the_working_range(seen, label):
 
 def test_rocking_progress_is_smooth(tmp_path):
     import tests.test_stage_rocking as T
-    from dfxm.stages import rocking
+    from darq_xray.stages import rocking
 
     raw = T._setup(tmp_path)
     raw = raw[0] if isinstance(raw, tuple) else raw
@@ -237,7 +237,7 @@ def test_rocking_progress_is_smooth(tmp_path):
 
 def test_slices_progress_is_smooth(tmp_path):
     import tests.test_stage_slices as T
-    from dfxm.stages import slices
+    from darq_xray.stages import slices
 
     proc, raw = T._setup(tmp_path)
     params = T._minimal_params(proc, raw, tmp_path / "sl")
@@ -246,7 +246,7 @@ def test_slices_progress_is_smooth(tmp_path):
 
 def test_strain_progress_is_smooth(tmp_path):
     import tests.test_stage_strain as T
-    from dfxm.stages import strain
+    from darq_xray.stages import strain
 
     ccmth = T._synthetic_ccmth()
     root = tmp_path / "root"
@@ -264,7 +264,7 @@ def test_strain_progress_is_smooth(tmp_path):
 
 def test_mosaicity_progress_is_smooth(tmp_path):
     import tests.test_stage_mosaicity as T
-    from dfxm.stages import mosaicity
+    from darq_xray.stages import mosaicity
 
     root = T._make_root(tmp_path)
     params = {"mode": "batch", "root_folder": str(root), "folder_pattern": "layer__*"}
@@ -275,7 +275,7 @@ def test_matched_progress_is_smooth(tmp_path):
     import numpy as np
 
     import tests.test_stage_matched as T
-    from dfxm.stages import matched
+    from darq_xray.stages import matched
 
     raw = tmp_path / "raw"
     samy = [0.0, 0.0005, 0.001]
@@ -297,7 +297,7 @@ def test_matched_progress_is_smooth(tmp_path):
 
 def test_profiles_progress_is_smooth(tmp_path):
     import tests.test_stage_profiles as T
-    from dfxm.stages import profiles
+    from darq_xray.stages import profiles
 
     h5 = tmp_path / "consolidated.h5"
     T._write_consolidated(str(h5))
@@ -316,7 +316,7 @@ def test_slices_reports_a_plane_only_once_it_is_on_disk(tmp_path):
     Cancelling mid-plane left the bar one plane ahead of the disk.
     """
     import tests.test_stage_slices as T
-    from dfxm.stages import slices
+    from darq_xray.stages import slices
 
     proc, raw = T._setup(tmp_path)
     out = tmp_path / "sl"
@@ -364,7 +364,7 @@ def test_strain_speaks_before_it_has_finished_reading(tmp_path):
     actually wrong, is that the run speaks early and often.
     """
     import tests.test_stage_strain as T
-    from dfxm.stages import strain
+    from darq_xray.stages import strain
 
     ccmth = T._synthetic_ccmth()
     root = tmp_path / "root"
@@ -393,7 +393,7 @@ def test_mosaicity_progress_is_smooth_with_one_layer(tmp_path):
     three layers that is 0.067 and invisible, at one layer it is 0.19.
     """
     import tests.test_stage_mosaicity as T
-    from dfxm.stages import mosaicity
+    from darq_xray.stages import mosaicity
 
     root = T._make_root(tmp_path, ("layer__1",))
     params = {"mode": "batch", "root_folder": str(root), "folder_pattern": "layer__*"}
@@ -419,7 +419,7 @@ def test_rocking_reports_per_layer_while_rendering(tmp_path):
     reports themselves rather than on smoothness.
     """
     import tests.test_stage_rocking as T
-    from dfxm.stages import rocking
+    from darq_xray.stages import rocking
 
     raw = T._setup(tmp_path)
     raw = raw[0] if isinstance(raw, tuple) else raw
@@ -454,7 +454,7 @@ def test_matched_reports_every_step_of_a_single_layer(tmp_path):
     import numpy as np
 
     import tests.test_stage_matched as T
-    from dfxm.stages import matched
+    from darq_xray.stages import matched
 
     raw = tmp_path / "raw"
     T._write_strain(str(raw), "strain__1", 0.0, 0.0)
@@ -496,7 +496,7 @@ def test_profiles_preview_reports_through_the_render(tmp_path):
     better than passing a looser `max_gap` and calling it covered.
     """
     import tests.test_stage_profiles as T
-    from dfxm.stages import profiles
+    from darq_xray.stages import profiles
 
     h5 = tmp_path / "consolidated.h5"
     T._write_consolidated(str(h5))
@@ -516,7 +516,7 @@ def test_profiles_preview_reports_through_the_render(tmp_path):
 def test_concat_progress_is_smooth(bliss_factory, tmp_path):
     """`concat` alone needs a conftest fixture, so it takes one rather than
     being folded into a parametrised sweep with the other four."""
-    from dfxm.stages import concat
+    from darq_xray.stages import concat
 
     folder = bliss_factory(specs=(("1.1", 3), ("2.1", 2), ("3.1", 4)))
     params = {"mode": "single", "input_folder": folder}

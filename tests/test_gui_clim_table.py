@@ -12,9 +12,9 @@ import pytest
 pytest.importorskip("PySide6")
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
-from dfxm.stages import visualize as V  # noqa: E402
-from gui.widgets.clim_section import ClimGroupSection  # noqa: E402
-from gui.widgets.clim_table import ClimTableEditor, summarize_clim  # noqa: E402
+from darq_xray.gui.widgets.clim_section import ClimGroupSection  # noqa: E402
+from darq_xray.gui.widgets.clim_table import ClimTableEditor, summarize_clim  # noqa: E402
+from darq_xray.stages import visualize as V  # noqa: E402
 
 _app = QApplication.instance() or QApplication([])
 
@@ -98,7 +98,7 @@ def test_reseeding_a_section_drops_the_limits_the_new_mapping_omits():
 
 def test_param_form_renders_the_clim_editor_for_the_hint():
     """The `editor="clim_table"` hint must actually reach ParamForm."""
-    from gui.widgets.param_form import ParamForm
+    from darq_xray.gui.widgets.param_form import ParamForm
 
     form = ParamForm(V.STAGE.params)
     assert isinstance(form._editors["volume_clim_json"], ClimTableEditor)

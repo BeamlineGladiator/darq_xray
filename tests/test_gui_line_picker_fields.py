@@ -35,7 +35,7 @@ def _mini(path):
 
 
 def test_picker_exposes_field_checkboxes(tmp_path):
-    from gui.widgets.line_picker import LinePickerDialog
+    from darq_xray.gui.widgets.line_picker import LinePickerDialog
 
     h5 = tmp_path / "oblique_slices.h5"
     _mini(str(h5))
@@ -55,7 +55,7 @@ def test_picker_exposes_field_checkboxes(tmp_path):
 
 def test_use_button_disabled_when_no_fields_checked(tmp_path):
     """Use button must be disabled when all field boxes are unchecked (FIX 4)."""
-    from gui.widgets.line_picker import LinePickerDialog
+    from darq_xray.gui.widgets.line_picker import LinePickerDialog
 
     h5 = tmp_path / "oblique_slices.h5"
     _mini(str(h5))
@@ -76,7 +76,7 @@ def test_inject_line_into_jobs_with_fields():
     """inject_line_into_jobs is pure — unit-test the fields= kwarg directly."""
     import json
 
-    from gui.viewers import inject_line_into_jobs
+    from darq_xray.gui.viewers import inject_line_into_jobs
 
     base = json.dumps([{"name": "oblique_full", "offset_um": 0.0}])
 

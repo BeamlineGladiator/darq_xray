@@ -39,7 +39,7 @@ def _mini(path, offsets=(-2.0, 0.0, 2.0)):
 
 
 def test_browser_open_step_and_group_switch(tmp_path):
-    from gui.widgets.plane_browser import PlaneBrowser
+    from darq_xray.gui.widgets.plane_browser import PlaneBrowser
 
     _app = QApplication.instance() or QApplication([])
     b = PlaneBrowser(_mini(tmp_path / "s.h5"))
@@ -58,7 +58,7 @@ def test_browser_open_step_and_group_switch(tmp_path):
 
 
 def test_picker_background_dropdown_and_result_reference(tmp_path):
-    from gui.widgets.line_picker import LinePickerDialog
+    from darq_xray.gui.widgets.line_picker import LinePickerDialog
 
     _app = QApplication.instance() or QApplication([])
     dlg = LinePickerDialog(_mini(tmp_path / "s.h5"), "oblique_full")
@@ -77,7 +77,7 @@ def test_picker_background_dropdown_and_result_reference(tmp_path):
 
 
 def test_inject_line_reference_kwarg():
-    from gui.viewers import inject_line_into_jobs
+    from darq_xray.gui.viewers import inject_line_into_jobs
 
     base = json.dumps([{"name": "oblique_full", "offset_um": 0.0, "reference": "old"}])
     out = inject_line_into_jobs(
@@ -89,8 +89,8 @@ def test_inject_line_reference_kwarg():
 
 
 def test_picker_info_shows_star_for_marked_plane(tmp_path):
-    from dfxm.stages import slices as sl
-    from gui.widgets.line_picker import LinePickerDialog
+    from darq_xray.gui.widgets.line_picker import LinePickerDialog
+    from darq_xray.stages import slices as sl
 
     _app = QApplication.instance() or QApplication([])
     h5 = _mini(tmp_path / "m.h5")

@@ -11,7 +11,7 @@ import pytest
 pytest.importorskip("PySide6")
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
-from gui.widgets.clim_section import ClimGroupSection  # noqa: E402
+from darq_xray.gui.widgets.clim_section import ClimGroupSection  # noqa: E402
 
 _app = QApplication.instance() or QApplication([])
 

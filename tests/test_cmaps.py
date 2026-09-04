@@ -5,14 +5,14 @@ from __future__ import annotations
 import matplotlib
 import numpy as np
 
-import dfxm.common.plotting  # noqa: F401 — importing registers "fast"
-from dfxm.common.cmaps import _FAST_POINTS, fast_colormap, register
+import darq_xray.common.plotting  # noqa: F401 — importing registers "fast"
+from darq_xray.common.cmaps import _FAST_POINTS, fast_colormap, register
 
 
 def test_fast_is_registered_with_matplotlib():
     assert "fast" in matplotlib.colormaps
     # and resolvable through the shared lookup helper
-    from dfxm.common.plotting import get_cmap
+    from darq_xray.common.plotting import get_cmap
 
     assert get_cmap("fast").name == "fast"
 

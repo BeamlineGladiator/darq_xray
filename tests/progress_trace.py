@@ -5,7 +5,7 @@ the same arrangement as `tests/peak_rss.py`.
 
 Why this exists. Every stage takes `progress(frac, text)` and the GUI turns the
 stream of `frac` values into a progress bar and, via
-`dfxm.common.eta.EtaEstimator`, a "~N left" readout. Stages used to assign
+`darq_xray.common.eta.EtaEstimator`, a "~N left" readout. Stages used to assign
 `frac` by **milestone** rather than by work — `visualize` reported `0.6` and
 then said nothing at all for the whole strain half of the run, `paraview`
 emitted four fractions for an entire 17 GB export — and a bar that stands still

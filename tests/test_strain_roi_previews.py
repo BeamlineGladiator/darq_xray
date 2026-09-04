@@ -5,7 +5,7 @@ from __future__ import annotations
 import h5py
 import numpy as np
 
-from dfxm.stages import strain as ST
+from darq_xray.stages import strain as ST
 
 
 def test_roi_param_is_tagged():

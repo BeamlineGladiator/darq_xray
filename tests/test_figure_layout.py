@@ -3,8 +3,8 @@
 import numpy as np
 from matplotlib.backends.backend_agg import FigureCanvasAgg
 
-from dfxm.common.plotting import PlotStyle, styled_figure
-from dfxm.stages.slices import build_slice_figure
+from darq_xray.common.plotting import PlotStyle, styled_figure
+from darq_xray.stages.slices import build_slice_figure
 
 # The exact style family that produced the overlapping export in the bug report
 _BIG = PlotStyle(
@@ -123,7 +123,7 @@ def _box_inches(fig, ax):
 def test_fit_axes_to_box_reaches_target_under_two_decoration_loads():
     import numpy as np
 
-    from dfxm.common.plotting import fit_axes_to_box, styled_figure
+    from darq_xray.common.plotting import fit_axes_to_box, styled_figure
 
     for title, with_cbar in (
         ("A long two-line title\nwith even more text on the second line", True),
@@ -148,7 +148,7 @@ def test_fit_axes_to_box_reaches_target_under_two_decoration_loads():
 def test_fit_axes_to_box_nonconvergence_is_nonfatal():
     import numpy as np
 
-    from dfxm.common.plotting import fit_axes_to_box, styled_figure
+    from darq_xray.common.plotting import fit_axes_to_box, styled_figure
 
     fig = styled_figure((2.0, 2.0), styled=True)
     ax = fig.add_subplot(111)
@@ -159,7 +159,7 @@ def test_fit_axes_to_box_nonconvergence_is_nonfatal():
 
 
 def test_finalize_fixed_scale_noop_when_knob_off():
-    from dfxm.common.plotting import PlotStyle, finalize_fixed_scale, styled_figure
+    from darq_xray.common.plotting import PlotStyle, finalize_fixed_scale, styled_figure
 
     fig = styled_figure((6.0, 5.0), styled=True)
     ax = fig.add_subplot(111)
@@ -169,7 +169,7 @@ def test_finalize_fixed_scale_noop_when_knob_off():
 
 
 def test_finalize_fixed_scale_fits_axes_box_on_path():
-    from dfxm.common.plotting import PlotStyle, finalize_fixed_scale, styled_figure
+    from darq_xray.common.plotting import PlotStyle, finalize_fixed_scale, styled_figure
 
     # Asymmetric extents so a box[0]/box[1] (w/h) swap in finalize_fixed_scale's
     # internal fit_axes_to_box call cannot land unseen.
@@ -193,8 +193,8 @@ def test_finalize_fixed_scale_fits_axes_box_on_path():
 def test_layer_figure_fixed_scale_equal_boxes_across_decoration_loads():
     import numpy as np
 
-    from dfxm.common import render
-    from dfxm.common.plotting import PlotStyle
+    from darq_xray.common import render
+    from darq_xray.common.plotting import PlotStyle
 
     layer = np.random.default_rng(1).random((10, 20))
     style = PlotStyle(scale_um_per_cm=50.0, figure_width="single", tickfmt_raw="scientific")
@@ -221,8 +221,8 @@ def test_layer_figure_fixed_scale_equal_boxes_across_decoration_loads():
 def test_build_strain_map_fixed_scale_box():
     import numpy as np
 
-    from dfxm.common.plotting import PlotStyle
-    from dfxm.stages.strain import build_strain_map
+    from darq_xray.common.plotting import PlotStyle
+    from darq_xray.stages.strain import build_strain_map
 
     strain = np.random.default_rng(2).standard_normal((50, 100)) * 1e-4
     style = PlotStyle(scale_um_per_cm=10.0)
@@ -243,7 +243,7 @@ def test_slice_figure_axes_mode_none_removes_axes():
 def test_layer_figure_fixed_scale_box_unchanged_by_axes_mode():
     import numpy as np
 
-    from dfxm.common import render
+    from darq_xray.common import render
 
     layer = np.random.default_rng(3).random((10, 20))
     boxes = []

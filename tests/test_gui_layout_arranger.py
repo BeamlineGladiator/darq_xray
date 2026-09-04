@@ -9,7 +9,7 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 
 _app = QApplication.instance() or QApplication([])
 
-from gui.widgets.layout_arranger import LayoutArranger, _corner_at  # noqa: E402
+from darq_xray.gui.widgets.layout_arranger import LayoutArranger, _corner_at  # noqa: E402
 
 _INFO = {
     "a": {"title": "strain / z=0", "group": "strain"},
@@ -84,21 +84,21 @@ def test_schematic_strips_follow_mode_and_pos():
 
 
 def _fb_win():
-    from dfxm.common.plotting import PlotStyle
-    from gui.figure_builder import FigureBuilderWindow
+    from darq_xray.common.plotting import PlotStyle
+    from darq_xray.gui.figure_builder import FigureBuilderWindow
 
     return FigureBuilderWindow(lambda: {}, PlotStyle(scale_um_per_cm=10.0))
 
 
 def _mk_panel(pid):
-    from dfxm.compose.recipe import PanelDef, PanelSource
+    from darq_xray.compose.recipe import PanelDef, PanelSource
 
     return PanelDef(pid, PanelSource("/x.h5", "map_layer", {"stage": "strain", "z": 0}))
 
 
 def test_arrange_dialog_clean_grid_preserves_col_flags():
-    from dfxm.compose.recipe import Col, PanelRef
-    from gui.widgets.layout_arranger import ArrangeDialog
+    from darq_xray.compose.recipe import Col, PanelRef
+    from darq_xray.gui.widgets.layout_arranger import ArrangeDialog
 
     w = _fb_win()
     w.add_panels([_mk_panel("a"), _mk_panel("b"), _mk_panel("c")])
@@ -133,8 +133,8 @@ def test_arrange_dialog_clean_grid_preserves_col_flags():
 
 
 def test_arrange_dialog_flatten_path_warns_and_seeds_one_column():
-    from dfxm.compose.recipe import Col, Spacer
-    from gui.widgets.layout_arranger import ArrangeDialog
+    from darq_xray.compose.recipe import Col, Spacer
+    from darq_xray.gui.widgets.layout_arranger import ArrangeDialog
 
     w = _fb_win()
     w.add_panels([_mk_panel("a"), _mk_panel("b")])

@@ -1,4 +1,4 @@
-"""Tests for dfxm.stages.concat — structure, lengths, modes, and a golden
+"""Tests for darq_xray.stages.concat — structure, lengths, modes, and a golden
 equivalence check against the legacy concatenate_h5_scans_v3 script.
 """
 
@@ -12,8 +12,8 @@ import h5py
 import numpy as np
 import pytest
 
-from dfxm.common import h5io
-from dfxm.stages import concat
+from darq_xray.common import h5io
+from darq_xray.stages import concat
 
 
 # -- single mode --------------------------------------------------------------
@@ -89,7 +89,7 @@ def test_batch_no_matching_folders_raises(tmp_path):
 # -- golden equivalence vs the legacy script ---------------------------------
 def _import_legacy():
     """Import concatenate_h5_scans_v3 from the parent repo, or skip."""
-    repo_root = Path(__file__).resolve().parents[2]  # worktree root, above dfxm_pipeline/
+    repo_root = Path(__file__).resolve().parents[2]  # worktree root, above the darq_xray checkout
     candidate = repo_root / "concatenate_h5_scans_v3.py"
     if not candidate.exists():
         pytest.skip("legacy concatenate_h5_scans_v3.py not found alongside the package")

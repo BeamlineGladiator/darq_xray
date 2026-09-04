@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from dfxm.common import render3d as R3
+from darq_xray.common import render3d as R3
 
 
 def _vol():
@@ -422,7 +422,7 @@ def test_scene_figure_does_not_flip_the_render():
 def test_scene_figure_honours_style_decoration_flags():
     from matplotlib.offsetbox import AnchoredOffsetbox
 
-    from dfxm.common.plotting import PlotStyle
+    from darq_xray.common.plotting import PlotStyle
 
     st = PlotStyle(scale_bar=False, colorbar=False, scale_bar_color="black")
     fig, ax, im = R3.scene_figure(

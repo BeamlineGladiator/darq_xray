@@ -27,11 +27,11 @@ import os
 import sys
 
 # Running this file directly (not via `-m`) puts tools/ on sys.path, not the
-# repo root, so the dfxm package would not be importable without this.
+# repo root, so the darq_xray package would not be importable without this.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from dfxm.common.errors import StageUserError  # noqa: E402
-from dfxm.stages.slices import build_pinned_spec  # noqa: E402
+from darq_xray.common.errors import StageUserError  # noqa: E402
+from darq_xray.stages.slices import build_pinned_spec  # noqa: E402
 
 
 def _main(argv=None):

@@ -1,4 +1,4 @@
-"""Tests for dfxm.common.pixel_size."""
+"""Tests for darq_xray.common.pixel_size."""
 
 from __future__ import annotations
 
@@ -7,8 +7,8 @@ import math
 import h5py
 import pytest
 
-from dfxm.common.errors import StageUserError
-from dfxm.common.pixel_size import compute_pixel_size
+from darq_xray.common.errors import StageUserError
+from darq_xray.common.pixel_size import compute_pixel_size
 
 
 def _write_scan(path, *, mainx, obx, ffsel, ffz, lenssel, entry="1.1", motors=None):

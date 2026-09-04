@@ -3,8 +3,8 @@
 import h5py
 import numpy as np
 
-from dfxm.common.plotting import measured_box_in
-from dfxm.compose.recipe import (
+from darq_xray.common.plotting import measured_box_in
+from darq_xray.compose.recipe import (
     Col,
     ComposeStyle,
     FigureRecipe,
@@ -13,7 +13,7 @@ from dfxm.compose.recipe import (
     PanelSource,
     Row,
 )
-from dfxm.compose.render import render_recipe
+from darq_xray.compose.render import render_recipe
 
 
 def _write_slices_two_planes(path):

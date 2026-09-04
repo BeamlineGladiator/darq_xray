@@ -13,11 +13,11 @@ from PySide6.QtWidgets import QApplication, QComboBox, QFormLayout  # noqa: E402
 
 _app = QApplication.instance() or QApplication([])
 
-from dfxm.config.models import Experiment, Param, ParamType, SeeAlso  # noqa: E402
-from gui.bindings import STAGE_SPECS  # noqa: E402
-from gui.stage_view import StageView  # noqa: E402
-from gui.widgets.help_panel import HelpPanel, param_help_html  # noqa: E402
-from gui.widgets.param_form import ParamForm  # noqa: E402
+from darq_xray.config.models import Experiment, Param, ParamType, SeeAlso  # noqa: E402
+from darq_xray.gui.bindings import STAGE_SPECS  # noqa: E402
+from darq_xray.gui.stage_view import StageView  # noqa: E402
+from darq_xray.gui.widgets.help_panel import HelpPanel, param_help_html  # noqa: E402
+from darq_xray.gui.widgets.param_form import ParamForm  # noqa: E402
 
 _PARAMS = (
     Param("colormap", ParamType.ENUM, "Colormap", default="fast", choices=("fast", "gray")),

@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from dfxm.stages.slices import ReplotEntry
-from gui.widgets.plane_selection_model import PlaneRow, build_slice_rows, filter_rows
+from darq_xray.gui.widgets.plane_selection_model import PlaneRow, build_slice_rows, filter_rows
+from darq_xray.stages.slices import ReplotEntry
 
 
 def _entries():

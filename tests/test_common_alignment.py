@@ -1,4 +1,4 @@
-"""Tests for dfxm.common.alignment and dfxm.common.raster.
+"""Tests for darq_xray.common.alignment and darq_xray.common.raster.
 
 The alignment primitives are checked voxel-for-voxel against the legacy PVTI
 exporter (export_aligned_volumes_to_paraview_v6_pvti) so the two stay
@@ -17,9 +17,9 @@ import h5py
 import numpy as np
 import pytest
 
-from dfxm.common import alignment as A
-from dfxm.common import raster as R
-from dfxm.common import volumeio
+from darq_xray.common import alignment as A
+from darq_xray.common import raster as R
+from darq_xray.common import volumeio
 
 
 def _legacy_export():
@@ -968,7 +968,7 @@ def test_aligned_elems_for_params_never_raises_on_junk():
 
 # -- an ROI that crops to nothing is a user error, not an empty array --------
 def test_apply_roi_3d_refuses_an_inverted_pair():
-    from dfxm.common.errors import StageUserError
+    from darq_xray.common.errors import StageUserError
 
     vol = np.zeros((3, 40, 50))
     with pytest.raises(StageUserError) as exc:
@@ -977,7 +977,7 @@ def test_apply_roi_3d_refuses_an_inverted_pair():
 
 
 def test_apply_roi_3d_refuses_a_start_past_the_data():
-    from dfxm.common.errors import StageUserError
+    from darq_xray.common.errors import StageUserError
 
     vol = np.zeros((3, 40, 50))
     with pytest.raises(StageUserError):

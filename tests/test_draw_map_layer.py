@@ -3,8 +3,8 @@
 import numpy as np
 from matplotlib.offsetbox import AnchoredOffsetbox
 
-from dfxm.common.plotting import PlotStyle
-from dfxm.common.render import layer_figure
+from darq_xray.common.plotting import PlotStyle
+from darq_xray.common.render import layer_figure
 
 LAYER = np.linspace(0.0, 1.0, 24 * 30).reshape(24, 30)
 
@@ -32,7 +32,7 @@ def test_layer_figure_styled_flags_and_fixed_scale():
     assert len(fig.axes) == 1  # colorbar honoured off
     assert _bar_boxes(ax) == []  # scale bar honoured off
     assert ax.get_title() == ""  # show_title off via apply_text_scale
-    from dfxm.common.plotting import measured_box_in
+    from darq_xray.common.plotting import measured_box_in
 
     w, h = measured_box_in(fig, ax)
     assert abs(w - 30.0 / 10.0 / 2.54) < 0.02 and abs(h - 24.0 / 10.0 / 2.54) < 0.02

@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from dfxm.config.models import Experiment
-from gui.bindings import experiment_overrides
+from darq_xray.config.models import Experiment
+from darq_xray.gui.bindings import experiment_overrides
 
 STO2_ROIS = dict(darfix_roi="105,230,1832,1266", analysis_roi_x="0,1832", analysis_roi_y="400,1100")
 

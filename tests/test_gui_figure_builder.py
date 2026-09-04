@@ -9,9 +9,9 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 
 _app = QApplication.instance() or QApplication([])
 
-from dfxm.common.plotting import PlotStyle  # noqa: E402
-from dfxm.compose.recipe import PanelDef, PanelRef, PanelSource, Row  # noqa: E402
-from gui.figure_builder import FigureBuilderWindow  # noqa: E402
+from darq_xray.common.plotting import PlotStyle  # noqa: E402
+from darq_xray.compose.recipe import PanelDef, PanelRef, PanelSource, Row  # noqa: E402
+from darq_xray.gui.figure_builder import FigureBuilderWindow  # noqa: E402
 
 # Every FigureBuilderWindow built by a test lives only for that test, but
 # add_panels()/etc. arm its 300 ms render debounce (schedule_preview) — a
@@ -90,7 +90,7 @@ def test_delete_row_purges_nested_panel_defs_and_gutter_renders(tmp_path):
     import h5py
     import numpy as np
 
-    from dfxm.compose.recipe import Col
+    from darq_xray.compose.recipe import Col
 
     h5 = tmp_path / "obl.h5"
     with h5py.File(h5, "w") as f:
@@ -158,7 +158,7 @@ def test_panel_picker_builds_slice_panel_defs(tmp_path):
     import h5py
     import numpy as np
 
-    from gui.widgets.panel_picker import AddPanelDialog
+    from darq_xray.gui.widgets.panel_picker import AddPanelDialog
 
     h5 = tmp_path / "obl.h5"
     with h5py.File(h5, "w") as f:
@@ -183,7 +183,7 @@ def test_panel_picker_pins_loaded_h5_path_not_live_field_text(tmp_path):
     import h5py
     import numpy as np
 
-    from gui.widgets.panel_picker import AddPanelDialog
+    from darq_xray.gui.widgets.panel_picker import AddPanelDialog
 
     h5 = tmp_path / "obl.h5"
     with h5py.File(h5, "w") as f:
@@ -218,7 +218,7 @@ def _obl_recipe_panels(tmp_path):
         sg.create_dataset("u_um", data=np.linspace(0.0, 2.0, 5))
         sg.create_dataset("v_um", data=np.linspace(0.0, 1.5, 4))
         sg.create_dataset("offsets_um", data=np.array([0.0]))
-    from dfxm.compose.recipe import PanelDef, PanelSource
+    from darq_xray.compose.recipe import PanelDef, PanelSource
 
     return [
         PanelDef(
@@ -362,7 +362,7 @@ def test_export_now_writes_files(tmp_path, monkeypatch):
     w._debounce.stop()
     out = tmp_path / "out"
     monkeypatch.setattr(
-        "gui.figure_builder.QFileDialog.getSaveFileName",
+        "darq_xray.gui.figure_builder.QFileDialog.getSaveFileName",
         lambda *a, **k: (str(out / "untitled.png"), ""),
     )
     export_and_wait(w)
@@ -383,7 +383,7 @@ def test_export_now_uses_the_typed_name_and_never_renames_the_recipe(tmp_path, m
     w._debounce.stop()
     out = tmp_path / "out"
     monkeypatch.setattr(
-        "gui.figure_builder.QFileDialog.getSaveFileName",
+        "darq_xray.gui.figure_builder.QFileDialog.getSaveFileName",
         lambda *a, **k: (str(out / "strain overview.png"), ""),
     )
     w._dirty = False
@@ -412,7 +412,7 @@ def test_export_dialog_prefills_recipe_name_then_the_last_export_name(tmp_path, 
         seen.append((path, filt))
         return (str(tmp_path / "out" / "panel_a.pdf"), "")
 
-    monkeypatch.setattr("gui.figure_builder.QFileDialog.getSaveFileName", _dlg)
+    monkeypatch.setattr("darq_xray.gui.figure_builder.QFileDialog.getSaveFileName", _dlg)
     export_and_wait(w)
     assert seen[0][0] == str(tmp_path / "figure_3")  # pre-filled from the recipe
     assert "*.png" in seen[0][1]  # filter lists the enabled formats
@@ -424,7 +424,7 @@ def test_export_dialog_prefills_recipe_name_then_the_last_export_name(tmp_path, 
 def test_export_stem_from_filename_strips_only_a_real_extension():
     """Qt appends the filter's suffix to a name typed without one, so the
     extension is a hint — but a dotted *name* must survive intact."""
-    from gui.figure_builder import _export_stem_from_filename as stem_of
+    from darq_xray.gui.figure_builder import _export_stem_from_filename as stem_of
 
     assert stem_of("fig.png", ("png",)) == "fig"
     assert stem_of("fig.PDF", ("png",)) == "fig"  # any image suffix, any case
@@ -442,7 +442,7 @@ def test_export_now_zero_files_written_still_reports_chosen_dir(tmp_path, monkey
     `out` directly, never one derived from paths[0])."""
     from matplotlib.figure import Figure
 
-    from dfxm.compose.render import ComposeResult
+    from darq_xray.compose.render import ComposeResult
 
     w = _win()
     w.add_panels(_obl_recipe_panels(tmp_path))
@@ -452,11 +452,11 @@ def test_export_now_zero_files_written_still_reports_chosen_dir(tmp_path, monkey
     w._debounce.stop()
     out = tmp_path / "out"
     monkeypatch.setattr(
-        "gui.figure_builder.QFileDialog.getSaveFileName",
+        "darq_xray.gui.figure_builder.QFileDialog.getSaveFileName",
         lambda *a, **k: (str(out / "untitled.png"), ""),
     )
     monkeypatch.setattr(
-        "dfxm.compose.render.export_recipe",
+        "darq_xray.compose.render.export_recipe",
         lambda *a, **k: ([], ComposeResult(figure=Figure())),
     )
     export_and_wait(w)
@@ -515,14 +515,14 @@ def test_export_now_unexpected_error_reports_to_notes_bar_not_crash(tmp_path, mo
     w._debounce.stop()
     out = tmp_path / "out"
     monkeypatch.setattr(
-        "gui.figure_builder.QFileDialog.getSaveFileName",
+        "darq_xray.gui.figure_builder.QFileDialog.getSaveFileName",
         lambda *a, **k: (str(out / "untitled.png"), ""),
     )
 
     def _raise(*_a, **_k):
         raise OSError("disk full")
 
-    monkeypatch.setattr("dfxm.compose.render.export_recipe", _raise)
+    monkeypatch.setattr("darq_xray.compose.render.export_recipe", _raise)
     export_and_wait(w)  # must not raise
     assert "export failed" in w._notes_label.text()
 
@@ -560,7 +560,7 @@ def test_close_with_unsaved_changes_cancel_leaves_debounce_running(tmp_path, mon
 
 # -- task 13: main-window launch wiring ---------------------------------------
 def test_main_window_launches_builder_non_modal():
-    from gui.main_window import MainWindow
+    from darq_xray.gui.main_window import MainWindow
 
     win = MainWindow()
     win._on_figure_builder()
@@ -581,7 +581,7 @@ def test_builder_defaults_prefill_stage_output_h5_not_folder():
     from. slices/profiles are untouched (already correct)."""
     from dataclasses import replace as _dc_replace
 
-    from gui.main_window import MainWindow
+    from darq_xray.gui.main_window import MainWindow
 
     win = MainWindow()
     exp = _dc_replace(
@@ -719,7 +719,7 @@ def test_group_mode_control_and_no_auto_sentinel_leak(monkeypatch):
         captured["prefill"] = kw.get("text", "")
         return ("", False)
 
-    monkeypatch.setattr("gui.figure_builder.QInputDialog.getText", fake_get_text)
+    monkeypatch.setattr("darq_xray.gui.figure_builder.QInputDialog.getText", fake_get_text)
     w._on_label_selected()
     assert captured["prefill"] == ""  # the Label… dialog leak, fixed
     w._row_group_mode.setCurrentIndex(2)  # Custom…
@@ -812,8 +812,8 @@ def test_figure2_authored_through_window_methods(tmp_path):
     geometry tests/test_compose_acceptance.py's figure-2 test pins."""
     import numpy as np
 
-    from dfxm.common.plotting import measured_box_in
-    from dfxm.compose.recipe import PanelSource
+    from darq_xray.common.plotting import measured_box_in
+    from darq_xray.compose.recipe import PanelSource
     from tests.test_compose_acceptance import _write_profiles_three_fields
 
     h5 = _write_profiles_three_fields(tmp_path / "obl.h5")
@@ -944,7 +944,7 @@ def test_custom_group_mode_uncommitted_until_text():
 
 
 def test_style_controls_cbar_typography_round_trip():
-    from gui.widgets.export_dialog import StyleControls
+    from darq_xray.gui.widgets.export_dialog import StyleControls
 
     st = PlotStyle(cbar_label_scale=1.7, cbar_tick_scale=0.8, cbar_labelpad_pt=12.0)
     c = StyleControls(st)
@@ -969,7 +969,7 @@ def test_panel_picker_slice_leaves_carry_titles(tmp_path):
     import numpy as np
     from PySide6.QtCore import Qt
 
-    from gui.widgets.panel_picker import AddPanelDialog
+    from darq_xray.gui.widgets.panel_picker import AddPanelDialog
 
     h5 = tmp_path / "obl.h5"
     with h5py.File(h5, "w") as f:
@@ -994,7 +994,7 @@ def test_panel_picker_slice_leaves_carry_titles(tmp_path):
 def test_panel_picker_map_titles_from_fake_catalog():
     from PySide6.QtCore import Qt
 
-    from gui.widgets.panel_picker import AddPanelDialog
+    from darq_xray.gui.widgets.panel_picker import AddPanelDialog
 
     class _Grp:
         key = "/chi/Center of mass"
@@ -1037,7 +1037,7 @@ def _slices_dialog(tmp_path):
     import h5py
     import numpy as np
 
-    from gui.widgets.panel_picker import AddPanelDialog
+    from darq_xray.gui.widgets.panel_picker import AddPanelDialog
 
     h5 = tmp_path / "obl.h5"
     with h5py.File(h5, "w") as f:
@@ -1056,7 +1056,7 @@ def _slices_dialog(tmp_path):
 
 
 def test_add_dialog_two_step_returns_fragment(tmp_path):
-    from dfxm.compose.recipe import Col
+    from darq_xray.compose.recipe import Col
 
     dlg = _slices_dialog(tmp_path)
     dlg._on_next()
@@ -1113,7 +1113,7 @@ def test_add_dialog_stale_pick_cleared_by_restage_on_next(tmp_path):
 
 
 def test_window_add_panels_with_fragment_and_id_collision():
-    from dfxm.compose.recipe import Col
+    from darq_xray.compose.recipe import Col
 
     w = _win()
     w.add_panels([_panel("slices_0")])
@@ -1245,8 +1245,8 @@ def test_scale_bar_corner_combo_is_style_scale_bar_loc_both_ways():
 
 
 def test_scale_bar_locs_is_canonical():
-    from dfxm.common.plotting import SCALE_BAR_LOCS
-    from gui.widgets.export_dialog import _LOCS
+    from darq_xray.common.plotting import SCALE_BAR_LOCS
+    from darq_xray.gui.widgets.export_dialog import _LOCS
 
     assert (
         list(SCALE_BAR_LOCS)
@@ -1281,7 +1281,7 @@ def test_async_render_shows_overlay_then_clears(tmp_path):
 def test_latest_wins_two_rapid_renders_one_canvas(tmp_path, monkeypatch):
     import threading
 
-    import dfxm.compose.render as _render
+    import darq_xray.compose.render as _render
 
     real = _render.render_recipe
     release = threading.Event()
@@ -1325,7 +1325,7 @@ def test_close_with_live_worker_drops_result_never_attaches(tmp_path, monkeypatc
     discarded by _on_worker_result's generation check on arrival."""
     import threading
 
-    import dfxm.compose.render as _render
+    import darq_xray.compose.render as _render
 
     real = _render.render_recipe
     release = threading.Event()
@@ -1355,7 +1355,7 @@ def _gate_render_and_export(monkeypatch):
     export_recipe (recorded, never gated) — shared setup for the F2 tests."""
     import threading
 
-    import dfxm.compose.render as _render
+    import darq_xray.compose.render as _render
 
     real_render = _render.render_recipe
     real_export = _render.export_recipe
@@ -1386,7 +1386,7 @@ def test_pending_export_survives_a_pending_render_export_then_render(tmp_path, m
     release, render_calls, export_calls = _gate_render_and_export(monkeypatch)
     out = tmp_path / "out"
     monkeypatch.setattr(
-        "gui.figure_builder.QFileDialog.getSaveFileName",
+        "darq_xray.gui.figure_builder.QFileDialog.getSaveFileName",
         lambda *a, **k: (str(out / "untitled.png"), ""),
     )
 
@@ -1417,7 +1417,7 @@ def test_pending_render_survives_a_pending_export_render_then_export(tmp_path, m
     release, render_calls, export_calls = _gate_render_and_export(monkeypatch)
     out = tmp_path / "out"
     monkeypatch.setattr(
-        "gui.figure_builder.QFileDialog.getSaveFileName",
+        "darq_xray.gui.figure_builder.QFileDialog.getSaveFileName",
         lambda *a, **k: (str(out / "untitled.png"), ""),
     )
 
@@ -1442,7 +1442,7 @@ def test_render_now_no_panels_invalidates_inflight_worker_and_pending(tmp_path, 
     user just deleted every panel out of."""
     import threading
 
-    import dfxm.compose.render as _render
+    import darq_xray.compose.render as _render
 
     real = _render.render_recipe
     release = threading.Event()
@@ -1472,7 +1472,7 @@ def test_render_now_no_panels_invalidates_inflight_worker_and_pending(tmp_path, 
 
 
 def test_save_as_appends_json_suffix_and_open_offers_all_files(tmp_path, monkeypatch):
-    from gui.figure_builder import _ensure_json_suffix
+    from darq_xray.gui.figure_builder import _ensure_json_suffix
 
     assert _ensure_json_suffix("/x/recipe") == "/x/recipe.json"
     assert _ensure_json_suffix("/x/recipe.json") == "/x/recipe.json"
@@ -1481,7 +1481,8 @@ def test_save_as_appends_json_suffix_and_open_offers_all_files(tmp_path, monkeyp
     w.add_panels(_obl_recipe_panels(tmp_path))
     target = tmp_path / "myfig"  # user typed no extension
     monkeypatch.setattr(
-        "gui.figure_builder.QFileDialog.getSaveFileName", lambda *a, **k: (str(target), "")
+        "darq_xray.gui.figure_builder.QFileDialog.getSaveFileName",
+        lambda *a, **k: (str(target), ""),
     )
     w._on_save_as()
     assert (tmp_path / "myfig.json").exists() and not target.exists()
@@ -1492,13 +1493,13 @@ def test_save_as_appends_json_suffix_and_open_offers_all_files(tmp_path, monkeyp
         seen["filter"] = a[3] if len(a) > 3 else k.get("filter")
         return ("", "")
 
-    monkeypatch.setattr("gui.figure_builder.QFileDialog.getOpenFileName", fake_open)
+    monkeypatch.setattr("darq_xray.gui.figure_builder.QFileDialog.getOpenFileName", fake_open)
     w._on_open()
     assert "All files" in seen["filter"]
 
 
 def test_add_scale_bar_cell_and_trace_aspect_widget():
-    from dfxm.compose.recipe import ScaleBarCell, iter_leaves
+    from darq_xray.compose.recipe import ScaleBarCell, iter_leaves
 
     w = _win()
     w.add_scale_bar()
@@ -1544,7 +1545,7 @@ def test_row_col_gap_spin_writes_gap_cm_with_follow_sentinel():
 
 
 def test_pick_roi_button_writes_roi_from_picker(tmp_path, monkeypatch):
-    import gui.figure_builder as fb
+    import darq_xray.gui.figure_builder as fb
 
     w = _win()
     w.add_panels(_obl_recipe_panels(tmp_path))
@@ -1576,11 +1577,11 @@ def test_pick_roi_button_writes_roi_from_picker(tmp_path, monkeypatch):
 def test_pick_roi_offers_all_image_panels(tmp_path, monkeypatch):
     """Pick… previews every image panel (selected first, traces excluded) so the
     ROI can be checked on each map; the result still lands on the selected panel."""
-    import gui.figure_builder as fb
+    import darq_xray.gui.figure_builder as fb
 
     w = _win()
     w.add_panels(_obl_recipe_panels(tmp_path))
-    from dfxm.compose.recipe import PanelDef, PanelSource
+    from darq_xray.compose.recipe import PanelDef, PanelSource
 
     h5 = w.recipe().panels[0].source.h5_path
     sel = {"volume_id": "strain", "slice_name": "obl", "plane": 0}
@@ -1611,11 +1612,11 @@ def test_pick_roi_offers_all_image_panels(tmp_path, monkeypatch):
 def test_pick_roi_applies_per_map_positions(tmp_path, monkeypatch):
     """A dialog reporting per-preview picks writes each map its OWN ROI: the
     selected panel via the ROI box, every other picked panel directly."""
-    import gui.figure_builder as fb
+    import darq_xray.gui.figure_builder as fb
 
     w = _win()
     w.add_panels(_obl_recipe_panels(tmp_path))
-    from dfxm.compose.recipe import PanelDef, PanelSource
+    from darq_xray.compose.recipe import PanelDef, PanelSource
 
     h5 = w.recipe().panels[0].source.h5_path
     sel = {"volume_id": "strain", "slice_name": "obl", "plane": 0}
@@ -1648,7 +1649,7 @@ def test_pick_roi_applies_per_map_positions(tmp_path, monkeypatch):
 def test_copy_roi_to_all_image_panels(tmp_path):
     w = _win()
     w.add_panels(_obl_recipe_panels(tmp_path))
-    from dfxm.compose.recipe import PanelDef, PanelSource
+    from darq_xray.compose.recipe import PanelDef, PanelSource
 
     h5 = w.recipe().panels[0].source.h5_path
     sel = {"volume_id": "strain", "slice_name": "obl", "plane": 0}
@@ -1708,7 +1709,7 @@ def test_recipe_buttons_name_the_recipe_and_point_at_export():
     commands; they write the .json recipe. Every label names it and every
     tooltip cross-references the button that does write images.
     """
-    from gui.figure_builder import RECIPE_VS_EXPORT_TIP
+    from darq_xray.gui.figure_builder import RECIPE_VS_EXPORT_TIP
 
     w = _win()
     btns = _buttons_by_text(w)
@@ -1790,7 +1791,7 @@ def test_default_save_dir_survives_a_broken_defaults_provider():
 def test_override_y_tick_labels_checkbox_trace_only():
     import json
 
-    from dfxm.compose.recipe import recipe_to_json
+    from darq_xray.compose.recipe import recipe_to_json
 
     w = _win()
     trace = PanelDef("t", PanelSource("/x.h5", "profiles_trace", {"job": {}, "field": "strain"}))

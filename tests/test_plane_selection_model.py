@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from gui.widgets.plane_selection_model import (
+from darq_xray.gui.widgets.plane_selection_model import (
     build_layer_rows,
     build_slice_rows,
     filter_rows,
@@ -12,7 +12,7 @@ from gui.widgets.plane_selection_model import (
 )
 
 
-class _E:  # duck-typed dfxm.stages.slices.ReplotEntry
+class _E:  # duck-typed darq_xray.stages.slices.ReplotEntry
     def __init__(self, vid, sname, offsets):
         self.volume_id = vid
         self.slice_name = sname
@@ -20,7 +20,7 @@ class _E:  # duck-typed dfxm.stages.slices.ReplotEntry
         self.n_planes = len(self.offsets_um)
 
 
-class _G:  # duck-typed dfxm.common.figures.ReplotGroup
+class _G:  # duck-typed darq_xray.common.figures.ReplotGroup
     def __init__(self, key, labels):
         self.key = key
         self.item_labels = list(labels)

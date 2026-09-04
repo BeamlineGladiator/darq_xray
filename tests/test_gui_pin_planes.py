@@ -15,7 +15,7 @@ pytest.importorskip("PySide6")
 from PySide6.QtCore import Qt  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
-from gui.widgets.pin_planes import PinPlanesDialog  # noqa: E402
+from darq_xray.gui.widgets.pin_planes import PinPlanesDialog  # noqa: E402
 
 _app = QApplication.instance() or QApplication([])
 
@@ -63,8 +63,8 @@ def test_pin_dialog_empty_selection_or_bad_file_writes_nothing(tmp_path):
 
 
 def test_pin_dialog_shows_stage_user_error_hint(tmp_path, monkeypatch):
-    from dfxm.common.errors import StageUserError
-    from dfxm.stages import slices as sl
+    from darq_xray.common.errors import StageUserError
+    from darq_xray.stages import slices as sl
 
     dlg = PinPlanesDialog(_sweep_h5(tmp_path))
     dlg._panel._items[("oblique", 0)].setCheckState(0, Qt.CheckState.Checked)

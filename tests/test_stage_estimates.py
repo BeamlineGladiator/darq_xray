@@ -6,7 +6,7 @@ import h5py
 import numpy as np
 import pytest
 
-from dfxm.config.models import CostEstimate
+from darq_xray.config.models import CostEstimate
 
 H, W = 8, 16
 CCMTH_PATH = "/entry/ccmth/Center of mass/Center of mass"
@@ -45,7 +45,7 @@ def _make_big_layer(tmp_path, *, ny, nx):
 
 @pytest.fixture(scope="module")
 def _strain_defaults():
-    from dfxm.stages import strain
+    from darq_xray.stages import strain
 
     return strain.STAGE.defaults()
 
@@ -64,8 +64,8 @@ def _strain_params(root, **over):
 
 def _strain_peak(layer_elems, *, plots=True, canvas_px=0):
     """The recalibrated strain model, spelled out independently of the stage."""
-    from dfxm.common.plotting import AGG_RENDER_BYTES_PER_PIXEL
-    from dfxm.stages import strain
+    from darq_xray.common.plotting import AGG_RENDER_BYTES_PER_PIXEL
+    from darq_xray.stages import strain
 
     peak = strain.STRAIN_PROCESS_FLOOR_BYTES + strain.STRAIN_ARRAY_BYTES_PER_ELEM * layer_elems
     if plots:
@@ -76,7 +76,7 @@ def _strain_peak(layer_elems, *, plots=True, canvas_px=0):
 
 def test_strain_estimate_reports_shape_and_peak(tmp_path, _strain_defaults):
     """One layer's working set, not the volume: `run()` drops each layer as it goes."""
-    from dfxm.stages.strain import _plot_canvas_pixels, estimate
+    from darq_xray.stages.strain import _plot_canvas_pixels, estimate
 
     root = _make_layers(tmp_path, n_layers=3, dtype="float32")
     params = _strain_params(root)
@@ -96,7 +96,7 @@ def test_strain_peak_does_not_grow_with_the_layer_count(tmp_path):
     hundred layers cost what three do. input_bytes must still scale, or this
     would pass on an estimator that had stopped counting the input at all.
     """
-    from dfxm.stages.strain import estimate
+    from darq_xray.stages.strain import estimate
 
     peaks = set()
     inputs = []
@@ -111,7 +111,7 @@ def test_strain_peak_does_not_grow_with_the_layer_count(tmp_path):
 
 def test_strain_save_plots_off_drops_the_whole_plotting_term(tmp_path):
     """Turning the product off must move the estimate, or the toggle is cosmetic."""
-    from dfxm.stages.strain import estimate
+    from darq_xray.stages.strain import estimate
 
     root = _make_layers(tmp_path, n_layers=2, dtype="float32")
     on = estimate(_strain_params(root, save_plots=True)).peak_bytes
@@ -127,8 +127,8 @@ def test_strain_prices_the_canvas_a_fixed_scale_style_asks_for(tmp_path):
     through the shared `strain_map_geometry`. Without this term the model
     UNDER-predicts a publication-scale run by 3.6x.
     """
-    from dfxm.common.plotting import canvas_pixels, style_from_params
-    from dfxm.stages.strain import estimate, strain_map_geometry
+    from darq_xray.common.plotting import canvas_pixels, style_from_params
+    from darq_xray.stages.strain import estimate, strain_map_geometry
 
     # A layer big enough that the fixed-scale box is the larger canvas: at 8x16
     # px it would not be, and this test would pass on an estimator that ignored
@@ -147,7 +147,7 @@ def test_strain_prices_the_canvas_a_fixed_scale_style_asks_for(tmp_path):
 
 def test_strain_estimate_sizes_one_layer_not_all_of_them(tmp_path, monkeypatch):
     """It must open the first maps.h5 only — this runs on every form change."""
-    from dfxm.stages import strain
+    from darq_xray.stages import strain
 
     root = _make_layers(tmp_path, n_layers=5)
     opened = []
@@ -176,8 +176,8 @@ def _mosa_params(root, **over):
 
 def test_mosaicity_estimate_accounts_for_all_four_datasets(tmp_path):
     """One LAYER of each present dataset, plus the writer's buffers — not a volume."""
-    from dfxm.stages import mosaicity
-    from dfxm.stages.mosaicity import estimate
+    from darq_xray.stages import mosaicity
+    from darq_xray.stages.mosaicity import estimate
 
     root = _make_layers(tmp_path, n_layers=3, dtype="float32", mosa=True)
     est = estimate(_mosa_params(root))
@@ -191,7 +191,7 @@ def test_mosaicity_each_present_dataset_costs_exactly_one_layer(tmp_path):
     """Measured at 1.00 / 1.01 / 1.00 layers per dataset — the sharpest number
     in the campaign, so it is pinned as an exact step rather than a bound.
     """
-    from dfxm.stages.mosaicity import estimate
+    from darq_xray.stages.mosaicity import estimate
 
     keys = list(MOSA_PATHS)
     peaks = []
@@ -214,7 +214,7 @@ def test_mosaicity_peak_does_not_grow_with_the_layer_count(tmp_path):
     by 36x. input_bytes must still scale, or an estimator that had stopped
     counting the input would pass this.
     """
-    from dfxm.stages.mosaicity import estimate
+    from darq_xray.stages.mosaicity import estimate
 
     peaks, inputs = set(), []
     for n in (1, 3, 32):
@@ -227,8 +227,8 @@ def test_mosaicity_peak_does_not_grow_with_the_layer_count(tmp_path):
 
 
 def test_estimators_never_raise_on_a_missing_root(tmp_path):
-    from dfxm.stages.mosaicity import estimate as mosa_estimate
-    from dfxm.stages.strain import estimate as strain_estimate
+    from darq_xray.stages.mosaicity import estimate as mosa_estimate
+    from darq_xray.stages.strain import estimate as strain_estimate
 
     missing = str(tmp_path / "nope")
     for fn in (strain_estimate, mosa_estimate):
@@ -240,7 +240,7 @@ def test_estimators_never_raise_on_a_missing_root(tmp_path):
 
 def test_estimators_never_read_data(tmp_path, monkeypatch):
     """Guard the cheapness contract: shapes only, so it can run on every keystroke."""
-    from dfxm.stages.strain import estimate
+    from darq_xray.stages.strain import estimate
 
     root = _make_layers(tmp_path, n_layers=2)
 
@@ -253,7 +253,7 @@ def test_estimators_never_read_data(tmp_path, monkeypatch):
 
 
 def test_specs_declare_their_estimators():
-    from dfxm.stages import mosaicity, strain
+    from darq_xray.stages import mosaicity, strain
 
     for module in (strain, mosaicity):
         assert module.STAGE.estimate is not None
@@ -263,7 +263,7 @@ def test_specs_declare_their_estimators():
 @pytest.mark.parametrize("dtype,itemsize", [("float32", 4), ("float64", 8), ("uint16", 2)])
 def test_strain_input_bytes_follow_the_source_dtype(tmp_path, dtype, itemsize):
     """input_bytes tracks the file; peak is always float64 because run() converts."""
-    from dfxm.stages.strain import estimate
+    from darq_xray.stages.strain import estimate
 
     root = _make_layers(tmp_path, n_layers=2, dtype=dtype)
     est = estimate(_strain_params(root, save_plots=False))
@@ -287,8 +287,8 @@ ALL_ESTIMATOR_STAGES = (
 def test_every_volume_stage_declares_an_estimator(stage_name):
     import importlib
 
-    module = importlib.import_module(f"dfxm.stages.{stage_name}")
-    assert module.STAGE.estimate == f"dfxm.stages.{stage_name}:estimate"
+    module = importlib.import_module(f"darq_xray.stages.{stage_name}")
+    assert module.STAGE.estimate == f"darq_xray.stages.{stage_name}:estimate"
     assert callable(module.STAGE.estimator())
 
 
@@ -297,7 +297,7 @@ def test_every_estimator_survives_junk_params(stage_name):
     """Called on every form change, including while the user is mid-typing."""
     import importlib
 
-    module = importlib.import_module(f"dfxm.stages.{stage_name}")
+    module = importlib.import_module(f"darq_xray.stages.{stage_name}")
     junk = (
         {},
         {"raw_root": "", "mosa_volume_file": ""},
@@ -310,7 +310,7 @@ def test_every_estimator_survives_junk_params(stage_name):
 
 
 def test_sum_dataset_bytes_walks_nested_groups(tmp_path):
-    from dfxm.common.h5io import sum_dataset_bytes
+    from darq_xray.common.h5io import sum_dataset_bytes
 
     path = tmp_path / "v.h5"
     with h5py.File(path, "w") as f:
@@ -323,7 +323,7 @@ def test_sum_dataset_bytes_walks_nested_groups(tmp_path):
 
 
 def test_sum_dataset_bytes_on_a_missing_file_is_zero(tmp_path):
-    from dfxm.common.h5io import sum_dataset_bytes
+    from darq_xray.common.h5io import sum_dataset_bytes
 
     assert sum_dataset_bytes(str(tmp_path / "nope.h5")) == (0, None, 0)
 
@@ -352,7 +352,7 @@ def test_slices_is_chunkable_and_peaks_at_four_arrays_worth(tmp_path):
     `map_coordinates(order=1)` reads only the two Z layers bracketing each
     sample. The peak figure itself still models the old whole-volume loop.
     """
-    from dfxm.stages.slices import estimate
+    from darq_xray.stages.slices import estimate
 
     path = tmp_path / "mosa.h5"
     with h5py.File(path, "w") as f:
@@ -371,7 +371,7 @@ def test_slices_estimate_survives_mid_typed_roi_strings(tmp_path):
     the estimator runs on every keystroke, and the ROI plays no part in the
     sizing arithmetic, so the peak must match the no-ROI case exactly.
     """
-    from dfxm.stages.slices import estimate
+    from darq_xray.stages.slices import estimate
 
     path = tmp_path / "mosa.h5"
     with h5py.File(path, "w") as f:
@@ -387,7 +387,7 @@ def test_slices_estimate_survives_mid_typed_roi_strings(tmp_path):
 
 def test_slices_peak_across_two_volumes_is_the_max_pair_not_the_sum(tmp_path):
     """run() holds at most the current + previous volume, never every volume."""
-    from dfxm.stages.slices import estimate
+    from darq_xray.stages.slices import estimate
 
     mosa_path = tmp_path / "mosa.h5"
     with h5py.File(mosa_path, "w") as f:
@@ -434,7 +434,7 @@ def _raw_scans(root, *, n_scans=1, n_frames=6, ny=8, nx=16, dtype="uint16", samy
 
 def _matched_peak(*, n_frames, ny, nx, pad=0, itemsize=2, autoclim=True):
     """The recalibrated matched model, spelled out independently of the stage."""
-    from dfxm.stages import matched
+    from darq_xray.stages import matched
 
     peak = matched.MATCHED_PROCESS_FLOOR_BYTES + min(
         n_frames * ny * nx * (itemsize + matched.MEDIAN_WORKING_SET_PER_ELEMENT),
@@ -450,8 +450,8 @@ def test_matched_is_chunkable(tmp_path):
     """The median needs the whole stack along the FRAME axis only, so an in-plane
     block gives the identical answer and the stage chunks itself.
     """
-    from dfxm.stages import matched
-    from dfxm.stages.matched import estimate
+    from darq_xray.stages import matched
+    from darq_xray.stages.matched import estimate
 
     root = _raw_scans(tmp_path / "raw")
     est = estimate({"raw_root": root, "rocking_pattern": "rock__*"})
@@ -473,8 +473,8 @@ def test_matched_median_term_stops_at_the_block_working_set(tmp_path):
     Measured at 512x512: 217.6 / 213.5 / 217.8 / 215.8 MiB for 21 / 51 / 101 /
     201 frames — flat. The old model climbed to 928 MiB over the same span.
     """
-    from dfxm.stages import matched
-    from dfxm.stages.matched import estimate
+    from darq_xray.stages import matched
+    from darq_xray.stages.matched import estimate
 
     ny = nx = 256
     peaks = []
@@ -497,7 +497,7 @@ def test_matched_reports_chunkable_on_every_early_return(tmp_path):
     would flip `advice.plan_run` between "chunked" and "disk-backed" while the
     user is still typing the path.
     """
-    from dfxm.stages.matched import estimate
+    from darq_xray.stages.matched import estimate
 
     for params in (
         {"raw_root": "", "rocking_pattern": "rock__*"},
@@ -515,7 +515,7 @@ def test_matched_peak_does_not_grow_with_folder_count(tmp_path):
     """Only one scan is ever resident at a time — a second folder must double
     input_bytes but leave peak_bytes exactly where it was.
     """
-    from dfxm.stages.matched import estimate
+    from darq_xray.stages.matched import estimate
 
     one = estimate({"raw_root": _raw_scans(tmp_path / "a"), "rocking_pattern": "rock__*"})
     two = estimate(
@@ -532,7 +532,7 @@ def _rocking_peak(*, n_scans, n_frames, ny, nx, itemsize=2, topview=False, volum
     *volume_elems* is the ALIGNED volume's element count; ``None`` means the
     no-motor path, where the read shape is the volume shape.
     """
-    from dfxm.stages import rocking
+    from darq_xray.stages import rocking
 
     if volume_elems is None:
         volume_elems = n_scans * ny * nx
@@ -551,7 +551,7 @@ def test_rocking_peak_models_streaming_per_scan(tmp_path):
     coexist, `del frames` before the next scan) — but the accumulated volumes do
     scale with the scan count, which is the term the old model under-charged.
     """
-    from dfxm.stages.rocking import estimate
+    from darq_xray.stages.rocking import estimate
 
     root = _raw_scans(tmp_path / "raw", n_scans=2, n_frames=3)
     est = estimate({"raw_root": root, "rocking_pattern": "rock__*", "save_topview": False})
@@ -564,8 +564,8 @@ def test_rocking_volume_term_grows_with_the_scan_count(tmp_path):
     """Each extra scan adds a layer to both accumulated volumes and everything
     the alignment then does to them — measured at 48.5 B per element per scan.
     """
-    from dfxm.stages import rocking
-    from dfxm.stages.rocking import estimate
+    from darq_xray.stages import rocking
+    from darq_xray.stages.rocking import estimate
 
     peaks = []
     for n in (2, 4, 8):
@@ -588,7 +588,7 @@ def test_rocking_prices_the_roi_it_will_actually_read(tmp_path):
     `input_bytes` must NOT follow the ROI: it is the data on disk, which a crop
     does not change.
     """
-    from dfxm.stages.rocking import estimate
+    from darq_xray.stages.rocking import estimate
 
     root = _raw_scans(tmp_path / "raw", n_scans=2, n_frames=3, ny=64, nx=64)
     base = {"raw_root": root, "rocking_pattern": "rock__*", "save_topview": False}
@@ -607,7 +607,7 @@ def test_rocking_roi_never_shrinks_the_estimate_on_a_half_typed_form(tmp_path, r
     """A blank, malformed, inverted or out-of-range ROI falls back to the whole
     axis — the direction run() would actually read — and never raises.
     """
-    from dfxm.stages.rocking import estimate
+    from darq_xray.stages.rocking import estimate
 
     root = _raw_scans(tmp_path / "raw", n_scans=2, n_frames=3, ny=64, nx=64)
     base = {"raw_root": root, "rocking_pattern": "rock__*", "save_topview": False}
@@ -621,7 +621,7 @@ def test_rocking_globs_the_pattern_its_source_scan_actually_processes(tmp_path):
     count those. On the real STO2 form the rocking glob matches 709 folders for a
     run that processes 76 — a 9x over-statement of the volume term.
     """
-    from dfxm.stages.rocking import estimate
+    from darq_xray.stages.rocking import estimate
 
     root = tmp_path / "raw"
     _raw_scans(root, n_scans=6, n_frames=3)
@@ -651,8 +651,8 @@ def test_rocking_prices_the_topview_render_which_is_on_by_default(tmp_path):
     and its render context) and defaults to ON. The old model charged nothing
     for it and under-predicted a default run by 14x.
     """
-    from dfxm.stages import rocking
-    from dfxm.stages.rocking import estimate
+    from darq_xray.stages import rocking
+    from darq_xray.stages.rocking import estimate
 
     root = _raw_scans(tmp_path / "raw", n_scans=2, n_frames=3)
     base = {"raw_root": root, "rocking_pattern": "rock__*"}
@@ -670,7 +670,7 @@ def test_paraview_peak_is_the_max_over_files_not_the_sum(tmp_path):
     (including the raw datasets dict) die on return, so the two files'
     peaks don't add.
     """
-    from dfxm.stages.paraview import estimate
+    from darq_xray.stages.paraview import estimate
 
     mosa_path = tmp_path / "stacked_volumes.h5"
     with h5py.File(mosa_path, "w") as f:
@@ -698,7 +698,7 @@ def test_visualize_peak_sums_inputs_because_datasets_dict_outlives_the_loop(tmp_
     `datasets` dict is never freed before the strain section runs, so the two
     files' input bytes DO add (unlike paraview's max-over-files).
     """
-    from dfxm.stages.visualize import estimate
+    from darq_xray.stages.visualize import estimate
 
     mosa_path = tmp_path / "stacked_volumes.h5"
     with h5py.File(mosa_path, "w") as f:
@@ -735,7 +735,7 @@ def _volume_file(tmp_path, name="stacked_volumes.h5", dataset="strain", shape=_S
 
 def _patch_motors(monkeypatch):
     """Give every estimator the same known motors, so the expected size is exact."""
-    from dfxm.common import alignment as A
+    from darq_xray.common import alignment as A
 
     monkeypatch.setattr(
         A.raster,
@@ -745,7 +745,7 @@ def _patch_motors(monkeypatch):
 
 
 def _expected_scratch_bytes(shape=_SCRATCH_SHAPE):
-    from dfxm.common import alignment as A
+    from darq_xray.common import alignment as A
 
     extent = A.aligned_extent(
         shape,
@@ -813,7 +813,7 @@ def test_paraview_reports_scratch_only_for_the_median_centring(
     tmp_path, monkeypatch, method, spills
 ):
     """`mean` is a single pass — `_multipass_scratch` returns None and nothing caches."""
-    from dfxm.stages.paraview import estimate
+    from darq_xray.stages.paraview import estimate
 
     _patch_motors(monkeypatch)
     expected, _extent = _expected_scratch_bytes()
@@ -843,7 +843,7 @@ def test_paraview_prices_the_spill_of_whichever_file_actually_caches(
     helpers run sequentially and each releases its cache before the next
     returns, so what is needed is the larger, never the sum.
     """
-    from dfxm.stages.paraview import estimate
+    from darq_xray.stages.paraview import estimate
 
     _patch_motors(monkeypatch)
     mosa_bytes, _e = _expected_scratch_bytes()
@@ -878,7 +878,7 @@ def test_paraview_prices_no_spill_for_a_file_it_will_not_export(
     perform. Only the file under test is present, so the figure is that file's
     alone and the export toggle is the only thing that can move it.
     """
-    from dfxm.stages.paraview import estimate
+    from darq_xray.stages.paraview import estimate
 
     _patch_motors(monkeypatch)
     params = _pv_params(tmp_path, center_mosa_com=True, center_strain=True)
@@ -894,7 +894,7 @@ def test_paraview_prices_no_spill_for_a_file_it_will_not_export(
 
 def test_scratch_bytes_is_zero_without_motors(tmp_path):
     """The no-motor path builds no aligned volume, so it caches nothing."""
-    from dfxm.stages.paraview import estimate
+    from darq_xray.stages.paraview import estimate
 
     est = estimate(_pv_params(tmp_path, raw_root="", mosa_pattern="", strain_pattern=""))
     assert est.scratch_bytes == 0
@@ -914,7 +914,7 @@ def test_visualize_never_prices_a_spill_it_cannot_perform(tmp_path, monkeypatch,
     half of this pair is
     `test_stage_visualize.py::test_visualize_never_hands_the_alignment_a_scratch_dir`.
     """
-    from dfxm.stages.visualize import estimate
+    from darq_xray.stages.visualize import estimate
 
     _patch_motors(monkeypatch)
     est = estimate(
@@ -948,7 +948,7 @@ def test_slices_never_prices_a_spill_it_cannot_perform(tmp_path, monkeypatch, me
     unchecked, which is how mutating it stayed green. Asserting
     `peak_bytes != input_bytes` keeps this test in the region it names.
     """
-    from dfxm.stages.slices import estimate
+    from darq_xray.stages.slices import estimate
 
     _patch_motors(monkeypatch)
     params = {
@@ -972,7 +972,7 @@ def test_slices_never_prices_a_spill_it_cannot_perform(tmp_path, monkeypatch, me
 
 def test_slices_reports_no_scratch_on_the_coarse_fallback_return_either(tmp_path, monkeypatch):
     """`estimate` has more than one return; zero must hold on all of them."""
-    from dfxm.stages import slices as S
+    from darq_xray.stages import slices as S
 
     _patch_motors(monkeypatch)
     params = {
@@ -1016,7 +1016,7 @@ def test_no_estimator_still_marks_itself_conservative(tmp_path):
     unresolved-input early returns never touch the marked `return` statement,
     so a test that landed on one would pass on any value of the flag.
     """
-    from dfxm.stages import matched, mosaicity, rocking, strain
+    from darq_xray.stages import matched, mosaicity, rocking, strain
 
     root = _make_layers(tmp_path / "s", n_layers=3, dtype="float32")
     mosa_root = _make_layers(tmp_path / "m", n_layers=3, dtype="float32", mosa=True)
@@ -1033,7 +1033,7 @@ def test_no_estimator_still_marks_itself_conservative(tmp_path):
 
 
 def test_visualize_estimator_is_not_marked(tmp_path):
-    from dfxm.stages.visualize import estimate
+    from darq_xray.stages.visualize import estimate
 
     mosa_path = tmp_path / "stacked_volumes.h5"
     with h5py.File(mosa_path, "w") as f:
@@ -1049,7 +1049,7 @@ def test_visualize_estimator_is_not_marked(tmp_path):
 
 
 def test_paraview_estimator_is_not_marked(tmp_path):
-    from dfxm.stages.paraview import estimate
+    from darq_xray.stages.paraview import estimate
 
     mosa_path = tmp_path / "stacked_volumes.h5"
     with h5py.File(mosa_path, "w") as f:
@@ -1065,7 +1065,7 @@ def test_paraview_estimator_is_not_marked(tmp_path):
 
 
 def test_slices_estimator_is_not_marked(tmp_path):
-    from dfxm.stages.slices import estimate
+    from darq_xray.stages.slices import estimate
 
     path = tmp_path / "mosa.h5"
     with h5py.File(path, "w") as f:
@@ -1091,7 +1091,7 @@ def test_alignment_estimators_read_motors_but_never_voxels(tmp_path, monkeypatch
     it is now the only estimator that reads motors at all — `visualize` and
     `slices` stopped once their (fictitious) spill figures were removed.
     """
-    from dfxm.stages.paraview import estimate
+    from darq_xray.stages.paraview import estimate
 
     _patch_motors(monkeypatch)
     real_getitem = h5py.Dataset.__getitem__
@@ -1116,9 +1116,9 @@ def test_matched_prices_the_samy_padding_the_run_will_add(tmp_path):
     2048-wide detector — a 52% inflation, and the single largest reason the
     first recalibration of this stage under-predicted the real run by 2.3x.
     """
-    from dfxm.common import alignment as A
-    from dfxm.stages import matched
-    from dfxm.stages.matched import estimate
+    from darq_xray.common import alignment as A
+    from darq_xray.stages import matched
+    from darq_xray.stages.matched import estimate
 
     ny = nx = 64
     px = 0.5
@@ -1158,8 +1158,8 @@ def test_matched_drops_the_clim_pool_when_both_limits_are_given(tmp_path):
     never does. That is the regime the first recalibration measured in, and why
     it under-charged this term.
     """
-    from dfxm.stages import matched
-    from dfxm.stages.matched import estimate
+    from darq_xray.stages import matched
+    from darq_xray.stages.matched import estimate
 
     root = _raw_scans(tmp_path / "raw", n_scans=12, n_frames=4, ny=32, nx=32)
     base = {"raw_root": root, "rocking_pattern": "rock__*", "strain_pattern": "rock__*"}
@@ -1175,7 +1175,7 @@ def test_matched_estimate_survives_unreadable_motors(tmp_path):
     """No samy dataset at all must mean "no padding", not an exception: a run
     whose motors are missing does no shifting either.
     """
-    from dfxm.stages.matched import estimate
+    from darq_xray.stages.matched import estimate
 
     root = tmp_path / "raw"
     scan = root / "rock__0"
@@ -1202,7 +1202,7 @@ def test_matched_pad_is_zero_when_the_pixel_size_is_unusable(tmp_path, pixel_siz
     """
     import warnings
 
-    from dfxm.stages.matched import estimate
+    from darq_xray.stages.matched import estimate
 
     root = _raw_scans(tmp_path / "raw", n_scans=8, n_frames=4, ny=64, nx=64, samy_step_mm=0.01)
     params = {
@@ -1229,7 +1229,7 @@ def test_strain_canvas_follows_the_roi_the_render_will_crop_to(tmp_path):
     at the STO2 pixel sizes, 1832 columns cropped to 200 takes the canvas from
     3.9 to 33.8 Mpx. Pricing the un-cropped layer under-predicts that 8x.
     """
-    from dfxm.stages.strain import _plot_canvas_pixels
+    from darq_xray.stages.strain import _plot_canvas_pixels
 
     p = {
         "pixel_size_x_um": 0.151733,
@@ -1253,8 +1253,8 @@ def test_strain_canvas_is_not_computed_from_a_transposed_map(tmp_path):
     count either way — so the canvas is pinned against an independently
     computed figure here.
     """
-    from dfxm.common.plotting import canvas_pixels
-    from dfxm.stages.strain import (
+    from darq_xray.common.plotting import canvas_pixels
+    from darq_xray.stages.strain import (
         DETREND_DIAG_DPI,
         DETREND_DIAG_FIGSIZE,
         STRAIN_MAP_DPI,
@@ -1291,7 +1291,7 @@ def test_strain_canvas_never_raises_on_a_half_typed_form(over):
     reaches `int(round(inf))`, which raises OverflowError — not ValueError — so
     the except set is asserted against the real failure modes, not assumed.
     """
-    from dfxm.stages.strain import _plot_canvas_pixels
+    from darq_xray.stages.strain import _plot_canvas_pixels
 
     base = {"pixel_size_x_um": 0.151733, "pixel_size_y_um": 0.387584, "roi": "", "plot_style": None}
     px = _plot_canvas_pixels({**base, **over}, (1266, 1832))
@@ -1299,7 +1299,7 @@ def test_strain_canvas_never_raises_on_a_half_typed_form(over):
 
 
 def test_canvas_pixels_rounds_each_side_as_matplotlib_does():
-    from dfxm.common.plotting import canvas_pixels
+    from darq_xray.common.plotting import canvas_pixels
 
     assert canvas_pixels((7.0, 13.0), 200) == 1400 * 2600
     assert canvas_pixels((7.004, 13.0), 200) == 1401 * 2600  # 1400.8 -> 1401
@@ -1311,8 +1311,8 @@ def test_mosaicity_prices_the_widest_dataset_not_the_last_one(tmp_path):
     """`_DATASETS` order must not decide the model. A maps.h5 with float64 chi
     and float32 mu was priced at the mu itemsize — half the real cost.
     """
-    from dfxm.stages import mosaicity
-    from dfxm.stages.mosaicity import estimate
+    from darq_xray.stages import mosaicity
+    from darq_xray.stages.mosaicity import estimate
 
     root = tmp_path / "mixed"
     folder = root / "layer__1"
@@ -1332,9 +1332,9 @@ def test_rocking_prices_the_aligned_volume_not_the_frames_it_read(tmp_path):
     accumulates. On real STO2 the aligned volume is (76, 700, 2891) against a
     1832-column read — a 1.58x inflation the model must carry.
     """
-    from dfxm.common import alignment as A
-    from dfxm.stages import rocking
-    from dfxm.stages.rocking import estimate
+    from darq_xray.common import alignment as A
+    from darq_xray.stages import rocking
+    from darq_xray.stages.rocking import estimate
 
     ny = nx = 64
     px = 0.5
@@ -1368,9 +1368,9 @@ def test_raw_stage_read_terms_follow_the_source_dtype(tmp_path, dtype, itemsize)
     """rocking's per-scan read is `itemsize + 4` and matched's median term is
     `itemsize + MEDIAN_WORKING_SET_PER_ELEMENT`; neither had a dtype test.
     """
-    from dfxm.stages import matched
-    from dfxm.stages.matched import estimate as matched_estimate
-    from dfxm.stages.rocking import estimate as rocking_estimate
+    from darq_xray.stages import matched
+    from darq_xray.stages.matched import estimate as matched_estimate
+    from darq_xray.stages.rocking import estimate as rocking_estimate
 
     root = _raw_scans(tmp_path / f"raw{dtype}", n_scans=2, n_frames=3, dtype=dtype)
     rock = rocking_estimate({"raw_root": root, "rocking_pattern": "rock__*", "save_topview": False})
@@ -1394,7 +1394,7 @@ def test_matched_survives_a_half_typed_colour_limit(tmp_path, limit):
     parse is one run() will not use either, so the pooled pass is what happens
     and charging it is the conservative direction as well as the correct one.
     """
-    from dfxm.stages.matched import estimate
+    from darq_xray.stages.matched import estimate
 
     root = _raw_scans(tmp_path / "raw", n_scans=2, n_frames=4, ny=32, nx=32)
     base = {"raw_root": root, "rocking_pattern": "rock__*", "strain_pattern": "rock__*"}
@@ -1422,8 +1422,8 @@ def test_rocking_estimate_anchors_the_samy_shift_where_the_run_does(tmp_path):
     Anchoring the ESTIMATE at the rocking glob's own first scan makes the pad —
     and with it the dominant 48 B/elem volume term — too SMALL, which is the
     under-prediction direction the recalibration exists to close."""
-    from dfxm.common import alignment as A
-    from dfxm.stages import rocking as RK
+    from darq_xray.common import alignment as A
+    from darq_xray.stages import rocking as RK
 
     root = tmp_path / "raw"
     step, n, ny, nx = 0.05, 4, 8, 16
@@ -1469,7 +1469,7 @@ def test_strain_out_of_range_roi_falls_back_instead_of_zeroing_the_canvas(_strai
     negative figure to 0 — silently deleting the largest plotting term instead
     of falling back to the legacy geometry. Nothing raises, so the cost line
     shows a number computed from a term that vanished."""
-    from dfxm.stages.strain import _plot_canvas_pixels
+    from darq_xray.stages.strain import _plot_canvas_pixels
 
     layer = (1266, 1832)
     good = _plot_canvas_pixels({**_strain_defaults, "roi": ""}, layer)
@@ -1478,8 +1478,8 @@ def test_strain_out_of_range_roi_falls_back_instead_of_zeroing_the_canvas(_strai
     # The defect was the MAP canvas term vanishing entirely, leaving only the
     # detrend diagnostic. Assert the term survived — not which of the two
     # geometries is larger, which is not the property at stake.
-    from dfxm.common.plotting import canvas_pixels
-    from dfxm.stages.strain import DETREND_DIAG_DPI, DETREND_DIAG_FIGSIZE
+    from darq_xray.common.plotting import canvas_pixels
+    from darq_xray.stages.strain import DETREND_DIAG_DPI, DETREND_DIAG_FIGSIZE
 
     diag_only = canvas_pixels(DETREND_DIAG_FIGSIZE, DETREND_DIAG_DPI)
     assert bad > diag_only, (bad, diag_only)

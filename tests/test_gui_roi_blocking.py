@@ -11,11 +11,11 @@ import pytest
 pytest.importorskip("PySide6")
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
-from dfxm.common.roi import RoiProblem  # noqa: E402
+from darq_xray.common.roi import RoiProblem  # noqa: E402
 
 
 def _view(stage: str = "rocking"):
-    from gui.main_window import MainWindow
+    from darq_xray.gui.main_window import MainWindow
 
     _ = QApplication.instance() or QApplication([])
     win = MainWindow()
@@ -145,7 +145,7 @@ def test_slices_advanced_roi_field_is_revealed_when_run_is_refused(monkeypatch):
 def test_every_stage_with_an_roi_field_can_render_a_problem():
     """Each ROI-taking stage has an error row for each of its ROI params — a
     stage whose param the form never built would silently swallow the note."""
-    from gui.main_window import MainWindow
+    from darq_xray.gui.main_window import MainWindow
 
     _ = QApplication.instance() or QApplication([])
     win = MainWindow()

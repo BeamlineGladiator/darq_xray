@@ -1,9 +1,9 @@
-"""Recipe schema + JSON round-trip — dfxm.compose.recipe."""
+"""Recipe schema + JSON round-trip — darq_xray.compose.recipe."""
 
 import pytest
 
-from dfxm.common.errors import StageUserError
-from dfxm.compose.recipe import (
+from darq_xray.common.errors import StageUserError
+from darq_xray.compose.recipe import (
     Col,
     ComposeStyle,
     FigureRecipe,
@@ -53,7 +53,7 @@ def _mini_recipe():
 
 
 def __src(path, kind, sel):
-    from dfxm.compose.recipe import PanelSource
+    from darq_xray.compose.recipe import PanelSource
 
     return PanelSource(path, kind, sel)
 
@@ -294,7 +294,7 @@ def test_panel_crop_to_data_round_trips_and_defaults_false():
 
 
 def test_scale_bar_cell_round_trips():
-    from dfxm.compose.recipe import ScaleBarCell
+    from darq_xray.compose.recipe import ScaleBarCell
 
     r = _mini_recipe()
     r.layout.children.append(ScaleBarCell(3.5, 1.25))

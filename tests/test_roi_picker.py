@@ -6,7 +6,7 @@ import pytest
 
 pytest.importorskip("PySide6")  # module imports PySide6 at import time, but needs no app
 
-from gui.widgets.roi_picker import rect_to_indices  # noqa: E402
+from darq_xray.gui.widgets.roi_picker import rect_to_indices  # noqa: E402
 
 
 def test_basic_floor_ceil_halfopen():

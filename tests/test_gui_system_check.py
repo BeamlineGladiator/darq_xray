@@ -12,8 +12,8 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 
 _app = QApplication.instance() or QApplication([])
 
-from dfxm.common import machine  # noqa: E402
-from gui.widgets.system_check import SystemCheckDialog  # noqa: E402
+from darq_xray.common import machine  # noqa: E402
+from darq_xray.gui.widgets.system_check import SystemCheckDialog  # noqa: E402
 from tests.machine_fixtures import tiny_ram, windows_no_vtk, workstation_sw_gl  # noqa: E402
 
 

@@ -8,7 +8,7 @@ the machine they are asserting about.
 
 from __future__ import annotations
 
-from dfxm.common.machine import GLInfo, MachineProfile
+from darq_xray.common.machine import GLInfo, MachineProfile
 
 GB = 1024**3
 

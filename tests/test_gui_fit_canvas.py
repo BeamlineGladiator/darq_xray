@@ -6,7 +6,7 @@ import pytest
 from matplotlib.figure import Figure
 from PySide6.QtWidgets import QApplication
 
-from gui.widgets.fit_canvas import FitFigureHost, fit_dpi
+from darq_xray.gui.widgets.fit_canvas import FitFigureHost, fit_dpi
 
 _ = QApplication.instance() or QApplication([])
 

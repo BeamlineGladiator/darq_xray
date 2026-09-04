@@ -7,7 +7,7 @@ import pytest
 pytest.importorskip("PySide6")
 from PySide6.QtCore import QSettings  # noqa: E402
 
-from gui.form_state import FormStateStore, _slug  # noqa: E402
+from darq_xray.gui.form_state import FormStateStore, _slug  # noqa: E402
 
 
 def _store(tmp_path):

@@ -14,9 +14,9 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
 
-from dfxm.common import render3d as R3
-from dfxm.config.models import Param, ParamType
-from dfxm.stages import visualize as V
+from darq_xray.common import render3d as R3
+from darq_xray.config.models import Param, ParamType
+from darq_xray.stages import visualize as V
 
 
 def test_a_label_table_covers_every_choice_it_describes():
@@ -62,7 +62,7 @@ def test_labelled_enum_stores_the_value_not_the_label():
     pytest.importorskip("PySide6")
     from PySide6.QtWidgets import QApplication
 
-    from gui.widgets.param_form import ParamForm
+    from darq_xray.gui.widgets.param_form import ParamForm
 
     _app = QApplication.instance() or QApplication([])
     form = ParamForm(V.STAGE.params)
@@ -81,7 +81,7 @@ def test_an_unlabelled_enum_is_untouched():
     pytest.importorskip("PySide6")
     from PySide6.QtWidgets import QApplication
 
-    from gui.widgets.param_form import ParamForm
+    from darq_xray.gui.widgets.param_form import ParamForm
 
     _app = QApplication.instance() or QApplication([])
     form = ParamForm(V.STAGE.params)
@@ -94,7 +94,7 @@ def test_the_viewer_mapping_combo_shows_labels_and_yields_values():
     pytest.importorskip("PySide6")
     from PySide6.QtWidgets import QApplication, QComboBox
 
-    from gui.widgets.viewer3d_window import fill_mapping_combo
+    from darq_xray.gui.widgets.viewer3d_window import fill_mapping_combo
 
     _app = QApplication.instance() or QApplication([])
     box = QComboBox()

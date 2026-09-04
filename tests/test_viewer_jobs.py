@@ -5,7 +5,7 @@ from __future__ import annotations
 import h5py
 import numpy as np
 
-from dfxm import viewer_jobs as VJ
+from darq_xray import viewer_jobs as VJ
 
 
 def _h5(tmp_path):

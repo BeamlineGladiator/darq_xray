@@ -1,10 +1,10 @@
-"""Tests for dfxm.config.detect (data-driven experiment initialization)."""
+"""Tests for darq_xray.config.detect (data-driven experiment initialization)."""
 
 from __future__ import annotations
 
 import h5py
 
-from dfxm.config.detect import (
+from darq_xray.config.detect import (
     Detection,
     detect_entry_suffix,
     detect_patterns,
@@ -140,7 +140,7 @@ def test_detect_entry_suffix_unreadable_file(tmp_path):
 
 import numpy as np  # noqa: E402  (test-section import, keeps diffs local)
 
-from dfxm.config.detect import (  # noqa: E402
+from darq_xray.config.detect import (  # noqa: E402
     detect_ccmth_from_maps,
     detect_ccmth_from_positioners,
     detect_darfix_roi,
@@ -282,8 +282,8 @@ def test_detect_darfix_roi_malformed_dataset(tmp_path):
 
 # -- orchestrator + CLI -------------------------------------------------------
 
-from dfxm.config.detect import detect_experiment, main  # noqa: E402
-from dfxm.config.models import Experiment  # noqa: E402
+from darq_xray.config.detect import detect_experiment, main  # noqa: E402
+from darq_xray.config.models import Experiment  # noqa: E402
 
 
 def _make_tree(tmp_path, *, with_maps=True):

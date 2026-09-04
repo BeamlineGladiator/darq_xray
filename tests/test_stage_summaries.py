@@ -1,4 +1,4 @@
-"""Unit tests for the stage-name-keyed Results summaries in gui.stage_view.
+"""Unit tests for the stage-name-keyed Results summaries in darq_xray.gui.stage_view.
 
 ``_summarize`` / ``_representative_image`` are pure module-level functions over
 the Qt-free result dataclasses, so they are tested headless (no QApplication).
@@ -10,17 +10,17 @@ import pytest
 
 pytest.importorskip("PySide6")
 
-from dfxm.stages.concat import ConcatFileResult, ConcatResult
-from dfxm.stages.matched import MatchedResult
-from dfxm.stages.mosaicity import MosaicityResult
-from dfxm.stages.paraview import ExportInfo, ParaviewResult
-from dfxm.stages.profiles import ProfileJobResult, ProfilesResult
-from dfxm.stages.registry import STAGE_TARGETS
-from dfxm.stages.rocking import RockingProducts, RockingResult
-from dfxm.stages.slices import SlicesResult
-from dfxm.stages.strain import LayerResult, StrainResult
-from dfxm.stages.visualize import DatasetProducts, VisualizeResult
-from gui.stage_view import _IMAGE_PICKERS, _SUMMARIZERS, _representative_image, _summarize
+from darq_xray.gui.stage_view import _IMAGE_PICKERS, _SUMMARIZERS, _representative_image, _summarize
+from darq_xray.stages.concat import ConcatFileResult, ConcatResult
+from darq_xray.stages.matched import MatchedResult
+from darq_xray.stages.mosaicity import MosaicityResult
+from darq_xray.stages.paraview import ExportInfo, ParaviewResult
+from darq_xray.stages.profiles import ProfileJobResult, ProfilesResult
+from darq_xray.stages.registry import STAGE_TARGETS
+from darq_xray.stages.rocking import RockingProducts, RockingResult
+from darq_xray.stages.slices import SlicesResult
+from darq_xray.stages.strain import LayerResult, StrainResult
+from darq_xray.stages.visualize import DatasetProducts, VisualizeResult
 
 
 def _layer(name="lay1", plots=()):

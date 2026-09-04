@@ -15,8 +15,8 @@ STO2 = dict(darfix_roi="105,230,1832,1266", analysis_roi_x="0,1832", analysis_ro
 
 
 def _dlg(**fields):
-    from dfxm.config.models import Experiment
-    from gui.experiment_panel import ExperimentDialog
+    from darq_xray.config.models import Experiment
+    from darq_xray.gui.experiment_panel import ExperimentDialog
 
     _ = QApplication.instance() or QApplication([])
     return ExperimentDialog(Experiment(**fields))
@@ -61,8 +61,8 @@ def test_accept_passes_when_valid():
 
 
 def test_pick_analysis_roi_writes_map_pairs(monkeypatch):
-    import dfxm.common.figures as F
-    import gui.widgets.roi_picker as RP
+    import darq_xray.common.figures as F
+    import darq_xray.gui.widgets.roi_picker as RP
 
     dlg = _dlg(darfix_roi="105,230,1832,1266")
     monkeypatch.setattr(

@@ -12,7 +12,7 @@ from PySide6.QtWidgets import QApplication, QWidget  # noqa: E402
 
 _app = QApplication.instance() or QApplication([])
 
-from gui.widgets.busy import BusyOverlay, busy_cursor  # noqa: E402
+from darq_xray.gui.widgets.busy import BusyOverlay, busy_cursor  # noqa: E402
 
 _hosts: list = []
 
@@ -114,7 +114,7 @@ def _run_batch(worker):
 
 
 def test_batch_worker_runs_items_and_reports():
-    from gui.widgets.busy import BatchWorker
+    from darq_xray.gui.widgets.busy import BatchWorker
 
     ticks, finishes = [], []
     w = BatchWorker([1, 2, 3], lambda i: [f"p{i}"])
@@ -127,7 +127,7 @@ def test_batch_worker_runs_items_and_reports():
 
 
 def test_batch_worker_cancel_stops_after_current_item():
-    from gui.widgets.busy import BatchWorker
+    from darq_xray.gui.widgets.busy import BatchWorker
 
     seen: list[int] = []
     holder: list = []
@@ -147,8 +147,8 @@ def test_batch_worker_cancel_stops_after_current_item():
 
 
 def test_batch_worker_error_carries_partial_written_and_hint():
-    from dfxm.common.errors import StageUserError
-    from gui.widgets.busy import BatchWorker
+    from darq_xray.common.errors import StageUserError
+    from darq_xray.gui.widgets.busy import BatchWorker
 
     def fn(i):
         if i == 2:
@@ -164,7 +164,7 @@ def test_batch_worker_error_carries_partial_written_and_hint():
 
 def test_wait_for_workers_blocks_until_released_then_registry_empty():
     """F1 fix wave: wait_for_workers is the one sanctioned join-on-the-GUI-
-    thread — the shutdown path (MainWindow.closeEvent / gui/app.py) uses it to
+    thread — the shutdown path (MainWindow.closeEvent / darq_xray/gui/app.py) uses it to
     avoid a pinned still-running QThread aborting the process at teardown
     ("QThread: Destroyed while thread is still running"). Gate a worker,
     release it from another (non-GUI) thread while wait_for_workers blocks,
@@ -173,7 +173,7 @@ def test_wait_for_workers_blocks_until_released_then_registry_empty():
     the live-worker registry."""
     import threading
 
-    from gui.widgets.busy import _LIVE_WORKERS, BatchWorker, keep_alive, wait_for_workers
+    from darq_xray.gui.widgets.busy import _LIVE_WORKERS, BatchWorker, keep_alive, wait_for_workers
 
     release = threading.Event()
 
@@ -200,7 +200,7 @@ def test_wait_for_workers_blocks_until_released_then_registry_empty():
 def test_dialog_batch_runner_overlay_buttons_and_finish():
     from PySide6.QtWidgets import QPushButton
 
-    from gui.widgets.busy import DialogBatchRunner
+    from darq_xray.gui.widgets.busy import DialogBatchRunner
 
     host = _host()
     btn = QPushButton("Render", host)

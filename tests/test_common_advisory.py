@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import os
 
-from dfxm.common import advice, advisory, alignment
-from dfxm.common.advisory import HINT_3D_TEXTURE, advise_stage, disk_probe_dir
-from dfxm.config.models import CostEstimate, Param, ParamType, StageSpec
+from darq_xray.common import advice, advisory, alignment
+from darq_xray.common.advisory import HINT_3D_TEXTURE, advise_stage, disk_probe_dir
+from darq_xray.config.models import CostEstimate, Param, ParamType, StageSpec
 from tests.machine_fixtures import laptop_hw_gl, tiny_ram, windows_no_vtk, workstation_sw_gl
 
 GB = 1024**3
@@ -271,7 +271,7 @@ def test_a_four_element_scan_shape_is_reduced_to_the_volume_axes():
     outright silenced the hint for the stage with the pipeline's widest volume;
     reading it as `(Z, Y, X)` aimed `roi_y` at the frame count. The frame axis
     is consumed by the sum, so the volume axes are `(folders, H, W)`."""
-    from dfxm.common.advisory import _aligned_shape_for_hint
+    from darq_xray.common.advisory import _aligned_shape_for_hint
 
     params = {"raw_root": "", "rocking_pattern": "*", "pixel_size_x_um": 0.15}
     assert _aligned_shape_for_hint((76, 575, 2048, 2048), params) == (76, 2048, 2048)
@@ -291,7 +291,7 @@ def test_the_hint_reads_rockings_own_folder_pattern(tmp_path):
     Asserted through the helper, not by membership in `_ALIGNMENT_PATTERN_KEYS`:
     that assertion kept passing after `rocking` stopped using the sweep at all.
     """
-    from dfxm.common.advisory import _aligned_shape_for_hint
+    from darq_xray.common.advisory import _aligned_shape_for_hint
 
     params = _rocking_raw_root(tmp_path)  # rocking scans sit 0.30 mm from mosa
     raw = (2, 575, 50, 100)
@@ -464,7 +464,7 @@ def test_the_rocking_hint_prices_the_roi_not_the_whole_detector():
     xs:xe]`). Falling back to the uncropped shape put a permanent, false
     "renders BLANK" advisory on rocking's form on every 2048-cap stack, for a
     volume the run never uploads."""
-    from dfxm.common.advisory import _aligned_shape_for_hint
+    from darq_xray.common.advisory import _aligned_shape_for_hint
 
     prof = workstation_sw_gl()
     params = {
@@ -516,7 +516,7 @@ def test_the_rocking_hint_anchors_the_samy_shift_where_the_run_does(tmp_path):
     rocking glob's own first scan instead, the hint loses the whole
     mosaicity-to-rocking offset and under-states the aligned width — it goes
     SILENT about a render that will come out blank, the direction that hurts."""
-    from dfxm.common.advisory import _aligned_shape_for_hint
+    from darq_xray.common.advisory import _aligned_shape_for_hint
 
     prof = workstation_sw_gl()
     params = _rocking_raw_root(tmp_path)
@@ -542,7 +542,7 @@ def test_an_empty_roi_is_reported_before_the_run_not_after():
     nothing. Cropping the hint's fallback (correctly) made the texture note go
     quiet there, and nothing else on the form spoke — so the emptiness would
     surface only after a 26-minute run. The same field says it up front."""
-    from dfxm.common.advisory import EMPTY_ROI_HINT, _aligned_shape_for_hint
+    from darq_xray.common.advisory import EMPTY_ROI_HINT, _aligned_shape_for_hint
 
     params = {"raw_root": "", "pixel_size_x_um": 0.15, "roi_y": "3000,4000"}
     shape = _aligned_shape_for_hint((76, 1266, 1832), params)
@@ -569,7 +569,7 @@ def test_a_blank_rocking_pattern_prices_no_pad_because_no_run_can_happen():
     span of every folder under `raw_root` for a run that cannot happen is a
     false "renders BLANK" advisory, the kind this helper exists to stop.
     """
-    from dfxm.common.advisory import _aligned_shape_for_hint
+    from darq_xray.common.advisory import _aligned_shape_for_hint
 
     raw = (2, 575, 50, 100)
     unpadded = _aligned_shape_for_hint(raw, {"raw_root": "/nowhere"}, stage="rocking")

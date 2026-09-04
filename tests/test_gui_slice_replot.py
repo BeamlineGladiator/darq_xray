@@ -1,5 +1,5 @@
 """Offscreen construction test for the slices Replot dialog (delegates rendering
-to the tested Qt-free core in dfxm.stages.slices)."""
+to the tested Qt-free core in darq_xray.stages.slices)."""
 
 from __future__ import annotations
 
@@ -35,7 +35,7 @@ def _mini(path):
 
 
 def test_dialog_populates_tree_and_renders(tmp_path):
-    from gui.widgets.slice_replot import SliceReplotDialog
+    from darq_xray.gui.widgets.slice_replot import SliceReplotDialog
 
     h5 = tmp_path / "oblique_slices.h5"
     _mini(str(h5))
@@ -55,8 +55,8 @@ def test_dialog_populates_tree_and_renders(tmp_path):
 
 
 def test_slice_replot_dialog_passes_roi(tmp_path, monkeypatch):
-    from dfxm.stages import slices as sl
-    from gui.widgets.slice_replot import SliceReplotDialog
+    from darq_xray.gui.widgets.slice_replot import SliceReplotDialog
+    from darq_xray.stages import slices as sl
 
     captured = {}
 
@@ -79,7 +79,7 @@ def test_slice_replot_dialog_passes_roi(tmp_path, monkeypatch):
 
 
 def test_slice_replot_defaults_to_all_selected(tmp_path):
-    from gui.widgets.slice_replot import SliceReplotDialog
+    from darq_xray.gui.widgets.slice_replot import SliceReplotDialog
 
     h5 = tmp_path / "oblique_slices.h5"
     _mini(str(h5))
@@ -91,8 +91,8 @@ def test_slice_replot_defaults_to_all_selected(tmp_path):
 
 
 def test_slice_replot_passes_per_kind_clim(tmp_path, monkeypatch):
-    from dfxm.stages import slices as sl
-    from gui.widgets.slice_replot import SliceReplotDialog
+    from darq_xray.gui.widgets.slice_replot import SliceReplotDialog
+    from darq_xray.stages import slices as sl
 
     captured = {}
 
@@ -114,7 +114,7 @@ def test_slice_replot_passes_per_kind_clim(tmp_path, monkeypatch):
 
 
 def test_slice_replot_clim_survives_reload(tmp_path):
-    from gui.widgets.slice_replot import SliceReplotDialog
+    from darq_xray.gui.widgets.slice_replot import SliceReplotDialog
 
     h5 = tmp_path / "oblique_slices.h5"
     _mini(str(h5))
@@ -129,7 +129,7 @@ def test_slice_replot_clim_survives_reload(tmp_path):
 
 
 def test_slice_replot_output_defaults_beside_h5(tmp_path):
-    from gui.widgets.slice_replot import SliceReplotDialog
+    from darq_xray.gui.widgets.slice_replot import SliceReplotDialog
 
     h5 = tmp_path / "oblique_slices.h5"
     _mini(str(h5))
@@ -141,7 +141,7 @@ def test_slice_replot_output_defaults_beside_h5(tmp_path):
 
 
 def test_slice_replot_dialog_shows_plane_pixel_size(tmp_path):
-    from gui.widgets.slice_replot import SliceReplotDialog
+    from darq_xray.gui.widgets.slice_replot import SliceReplotDialog
 
     h5 = tmp_path / "oblique_slices.h5"
     _mini(str(h5))  # planes are (nv, nu) = (7, 9)
@@ -154,7 +154,7 @@ def test_slice_replot_dialog_shows_plane_pixel_size(tmp_path):
 
 
 def test_clim_rows_are_per_volume_id(tmp_path):
-    from gui.widgets.slice_replot import SliceReplotDialog
+    from darq_xray.gui.widgets.slice_replot import SliceReplotDialog
 
     _ = QApplication.instance() or QApplication([])
     h5 = tmp_path / "oblique_slices.h5"
@@ -181,14 +181,14 @@ def test_clim_rows_are_per_volume_id(tmp_path):
 
 
 def test_slice_pick_roi_fills_boxes(tmp_path, monkeypatch):
-    from gui.widgets.slice_replot import SliceReplotDialog
+    from darq_xray.gui.widgets.slice_replot import SliceReplotDialog
 
     _ = QApplication.instance() or QApplication([])
     h5 = tmp_path / "oblique_slices.h5"
     _mini(str(h5))  # helper already in this file: raw_sum + strain, plane_a
     dlg = SliceReplotDialog(str(h5), style=None, out_default=str(tmp_path / "o"))
 
-    import gui.widgets.slice_replot as SR
+    import darq_xray.gui.widgets.slice_replot as SR
 
     class _FakePicker:
         def __init__(self, *a, **k):
@@ -204,7 +204,7 @@ def test_slice_pick_roi_fills_boxes(tmp_path, monkeypatch):
 
 
 def test_panel_default_all_checked_renders_everything(tmp_path):
-    from gui.widgets.slice_replot import SliceReplotDialog
+    from darq_xray.gui.widgets.slice_replot import SliceReplotDialog
 
     h5 = tmp_path / "oblique_slices.h5"
     _mini(str(h5))  # 2 volumes (raw_sum, strain) x slice "plane_a" x 2 planes
@@ -216,7 +216,7 @@ def test_panel_default_all_checked_renders_everything(tmp_path):
 
 
 def test_panel_filter_and_check_all_visible_subsets(tmp_path):
-    from gui.widgets.slice_replot import SliceReplotDialog
+    from darq_xray.gui.widgets.slice_replot import SliceReplotDialog
 
     h5 = tmp_path / "oblique_slices.h5"
     _mini(str(h5))
@@ -230,7 +230,7 @@ def test_panel_filter_and_check_all_visible_subsets(tmp_path):
 
 
 def test_panel_section_header_shows_uniform_shape_px_hint(tmp_path):
-    from gui.widgets.slice_replot import SliceReplotDialog
+    from darq_xray.gui.widgets.slice_replot import SliceReplotDialog
 
     h5 = tmp_path / "oblique_slices.h5"
     _mini(str(h5))  # raw_sum + strain both store plane_a at (7, 9) px (Y×X)
@@ -244,7 +244,7 @@ def test_panel_section_header_shows_uniform_shape_px_hint(tmp_path):
 
 
 def test_on_render_runs_batch_with_overlay_and_status(tmp_path):
-    from gui.widgets.slice_replot import SliceReplotDialog
+    from darq_xray.gui.widgets.slice_replot import SliceReplotDialog
     from tests.qt_helpers import wait_batch_idle
 
     h5 = tmp_path / "oblique_slices.h5"
@@ -268,8 +268,8 @@ def test_on_render_runs_batch_with_overlay_and_status(tmp_path):
 def test_reject_while_running_cancels_instead_of_closing(tmp_path, monkeypatch):
     import threading
 
-    from dfxm.stages import slices as sl
-    from gui.widgets.slice_replot import SliceReplotDialog
+    from darq_xray.gui.widgets.slice_replot import SliceReplotDialog
+    from darq_xray.stages import slices as sl
     from tests.qt_helpers import wait_batch_idle
 
     h5 = tmp_path / "oblique_slices.h5"
@@ -304,7 +304,7 @@ def test_reject_while_running_cancels_instead_of_closing(tmp_path, monkeypatch):
 
 
 def test_panel_section_header_shows_mixed_grids_hint(tmp_path):
-    from gui.widgets.slice_replot import SliceReplotDialog
+    from darq_xray.gui.widgets.slice_replot import SliceReplotDialog
 
     h5 = tmp_path / "oblique_slices.h5"
     u9 = np.linspace(-4.0, 4.0, 9)

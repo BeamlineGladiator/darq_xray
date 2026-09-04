@@ -12,10 +12,10 @@ pytest.importorskip("PySide6")
 from PySide6.QtCore import QSettings  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
-from dfxm.config.models import Experiment  # noqa: E402
-from gui.bindings import STAGE_SPECS  # noqa: E402
-from gui.form_state import FormStateStore  # noqa: E402
-from gui.stage_view import StageView  # noqa: E402
+from darq_xray.config.models import Experiment  # noqa: E402
+from darq_xray.gui.bindings import STAGE_SPECS  # noqa: E402
+from darq_xray.gui.form_state import FormStateStore  # noqa: E402
+from darq_xray.gui.stage_view import StageView  # noqa: E402
 
 _app = QApplication.instance() or QApplication([])
 

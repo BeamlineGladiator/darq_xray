@@ -4,9 +4,10 @@ Guidance for Claude Code when working in this repository.
 
 ## Overview
 
-GUI-based data-analysis pipeline for **Dark-Field X-ray Microscopy (DFXM)** data
-from the ESRF ID03 beamline. A PySide6 desktop app drives the whole flow from
-raw/darfix output to finished strain & mosaicity products. It was extracted from
+**DARQ** (distribution / import name `darq_xray`) — a GUI-based data-analysis
+pipeline for **Dark-Field X-ray Microscopy (DFXM)** data from the ESRF ID03
+beamline. A PySide6 desktop app drives the whole flow from raw/darfix output to
+finished strain & mosaicity products. It was extracted from
 the `Scripts2` collection of standalone analysis scripts and reproduces them as a
 single 9-stage pipeline. (DFXM — never call it XRD / X-ray diffraction.)
 
@@ -35,19 +36,19 @@ single 9-stage pipeline. (DFXM — never call it XRD / X-ray diffraction.)
   the next action, then wait for confirmation before dispatching any agent —
   the no-check-in rule applies *after* scope is confirmed, not to scoping itself.
 - **SDD commit hygiene:** when cleaning a subagent's commit, never strip `docs/`
-  changes that accompany `dfxm/stages/` or `gui/` changes — the same-change docs
+  changes that accompany `darq_xray/stages/` or `darq_xray/gui/` changes — the same-change docs
   contract outranks code-only commit aesthetics.
 
 ## Architecture
 
-- **`dfxm/` — Qt-free core library** (importable, testable, and CLI-runnable
+- **`darq_xray/` — Qt-free core library** (importable, testable, and CLI-runnable
   without Qt). The GUI depends on the core, never the reverse.
-  - `dfxm/stages/` — one module per stage, each exposing
+  - `darq_xray/stages/` — one module per stage, each exposing
     `run(params: dict, progress=None) -> result` plus a `__main__` CLI.
     `registry.py` maps stage name → `"module:function"`.
-  - `dfxm/runner.py` — runs a stage in a child process with progress/log/cancel.
-- **`gui/` — the PySide6 desktop app** on top of the core; stage wiring
-  (order, pre-fill, output auto-chaining) lives in `gui/bindings.py`.
+  - `darq_xray/runner.py` — runs a stage in a child process with progress/log/cancel.
+- **`darq_xray/gui/` — the PySide6 desktop app** on top of the core; stage wiring
+  (order, pre-fill, output auto-chaining) lives in `darq_xray/gui/bindings.py`.
 
 ## Pipeline (stage order)
 
@@ -62,8 +63,8 @@ the app, between `concat` and the map stages.
 
 ```bash
 pip install -e ".[test]"            # install deps (once; editable, run-in-place kept)
-python3 -m gui.app                  # launch the GUI
-python3 -m dfxm.stages.strain -h    # run any stage headless (each has a CLI)
+python3 -m darq_xray.gui.app                  # launch the GUI
+python3 -m darq_xray.stages.strain -h    # run any stage headless (each has a CLI)
 python3 -m pytest -q                # tests
 ruff check . && ruff format .       # lint + format (config in pyproject.toml)
 ```
@@ -81,15 +82,15 @@ enables MP4 export (GIF fallback without it).
 
 ## Conventions & gotchas
 
-- **Keep `dfxm/` Qt-free.** Never import PySide6/pyvista there.
+- **Keep `darq_xray/` Qt-free.** Never import PySide6/pyvista there.
 - **Lazy heavy deps.** `pyvista`/`vtk` are imported only inside the functions
   that render/write 3-D, so GUI startup stays light and headless-safe. The 3-D
   viewer (`pv_canvas`/`volume3d`) and the profiles line picker build nothing —
   no import, no GL context, no volume load — until the user clicks.
 - **Plotting:** build figures with the explicit `matplotlib.figure.Figure` API;
   never `pyplot` or `matplotlib.use(...)` (that clobbers the Qt backend the
-  embedded canvases need). Shared volume renderers live in `dfxm/common/render.py`.
-- **One alignment.** Every volume stage reuses `dfxm/common/alignment.py` so they
+  embedded canvases need). Shared volume renderers live in `darq_xray/common/render.py`.
+- **One alignment.** Every volume stage reuses `darq_xray/common/alignment.py` so they
   co-register in the origin-0 PVTI world frame. Don't reimplement the
   samy-shift / Z-interpolation. The fixed order is
   `abs(FWHM) → ROI → samy X-shift → uniform-Z interp → centre`; don't reorder.
@@ -108,7 +109,7 @@ enables MP4 export (GIF fallback without it).
   `memory/MEMORY.md` and `.superpowers/sdd/progress.md` — must be Read once
   before its first Edit.
 - **Never reconstruct `old_string` from memory or sibling files.** Known hazards
-  here: `hint=` strings in `dfxm/stages/*.py` contain em-dashes and sit at 12
+  here: `hint=` strings in `darq_xray/stages/*.py` contain em-dashes and sit at 12
   *or* 16 spaces depending on nesting; markdown prose reflows. Read (or grep the
   exact bytes of) every target site first — batch one Read covering all sites
   before a multi-file edit sweep.
@@ -121,7 +122,7 @@ enables MP4 export (GIF fallback without it).
   `pkill -f <pattern>` with a pattern matching your own command line; collect PIDs
   first (`pgrep -f <pattern> | grep -v $$`). The GUI smoke test is
   `tests/gui_smoke.py` (no `test_` prefix; it is not a pytest file).
-- `stage_view.py` and all Qt code live under `gui/`, never `dfxm/` — grep for a
+- `stage_view.py` and all Qt code live under `darq_xray/gui/`, never `darq_xray/` — grep for a
   filename before Read if unsure which tree it's in.
 - **Check for a git remote before any push/PR step.** The repo was developed
   entirely locally; if `git remote -v` is empty, skip pull/push/PR in any
@@ -154,7 +155,7 @@ behaviour, inputs/outputs, add or remove a stage/module/public function, or
 change how a viewer works, update the matching sections of BOTH docs in the SAME
 change** — `Usage.md` for user-visible behaviour, `Codebase.md` for the code
 structure — not as a follow-up. A PostToolUse hook (`.claude/settings.json`)
-prints a reminder whenever you edit `dfxm/stages/` or `gui/`. Treat a code change
+prints a reminder whenever you edit `darq_xray/stages/` or `darq_xray/gui/`. Treat a code change
 that alters behaviour or structure without the matching `docs/` update as
 incomplete.
 
