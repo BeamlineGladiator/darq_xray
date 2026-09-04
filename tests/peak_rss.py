@@ -92,6 +92,27 @@ def _attach(pid: int | None) -> psutil.Process | None:
         return None
 
 
+_EXEC_GRACE = 2.0  # s to wait for spawn's exec before trusting samples anyway
+
+
+def _own_cmdline() -> list[str] | None:
+    """This process's argv, or None when it cannot be read."""
+    try:
+        return psutil.Process().cmdline()
+    except psutil.Error:
+        return None
+
+
+def _cmdline(proc: psutil.Process | None) -> list[str] | None:
+    """*proc*'s argv, or None when it cannot be read (gone, or denied)."""
+    if proc is None:
+        return None
+    try:
+        return proc.cmdline()
+    except psutil.Error:
+        return None
+
+
 def _sample_rss(proc: psutil.Process | None) -> int | None:
     """One RSS reading in bytes, or None when the process cannot be read.
 
@@ -144,6 +165,25 @@ def measure_peak_rss(
     runner = StageRunner(target, params)
     runner.start()
     proc = _attach(runner.pid)
+    # A sample taken before the child has exec'd is not the child's. `spawn`
+    # creates the process by forking and only then execs a fresh interpreter,
+    # and in that window /proc reports the *parent's* pages. Measured on CI:
+    # the first sample landed 0.1 ms after start() and read 1 555 800 064 B —
+    # the pytest parent's whole RSS — while every later sample traced a sane
+    # 10 -> 41 MB curve for an 8 MiB child. The mirror image shows up too (a
+    # 274 432 B reading for a process that had not populated yet). `peak` is a
+    # max, so one bogus high sample poisons the answer outright, and the
+    # existing MIN_PLAUSIBLE_RSS floor cannot catch it: it guards the low side
+    # only.
+    #
+    # Before exec the child's argv is still the parent's, so comparing cmdline
+    # identifies the window exactly rather than guessing at a delay. The
+    # deadline matters for correctness, not just safety: under start_method
+    # "fork" the child never execs and its cmdline never changes, so without a
+    # bound every sample would be skipped and the run would report "not one
+    # RSS sample was read".
+    parent_cmdline = _own_cmdline()
+    exec_deadline = time.monotonic() + _EXEC_GRACE
     peak = 0
     samples = 0
     # *trace*, when given, is filled with the raw sample series. It exists
@@ -158,7 +198,12 @@ def measure_peak_rss(
     deadline = time.monotonic() + timeout
     try:
         while True:
-            rss = _sample_rss(proc)
+            pre_exec = (
+                parent_cmdline is not None
+                and time.monotonic() < exec_deadline
+                and _cmdline(proc) == parent_cmdline
+            )
+            rss = None if pre_exec else _sample_rss(proc)
             if rss is not None:
                 samples += 1
                 peak = max(peak, rss)

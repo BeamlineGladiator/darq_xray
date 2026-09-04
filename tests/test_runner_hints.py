@@ -95,6 +95,65 @@ def test_peak_rss_sees_a_large_allocation():
     )
 
 
+def test_peak_rss_ignores_samples_taken_before_the_child_execs(monkeypatch):
+    """The pre-exec window must contribute nothing to the peak.
+
+    `spawn` forks and only then execs, and in that window /proc reports the
+    parent's pages. On CI the very first sample — 0.1 ms after `start()` —
+    read 1 555 800 064 B, the pytest parent's whole RSS, for a child that
+    allocates 8 MiB; every later sample traced a sane 10 -> 41 MB curve.
+    `peak` is a max, so that single reading became the answer.
+
+    Stubbed rather than raced: the window is real but nobody can make it open
+    on demand, and a test that only passes when the timing cooperates is not a
+    test. `_cmdline` reports the parent's argv for the first three polls (what
+    the kernel genuinely shows pre-exec), and the sampler asserts it is never
+    consulted while that holds.
+    """
+    from tests import peak_rss
+
+    parent = peak_rss._own_cmdline()
+    assert parent, "this test needs a readable argv for the running process"
+    state = {"polls": 0, "pre_exec": True, "sampled_early": False}
+
+    def fake_cmdline(proc):
+        state["polls"] += 1
+        state["pre_exec"] = state["polls"] <= 3
+        return list(parent) if state["pre_exec"] else ["/usr/bin/python3", "-c", "spawn_main"]
+
+    def fake_sample(proc):
+        if state["pre_exec"]:
+            state["sampled_early"] = True
+        return 64 * MIB
+
+    monkeypatch.setattr(peak_rss, "_cmdline", fake_cmdline)
+    monkeypatch.setattr(peak_rss, "_sample_rss", fake_sample)
+    _, peak = peak_rss.measure_peak_rss("tests.peak_rss:_sleepy_target", {"seconds": 0.3})
+
+    assert not state["sampled_early"], "the sampler ran during the pre-exec window"
+    assert state["polls"] > 3, "the run ended before it could leave the pre-exec window"
+    assert peak == 64 * MIB
+
+
+def test_peak_rss_still_measures_a_child_that_never_execs(monkeypatch):
+    """The pre-exec guard must not starve a `fork` child of every sample.
+
+    Under start_method "fork" the child's argv stays the parent's forever, so
+    an unbounded guard would skip every sample and turn a working measurement
+    into "not one RSS sample was read". `_EXEC_GRACE` bounds it; this pins that
+    the bound is real rather than incidental.
+    """
+    from tests import peak_rss
+
+    parent = peak_rss._own_cmdline()
+    monkeypatch.setattr(peak_rss, "_cmdline", lambda proc: list(parent))  # never execs
+    monkeypatch.setattr(peak_rss, "_EXEC_GRACE", 0.05)
+    monkeypatch.setattr(peak_rss, "_sample_rss", lambda proc: 64 * MIB)
+
+    _, peak = peak_rss.measure_peak_rss("tests.peak_rss:_sleepy_target", {"seconds": 0.4})
+    assert peak == 64 * MIB
+
+
 def test_peak_rss_raises_when_no_sample_can_be_read(monkeypatch):
     """A sampler that reads nothing must fail loudly, not return 0."""
     from tests import peak_rss
