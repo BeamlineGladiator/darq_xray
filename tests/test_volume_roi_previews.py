@@ -6,9 +6,9 @@ import h5py
 import numpy as np
 import pytest
 
-from dfxm.stages import paraview as PV
-from dfxm.stages import slices as SL
-from dfxm.stages import visualize as VZ
+from darq_xray.stages import paraview as PV
+from darq_xray.stages import slices as SL
+from darq_xray.stages import visualize as VZ
 
 
 def _mosa_volume(path):

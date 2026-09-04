@@ -1,4 +1,4 @@
-"""Tests for dfxm.stages.profiles — profiling core (the legacy self-test, as
+"""Tests for darq_xray.stages.profiles — profiling core (the legacy self-test, as
 pytest) and end-to-end figure/CSV generation from a consolidated slice file.
 """
 
@@ -10,8 +10,8 @@ import h5py
 import numpy as np
 import pytest
 
-from dfxm.common.errors import StageUserError
-from dfxm.stages import profiles as PR
+from darq_xray.common.errors import StageUserError
+from darq_xray.stages import profiles as PR
 
 A, B = 0.7, -1.3  # linear field coefficients
 
@@ -145,7 +145,7 @@ def test_run_with_injected_style_produces_figures(tmp_path):
 
 
 def test_render_single_accepts_style(tmp_path):
-    from dfxm.common.plotting import PlotStyle
+    from darq_xray.common.plotting import PlotStyle
 
     plane = np.linspace(0, 1, 12).reshape(3, 4)
     attrs = {"cmap": "gray", "cbar_label": "c", "title": "t", "vmin": 0.0, "vmax": 1.0}
@@ -248,7 +248,7 @@ def test_build_trace_figure_scales_offset_text():
 
 
 def test_build_trace_figure_show_title_false_omits_title():
-    from dfxm.common.plotting import PlotStyle
+    from darq_xray.common.plotting import PlotStyle
 
     fld, geom = _fake_field(std=True)
     kwargs = dict(aspect_wh=(4.0, 3.0), width_in=6.0, linewidth=2.0, color="", font_scale=1.0)
@@ -263,7 +263,7 @@ def test_build_trace_figure_show_title_false_omits_title():
 def test_build_trace_figure_title_scale_scales_title_only():
     from matplotlib import text as mtext
 
-    from dfxm.common.plotting import PlotStyle
+    from darq_xray.common.plotting import PlotStyle
 
     fld, geom = _fake_field(std=True)
     kwargs = dict(aspect_wh=(4.0, 3.0), width_in=6.0, linewidth=2.0, color="", font_scale=2.0)
@@ -406,7 +406,7 @@ def _own_margin_flush(deferred, dpi, notes):
     discriminates (rather than passing by fixture coincidence)."""
     import os as _os
 
-    from dfxm.common.plotting import apply_axes_margins, box_drift_note, measure_axes_margins
+    from darq_xray.common.plotting import apply_axes_margins, box_drift_note, measure_axes_margins
 
     if not deferred:
         return
@@ -484,7 +484,7 @@ def _trace_box_inches(fig):
 def test_build_trace_figure_fixed_scale_box_is_length_by_height():
     # fixed-scale mode: box width = L/scale, box height = trace_height_cm —
     # trace_aspect no longer shapes the box (it only governs the legacy mode).
-    from dfxm.common.plotting import PlotStyle
+    from darq_xray.common.plotting import PlotStyle
 
     fld, geom = _fake_field(std=True)  # L = 10 um
     st = PlotStyle(trace_scale_um_per_cm=2.0, trace_height_cm=3.0)
@@ -505,7 +505,7 @@ def test_build_trace_figure_fixed_scale_box_is_length_by_height():
 
 
 def test_build_trace_figure_fixed_scale_ignores_width_in():
-    from dfxm.common.plotting import PlotStyle
+    from darq_xray.common.plotting import PlotStyle
 
     fld, geom = _fake_field()
     widths = []
@@ -527,7 +527,7 @@ def test_build_trace_figure_fixed_scale_ignores_width_in():
 def test_build_trace_figure_fixed_scale_exact_for_short_line_real_repro():
     # regression: L=29.668647 at 10 um/cm rendered at ~5.7 um/cm on real data
     # (set_box_aspect defeated fit_axes_to_box, which silently kept the miss).
-    from dfxm.common.plotting import PlotStyle
+    from darq_xray.common.plotting import PlotStyle
 
     n = 200
     dist = np.linspace(0.0, 29.668647, n)
@@ -562,7 +562,7 @@ def test_build_trace_figure_fixed_scale_exact_for_short_line_real_repro():
 
 
 def test_build_trace_figure_fixed_scale_clamps_width_only():
-    from dfxm.common.plotting import PlotStyle
+    from darq_xray.common.plotting import PlotStyle
 
     fld, geom = _fake_field(std=True)
     geom = {**geom, "L": 10.0}
@@ -585,7 +585,7 @@ def test_build_trace_figure_fixed_scale_clamps_width_only():
 def test_build_trace_figure_trace_scale_overrides_map_scale():
     # trace_scale_um_per_cm wins over scale_um_per_cm for the trace box width;
     # a smaller µm/cm value prints the same line physically larger.
-    from dfxm.common.plotting import PlotStyle
+    from darq_xray.common.plotting import PlotStyle
 
     fld, geom = _fake_field()  # geom["L"] == 10.0
     fig = PR.build_trace_figure(
@@ -871,7 +871,7 @@ def test_companion_map_styled_scale_bar_honours_style():
     not the hard-coded legacy one."""
     from matplotlib.patches import Rectangle
 
-    from dfxm.common.plotting import PlotStyle
+    from darq_xray.common.plotting import PlotStyle
 
     ref, fields, geom = _companion_inputs()
     style = PlotStyle(scale_bar_length_um=5.0)
@@ -885,7 +885,7 @@ def test_companion_map_styled_scale_bar_honours_style():
 
 
 def test_companion_map_scale_bar_off_draws_no_bar():
-    from dfxm.common.plotting import PlotStyle
+    from darq_xray.common.plotting import PlotStyle
 
     ref, fields, geom = _companion_inputs()
     fig = PR.build_companion_figure(ref, fields, geom, "cyan", style=PlotStyle(scale_bar=False))
@@ -911,12 +911,12 @@ def test_render_single_overview_fits_fixed_scale(tmp_path, monkeypatch):
 
     A PNG-existence check alone can't fail if the fit call is later deleted, so
     this spies on profiles.fit_axes_to_box (patched where profiles.py looks it
-    up, i.e. dfxm.stages.profiles.fit_axes_to_box) to assert it is called
+    up, i.e. darq_xray.stages.profiles.fit_axes_to_box) to assert it is called
     exactly once with the expected target box when the knob is set, and not at
     all when it's unset — pinning the companion-path fidelity from the run side
     too.
     """
-    from dfxm.common.plotting import PlotStyle
+    from darq_xray.common.plotting import PlotStyle
 
     ref, _fields, geom = _companion_inputs()
     u_um, v_um = ref[1], ref[2]
@@ -956,7 +956,7 @@ def test_render_single_appends_drift_note_on_forced_miss(tmp_path, monkeypatch):
     """render_single's overview drift guard: when fit_axes_to_box fails to place
     the axes at the target box (forced here via monkeypatch to simulate a miss),
     box_drift_note must catch the discrepancy and append a user-visible note."""
-    from dfxm.common.plotting import PlotStyle
+    from darq_xray.common.plotting import PlotStyle
 
     # force fit_axes_to_box to do nothing so the guard must catch the miss
     monkeypatch.setattr(PR, "fit_axes_to_box", lambda *a, **k: False)
@@ -1015,7 +1015,7 @@ def test_companion_map_panel_bar_geometry_unchanged_without_scale_knob():
     _draw_reference_image)."""
     from matplotlib.patches import Rectangle
 
-    from dfxm.common.plotting import PlotStyle
+    from darq_xray.common.plotting import PlotStyle
 
     ref, fields, geom = _companion_inputs()
     style = PlotStyle(scale_bar_thickness_pt=3.0)  # no scale_um_per_cm -> legacy path
@@ -1035,7 +1035,7 @@ def test_companion_map_panel_bar_geometry_matches_fixed_scale():
     figures use (e.g. render_single) — not the data-fraction fallback."""
     from matplotlib.patches import Rectangle
 
-    from dfxm.common.plotting import PlotStyle
+    from darq_xray.common.plotting import PlotStyle
 
     ref, fields, geom = _companion_inputs()
     style = PlotStyle(scale_um_per_cm=50.0, scale_bar_thickness_pt=3.0)
@@ -1049,13 +1049,13 @@ def test_companion_map_panel_bar_geometry_matches_fixed_scale():
 
 # -- companion on the deterministic stack layout (fixed scale) ----------------
 def test_companion_fixed_scale_panel_boxes_and_trace_style():
-    from dfxm.common.plotting import PlotStyle
+    from darq_xray.common.plotting import PlotStyle
 
     ref, fields, geom = _companion_inputs()
     st = PlotStyle(scale_um_per_cm=20.0, trace_scale_um_per_cm=2.0, trace_height_cm=3.0)
     topts = {"linewidth": 2.5, "color": "red", "font_scale": 1.4}
     fig = PR.build_companion_figure(ref, fields, geom, "white", style=st, trace_opts=topts)
-    from dfxm.common.plotting import measured_box_in
+    from darq_xray.common.plotting import measured_box_in
 
     # trace axes carry the plotted lines; the manual colorbar axes has none
     ax_map, ax_traces = fig.axes[0], [a for a in fig.axes[1:] if a.lines]
@@ -1073,7 +1073,7 @@ def test_companion_fixed_scale_panel_boxes_and_trace_style():
 
 
 def test_companion_fixed_scale_show_title_false_no_panel_titles():
-    from dfxm.common.plotting import PlotStyle
+    from darq_xray.common.plotting import PlotStyle
 
     ref, fields, geom = _companion_inputs()
     st = PlotStyle(
@@ -1085,7 +1085,7 @@ def test_companion_fixed_scale_show_title_false_no_panel_titles():
 
 
 def test_companion_without_fixed_scale_keeps_legacy_layout():
-    from dfxm.common.plotting import PlotStyle
+    from darq_xray.common.plotting import PlotStyle
 
     ref, fields, geom = _companion_inputs()
     fig_none = PR.build_companion_figure(ref, fields, geom, "white", style=None)
@@ -1105,7 +1105,7 @@ def test_companion_fixed_scale_degenerate_map_extent_falls_back_to_legacy():
     (matplotlib's zero-width-xlim UserWarning is expected here — the legacy
     fallback imshows the degenerate extent — and filtered so suite output
     stays pristine.)"""
-    from dfxm.common.plotting import PlotStyle
+    from darq_xray.common.plotting import PlotStyle
 
     ref, fields, geom = _companion_inputs()
     plane, u, v, attrs, label = ref
@@ -1301,7 +1301,7 @@ def test_render_replot_skips_malformed_job_renders_good_one(tmp_path):
 def test_trace_yaxis_follows_group_tickfmt():
     """tickfmt_strain='scientific' must reach the strain TRACE y axis (while a
     field of another group stays on matplotlib's default formatting)."""
-    from dfxm.common.plotting import PlotStyle
+    from darq_xray.common.plotting import PlotStyle
 
     n = 100
     dist = np.linspace(0.0, 20.0, n)

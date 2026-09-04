@@ -5,7 +5,7 @@ actually reads. The prose lists in `README.md` and `docs/Usage.md` exist for a
 reader skimming the repo on GitHub, and a prose list that nothing checks drifts
 — `docs/Usage.md` had been missing **pyyaml and psutil** since the lists were
 written, and a psutil-less environment is exactly what produced the "8 GB free
-of 502 GB RAM" bug fixed in `dfxm/common/machine.py`.
+of 502 GB RAM" bug fixed in `darq_xray/common/machine.py`.
 
 Each doc marks its list with `<!-- deps:start -->` / `<!-- deps:end -->` so this
 test extracts exactly the intended span rather than guessing at prose. HTML
@@ -62,9 +62,9 @@ def test_pyproject_is_installable():
 
     Without `[build-system]` pip falls back to setuptools' auto-discovery,
     which refuses this flat layout outright ("Multiple top-level packages
-    discovered in a flat-layout: ['gui', 'dfxm', 'experiments']") — so the
-    documented install command fails on a fresh clone. Both halves are asserted
-    because either one alone leaves it broken.
+    discovered in a flat-layout: ['darq_xray', 'experiments', 'tests']") — so
+    the documented install command fails on a fresh clone. Both halves are
+    asserted because either one alone leaves it broken.
     """
     tomllib = pytest.importorskip("tomllib")
     data = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
@@ -72,16 +72,16 @@ def test_pyproject_is_installable():
         "pyproject.toml has no [build-system]; `pip install -e .` cannot build it"
     )
     include = data["tool"]["setuptools"]["packages"]["find"]["include"]
-    assert "dfxm*" in include and "gui*" in include, (
-        f"package discovery must name both trees explicitly, got {include}"
+    assert "darq_xray*" in include, (
+        f"package discovery must name the source tree explicitly, got {include}"
     )
 
 
 def test_every_real_package_is_covered_by_discovery():
-    """The `dfxm*`/`gui*` globs must actually cover every importable package.
+    """The `darq_xray*` glob must actually cover every importable package.
 
     Guards the failure this cannot otherwise catch: a new top-level package
-    (or a stage tree moved out from under `dfxm/`) silently missing from an
+    (or a stage tree moved out from under `darq_xray/`) silently missing from an
     installed copy while the run-in-place tests all still pass.
 
     `tests` is a package (it has an `__init__.py`, so `tests.peak_rss` and
@@ -118,14 +118,12 @@ def test_every_real_package_is_covered_by_discovery():
         for p in ROOT.glob("*/__init__.py")
         if _is_ours(p)
     }
-    assert "dfxm.stages" in found, "package scan found nothing — the glob is broken"
+    assert "darq_xray.stages" in found, "package scan found nothing — the glob is broken"
     uncovered = sorted(
-        n
-        for n in found
-        if not (n.startswith("dfxm") or n.startswith("gui")) and n.split(".")[0] not in not_shipped
+        n for n in found if not n.startswith("darq_xray") and n.split(".")[0] not in not_shipped
     )
     assert not uncovered, (
-        f"importable packages outside the dfxm*/gui* globs: {uncovered} — "
+        f"importable packages outside the darq_xray* glob: {uncovered} — "
         "add them to [tool.setuptools.packages.find] include, or they vanish "
         "from an installed copy"
     )

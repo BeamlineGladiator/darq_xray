@@ -1,10 +1,10 @@
-"""Machine-aware policy (dfxm/common/advice.py). Pure functions, no IO."""
+"""Machine-aware policy (darq_xray/common/advice.py). Pure functions, no IO."""
 
 from __future__ import annotations
 
 import dataclasses
 
-from dfxm.common.advice import (
+from darq_xray.common.advice import (
     AVAILABLE_FRACTION,
     MARGINAL_RSS_PER_TRACED_BYTE,
     MIN_STREAM_BUDGET_BYTES,
@@ -15,7 +15,7 @@ from dfxm.common.advice import (
     plan_run,
     working_set_budget_bytes,
 )
-from dfxm.config.models import CostEstimate
+from darq_xray.config.models import CostEstimate
 from tests.machine_fixtures import laptop_hw_gl, tiny_ram, windows_no_vtk, workstation_sw_gl
 
 GB = 1024**3
@@ -130,7 +130,7 @@ def test_working_set_budget_is_not_floored_back_up_to_the_min_budget():
     """
     import dataclasses
 
-    from dfxm.common.advice import MIN_BUDGET_BYTES
+    from darq_xray.common.advice import MIN_BUDGET_BYTES
 
     unmeasurable = dataclasses.replace(laptop_hw_gl(), ram_total=0, ram_available=0)
     assert headroom_bytes(unmeasurable) == MIN_BUDGET_BYTES
@@ -251,7 +251,7 @@ def test_advise_3d_does_not_promise_a_fit_coarsening_cannot_deliver():
 def test_advise_3d_names_the_factor_the_actor_will_actually_use():
     """The hint's remedy is "set it to 0", so the factor it names must be the
     one auto-fit picks — the same 1/2/4/8/16 ladder, not `requested` doubled."""
-    from dfxm.common import render3d as R3
+    from darq_xray.common import render3d as R3
 
     shape = (100, 700, 12000)
     actor = R3.fit_factor_for_shape(shape, 2048)
@@ -380,8 +380,8 @@ def test_a_chunked_run_that_does_not_spill_is_never_disk_blocked():
 def test_the_chunking_reason_starts_with_the_pinned_prefix():
     """advisory.py filters on this prefix; a reworded message must fail here,
     not leak a chunk count into the GUI."""
-    from dfxm.common import advice
-    from dfxm.common.machine import MachineProfile
+    from darq_xray.common import advice
+    from darq_xray.common.machine import MachineProfile
 
     prof = MachineProfile(
         "Linux", 4, 2, 8 * 1024**3, 1 * 1024**3, 40 * 1024**3, None, "unprobed", None, ()

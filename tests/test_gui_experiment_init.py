@@ -14,8 +14,8 @@ from PySide6.QtWidgets import QApplication, QDialog, QMessageBox  # noqa: E402
 
 
 def _dlg(**fields):
-    from dfxm.config.models import Experiment
-    from gui.experiment_panel import ExperimentDialog
+    from darq_xray.config.models import Experiment
+    from darq_xray.gui.experiment_panel import ExperimentDialog
 
     _ = QApplication.instance() or QApplication([])
     return ExperimentDialog(Experiment(**fields))

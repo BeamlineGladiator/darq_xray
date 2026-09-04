@@ -1,12 +1,12 @@
-"""Headless CLI — python3 -m dfxm.compose render."""
+"""Headless CLI — python3 -m darq_xray.compose render."""
 
 import os
 
 import h5py
 import numpy as np
 
-from dfxm.compose.__main__ import _main
-from dfxm.compose.recipe import (
+from darq_xray.compose.__main__ import _main
+from darq_xray.compose.recipe import (
     ComposeStyle,
     FigureRecipe,
     PanelDef,

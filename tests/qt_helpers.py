@@ -16,7 +16,7 @@ from PySide6.QtWidgets import QApplication
 def applied_theme(app: QApplication, mode: str):
     """Apply a theme for the duration of a test, then put the app back.
 
-    `gui.theme.apply_theme` changes three process-wide things — the style, the
+    `darq_xray.gui.theme.apply_theme` changes three process-wide things — the style, the
     palette and the stylesheet — and pytest shares one QApplication across every
     Qt module in the run. A test that restored only `app.styleSheet()` left
     every later widget under Fusion with the themed palette but the *old*
@@ -28,7 +28,7 @@ def applied_theme(app: QApplication, mode: str):
     object back: `QApplication.setStyle` takes ownership and deletes what it
     replaces, so the saved pointer is not safe to reuse.
     """
-    from gui.theme import apply_theme
+    from darq_xray.gui.theme import apply_theme
 
     style_name = app.style().objectName()
     palette = app.palette()

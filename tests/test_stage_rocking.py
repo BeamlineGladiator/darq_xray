@@ -1,4 +1,4 @@
-"""Tests for dfxm.stages.rocking — background subtraction, samz-union filtering,
+"""Tests for darq_xray.stages.rocking — background subtraction, samz-union filtering,
 mosa-anchored alignment, and the aligned-HDF5 schema the slicer consumes.
 """
 
@@ -10,7 +10,7 @@ import h5py
 import numpy as np
 import pytest
 
-from dfxm.stages import rocking as RK
+from darq_xray.stages import rocking as RK
 
 NF, H, W = 4, 6, 8  # frames, height, width
 
@@ -180,7 +180,7 @@ def test_run_mosaicity_source_builds_mosa_volume(tmp_path):
 
 def test_figures_use_raw_group(tmp_path):
     """Rocking figure specs resolve their cmap from the style's raw group."""
-    from dfxm.common.plotting import PlotStyle
+    from darq_xray.common.plotting import PlotStyle
 
     raw = _setup(tmp_path)
     out = tmp_path / "rock_out"
@@ -308,7 +308,7 @@ def _write_aligned_with_hot_pixel(path):
 
 def test_rocking_replot_default_clim_uses_percentile(tmp_path):
     """_replot_default_clim must clip the hot-pixel outlier via percentile, not raw min/max."""
-    from dfxm.common.plotting import apply_round_clim
+    from darq_xray.common.plotting import apply_round_clim
 
     h5 = str(tmp_path / "hot.h5")
     _, vol = _write_aligned_with_hot_pixel(h5)
@@ -344,7 +344,7 @@ def test_rocking_replot_title_is_source_aware(tmp_path):
         captured.append(title)
         return None  # skip rendering; render_replot will skip None figures
 
-    with patch("dfxm.stages.rocking.render_volume_layer", side_effect=_capture_title):
+    with patch("darq_xray.stages.rocking.render_volume_layer", side_effect=_capture_title):
         RK.render_replot(
             h5,
             [("sum_intensity", [0])],
@@ -369,7 +369,7 @@ def _count_clim_blocks(monkeypatch):
     which is what a reverted `dataset[:]` looks like — so the precondition
     assertion below cannot pass vacuously.
     """
-    from dfxm.common import volumeio
+    from darq_xray.common import volumeio
 
     # Undo any earlier patch first: a test that calls this once per budget would
     # otherwise wrap the previous wrapper, leaving every earlier `seen` list
@@ -611,7 +611,7 @@ def test_rocking_render_replot_honours_a_supplied_clim_unchanged(tmp_path):
         seen.append((vmin, vmax, clim))
         return None
 
-    with patch("dfxm.stages.rocking.render_volume_layer", side_effect=_capture):
+    with patch("darq_xray.stages.rocking.render_volume_layer", side_effect=_capture):
         RK.render_replot(
             h5, [("sum_intensity", [0])], None, {"sum_intensity": (-3.0, 7.0)}, str(tmp_path / "o")
         )
@@ -668,7 +668,7 @@ def test_process_raw_scan_refuses_an_roi_that_crops_to_nothing(tmp_path):
     """rocking crops the raw detector itself rather than through
     `apply_roi_3d`, so it needs its own guard — without one an inverted pair
     reads an empty frame stack and the whole run produces blank layers."""
-    from dfxm.common.errors import StageUserError
+    from darq_xray.common.errors import StageUserError
 
     folder = _write_motor_folder(str(tmp_path), "rock__1", 0.0, 0.0, frames=_rng_frames(0))
     h5p = os.path.join(folder, "rock__1.h5")
@@ -685,7 +685,7 @@ def test_build_raw_volumes_lets_the_roi_error_out_of_the_scan_loop(tmp_path):
     catches `ValueError` — so without an explicit re-raise the ROI message is
     discarded once per folder and the run ends at the generic 'no rocking scans
     processed successfully', hint and all."""
-    from dfxm.common.errors import StageUserError
+    from darq_xray.common.errors import StageUserError
 
     folder = _write_motor_folder(str(tmp_path), "rock__1", 0.0, 0.0, frames=_rng_frames(0))
     with pytest.raises(StageUserError) as exc:

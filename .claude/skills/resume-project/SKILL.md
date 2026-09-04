@@ -1,6 +1,6 @@
 ---
 name: resume-project
-description: Use when the user says "resume", "resume last session", "continue the plan", "pick up where we left off", or any terse continuation prompt at session start in dfxm_pipeline
+description: Use when the user says "resume", "resume last session", "continue the plan", "pick up where we left off", or any terse continuation prompt at session start in darq_xray
 ---
 
 # Resume Project

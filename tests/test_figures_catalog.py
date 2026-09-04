@@ -6,17 +6,17 @@ import numpy as np
 import pytest
 from matplotlib.offsetbox import AnchoredOffsetbox
 
-from dfxm.common import figures, render
-from dfxm.common.figures import volume_layer_specs
-from dfxm.common.plotting import PlotStyle
-from dfxm.stages import matched as Matched
-from dfxm.stages import mosaicity as Mosaicity
-from dfxm.stages import profiles as Profiles
-from dfxm.stages import rocking as Rocking
-from dfxm.stages import slices as Slices
-from dfxm.stages import strain as Strain
-from dfxm.stages import visualize as Visualize
-from dfxm.stages.registry import STAGE_TARGETS
+from darq_xray.common import figures, render
+from darq_xray.common.figures import volume_layer_specs
+from darq_xray.common.plotting import PlotStyle
+from darq_xray.stages import matched as Matched
+from darq_xray.stages import mosaicity as Mosaicity
+from darq_xray.stages import profiles as Profiles
+from darq_xray.stages import rocking as Rocking
+from darq_xray.stages import slices as Slices
+from darq_xray.stages import strain as Strain
+from darq_xray.stages import visualize as Visualize
+from darq_xray.stages.registry import STAGE_TARGETS
 
 
 def _layer():
@@ -127,8 +127,8 @@ def test_volume_layer_specs_zum_length_mismatch_raises(tmp_path):
 
 def test_importing_figures_does_not_eager_import_stage_modules():
     code = (
-        "import sys, dfxm.common.figures as F; "
-        "assert 'dfxm.stages.matched' not in sys.modules; "
+        "import sys, darq_xray.common.figures as F; "
+        "assert 'darq_xray.stages.matched' not in sys.modules; "
         "assert len(F._FIGURE_CATALOGS) >= 9; "
         "print('ok')"
     )
@@ -389,8 +389,8 @@ def test_mosaicity_catalog_histogram_specs_per_layer(tmp_path):
 
 
 def test_plotting_build_histogram_importable():
-    """build_histogram is importable from dfxm.common.plotting."""
-    from dfxm.common.plotting import build_histogram
+    """build_histogram is importable from darq_xray.common.plotting."""
+    from darq_xray.common.plotting import build_histogram
 
     data = np.random.default_rng(0).random((10, 10))
     fig = build_histogram(data, title="Test hist", xlabel="Values")
@@ -400,7 +400,7 @@ def test_plotting_build_histogram_importable():
 
 def test_plotting_build_histogram_all_nan_returns_none():
     """build_histogram returns None when all values are NaN."""
-    from dfxm.common.plotting import build_histogram
+    from darq_xray.common.plotting import build_histogram
 
     data = np.full((5, 5), np.nan)
     assert build_histogram(data, title="t", xlabel="x") is None
@@ -1437,7 +1437,7 @@ def test_profiles_colorbar_font_not_double_scaled():
     build_companion_figure(style=PlotStyle(font_scale=2.0)) must produce a
     colorbar whose label fontsize is 10*2.0 == 20, not 10*2.0*2.0 == 40.
     """
-    from dfxm.common.plotting import PlotStyle
+    from darq_xray.common.plotting import PlotStyle
 
     fs = 2.0
     ref, fields, geom = _companion_fixture()
@@ -1494,7 +1494,7 @@ def test_profiles_build_missing_job_spec_raises_value_error(tmp_path):
 
 def test_profiles_colorbar_hidden_when_style_colorbar_false():
     """FIX 3: styled path with colorbar=False must produce no colorbar axes."""
-    from dfxm.common.plotting import PlotStyle
+    from darq_xray.common.plotting import PlotStyle
 
     ref, fields, geom = _companion_fixture()
     fig = Profiles.build_companion_figure(
@@ -1509,8 +1509,8 @@ def test_profiles_colorbar_hidden_when_style_colorbar_false():
 def test_layer_figure_threads_group_to_arbitrary_units():
     import numpy as np
 
-    from dfxm.common.plotting import PlotStyle
-    from dfxm.common.render import layer_figure
+    from darq_xray.common.plotting import PlotStyle
+    from darq_xray.common.render import layer_figure
 
     style = PlotStyle(tickfmt_raw="arb")
     fig, ax, im = layer_figure(
@@ -1534,8 +1534,8 @@ def test_volume_layer_specs_cmap_group_resolves_from_style(tmp_path):
     import h5py
     import numpy as np
 
-    from dfxm.common.figures import volume_layer_specs
-    from dfxm.common.plotting import PlotStyle
+    from darq_xray.common.figures import volume_layer_specs
+    from darq_xray.common.plotting import PlotStyle
 
     p = tmp_path / "v.h5"
     with h5py.File(p, "w") as f:
@@ -1557,8 +1557,8 @@ def test_save_layer_pngs_accepts_style(tmp_path):
 
     import numpy as np
 
-    from dfxm.common import render
-    from dfxm.common.plotting import PlotStyle
+    from darq_xray.common import render
+    from darq_xray.common.plotting import PlotStyle
 
     vol = np.zeros((1, 4, 5))
     d = render.save_layer_pngs(
@@ -1579,7 +1579,7 @@ def test_save_layer_pngs_accepts_style(tmp_path):
 
 
 def test_mosaicity_map_specs_resolve_cmap_groups(tmp_path):
-    from dfxm.common.plotting import PlotStyle
+    from darq_xray.common.plotting import PlotStyle
 
     vol = np.random.rand(1, 8, 12).astype(np.float32)
     h5 = tmp_path / "stacked_volumes.h5"
@@ -1604,8 +1604,8 @@ def test_mosaicity_map_specs_resolve_cmap_groups(tmp_path):
 def test_save_layer_pngs_forwards_group(tmp_path, monkeypatch):
     import numpy as np
 
-    from dfxm.common import render as R
-    from dfxm.common.plotting import PlotStyle
+    from darq_xray.common import render as R
+    from darq_xray.common.plotting import PlotStyle
 
     captured = {}
     real = R.layer_figure

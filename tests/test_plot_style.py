@@ -7,7 +7,7 @@ from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.figure import Figure
 from matplotlib.offsetbox import AnchoredOffsetbox
 
-from dfxm.common.plotting import (
+from darq_xray.common.plotting import (
     PUBLICATION_STYLE,
     PlotStyle,
     _tick_formatter,
@@ -362,7 +362,7 @@ def test_add_colorbar_default_tick_fontsize_is_nine():
 def test_cmap_groups_defaults_and_lookup():
     import pytest
 
-    from dfxm.common.plotting import CMAP_CHOICES, CMAP_GROUPS, resolve_cmap
+    from darq_xray.common.plotting import CMAP_CHOICES, CMAP_GROUPS, resolve_cmap
 
     s = PlotStyle()
     assert s.cmap_for("mosa_com") == "fast"
@@ -383,7 +383,7 @@ def test_cmap_groups_defaults_and_lookup():
 def test_style_from_params_roundtrip_and_tolerance():
     from dataclasses import asdict
 
-    from dfxm.common.plotting import style_from_params
+    from darq_xray.common.plotting import style_from_params
 
     src = replace(PUBLICATION_STYLE, cmap_strain="seismic", font_scale=3.0)
     p = {"plot_style": asdict(src)}
@@ -396,7 +396,7 @@ def test_style_from_params_roundtrip_and_tolerance():
 
 
 def test_style_json_roundtrip_and_bad_blob():
-    from dfxm.common.plotting import style_from_json, style_to_json
+    from darq_xray.common.plotting import style_from_json, style_to_json
 
     src = replace(PUBLICATION_STYLE, cmap_raw="turbo")
     assert style_from_json(style_to_json(src)) == src
@@ -424,7 +424,7 @@ def test_title_scale_default_leaves_title_at_base_size():
 
 
 def test_title_scale_survives_json_roundtrip():
-    from dfxm.common.plotting import style_from_json, style_to_json
+    from darq_xray.common.plotting import style_from_json, style_to_json
 
     s = PlotStyle(title_scale=0.4)
     assert style_from_json(style_to_json(s)).title_scale == 0.4
@@ -433,14 +433,14 @@ def test_title_scale_survives_json_roundtrip():
 
 
 def test_round_limits_outward_symmetric_stays_symmetric():
-    from dfxm.common.plotting import round_limits_outward
+    from darq_xray.common.plotting import round_limits_outward
 
     lo, hi = round_limits_outward(-0.0778, 0.0778)
     assert (lo, hi) == (-0.08, 0.08)
 
 
 def test_round_limits_outward_examples():
-    from dfxm.common.plotting import round_limits_outward
+    from darq_xray.common.plotting import round_limits_outward
 
     assert round_limits_outward(0.0, 0.11)[1] == 0.15
     assert round_limits_outward(0.0, 0.0432)[1] == 0.045
@@ -451,7 +451,7 @@ def test_round_limits_outward_examples():
 
 
 def test_round_limits_outward_already_round_is_unchanged():
-    from dfxm.common.plotting import round_limits_outward
+    from darq_xray.common.plotting import round_limits_outward
 
     assert round_limits_outward(-0.08, 0.08) == (-0.08, 0.08)  # no float-epsilon inflation
     assert round_limits_outward(0.0, 0.1) == (0.0, 0.1)
@@ -460,7 +460,7 @@ def test_round_limits_outward_already_round_is_unchanged():
 def test_round_limits_outward_degenerate_and_zero():
     import math
 
-    from dfxm.common.plotting import round_limits_outward
+    from darq_xray.common.plotting import round_limits_outward
 
     assert round_limits_outward(0.5, 0.5) == (0.5, 0.5)  # degenerate: unchanged
     assert round_limits_outward(0.0, 0.0778) == (0.0, 0.08)  # zero endpoint stays 0
@@ -469,7 +469,7 @@ def test_round_limits_outward_degenerate_and_zero():
 
 
 def test_round_limits_outward_preserves_tiny_symmetric_fallback():
-    from dfxm.common.plotting import round_limits_outward
+    from darq_xray.common.plotting import round_limits_outward
 
     # symmetric_limits() returns ±1e-12 for all-zero data; rounding must not
     # collapse it to a degenerate (0.0, 0.0) range
@@ -477,7 +477,7 @@ def test_round_limits_outward_preserves_tiny_symmetric_fallback():
 
 
 def test_apply_round_clim_notes_and_gating():
-    from dfxm.common.plotting import apply_round_clim
+    from darq_xray.common.plotting import apply_round_clim
 
     # disabled (default style) and style=None: passthrough, no note
     assert apply_round_clim(-0.0778, 0.0778, PlotStyle()) == (-0.0778, 0.0778, None)
@@ -561,7 +561,7 @@ def test_apply_text_scale_increases_title_pad_on_constrained_figure():
 
 
 def test_per_group_tickfmt_defaults_and_lookup():
-    from dfxm.common.plotting import GROUP_BY_KIND
+    from darq_xray.common.plotting import GROUP_BY_KIND
 
     s = PlotStyle()
     # bare defaults preserve the legacy look
@@ -616,7 +616,7 @@ def test_add_colorbar_arbitrary_units_does_not_double_up_existing_au():
 
 
 def test_style_from_dict_migrates_old_snapshot_to_tuned_defaults():
-    from dfxm.common.plotting import _style_from_dict
+    from darq_xray.common.plotting import _style_from_dict
 
     # An old GUI snapshot: no per-group tickfmt_* keys at all.
     old = {"font_scale": 2.2, "colorbar_ticks": 5}
@@ -634,7 +634,7 @@ def test_style_from_dict_migrates_old_snapshot_to_tuned_defaults():
 
 
 def test_publication_style_is_tuned_per_group():
-    from dfxm.common.plotting import PUBLICATION_STYLE
+    from darq_xray.common.plotting import PUBLICATION_STYLE
 
     assert PUBLICATION_STYLE.tickfmt_for("strain") == "scientific"
     assert PUBLICATION_STYLE.tickfmt_for("raw") == "arb"
@@ -681,7 +681,7 @@ def test_fixed_scale_defensive_parse():
 
 
 def test_trace_fixed_scale_precedence_and_fallback():
-    from dfxm.common.plotting import trace_fixed_scale
+    from darq_xray.common.plotting import trace_fixed_scale
 
     assert trace_fixed_scale(None) is None
     assert trace_fixed_scale(PlotStyle()) is None
@@ -699,7 +699,7 @@ def test_trace_fixed_scale_precedence_and_fallback():
 
 
 def test_fixed_scale_box_explicit_scale_override():
-    from dfxm.common.plotting import fixed_scale_box
+    from darq_xray.common.plotting import fixed_scale_box
 
     # explicit scale wins over the style's own scale_um_per_cm
     box = fixed_scale_box(PlotStyle(scale_um_per_cm=50.0), 100.0, 50.0, scale=25.0)
@@ -839,7 +839,7 @@ def test_histogram_keeps_axes_under_axes_mode_none():
 
 
 def test_trace_height_cm_roundtrips_and_defaults():
-    from dfxm.common.plotting import PlotStyle, style_from_json, style_to_json, trace_height_cm
+    from darq_xray.common.plotting import PlotStyle, style_from_json, style_to_json, trace_height_cm
 
     st = PlotStyle(trace_height_cm=4.2)
     assert style_from_json(style_to_json(st)).trace_height_cm == 4.2
@@ -882,7 +882,7 @@ def test_cbar_typography_defaults_byte_compatible():
 
 
 def test_apply_axis_tickfmt_scientific_digits_and_auto():
-    from dfxm.common.plotting import apply_axis_tickfmt
+    from darq_xray.common.plotting import apply_axis_tickfmt
 
     # scientific: mantissa ticks + our own x10^n exponent artist (the built-in
     # scilimits offset silently vanishes under constrained layout, mpl 3.6)
@@ -919,7 +919,7 @@ def test_apply_axis_tickfmt_scientific_uses_view_range_not_datalim():
     """Data just under a decade boundary: the 5% autoscale margin pushes the
     VIEW past it, so the exponent must come from the view range — dataLim gave
     mantissas like 12.5 x10^-4 instead of 1.25 x10^-3."""
-    from dfxm.common.plotting import apply_axis_tickfmt
+    from darq_xray.common.plotting import apply_axis_tickfmt
 
     fig = Figure()
     FigureCanvasAgg(fig)

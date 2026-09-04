@@ -1,4 +1,4 @@
-"""Hardware profile probing (dfxm/common/machine.py, dfxm/common/_glprobe.py)."""
+"""Hardware profile probing (darq_xray/common/machine.py, darq_xray/common/_glprobe.py)."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ import sys
 
 import pytest
 
-from dfxm.common import machine
+from darq_xray.common import machine
 
 
 def test_glprobe_child_prints_one_json_line_and_exits_zero():
@@ -18,7 +18,7 @@ def test_glprobe_child_prints_one_json_line_and_exits_zero():
     distinguishes outcomes by the 'status' field, not by exit code.
     """
     proc = subprocess.run(
-        [sys.executable, "-m", "dfxm.common._glprobe"],
+        [sys.executable, "-m", "darq_xray.common._glprobe"],
         capture_output=True,
         text=True,
         timeout=180,

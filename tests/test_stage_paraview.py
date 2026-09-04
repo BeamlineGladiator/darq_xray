@@ -1,4 +1,4 @@
-"""Tests for dfxm.stages.paraview — PVTI partitioning (parity with the legacy
+"""Tests for darq_xray.stages.paraview — PVTI partitioning (parity with the legacy
 exporter), end-to-end file writing, and a VTK round-trip of values + valid_mask.
 """
 
@@ -14,8 +14,8 @@ import h5py
 import numpy as np
 import pytest
 
-from dfxm.common import alignment as A
-from dfxm.stages import paraview as PV
+from darq_xray.common import alignment as A
+from darq_xray.stages import paraview as PV
 
 L, NY, NX = 4, 6, 8
 
@@ -634,7 +634,7 @@ def test_paraview_peak_stays_under_budget(tmp_path):
         "_budget_bytes": 64 << 20,
     }
     result = assert_peak_under(
-        "dfxm.stages.paraview:run", params, limit_bytes=480 * (1 << 20), timeout=600
+        "darq_xray.stages.paraview:run", params, limit_bytes=480 * (1 << 20), timeout=600
     )
     # ... and the bounded run still produced the export, rather than skipping it.
     assert [e.name for e in result.exports] == ["mosaicity"]
@@ -722,7 +722,7 @@ def test_in_core_rung_keeps_the_streamed_writers_saving(tmp_path, monkeypatch):
     )
 
     result = assert_peak_under(
-        "dfxm.stages.paraview:run", params, limit_bytes=576 * (1 << 20), timeout=600
+        "darq_xray.stages.paraview:run", params, limit_bytes=576 * (1 << 20), timeout=600
     )
     assert [e.name for e in result.exports] == ["mosaicity"]
     assert result.exports[0].n_pieces == 16
@@ -902,7 +902,7 @@ def test_rss_floor_covers_the_measured_process_image(tmp_path):
     }
     measured = assert_floor_covers(
         PV.RSS_FLOOR_BYTES,
-        "dfxm.stages.paraview:run",
+        "darq_xray.stages.paraview:run",
         params,
         data_bytes=4 * layers * ny * nx * 8,
         samples=2,

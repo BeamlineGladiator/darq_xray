@@ -1,6 +1,6 @@
 ---
 name: verify-suite
-description: Use when about to claim the dfxm_pipeline suite is green — before any commit, merge, "done"/"passing" claim, fresh-worktree baseline check, or plan phase boundary; also when the user asks "run the suite" or "is it green?"
+description: Use when about to claim the darq_xray suite is green — before any commit, merge, "done"/"passing" claim, fresh-worktree baseline check, or plan phase boundary; also when the user asks "run the suite" or "is it green?"
 ---
 
 # Verify Suite

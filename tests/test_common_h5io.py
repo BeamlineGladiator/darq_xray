@@ -1,4 +1,4 @@
-"""Tests for dfxm.common.h5io."""
+"""Tests for darq_xray.common.h5io."""
 
 from __future__ import annotations
 
@@ -8,8 +8,8 @@ import h5py
 import numpy as np
 import pytest
 
-from dfxm.common import h5io
-from dfxm.common.h5io import StackedVolumeFile
+from darq_xray.common import h5io
+from darq_xray.common.h5io import StackedVolumeFile
 
 
 def test_resolve_input_file_matches_folder_name():

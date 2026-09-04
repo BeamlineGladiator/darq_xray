@@ -9,11 +9,11 @@ import time
 
 import pytest
 
-from dfxm.runner import Failed, StageRunner
+from darq_xray.runner import Failed, StageRunner
 
 
 def _fail_with_hint(params, progress=None):
-    from dfxm.common.errors import StageUserError
+    from darq_xray.common.errors import StageUserError
 
     raise StageUserError("maps.h5 not found in /nowhere", hint="Run darfix first.")
 
@@ -34,7 +34,7 @@ def _run_to_failure(fn) -> Failed:
 
 
 def test_stage_user_error_attrs():
-    from dfxm.common.errors import StageUserError
+    from darq_xray.common.errors import StageUserError
 
     exc = StageUserError("bad input", hint="fix it like so")
     assert isinstance(exc, ValueError)  # existing pytest.raises(ValueError) keep working

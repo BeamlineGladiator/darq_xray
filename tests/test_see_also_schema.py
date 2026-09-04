@@ -2,8 +2,8 @@
 
 import pytest
 
-from dfxm.config.models import Param, ParamType, SeeAlso, StageSpec
-from gui.bindings import STAGE_SPECS
+from darq_xray.config.models import Param, ParamType, SeeAlso, StageSpec
+from darq_xray.gui.bindings import STAGE_SPECS
 
 
 def _spec(*see_also):

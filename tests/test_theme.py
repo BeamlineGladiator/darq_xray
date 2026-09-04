@@ -1,4 +1,4 @@
-"""Tests for gui.theme: palettes, QSS generation, ThemeController, apply_theme."""
+"""Tests for darq_xray.gui.theme: palettes, QSS generation, ThemeController, apply_theme."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import os
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("QT_API", "pyside6")
 
-from gui import theme  # noqa: E402
+from darq_xray.gui import theme  # noqa: E402
 
 _FIELDS = (
     "surface",

@@ -14,11 +14,11 @@ from PySide6.QtWidgets import QApplication, QDialog, QLabel  # noqa: E402
 
 _app = QApplication.instance() or QApplication([])
 
-from dfxm.common.plotting import PlotStyle  # noqa: E402
-from dfxm.config.models import Experiment  # noqa: E402
-from gui.bindings import STAGE_SPECS  # noqa: E402
-from gui.main_window import MainWindow  # noqa: E402
-from gui.stage_view import StageView, style_stamp  # noqa: E402
+from darq_xray.common.plotting import PlotStyle  # noqa: E402
+from darq_xray.config.models import Experiment  # noqa: E402
+from darq_xray.gui.bindings import STAGE_SPECS  # noqa: E402
+from darq_xray.gui.main_window import MainWindow  # noqa: E402
+from darq_xray.gui.stage_view import StageView, style_stamp  # noqa: E402
 
 
 def test_no_style_stamps_nothing():
@@ -47,8 +47,8 @@ def test_the_stamp_names_the_groups_the_way_the_style_dialog_does():
     pointer and the Usage table both say "Raw intensity". Reading the labels off
     `CMAP_GROUP_LABELS` is what keeps them from drifting apart again.
     """
-    from dfxm.common.plotting import CMAP_GROUPS
-    from gui.widgets.export_dialog import CMAP_GROUP_LABELS
+    from darq_xray.common.plotting import CMAP_GROUPS
+    from darq_xray.gui.widgets.export_dialog import CMAP_GROUP_LABELS
 
     # the labels really do cover every group PlotStyle has a cmap field for
     assert tuple(CMAP_GROUP_LABELS) == tuple(CMAP_GROUPS)

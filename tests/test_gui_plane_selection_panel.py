@@ -11,8 +11,8 @@ import pytest
 pytest.importorskip("PySide6")
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
-from gui.widgets.plane_selection import PlaneSelectionPanel  # noqa: E402
-from gui.widgets.plane_selection_model import PlaneRow  # noqa: E402
+from darq_xray.gui.widgets.plane_selection import PlaneSelectionPanel  # noqa: E402
+from darq_xray.gui.widgets.plane_selection_model import PlaneRow  # noqa: E402
 
 
 def _rows():

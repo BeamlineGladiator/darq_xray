@@ -8,9 +8,9 @@ import h5py
 import numpy as np
 import pytest
 
-from dfxm.common.errors import StageUserError
-from dfxm.stages import profiles as pr
-from dfxm.stages import slices as sl
+from darq_xray.common.errors import StageUserError
+from darq_xray.stages import profiles as pr
+from darq_xray.stages import slices as sl
 
 
 def _mini(path, offsets=(-2.0, 0.0, 2.0)):

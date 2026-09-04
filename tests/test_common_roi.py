@@ -1,11 +1,11 @@
-"""dfxm.common.roi — darfix-window / map-frame conversions and validation."""
+"""darq_xray.common.roi — darfix-window / map-frame conversions and validation."""
 
 from __future__ import annotations
 
 import pytest
 
-from dfxm.common import roi as R
-from dfxm.config.models import Param, ParamType, StageSpec
+from darq_xray.common import roi as R
+from darq_xray.config.models import Param, ParamType, StageSpec
 
 STO2_DARFIX = "105,230,1832,1266"
 

@@ -3,7 +3,7 @@
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Spec:** `docs/superpowers/specs/2026-08-17-busy-indication-design.md` (approved 2026-08-17).
-**Repo:** `dfxm_pipeline`. Runs AFTER the trace-autoscale/collisions plan (`2026-08-17-trace-autoscale-collisions-design.md`) is merged — rebase/verify the baseline first.
+**Repo:** `darq_xray`. Runs AFTER the trace-autoscale/collisions plan (`2026-08-17-trace-autoscale-collisions-design.md`) is merged — rebase/verify the baseline first.
 
 ## Goal
 

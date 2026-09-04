@@ -12,9 +12,9 @@ import pytest
 pytest.importorskip("PySide6")
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
-from gui.viewers import LoadedVolume, VolumeSourceSpec  # noqa: E402
-from gui.widgets.viewer3d_window import Viewer3DWindow  # noqa: E402
-from gui.widgets.volume3d import Volume3DPanel  # noqa: E402
+from darq_xray.gui.viewers import LoadedVolume, VolumeSourceSpec  # noqa: E402
+from darq_xray.gui.widgets.viewer3d_window import Viewer3DWindow  # noqa: E402
+from darq_xray.gui.widgets.volume3d import Volume3DPanel  # noqa: E402
 
 _app = QApplication.instance() or QApplication([])
 
@@ -62,7 +62,9 @@ def _wide_spec():
 def test_window_opens_already_fitted_to_the_texture_limit(monkeypatch):
     """A volume over the limit renders blank; the viewer opens it coarsened
     instead, with the Downsample spin showing the factor in force."""
-    monkeypatch.setattr("gui.widgets.viewer3d_window.R3.volume_texture_limit", lambda *a, **kw: 6)
+    monkeypatch.setattr(
+        "darq_xray.gui.widgets.viewer3d_window.R3.volume_texture_limit", lambda *a, **kw: 6
+    )
     w = Viewer3DWindow(_wide_spec(), "visualize")
     w.load_and_render()
     assert w.scene.downsample == 2  # (2, 4, 4) -> 5 points <= 6
@@ -73,7 +75,7 @@ def test_window_opens_already_fitted_to_the_texture_limit(monkeypatch):
 
 def test_a_fitting_volume_opens_untouched(monkeypatch):
     monkeypatch.setattr(
-        "gui.widgets.viewer3d_window.R3.volume_texture_limit", lambda *a, **kw: 4096
+        "darq_xray.gui.widgets.viewer3d_window.R3.volume_texture_limit", lambda *a, **kw: 4096
     )
     w = Viewer3DWindow(_wide_spec(), "visualize")
     w.load_and_render()
@@ -104,7 +106,7 @@ def test_an_empty_volume_keeps_its_note_even_though_nothing_was_coarsened(monkey
     under any limit) and `rebuild` falls through to "no finite voxels after
     threshold/clip", blaming the threshold for an ROI that read nothing."""
     monkeypatch.setattr(
-        "gui.widgets.viewer3d_window.R3.volume_texture_limit", lambda *a, **kw: 2048
+        "darq_xray.gui.widgets.viewer3d_window.R3.volume_texture_limit", lambda *a, **kw: 2048
     )
     w = Viewer3DWindow(_empty_spec(), "visualize")
     w.load_and_render()
@@ -119,7 +121,7 @@ def test_driving_the_spin_keeps_the_empty_volume_note(monkeypatch):
     dropped them back onto "no finite voxels after threshold/clip" at the exact
     moment they reached for a control to fix it."""
     monkeypatch.setattr(
-        "gui.widgets.viewer3d_window.R3.volume_texture_limit", lambda *a, **kw: 2048
+        "darq_xray.gui.widgets.viewer3d_window.R3.volume_texture_limit", lambda *a, **kw: 2048
     )
     w = Viewer3DWindow(_empty_spec(), "visualize")
     w.load_and_render()
@@ -132,7 +134,9 @@ def test_driving_the_spin_keeps_the_empty_volume_note(monkeypatch):
 def test_driving_the_spin_clears_the_autofit_note(monkeypatch):
     """Spinning back to 1 must reproduce today's blank render, not keep
     explaining a coarsening that is no longer in force."""
-    monkeypatch.setattr("gui.widgets.viewer3d_window.R3.volume_texture_limit", lambda *a, **kw: 6)
+    monkeypatch.setattr(
+        "darq_xray.gui.widgets.viewer3d_window.R3.volume_texture_limit", lambda *a, **kw: 6
+    )
     w = Viewer3DWindow(_wide_spec(), "visualize")
     w.load_and_render()
     w._downsample_spin.setValue(1)
@@ -160,7 +164,9 @@ def _deep_spec():
 def test_an_unfittable_volume_gets_one_message_not_two(monkeypatch):
     """Showing the auto-fit note AND the oversize note put two blank-render
     warnings on one line that disagreed about the remedy."""
-    monkeypatch.setattr("gui.widgets.viewer3d_window.R3.volume_texture_limit", lambda *a, **kw: 8)
+    monkeypatch.setattr(
+        "darq_xray.gui.widgets.viewer3d_window.R3.volume_texture_limit", lambda *a, **kw: 8
+    )
     w = Viewer3DWindow(_deep_spec(), "visualize")
     w.load_and_render()
     text = w._status.text()
@@ -292,7 +298,8 @@ def test_camera_fields_build_cameraspec(monkeypatch):
     w.load_and_render()
     seen = {}
     monkeypatch.setattr(
-        "gui.widgets.viewer3d_window.R3.apply_camera", lambda pl, cam: seen.update(cam=cam)
+        "darq_xray.gui.widgets.viewer3d_window.R3.apply_camera",
+        lambda pl, cam: seen.update(cam=cam),
     )
     w._az_spin.setValue(30.0)
     w._el_spin.setValue(15.0)
@@ -326,7 +333,7 @@ def test_save_figure_writes_png(tmp_path, monkeypatch):
     w.load_and_render()
     fake_img = np.full((60, 80, 3), 200, dtype=np.uint8)
     monkeypatch.setattr(
-        "gui.widgets.viewer3d_window.R3.render_scene_image",
+        "darq_xray.gui.widgets.viewer3d_window.R3.render_scene_image",
         lambda scene, cam, window_size: (fake_img, 2.0),
     )
     out = tmp_path / "fig.png"
@@ -347,7 +354,7 @@ def test_finish_video_ok_reports_an_empty_scene():
 
 
 def test_finish_video_failed_shows_the_hint():
-    from dfxm.runner import Failed
+    from darq_xray.runner import Failed
 
     w = Viewer3DWindow(_spec(), "visualize")
     w.load_and_render()
@@ -361,7 +368,9 @@ def test_finish_video_failed_shows_the_hint():
 def test_rebuild_hints_at_an_oversize_volume(monkeypatch):
     w = Viewer3DWindow(_spec(), "visualize")
     w.load_and_render()
-    monkeypatch.setattr("gui.widgets.viewer3d_window.R3.volume_texture_limit", lambda *a, **kw: 2)
+    monkeypatch.setattr(
+        "darq_xray.gui.widgets.viewer3d_window.R3.volume_texture_limit", lambda *a, **kw: 2
+    )
     w.rebuild()
     if w._canvas.available:  # the status line only carries a scene when GL is up
         assert "texture limit" in w._status.text()

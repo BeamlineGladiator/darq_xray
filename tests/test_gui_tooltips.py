@@ -12,9 +12,13 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 
 _app = QApplication.instance() or QApplication([])
 
-from dfxm.config.models import Experiment  # noqa: E402
-from gui.bindings import STAGE_SPECS  # noqa: E402
-from gui.stage_view import EXPORT_TIP_DISABLED, EXPORT_TIP_ENABLED, StageView  # noqa: E402
+from darq_xray.config.models import Experiment  # noqa: E402
+from darq_xray.gui.bindings import STAGE_SPECS  # noqa: E402
+from darq_xray.gui.stage_view import (  # noqa: E402
+    EXPORT_TIP_DISABLED,
+    EXPORT_TIP_ENABLED,
+    StageView,
+)
 
 
 def _view(stage):
@@ -102,7 +106,7 @@ def test_starting_a_new_run_puts_the_exports_back_on_the_disabled_wording(monkey
         def cancel(self):
             pass
 
-    monkeypatch.setattr("gui.stage_view.StageRunner", _FakeRunner)
+    monkeypatch.setattr("darq_xray.gui.stage_view.StageRunner", _FakeRunner)
     view = _view("strain")
     view._enable_exports()
     assert view._export_btn.toolTip() == EXPORT_TIP_ENABLED  # precondition
@@ -123,7 +127,7 @@ def test_the_3d_tab_carries_a_tooltip_on_volume_stages():
 
 
 def test_the_left_panel_buttons_explain_themselves():
-    from gui.main_window import MainWindow
+    from darq_xray.gui.main_window import MainWindow
 
     win = MainWindow()
     assert win._pub_style_btn.toolTip().strip()

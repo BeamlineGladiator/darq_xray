@@ -3,14 +3,14 @@ requires = ["setuptools>=64"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "dfxm-pipeline"
+name = "darq_xray"
 version = "0.1.0"
-description = "GUI-driven DFXM (Dark-Field X-ray Microscopy) analysis pipeline for ESRF ID03 data"
+description = "DARQ — GUI-driven DFXM (Dark-Field X-ray Microscopy) analysis pipeline for ESRF ID03 data"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
 authors = [{ name = "Albert" }]
-keywords = ["dfxm", "esrf", "id03", "x-ray", "microscopy", "strain", "mosaicity"]
+keywords = ["darq", "dfxm", "esrf", "id03", "x-ray", "microscopy", "strain", "mosaicity"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Environment :: X11 Applications :: Qt",
@@ -41,14 +41,17 @@ dependencies = [
 [project.optional-dependencies]
 test = ["pytest>=7.0"]
 
-# Named explicitly, because this is a flat layout (dfxm/, gui/, tests/,
+[project.scripts]
+darq_xray = "darq_xray.gui.app:main"
+
+# Named explicitly, because this is a flat layout (darq_xray/, tests/,
 # experiments/, tools/, docs/ all sit side by side at the root). Setuptools'
 # auto-discovery refuses to guess here — "Multiple top-level packages
-# discovered in a flat-layout: ['gui', 'dfxm', 'experiments']" — and without
-# this table `pip install -e .` fails outright on a fresh clone. `tests` is a
-# package too but is deliberately not shipped.
+# discovered in a flat-layout: ['darq_xray', 'experiments', 'tests']" — and
+# without this table `pip install -e .` fails outright on a fresh clone.
+# `tests` is a package too but is deliberately not shipped.
 [tool.setuptools.packages.find]
-include = ["dfxm*", "gui*"]
+include = ["darq_xray*"]
 
 # Ruff conventions inherited from the parent repository: line length 100,
 # target py310, lint rules E (pycodestyle) / F (pyflakes) / I (isort).
@@ -67,8 +70,8 @@ ignore = ["E501"]
 quote-style = "double"
 
 [tool.pytest.ini_options]
-# Run-in-place (no install): make `dfxm` and `gui` importable from the
-# project root so `python3 -m pytest` works without `pip install -e`.
+# Run-in-place (no install): make `darq_xray` importable from the project
+# root so `python3 -m pytest` works without `pip install -e`.
 pythonpath = ["."]
 testpaths = ["tests"]
 # Silence two third-party deprecation warnings surfaced (not caused) by the

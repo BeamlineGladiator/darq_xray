@@ -13,8 +13,8 @@ from PySide6.QtCore import QPoint, QPointF, Qt  # noqa: E402
 from PySide6.QtGui import QWheelEvent  # noqa: E402
 from PySide6.QtWidgets import QApplication, QComboBox, QDoubleSpinBox, QSpinBox  # noqa: E402
 
-from dfxm.config.models import Param, ParamType  # noqa: E402
-from gui.widgets.param_form import ParamForm  # noqa: E402
+from darq_xray.config.models import Param, ParamType  # noqa: E402
+from darq_xray.gui.widgets.param_form import ParamForm  # noqa: E402
 
 
 def _wheel(widget, delta=120):

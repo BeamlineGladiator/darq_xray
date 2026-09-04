@@ -12,8 +12,8 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 
 _app = QApplication.instance() or QApplication([])
 
-from dfxm.config.models import Param, ParamType  # noqa: E402
-from gui.widgets.param_form import ParamForm  # noqa: E402
+from darq_xray.config.models import Param, ParamType  # noqa: E402
+from darq_xray.gui.widgets.param_form import ParamForm  # noqa: E402
 
 _PARAMS = (
     Param(

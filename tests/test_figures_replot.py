@@ -2,7 +2,7 @@ import h5py
 import numpy as np
 import pytest
 
-from dfxm.common import figures as F
+from darq_xray.common import figures as F
 
 
 def _write_vol(path, key="/chi/Center of mass", shape=(2, 4, 5)):
@@ -91,7 +91,7 @@ def test_load_middle_layer(tmp_path):
     import h5py
     import numpy as np
 
-    from dfxm.common.figures import load_middle_layer
+    from darq_xray.common.figures import load_middle_layer
 
     p = tmp_path / "vol.h5"
     with h5py.File(p, "w") as f:

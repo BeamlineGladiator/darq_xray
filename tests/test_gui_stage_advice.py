@@ -13,10 +13,10 @@ from PySide6.QtWidgets import QApplication, QLabel  # noqa: E402
 
 _app = QApplication.instance() or QApplication([])
 
-from dfxm.common.advisory import Advisory  # noqa: E402
-from dfxm.config.models import Experiment  # noqa: E402
-from gui.bindings import STAGE_SPECS  # noqa: E402
-from gui.stage_view import StageView  # noqa: E402
+from darq_xray.common.advisory import Advisory  # noqa: E402
+from darq_xray.config.models import Experiment  # noqa: E402
+from darq_xray.gui.bindings import STAGE_SPECS  # noqa: E402
+from darq_xray.gui.stage_view import StageView  # noqa: E402
 from tests.machine_fixtures import workstation_sw_gl  # noqa: E402
 from tests.qt_helpers import applied_theme  # noqa: E402
 
@@ -67,8 +67,8 @@ def test_form_changes_ask_the_advisor_for_a_refresh():
 
 from PySide6.QtWidgets import QMessageBox  # noqa: E402
 
-from dfxm.common.advice import RunPlan  # noqa: E402
-from dfxm.config.models import CostEstimate  # noqa: E402
+from darq_xray.common.advice import RunPlan  # noqa: E402
+from darq_xray.config.models import CostEstimate  # noqa: E402
 
 GB = 1024**3
 

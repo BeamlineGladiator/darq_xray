@@ -12,11 +12,11 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 
 _app = QApplication.instance() or QApplication([])
 
-from dfxm.common.eta import EtaEstimator  # noqa: E402
-from dfxm.config.models import Experiment  # noqa: E402
-from dfxm.runner import Progress  # noqa: E402
-from gui.bindings import STAGE_SPECS  # noqa: E402
-from gui.stage_view import StageView  # noqa: E402
+from darq_xray.common.eta import EtaEstimator  # noqa: E402
+from darq_xray.config.models import Experiment  # noqa: E402
+from darq_xray.gui.bindings import STAGE_SPECS  # noqa: E402
+from darq_xray.gui.stage_view import StageView  # noqa: E402
+from darq_xray.runner import Progress  # noqa: E402
 
 
 def _view_with_fake_clock():
@@ -97,7 +97,7 @@ def test_on_run_clears_progress_plain_too(monkeypatch):
         def cancel(self):
             pass
 
-    monkeypatch.setattr("gui.stage_view.StageRunner", _FakeRunner)
+    monkeypatch.setattr("darq_xray.gui.stage_view.StageRunner", _FakeRunner)
     view, _t = _view_with_fake_clock()
     view._handle(Progress(0.5, "stale step from a previous run"))
     assert view._progress_plain == "stale step from a previous run"

@@ -1,4 +1,4 @@
-"""Tests for dfxm.stages.strain — ccmth-only axial strain (cot method): numeric
+"""Tests for darq_xray.stages.strain — ccmth-only axial strain (cot method): numeric
 golden equivalence vs the legacy calc_axial_strain_v7_batch script (self-skips
 when the legacy file is absent), an independent cot-formula check, and the
 detrend-before-ROI ordering constraint.
@@ -15,7 +15,7 @@ import numpy as np
 import pytest
 from matplotlib.offsetbox import AnchoredOffsetbox
 
-from dfxm.stages import strain as S
+from darq_xray.stages import strain as S
 
 CCMTH_PATH = "/entry/ccmth/Center of mass/Center of mass"
 
@@ -247,7 +247,7 @@ def test_roi_out_of_bounds_raises_stage_user_error(tmp_path):
     """A ROI larger than the map (e.g. pre-filled from a different experiment's
     analysis window) must fail loudly with a StageUserError naming the ROI and
     the actual map shape, not silently crop to an empty/mismatched array."""
-    from dfxm.common.errors import StageUserError
+    from darq_xray.common.errors import StageUserError
 
     ccmth = _synthetic_ccmth(ny=40, nx=60)
     folder = tmp_path / "layer__1"
@@ -269,7 +269,7 @@ def test_roi_out_of_bounds_raises_stage_user_error(tmp_path):
 
 
 def test_apply_roi_out_of_bounds_raises_stage_user_error():
-    from dfxm.common.errors import StageUserError
+    from darq_xray.common.errors import StageUserError
 
     map_2d = np.zeros((40, 60))
     with pytest.raises(StageUserError):
@@ -294,7 +294,7 @@ def test_build_strain_map_legacy_has_no_scale_bar():
 
 
 def test_build_strain_map_style_adds_scale_bar():
-    from dfxm.common.plotting import PlotStyle
+    from darq_xray.common.plotting import PlotStyle
 
     fig = S.build_strain_map(
         np.random.rand(20, 30) * 1e-3,
@@ -314,7 +314,7 @@ def test_build_strain_histogram_returns_none_on_empty_data():
 def test_build_strain_histogram_styled_returns_figure():
     from matplotlib.figure import Figure
 
-    from dfxm.common.plotting import PlotStyle
+    from darq_xray.common.plotting import PlotStyle
 
     data = np.random.rand(10, 10) * 1e-3
     fig = S.build_strain_histogram(data, style=PlotStyle())
@@ -324,7 +324,7 @@ def test_build_strain_histogram_styled_returns_figure():
 def test_build_detrend_diag_styled_returns_figure():
     from matplotlib.figure import Figure
 
-    from dfxm.common.plotting import PlotStyle
+    from darq_xray.common.plotting import PlotStyle
 
     arr = np.random.rand(10, 15) * 0.002
     fig = S.build_detrend_diag(arr, arr * 0.9, arr * 0.1, style=PlotStyle())
@@ -334,8 +334,8 @@ def test_build_detrend_diag_styled_returns_figure():
 def test_strain_map_cmap_follows_style():
     import numpy as np
 
-    from dfxm.common.plotting import PlotStyle
-    from dfxm.stages.strain import build_strain_map
+    from darq_xray.common.plotting import PlotStyle
+    from darq_xray.stages.strain import build_strain_map
 
     strain = np.random.default_rng(0).standard_normal((6, 8)) * 1e-4
     fig = build_strain_map(strain, 0.152, 0.385, None, (None, None))
@@ -395,7 +395,7 @@ def test_strain_render_replot_writes_pngs_with_crop(tmp_path):
 
 
 def test_build_strain_map_axes_mode_none_map_only():
-    from dfxm.common.plotting import PlotStyle
+    from darq_xray.common.plotting import PlotStyle
 
     strain = np.linspace(-1e-4, 1e-4, 400).reshape(20, 20)
     fig = S.build_strain_map(

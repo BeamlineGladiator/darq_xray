@@ -1,4 +1,4 @@
-"""Tests for dfxm.stages.matched — (samy,samz) matching, background-subtracted
+"""Tests for darq_xray.stages.matched — (samy,samz) matching, background-subtracted
 frame loading, and pixel-aligned grayscale layer output.
 """
 
@@ -11,8 +11,8 @@ import h5py
 import numpy as np
 import pytest
 
-from dfxm.common.plotting import PlotStyle
-from dfxm.stages import matched as M
+from darq_xray.common.plotting import PlotStyle
+from darq_xray.stages import matched as M
 
 NF, H, W = 4, 6, 8
 
@@ -125,7 +125,7 @@ def _count_row_blocks(monkeypatch):
     Empty if `load_pco_ff_frame` never blocks at all — which is what a reverted
     `ds[:]` looks like — so the precondition assertions cannot pass vacuously.
     """
-    from dfxm.common import volumeio
+    from darq_xray.common import volumeio
 
     # Undo any earlier patch first, so a per-budget sweep wraps the pristine
     # function rather than the previous wrapper (which would leave every earlier
@@ -340,7 +340,7 @@ def test_matched_peak_does_not_follow_the_stack_size(tmp_path):
     del frames
 
     result = assert_peak_under(
-        "dfxm.stages.matched:run",
+        "darq_xray.stages.matched:run",
         {
             "raw_root": str(raw),
             "strain_pattern": "strain__*",
@@ -355,9 +355,9 @@ def test_matched_peak_does_not_follow_the_stack_size(tmp_path):
 
 
 def test_colormap_param_is_enum_dropdown():
-    from dfxm.common.plotting import CMAP_CHOICES
-    from dfxm.config.models import ParamType
-    from dfxm.stages.matched import STAGE
+    from darq_xray.common.plotting import CMAP_CHOICES
+    from darq_xray.config.models import ParamType
+    from darq_xray.stages.matched import STAGE
 
     p = next(q for q in STAGE.params if q.name == "colormap")
     assert p.type is ParamType.ENUM
@@ -424,7 +424,7 @@ def test_the_export_rebuild_resolves_the_same_colormap_as_the_run(tmp_path, monk
 
 
 def test_the_stage_colormap_is_still_the_fallback_without_a_group():
-    from dfxm.common.plotting import resolve_cmap
+    from darq_xray.common.plotting import resolve_cmap
 
     assert resolve_cmap(PlotStyle(cmap_raw="turbo"), None, fallback="magma") == "magma"
 
@@ -436,7 +436,7 @@ def test_a_headless_run_falls_back_to_the_stage_colormap(tmp_path, monkeypatch):
     must be withheld on this branch or the dropdown — and the `--colormap` CLI
     flag behind it — would silently stop working.
     """
-    from dfxm.common.plotting import style_from_params
+    from darq_xray.common.plotting import style_from_params
 
     params = _one_layer_setup(tmp_path)
     params.pop("plot_style")
@@ -488,5 +488,5 @@ def test_the_estimator_literals_match_the_spec_defaults():
     for key, literal in literals.items():
         assert literal == defaults[key], (
             f"{key}: estimator falls back to {literal!r} but the spec default is "
-            f"{defaults[key]!r} — update dfxm/stages/matched.py to match"
+            f"{defaults[key]!r} — update darq_xray/stages/matched.py to match"
         )

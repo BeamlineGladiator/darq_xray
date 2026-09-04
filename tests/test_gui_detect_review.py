@@ -12,14 +12,14 @@ pytest.importorskip("PySide6")
 from PySide6.QtCore import Qt  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
-from dfxm.config.detect import Detection  # noqa: E402
-from dfxm.config.models import Experiment  # noqa: E402
+from darq_xray.config.detect import Detection  # noqa: E402
+from darq_xray.config.models import Experiment  # noqa: E402
 
 DEFAULTS = Experiment().to_dict()
 
 
 def _dlg(detections, current=None):
-    from gui.widgets.detect_review import DetectReviewDialog
+    from darq_xray.gui.widgets.detect_review import DetectReviewDialog
 
     _ = QApplication.instance() or QApplication([])
     cur = dict(DEFAULTS)

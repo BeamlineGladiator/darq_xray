@@ -19,11 +19,11 @@ import os
 import h5py
 import numpy as np
 
-from dfxm.stages import mosaicity as Mosaicity
-from dfxm.stages import profiles as Profiles
-from dfxm.stages import slices as Slices
-from dfxm.stages import strain as Strain
-from dfxm.stages import visualize as Visualize
+from darq_xray.stages import mosaicity as Mosaicity
+from darq_xray.stages import profiles as Profiles
+from darq_xray.stages import slices as Slices
+from darq_xray.stages import strain as Strain
+from darq_xray.stages import visualize as Visualize
 
 
 def _ccmth(ny=40, nx=60, seed=1):

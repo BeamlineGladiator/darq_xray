@@ -1,10 +1,10 @@
-"""Tests for dfxm.common.sort."""
+"""Tests for darq_xray.common.sort."""
 
 from __future__ import annotations
 
 import os
 
-from dfxm.common.sort import find_matching_folders, natural_sort_key
+from darq_xray.common.sort import find_matching_folders, natural_sort_key
 
 
 def test_natural_sort_orders_numbers_numerically():

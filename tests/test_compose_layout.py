@@ -1,13 +1,13 @@
-"""Layout solver, sizing pass — dfxm.compose.layout."""
+"""Layout solver, sizing pass — darq_xray.compose.layout."""
 
 import numpy as np
 import pytest
 from matplotlib.figure import Figure
 
-from dfxm.common.errors import StageUserError
-from dfxm.common.plotting import PlotStyle, measured_box_in
-from dfxm.compose.adapters import PanelData
-from dfxm.compose.layout import (
+from darq_xray.common.errors import StageUserError
+from darq_xray.common.plotting import PlotStyle, measured_box_in
+from darq_xray.compose.adapters import PanelData
+from darq_xray.compose.layout import (
     SizedCell,
     autoscale_traces,
     measure_cells,
@@ -15,7 +15,7 @@ from dfxm.compose.layout import (
     size_cells,
     trace_column_targets,
 )
-from dfxm.compose.recipe import (
+from darq_xray.compose.recipe import (
     Col,
     ComposeStyle,
     FigureRecipe,
@@ -564,8 +564,8 @@ def test_spacer_and_text_cells_occupy_their_boxes():
 
 
 def test_apply_trace_aspect_sets_height_from_width_skipping_pins():
-    from dfxm.compose.layout import SizedCell, apply_trace_aspect
-    from dfxm.compose.recipe import ComposeStyle
+    from darq_xray.compose.layout import SizedCell, apply_trace_aspect
+    from darq_xray.compose.recipe import ComposeStyle
 
     t = SizedCell(object(), None, "trace", 3.0, 1.0)
     pinned = SizedCell(object(), None, "trace", 3.0, 1.0, pinned=True)
@@ -606,7 +606,7 @@ def test_col_gap_cm_overrides_global_gutter_between_its_children():
 
 
 def test_row_col_gap_cm_round_trips_and_validated():
-    from dfxm.compose.recipe import recipe_from_json, recipe_to_json, validate_recipe
+    from darq_xray.compose.recipe import recipe_from_json, recipe_to_json, validate_recipe
 
     p = PanelDef("m", PanelSource("/x.h5", "map_layer", {"stage": "strain"}))
     r = FigureRecipe(
@@ -648,7 +648,7 @@ def test_col_fill_height_stretches_its_traces_to_the_row_height():
 
 
 def test_fill_flags_round_trip_and_pinned_or_map_cells_untouched():
-    from dfxm.compose.recipe import recipe_from_json, recipe_to_json
+    from darq_xray.compose.recipe import recipe_from_json, recipe_to_json
 
     p = PanelDef("m", PanelSource("/x.h5", "map_layer", {"stage": "strain"}))
     r = FigureRecipe(

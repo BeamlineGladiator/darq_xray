@@ -13,7 +13,7 @@ import pytest
 pytest.importorskip("PySide6")
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
-from dfxm.stages import slices as sl  # noqa: E402
+from darq_xray.stages import slices as sl  # noqa: E402
 
 
 def _mini(path, offsets=(-2.0, 0.0, 2.0)):
@@ -40,7 +40,7 @@ def _mini(path, offsets=(-2.0, 0.0, 2.0)):
 
 
 def test_mark_toggle_and_save(tmp_path):
-    from gui.widgets.mark_planes import MarkPlanesDialog
+    from darq_xray.gui.widgets.mark_planes import MarkPlanesDialog
 
     _app = QApplication.instance() or QApplication([])
     h5 = _mini(tmp_path / "s.h5")
@@ -65,7 +65,7 @@ def test_mark_toggle_and_save(tmp_path):
 
 
 def test_dialog_loads_existing_marks(tmp_path):
-    from gui.widgets.mark_planes import MarkPlanesDialog
+    from darq_xray.gui.widgets.mark_planes import MarkPlanesDialog
 
     _app = QApplication.instance() or QApplication([])
     h5 = _mini(tmp_path / "s.h5")
@@ -79,7 +79,7 @@ def test_dialog_loads_existing_marks(tmp_path):
 
 def test_save_succeeds_but_reopen_fails_still_commits(tmp_path, monkeypatch):
     """Write OK + reopen failure: saved=True, not dirty (no false discard prompt)."""
-    import gui.widgets.mark_planes as mp
+    import darq_xray.gui.widgets.mark_planes as mp
 
     _app = QApplication.instance() or QApplication([])
     h5 = _mini(tmp_path / "s.h5")
@@ -107,8 +107,8 @@ def test_save_succeeds_but_reopen_fails_still_commits(tmp_path, monkeypatch):
 
 def test_save_reopen_failure_warns_once_and_disables_nav(tmp_path, monkeypatch):
     """write_marks fails AND reopen() also fails: one warning, no crash, nav disabled."""
-    import gui.widgets.mark_planes as mp
-    from dfxm.common.errors import StageUserError
+    import darq_xray.gui.widgets.mark_planes as mp
+    from darq_xray.common.errors import StageUserError
 
     _app = QApplication.instance() or QApplication([])
     h5 = _mini(tmp_path / "s.h5")

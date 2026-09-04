@@ -13,7 +13,7 @@ pytest.importorskip("PySide6")
 from PySide6.QtCore import Qt  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
-from gui.viewers import append_line_job  # noqa: E402
+from darq_xray.gui.viewers import append_line_job  # noqa: E402
 
 
 def test_append_line_job_appends_never_updates():
@@ -42,7 +42,7 @@ def test_append_line_job_minimal_and_bad_json():
 
 
 def test_jobs_from_marks_dialog_selection():
-    from gui.widgets.jobs_from_marks import JobsFromMarksDialog
+    from darq_xray.gui.widgets.jobs_from_marks import JobsFromMarksDialog
 
     _app = QApplication.instance() or QApplication([])
     dlg = JobsFromMarksDialog({"b_slice": [1.0], "a_slice": [-2.0, 0.0]})

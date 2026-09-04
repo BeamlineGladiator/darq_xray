@@ -15,8 +15,8 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 
 _app = QApplication.instance() or QApplication([])
 
-from dfxm.config.models import CostEstimate, Param, ParamType, StageSpec  # noqa: E402
-from gui import advisor as A  # noqa: E402
+from darq_xray.config.models import CostEstimate, Param, ParamType, StageSpec  # noqa: E402
+from darq_xray.gui import advisor as A  # noqa: E402
 
 GB = 1024**3
 
@@ -190,7 +190,7 @@ def test_gl_is_not_probed_until_asked(monkeypatch):
 
 
 def test_once_probed_the_cached_profile_carries_gl(monkeypatch):
-    from dfxm.common.machine import GLInfo
+    from darq_xray.common.machine import GLInfo
 
     monkeypatch.setattr(
         A.machine,
@@ -211,7 +211,7 @@ def test_probe_gl_async_uses_the_bounded_timeout_not_probe_gls_120s_default(monk
     timeout of its own by `MainWindow.closeEvent`'s `wait_for_workers()`, so a
     hanging driver would otherwise make closing the window look frozen for up
     to `machine.probe_gl`'s full 120 s default."""
-    from dfxm.common.machine import GLInfo
+    from darq_xray.common.machine import GLInfo
 
     seen_kwargs: dict = {}
 

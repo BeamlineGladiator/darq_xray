@@ -1,4 +1,4 @@
-"""Bounded-memory volume IO (dfxm/common/volumeio.py)."""
+"""Bounded-memory volume IO (darq_xray/common/volumeio.py)."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ import h5py
 import numpy as np
 import pytest
 
-from dfxm.common import volumeio
+from darq_xray.common import volumeio
 
 
 @pytest.fixture

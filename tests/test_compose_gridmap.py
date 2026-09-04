@@ -1,9 +1,9 @@
-"""layout_to_grid / flatten_panel_ids / grid_to_layout — dfxm.compose.gridmap."""
+"""layout_to_grid / flatten_panel_ids / grid_to_layout — darq_xray.compose.gridmap."""
 
 import pytest
 
-from dfxm.compose.gridmap import flatten_panel_ids, grid_to_layout, layout_to_grid
-from dfxm.compose.recipe import Col, PanelDef, PanelRef, PanelSource, Row, Spacer, TextCell
+from darq_xray.compose.gridmap import flatten_panel_ids, grid_to_layout, layout_to_grid
+from darq_xray.compose.recipe import Col, PanelDef, PanelRef, PanelSource, Row, Spacer, TextCell
 
 
 def _panels(*pids):
@@ -79,7 +79,7 @@ def test_flatten_panel_ids_dfs_order():
 
 
 def test_panel_group_hint_covers_kinds():
-    from dfxm.compose.gridmap import panel_group_hint
+    from darq_xray.compose.gridmap import panel_group_hint
 
     def p(kind, sel):
         return PanelDef("x", PanelSource("/x.h5", kind, sel))

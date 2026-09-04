@@ -2,8 +2,8 @@
 
 import pytest
 
-from dfxm.common.errors import StageUserError
-from dfxm.stages import concat, mosaicity, profiles, strain
+from darq_xray.common.errors import StageUserError
+from darq_xray.stages import concat, mosaicity, profiles, strain
 
 
 def test_concat_single_requires_input_folder():

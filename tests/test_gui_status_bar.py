@@ -12,9 +12,9 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 
 _app = QApplication.instance() or QApplication([])
 
-from dfxm.common.advice import human_bytes  # noqa: E402
-from gui import advisor as A  # noqa: E402
-from gui.main_window import MainWindow  # noqa: E402
+from darq_xray.common.advice import human_bytes  # noqa: E402
+from darq_xray.gui import advisor as A  # noqa: E402
+from darq_xray.gui.main_window import MainWindow  # noqa: E402
 from tests.machine_fixtures import tiny_ram, windows_no_vtk, workstation_sw_gl  # noqa: E402
 
 

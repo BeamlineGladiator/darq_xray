@@ -82,8 +82,8 @@ def _sleeper(_params, progress=None):
 
 
 def main() -> int:
-    from dfxm.runner import StageRunner
-    from gui.main_window import MainWindow
+    from darq_xray.gui.main_window import MainWindow
+    from darq_xray.runner import StageRunner
 
     app = QApplication.instance() or QApplication([])
     win = MainWindow()
@@ -155,8 +155,8 @@ def main() -> int:
     print("[4] strain ran through the UI: status ✓; strain-map image previewed")
 
     # Export button wired on the Output tab after a successful strain run.
-    from dfxm.common.plotting import PUBLICATION_STYLE as _PUB_STYLE
-    from gui.widgets.export_dialog import ExportDialog as _ExportDialog
+    from darq_xray.common.plotting import PUBLICATION_STYLE as _PUB_STYLE
+    from darq_xray.gui.widgets.export_dialog import ExportDialog as _ExportDialog
 
     assert hasattr(sview, "_export_btn"), "StageView missing _export_btn"
     assert sview._export_btn.isEnabled(), "Export button should be enabled after a successful run"
@@ -190,7 +190,7 @@ def main() -> int:
     # Confirm field-checkbox API is present and documented on the dialog class.
     # No real oblique_slices.h5 available here; full behaviour coverage lives in
     # tests/test_gui_line_picker_fields.py.
-    from gui.widgets.line_picker import LinePickerDialog
+    from darq_xray.gui.widgets.line_picker import LinePickerDialog
 
     assert callable(getattr(LinePickerDialog, "selected_fields", None)), (
         "LinePickerDialog must expose callable selected_fields()"
@@ -372,9 +372,9 @@ def main() -> int:
     import numpy as _np
     from matplotlib.figure import Figure as _Fig
 
-    from dfxm.common import figures as _figs
-    from dfxm.common.plotting import PUBLICATION_STYLE
-    from gui.widgets.export_dialog import ExportDialog
+    from darq_xray.common import figures as _figs
+    from darq_xray.common.plotting import PUBLICATION_STYLE
+    from darq_xray.gui.widgets.export_dialog import ExportDialog
 
     # Build a synthetic one-figure catalog so the smoke doesn't need a real run:
 
@@ -437,8 +437,8 @@ def main() -> int:
     print("[15] plot-kind round-trip, filename sanitisation, build-raising spec")
 
     # [16] Session global style: MainWindow.global_plot_style() + StyleControls + ExportDialog.
-    from dfxm.common.plotting import PlotStyle as _PlotStyle
-    from gui.widgets.export_dialog import StyleControls as _StyleControls
+    from darq_xray.common.plotting import PlotStyle as _PlotStyle
+    from darq_xray.gui.widgets.export_dialog import StyleControls as _StyleControls
 
     # global_plot_style() returns a PlotStyle (a copy of PUBLICATION_STYLE).
     session_style = win.global_plot_style()
@@ -495,8 +495,8 @@ def main() -> int:
     # [17] ExportDialog._on_reset re-syncs controls via set_style().
     from dataclasses import replace as _replace
 
-    from dfxm.common.plotting import PUBLICATION_STYLE as _PUB_STYLE2
-    from gui.widgets.export_dialog import ExportDialog as _ExportDialog2
+    from darq_xray.common.plotting import PUBLICATION_STYLE as _PUB_STYLE2
+    from darq_xray.gui.widgets.export_dialog import ExportDialog as _ExportDialog2
 
     def _mk3(style):
         from matplotlib.figure import Figure as _Fig3
@@ -531,7 +531,7 @@ def main() -> int:
     import glob as _glob
     import tempfile as _tempfile
 
-    from dfxm.common.figures import FigureSpec as _FigureSpec
+    from darq_xray.common.figures import FigureSpec as _FigureSpec
 
     strain_view = win._views["strain"]
     assert hasattr(strain_view, "export_all"), "StageView missing export_all"
@@ -611,8 +611,8 @@ def main() -> int:
     # [19] save_spec writes atomically: a per-format failure leaves no partial
     # (".part") or corrupt file at the target, the good formats still write, and
     # the built Figure is cleared afterwards.
-    from dfxm.common.plotting import PlotStyle as _PS19
-    from gui.widgets.export_dialog import save_spec as _save_spec19
+    from darq_xray.common.plotting import PlotStyle as _PS19
+    from darq_xray.gui.widgets.export_dialog import save_spec as _save_spec19
 
     _built19 = {}
 
@@ -636,8 +636,8 @@ def main() -> int:
     # [20] Theme: light by default, toggling restyles the app + embedded canvases.
     from matplotlib.colors import to_hex
 
-    from gui import theme as _theme
-    from gui.widgets.mpl_canvas import MplCanvas as _MplCanvas
+    from darq_xray.gui import theme as _theme
+    from darq_xray.gui.widgets.mpl_canvas import MplCanvas as _MplCanvas
 
     tc = _theme.ThemeController.instance()
     tc.set_mode("light")
@@ -666,7 +666,7 @@ def main() -> int:
     from PySide6.QtWidgets import QSplitter as _QSplitter
     from PySide6.QtWidgets import QWidget as _QWidget
 
-    from gui.window_state import WindowState as _WindowState
+    from darq_xray.gui.window_state import WindowState as _WindowState
 
     _ws = _WindowState(_QSettings())
     _a = _QSplitter()
@@ -713,7 +713,7 @@ def main() -> int:
     from PySide6.QtWidgets import QSplitter as _QSplitter22
     from PySide6.QtWidgets import QWidget as _QWidget22
 
-    from gui.window_state import WindowState as _WindowState22
+    from darq_xray.gui.window_state import WindowState as _WindowState22
 
     _iso = _QSettings22()
     _ws22 = _WindowState22(_iso)
@@ -752,7 +752,7 @@ def main() -> int:
 
     # [23] publication-style controls expose the four colormap dropdowns and
     # mutate the session style in place.
-    from gui.widgets.export_dialog import StyleControls
+    from darq_xray.gui.widgets.export_dialog import StyleControls
 
     style = win.global_plot_style()
     assert style.cmap_mosa_com == "fast"  # new default
@@ -767,7 +767,7 @@ def main() -> int:
     print("[23] StyleControls colormap dropdowns mutate the session style")
 
     # [24] _on_run injects the live publication style into the worker params.
-    import gui.stage_view as _SV
+    import darq_xray.gui.stage_view as _SV
 
     captured: dict = {}
     _real_runner = _SV.StageRunner
@@ -800,7 +800,7 @@ def main() -> int:
     # [25] the style (incl. colormaps) round-trips through QSettings on save.
     from PySide6.QtCore import QSettings as _QSettings25
 
-    from dfxm.common.plotting import style_from_json as _style_from_json
+    from darq_xray.common.plotting import style_from_json as _style_from_json
 
     win._save_plot_style()
     restored = _style_from_json(_QSettings25().value("plot_style", ""))
@@ -812,7 +812,7 @@ def main() -> int:
     import h5py as _h5py26
     import numpy as _np26
 
-    from gui.widgets.slice_replot import SliceReplotDialog as _SRD
+    from darq_xray.gui.widgets.slice_replot import SliceReplotDialog as _SRD
 
     _slice_tmp = tempfile.mkdtemp()
     _h5_path26 = os.path.join(_slice_tmp, "oblique_slices.h5")
@@ -860,10 +860,10 @@ def main() -> int:
     # [27] Per-experiment form state saves on edit/flush and restores in a fresh StageView.
     from PySide6.QtCore import QSettings as _QSettings27
 
-    from dfxm.config.models import Experiment as _Experiment27
-    from gui.bindings import STAGE_SPECS as _SPECS27
-    from gui.form_state import FormStateStore as _FSS27
-    from gui.stage_view import StageView as _SV27
+    from darq_xray.config.models import Experiment as _Experiment27
+    from darq_xray.gui.bindings import STAGE_SPECS as _SPECS27
+    from darq_xray.gui.form_state import FormStateStore as _FSS27
+    from darq_xray.gui.stage_view import StageView as _SV27
 
     _state_ini = os.path.join(tempfile.mkdtemp(), "form_state.ini")  # isolated from real settings
     _store27 = _FSS27(_QSettings27(_state_ini, _QSettings27.Format.IniFormat))
@@ -893,8 +893,8 @@ def main() -> int:
     print("[28] schema-driven Pick ROI… buttons present on roi-grouped stages (visualize, strain)")
 
     # [29] StyleControls: Scale (µm/cm) field parses defensively and mutates the style.
-    from dfxm.common.plotting import PlotStyle as _PS29
-    from gui.widgets.export_dialog import StyleControls as _SC29
+    from darq_xray.common.plotting import PlotStyle as _PS29
+    from darq_xray.gui.widgets.export_dialog import StyleControls as _SC29
 
     _st29 = _PS29()
     _sc29 = _SC29(_st29)
@@ -909,7 +909,7 @@ def main() -> int:
     print("[29] StyleControls Scale (µm/cm) field mutates the style defensively")
 
     # [30] Planes-first slices replot: filter narrows visibility; check-all-visible selects.
-    from gui.widgets.slice_replot import SliceReplotDialog as _SRD30
+    from darq_xray.gui.widgets.slice_replot import SliceReplotDialog as _SRD30
 
     _dlg30 = _SRD30(_h5_path26, style=None, out_default=_out26)  # reuse [26]'s file
     _dlg30.show()
@@ -925,7 +925,7 @@ def main() -> int:
 
     # [31] Planes-first generic replot dialog (strain/mosaicity/rocking): product
     # selection across checked layers x checked quantity groups + filter hint.
-    from gui.widgets.replot_dialog import ReplotDialog as _RD31
+    from darq_xray.gui.widgets.replot_dialog import ReplotDialog as _RD31
 
     class _G31:
         def __init__(self, key, labels):
@@ -969,7 +969,7 @@ def main() -> int:
 
     from PySide6.QtCore import Qt as _Qt32
 
-    from gui.widgets.pin_planes import PinPlanesDialog as _PPD32
+    from darq_xray.gui.widgets.pin_planes import PinPlanesDialog as _PPD32
 
     assert win._views["slices"]._pin_btn is not None, "slices view missing _pin_btn"
     _dlg32 = _PPD32(_h5_path26)
@@ -982,7 +982,7 @@ def main() -> int:
     import h5py as _h5py33
     import numpy as _np33
 
-    from gui.widgets.profiles_replot import ProfilesReplotDialog as _PRD33
+    from darq_xray.gui.widgets.profiles_replot import ProfilesReplotDialog as _PRD33
 
     profiles_view = win._views["profiles"]
     assert profiles_view._replot_btn is not None, "profiles view missing _replot_btn"
@@ -1041,8 +1041,8 @@ def main() -> int:
 
     # [34] Experiment editor ROI: derived read-out translates map -> detector px
     # and validation catches an inverted analysis pair.
-    from dfxm.config.models import Experiment as _Exp34
-    from gui.experiment_panel import ExperimentDialog as _ED34
+    from darq_xray.config.models import Experiment as _Exp34
+    from darq_xray.gui.experiment_panel import ExperimentDialog as _ED34
 
     _dlg34 = _ED34(
         _Exp34(darfix_roi="105,230,1832,1266", analysis_roi_x="0,1832", analysis_roi_y="400,1100")
@@ -1069,7 +1069,7 @@ def main() -> int:
             mainx=-5000.0, obx=273.0, ffsel=-60.0, ffz=2100.0, lenssel=0.0, ccmth=7.1
         ).items():
             _pos35.create_dataset(_k35, data=_v35)
-    from gui.widgets.detect_review import DetectReviewDialog as _DRD35
+    from darq_xray.gui.widgets.detect_review import DetectReviewDialog as _DRD35
 
     _dlg35 = _ED34(_Exp34(raw_root=_raw35))
     _rows35 = _dlg35._detect(_dlg35._form.values())
@@ -1085,9 +1085,9 @@ def main() -> int:
     print("[35] initialize-from-data: detectors → review pre-checks → applied into the form")
 
     # [36] Axes mode: StyleControls dropdown mutates axes_mode; sync restores; JSON round-trips
-    from dfxm.common.plotting import PlotStyle as _PS36
-    from dfxm.common.plotting import style_from_json as _sfj36
-    from dfxm.common.plotting import style_to_json as _stj36
+    from darq_xray.common.plotting import PlotStyle as _PS36
+    from darq_xray.common.plotting import style_from_json as _sfj36
+    from darq_xray.common.plotting import style_to_json as _stj36
 
     s36 = _PS36()
     sc36 = _StyleControls(s36)
@@ -1106,8 +1106,8 @@ def main() -> int:
     import h5py as _h5b
     import numpy as _npb
 
-    from dfxm.compose.recipe import PanelDef as _PD
-    from dfxm.compose.recipe import PanelSource as _PS
+    from darq_xray.compose.recipe import PanelDef as _PD
+    from darq_xray.compose.recipe import PanelSource as _PS
 
     _bdir = tempfile.mkdtemp()
     _bh5 = os.path.join(_bdir, "obl.h5")
@@ -1141,7 +1141,7 @@ def main() -> int:
     res = fb._last_outcome
     assert res is not None and res.n_rendered == 1, fb._notes_label.text()
     _bout = os.path.join(_bdir, "export")
-    import gui.figure_builder as _fbmod
+    import darq_xray.gui.figure_builder as _fbmod
 
     _orig_save = _fbmod.QFileDialog.getSaveFileName
     # the export dialog names the file too — a typed name, not the recipe's
@@ -1162,8 +1162,8 @@ def main() -> int:
 
     # [38] Mark planes… dialog: reuses [26]'s file, marks one plane, Save
     # persists into /marks; the button is wired on the slices stage view.
-    from dfxm.stages import slices as _sl38
-    from gui.widgets.mark_planes import MarkPlanesDialog as _MPD38
+    from darq_xray.gui.widgets.mark_planes import MarkPlanesDialog as _MPD38
+    from darq_xray.stages import slices as _sl38
 
     assert win._views["slices"]._mark_btn is not None, "slices view missing _mark_btn"
     _dlg38 = _MPD38(_h5_path26)  # reuse [26]'s file
@@ -1179,7 +1179,7 @@ def main() -> int:
     # checklist dialog sorts by slice/offset and reports only checked rows.
     from PySide6.QtCore import Qt as _Qt39
 
-    from gui.widgets.jobs_from_marks import JobsFromMarksDialog as _JFMD39
+    from darq_xray.gui.widgets.jobs_from_marks import JobsFromMarksDialog as _JFMD39
 
     assert win._views["profiles"]._jobs_marks_btn is not None, (
         "profiles view missing _jobs_marks_btn"
@@ -1192,8 +1192,8 @@ def main() -> int:
 
     # [40] figure builder interactive: arranger grid, Arrange… apply, united
     # colorbar mode, two-step Add-panels dialog.
-    from gui.widgets.layout_arranger import ArrangeDialog, LayoutArranger
-    from gui.widgets.panel_picker import AddPanelDialog as _APD40
+    from darq_xray.gui.widgets.layout_arranger import ArrangeDialog, LayoutArranger
+    from darq_xray.gui.widgets.panel_picker import AddPanelDialog as _APD40
 
     _la40 = LayoutArranger()
     _la40.set_grid([["s0"]], {"s0": {"title": "strain slice", "group": "strain"}})
@@ -1247,8 +1247,8 @@ def main() -> int:
     # [41] 3-D viewer: launcher on the visualize view opens a Viewer3DWindow;
     # controls mutate the scene; close prunes the window list (offscreen: the
     # GL canvas degrades to its placeholder and export buttons disable).
-    from gui.viewers import LoadedVolume as _LV41
-    from gui.viewers import VolumeSourceSpec as _VSS41
+    from darq_xray.gui.viewers import LoadedVolume as _LV41
+    from darq_xray.gui.viewers import VolumeSourceSpec as _VSS41
 
     _lv41 = _LV41(np.ones((2, 3, 4)), (0.15, 0.38, 2.0), "magma", (0.5, 1.0), "I", "raw")
     _spec41 = _VSS41(
@@ -1298,7 +1298,7 @@ def main() -> int:
 
     # [43] System check dialog: rows()/as_text() are populated from a real
     # machine measurement; the dialog closes cleanly.
-    from gui.widgets.system_check import SystemCheckDialog as _SCD43
+    from darq_xray.gui.widgets.system_check import SystemCheckDialog as _SCD43
 
     scdlg43 = _SCD43(win)
     scdlg43.show()
@@ -1316,7 +1316,7 @@ def main() -> int:
     # The plant is stashed and undone (including a re-_finish_ok, which also
     # rewrites the Results text) so later steps inherit the real captured
     # style rather than this step's fake one.
-    from dfxm.common.plotting import PlotStyle as _PS44
+    from darq_xray.common.plotting import PlotStyle as _PS44
 
     sview44 = win._views["strain"]
     _stashed44 = sview44._last_style
@@ -1339,7 +1339,7 @@ def main() -> int:
     # summary instead of raw JSON, and the summary tracks whatever is written
     # into the field — which is exactly what the two picker call sites do.
     # _on_edit is deliberately NOT called: it opens a modal dialog.
-    from gui.widgets.jobs_summary import JobsSummaryEditor as _JSE45
+    from darq_xray.gui.widgets.jobs_summary import JobsSummaryEditor as _JSE45
 
     pview45 = win._views["profiles"]
     ed45 = pview45._form._editors["jobs_json"]

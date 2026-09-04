@@ -1,9 +1,9 @@
-"""Deterministic axes placement (trace fixed-scale engine) — dfxm.common.plotting."""
+"""Deterministic axes placement (trace fixed-scale engine) — darq_xray.common.plotting."""
 
 import numpy as np
 from matplotlib.figure import Figure
 
-from dfxm.common.plotting import (
+from darq_xray.common.plotting import (
     AxesMargins,
     PlotStyle,
     box_drift_note,
@@ -132,7 +132,7 @@ def test_trace_fixed_box_height_clamp(caplog):
     import logging
 
     st = PlotStyle(trace_scale_um_per_cm=10.0, trace_height_cm=100.0)  # 100/2.54 = 39.4 in
-    with caplog.at_level(logging.WARNING, logger="dfxm.common.plotting"):
+    with caplog.at_level(logging.WARNING, logger="darq_xray.common.plotting"):
         w, h, s = trace_fixed_box(st, 44.941256)
     assert h == 30.0
     assert abs(w - 44.941256 / 10.0 / 2.54) < 1e-9  # width unchanged
@@ -155,7 +155,7 @@ def test_place_axes_stack_left_aligned_exact_boxes():
     for ax, lab in zip(axs, labels):
         ax.plot([0, 1], [0, 1])
         ax.set_ylabel(lab)
-    from dfxm.common.plotting import place_axes_stack
+    from darq_xray.common.plotting import place_axes_stack
 
     boxes = [(2.5, 1.6), (1.4, 1.0), (2.0, 1.0)]
     place_axes_stack(fig, [(ax, w, h, (), None) for ax, (w, h) in zip(axs, boxes)])

@@ -1,6 +1,6 @@
-"""Qt-free ETA helpers (dfxm/common/eta.py)."""
+"""Qt-free ETA helpers (darq_xray/common/eta.py)."""
 
-from dfxm.common.eta import EtaEstimator, format_eta
+from darq_xray.common.eta import EtaEstimator, format_eta
 
 
 def test_format_eta_quiet_below_thresholds():

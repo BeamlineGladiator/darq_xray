@@ -1,4 +1,4 @@
-"""Tests for dfxm.stages.slices — plane geometry/sampling and end-to-end output."""
+"""Tests for darq_xray.stages.slices — plane geometry/sampling and end-to-end output."""
 
 from __future__ import annotations
 
@@ -12,9 +12,9 @@ import numpy as np
 import pytest
 from matplotlib.offsetbox import AnchoredOffsetbox
 
-from dfxm.common.errors import StageUserError
-from dfxm.common.plotting import PlotStyle
-from dfxm.stages import slices as SL
+from darq_xray.common.errors import StageUserError
+from darq_xray.common.plotting import PlotStyle
+from darq_xray.stages import slices as SL
 
 L, NY, NX = 4, 6, 8
 
@@ -481,7 +481,7 @@ def test_run_without_style_uses_group_defaults(tmp_path):
 
 
 def test_figures_re_resolve_cmap_by_kind(tmp_path):
-    from dfxm.common.plotting import PlotStyle
+    from darq_xray.common.plotting import PlotStyle
 
     proc, raw = _setup(tmp_path)
     res = SL.run(_minimal_params(proc, raw, tmp_path / "sl_figs"))
@@ -524,8 +524,8 @@ def test_run_round_clim_rounds_notes_and_h5_attrs(tmp_path):
 def test_build_slice_figure_raw_arbitrary_units_drops_ticks():
     import numpy as np
 
-    from dfxm.common.plotting import PlotStyle
-    from dfxm.stages.slices import build_slice_figure
+    from darq_xray.common.plotting import PlotStyle
+    from darq_xray.stages.slices import build_slice_figure
 
     u = np.linspace(0.0, 40.0, 40)
     v = np.linspace(0.0, 30.0, 30)
@@ -974,7 +974,7 @@ def _prep(cmap="magma", center=False):
 def test_build_slice_figure_unstyled_pinned_shape_and_decor():
     import numpy as np
 
-    from dfxm.stages.slices import build_slice_figure
+    from darq_xray.stages.slices import build_slice_figure
 
     u = np.linspace(-5.0, 5.0, 21)
     v = np.linspace(-4.0, 4.0, 17)
@@ -992,7 +992,7 @@ def test_build_slice_figure_centered_norm_pinned():
     import numpy as np
     from matplotlib.colors import TwoSlopeNorm
 
-    from dfxm.stages.slices import build_slice_figure
+    from darq_xray.stages.slices import build_slice_figure
 
     u = np.linspace(0.0, 2.0, 5)
     v = np.linspace(0.0, 2.0, 5)
@@ -1046,7 +1046,7 @@ def _in_core_prep(volume):
 
 
 def _streamed_prep(volume, budget_bytes):
-    from dfxm.common import volumeio
+    from darq_xray.common import volumeio
 
     volume = np.ascontiguousarray(volume, dtype=np.float64)
     return {
@@ -1058,7 +1058,7 @@ def _streamed_prep(volume, budget_bytes):
 
 
 def _n_blocks(volume, budget_bytes):
-    from dfxm.common import volumeio
+    from darq_xray.common import volumeio
 
     return sum(1 for _ in volumeio.iter_blocks(volume, budget_bytes=int(budget_bytes)))
 
@@ -1402,7 +1402,7 @@ def test_slices_both_rungs_agree_on_the_centred_volume_and_its_limits(tmp_path, 
     which passes on both numpy generations.
     """
     proc, raw = _setup(tmp_path)
-    from dfxm.common import volumeio
+    from darq_xray.common import volumeio
 
     # `mosa_fwhm` with `abs_fwhm=False` runs the same alignment on the same
     # dataset and skips the centring, so this is the uncentred aligned volume.
@@ -1530,7 +1530,7 @@ def test_slices_peak_stays_under_budget(tmp_path):
 
     proc, raw, _bytes = _peak_setup(tmp_path, 64, 256, 256)
     params = {**_peak_params(proc, raw, tmp_path / "sl_peak"), "_budget_bytes": 16 << 20}
-    result = assert_peak_under("dfxm.stages.slices:run", params, 200 << 20, timeout=900)
+    result = assert_peak_under("darq_xray.stages.slices:run", params, 200 << 20, timeout=900)
     assert len(result.volume_ids) == 7, "the run must actually have sliced the volumes"
     assert result.n_planes_total == 28
 
@@ -1836,7 +1836,9 @@ def test_slices_never_holds_the_whole_plane_stack(tmp_path, rung):
         "still pass, so this test would measure nothing"
     )
 
-    result = assert_peak_under("dfxm.stages.slices:run", params, _SWEEP_PEAK_LIMIT, timeout=900)
+    result = assert_peak_under(
+        "darq_xray.stages.slices:run", params, _SWEEP_PEAK_LIMIT, timeout=900
+    )
     assert result.volume_ids == ["strain"], "the run must actually have sliced a volume"
     assert result.n_planes_total == n_planes
     with h5py.File(result.output_h5, "r") as f:
@@ -1920,7 +1922,7 @@ def test_rss_floor_covers_the_measured_process_image(tmp_path):
     params = {**_peak_params(proc, raw, tmp_path / "sl_floor"), "save_png": True}
     assert_floor_covers(
         SL.RSS_FLOOR_BYTES,
-        "dfxm.stages.slices:run",
+        "darq_xray.stages.slices:run",
         params,
         data_bytes=data_bytes,
     )
@@ -2048,7 +2050,7 @@ def test_no_samz_chain_blocks_and_matches_the_whole_volume_form(with_samy, roi):
     *misconfiguration* is not the one path with no memory bound. The reference
     here is the whole-volume chain this replaced, computed inline.
     """
-    from dfxm.common import alignment as A
+    from darq_xray.common import alignment as A
 
     dset = _no_motor_dataset()
     cfg = {"roi_x": roi, "roi_y": None}
@@ -2124,7 +2126,7 @@ def test_run_stops_on_an_impossible_roi_instead_of_skipping_every_volume(tmp_pat
     subclasses — so without an explicit re-raise an impossible ROI is reported
     as one skip per volume behind a run that "succeeded" and wrote nothing,
     with the hint dropped."""
-    from dfxm.common.errors import StageUserError
+    from darq_xray.common.errors import StageUserError
 
     proc, raw = _setup(tmp_path)
     out = tmp_path / "sl"

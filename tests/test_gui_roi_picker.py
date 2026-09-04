@@ -28,7 +28,7 @@ def _two_previews():
 
 
 def test_dialog_selection_returns_indices_and_readout():
-    from gui.widgets.roi_picker import ROIPickerDialog
+    from darq_xray.gui.widgets.roi_picker import ROIPickerDialog
 
     _ = QApplication.instance() or QApplication([])
     dlg = ROIPickerDialog(_previews())
@@ -42,7 +42,7 @@ def test_dialog_selection_returns_indices_and_readout():
 
 
 def test_dialog_no_selection_result_none():
-    from gui.widgets.roi_picker import ROIPickerDialog
+    from darq_xray.gui.widgets.roi_picker import ROIPickerDialog
 
     _ = QApplication.instance() or QApplication([])
     dlg = ROIPickerDialog(_previews())
@@ -53,7 +53,7 @@ def test_dialog_no_selection_result_none():
 
 def test_initial_rectangle_drawn_on_open():
     """initial= pre-populates the selector so the rectangle is actually visible."""
-    from gui.widgets.roi_picker import ROIPickerDialog
+    from darq_xray.gui.widgets.roi_picker import ROIPickerDialog
 
     _ = QApplication.instance() or QApplication([])
     # initial=(r0, r1, c0, c1); extents order is (xmin, xmax, ymin, ymax)=(c0, c1, r0, r1)
@@ -66,7 +66,7 @@ def test_initial_rectangle_drawn_on_open():
 # -- "Keep size" lock ---------------------------------------------------------
 def test_keep_size_lock_moves_without_resizing():
     """With the lock on, a drag keeps the locked px size, centred on the new rect."""
-    from gui.widgets.roi_picker import ROIPickerDialog
+    from darq_xray.gui.widgets.roi_picker import ROIPickerDialog
 
     _ = QApplication.instance() or QApplication([])
     dlg = ROIPickerDialog(_previews())
@@ -82,7 +82,7 @@ def test_keep_size_lock_moves_without_resizing():
 
 
 def test_keep_size_lock_clamps_inside_image():
-    from gui.widgets.roi_picker import ROIPickerDialog
+    from darq_xray.gui.widgets.roi_picker import ROIPickerDialog
 
     _ = QApplication.instance() or QApplication([])
     dlg = ROIPickerDialog(_previews())  # image is 200 rows × 100 cols
@@ -96,7 +96,7 @@ def test_keep_size_lock_clamps_inside_image():
 
 def test_keep_size_lock_first_drag_establishes_size():
     """Lock checked before any rectangle: the first drag defines the locked size."""
-    from gui.widgets.roi_picker import ROIPickerDialog
+    from darq_xray.gui.widgets.roi_picker import ROIPickerDialog
 
     _ = QApplication.instance() or QApplication([])
     dlg = ROIPickerDialog(_previews())
@@ -109,7 +109,7 @@ def test_keep_size_lock_first_drag_establishes_size():
 
 
 def test_keep_size_unlock_frees_resizing():
-    from gui.widgets.roi_picker import ROIPickerDialog
+    from darq_xray.gui.widgets.roi_picker import ROIPickerDialog
 
     _ = QApplication.instance() or QApplication([])
     dlg = ROIPickerDialog(_previews())
@@ -124,7 +124,7 @@ def test_keep_size_unlock_frees_resizing():
 
 def test_per_preview_picks_collect_one_roi_per_moved_map():
     """per_preview=True: every preview the user draws/moves on gets its OWN pick."""
-    from gui.widgets.roi_picker import ROIPickerDialog
+    from darq_xray.gui.widgets.roi_picker import ROIPickerDialog
 
     _ = QApplication.instance() or QApplication([])
     dlg = ROIPickerDialog(_two_previews(), per_preview=True)
@@ -139,7 +139,7 @@ def test_per_preview_picks_collect_one_roi_per_moved_map():
 
 
 def test_per_preview_carried_rect_not_applied_until_moved():
-    from gui.widgets.roi_picker import ROIPickerDialog
+    from darq_xray.gui.widgets.roi_picker import ROIPickerDialog
 
     _ = QApplication.instance() or QApplication([])
     dlg = ROIPickerDialog(_two_previews(), per_preview=True)
@@ -152,7 +152,7 @@ def test_per_preview_carried_rect_not_applied_until_moved():
 
 
 def test_per_preview_returning_restores_that_maps_own_pick():
-    from gui.widgets.roi_picker import ROIPickerDialog
+    from darq_xray.gui.widgets.roi_picker import ROIPickerDialog
 
     _ = QApplication.instance() or QApplication([])
     dlg = ROIPickerDialog(_two_previews(), per_preview=True)
@@ -165,7 +165,7 @@ def test_per_preview_returning_restores_that_maps_own_pick():
 
 
 def test_per_preview_reset_drops_only_current_maps_pick():
-    from gui.widgets.roi_picker import ROIPickerDialog
+    from darq_xray.gui.widgets.roi_picker import ROIPickerDialog
 
     _ = QApplication.instance() or QApplication([])
     dlg = ROIPickerDialog(_two_previews(), per_preview=True)
@@ -180,7 +180,7 @@ def test_per_preview_reset_drops_only_current_maps_pick():
 
 def test_reset_clears_locked_size():
     """Reset forgets the locked size; the next drag re-establishes it."""
-    from gui.widgets.roi_picker import ROIPickerDialog
+    from darq_xray.gui.widgets.roi_picker import ROIPickerDialog
 
     _ = QApplication.instance() or QApplication([])
     dlg = ROIPickerDialog(_previews())

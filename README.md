@@ -1,4 +1,4 @@
-# dfxm_pipeline
+# DARQ
 
 A single Qt desktop application that drives the whole ESRF ID03 **Dark-Field
 X-ray Microscopy (DFXM)** analysis flow — from raw/darfix output to finished data
@@ -16,33 +16,33 @@ and paths are saved as reusable, named **experiment presets**.
 
 ## Architecture
 
-- **`dfxm/` — the Qt-free core library.** Pure Python implementations of every
-  analysis stage, plus shared helpers. *Nothing in this package imports Qt*, so
-  every stage stays runnable headless (CLI / `python3 -m dfxm.stages.<name>`) and
-  unit-testable.
-- **`gui/` — the PySide6 desktop app.** Builds parameter forms from each stage's
+- **`darq_xray/` (excluding `gui/`) — the Qt-free core library.** Pure Python
+  implementations of every analysis stage, plus shared helpers. *Nothing outside
+  `darq_xray/gui/` imports Qt*, so every stage stays runnable headless
+  (CLI / `python3 -m darq_xray.stages.<name>`) and unit-testable.
+- **`darq_xray/gui/` — the PySide6 desktop app.** Builds parameter forms from each stage's
   typed schema, runs stages, and embeds matplotlib + pyvista viewers. It only
-  *calls* `dfxm/`.
+  *calls* the core.
 
-This split is deliberate: keeping `gui/` a sibling of `dfxm/` (rather than nesting
-it) makes the "core never imports Qt" invariant easy to enforce and test.
+This split is deliberate: confining Qt to the single `darq_xray.gui` subpackage
+makes the "core never imports Qt" invariant easy to enforce and test.
 
 ## Layout
 
 ```
-dfxm_pipeline/
+darq_xray/                  # the repository
   pyproject.toml            # metadata + dependencies + ruff/pytest config
   LICENSE                   # MIT
   experiments/              # named presets (YAML): paths, patterns, angles, scales
     STO2_overnight.yaml
-  dfxm/                     # Qt-FREE core
+  darq_xray/                # the importable package
     config/                 # Experiment model + per-stage param schemas; preset I/O
     common/                 # natural sort, HDF5 I/O, alignment, raster, plotting helpers
     stages/                 # one module per script family; each exposes run(params, progress)
     compose/                # publication figure composer (also Qt-free)
     runner.py               # child-process execution + progress/log/cancel protocol
-  gui/                      # PySide6 app (entry point: python3 -m gui.app)
-    widgets/                # param-form, matplotlib canvas, pyvista canvas, log console
+    gui/                    # PySide6 app (entry point: `darq_xray`, or python3 -m darq_xray.gui.app)
+      widgets/              # param-form, matplotlib canvas, pyvista canvas, log console
   tests/                    # synthetic-fixture unit tests + golden reproduction tests
   docs/                     # Usage.md (user guide) + Codebase.md (code reference)
   tools/                    # small standalone helpers
@@ -54,7 +54,7 @@ dfxm_pipeline/
 One command, from a clone:
 
 ```bash
-git clone https://github.com/<you>/dfxm_pipeline.git && cd dfxm_pipeline
+git clone https://github.com/<you>/darq_xray.git && cd darq_xray
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[test]"
 ```
@@ -103,15 +103,15 @@ The app **runs in place** from the checkout — the editable install above adds
 its dependencies, not a launcher.
 
 ```bash
-cd dfxm_pipeline
-python3 -m gui.app
+cd darq_xray
+python3 -m darq_xray.gui.app     # or just `darq_xray` after the editable install
 ```
 
 Stages are also runnable headless, without the GUI:
 
 ```bash
-cd dfxm_pipeline
-python3 -m dfxm.stages.concat --help
+cd darq_xray
+python3 -m darq_xray.stages.concat --help
 ```
 
 And the test suite:

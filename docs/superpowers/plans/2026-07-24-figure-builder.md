@@ -3,7 +3,7 @@
 > **For agentic workers:** REQUIRED SUB-SKILL — use `superpowers:subagent-driven-development` (recommended) or `superpowers:executing-plans` to execute this plan task by task, with a reviewer gate after every task.
 
 **Spec:** `docs/superpowers/specs/2026-07-24-figure-builder-design.md` (approved 2026-07-24)
-**Repo:** `dfxm_pipeline`
+**Repo:** `darq_xray`
 
 ## Goal
 

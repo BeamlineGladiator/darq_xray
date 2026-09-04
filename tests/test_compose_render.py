@@ -1,4 +1,4 @@
-"""render_recipe / export_recipe — dfxm.compose.render."""
+"""render_recipe / export_recipe — darq_xray.compose.render."""
 
 import os
 
@@ -8,8 +8,8 @@ import pytest
 from matplotlib.offsetbox import AnchoredOffsetbox
 from matplotlib.patches import Rectangle
 
-from dfxm.common.errors import StageUserError
-from dfxm.compose.recipe import (
+from darq_xray.common.errors import StageUserError
+from darq_xray.compose.recipe import (
     Col,
     ComposeStyle,
     FigureRecipe,
@@ -19,7 +19,7 @@ from dfxm.compose.recipe import (
     Row,
     TextCell,
 )
-from dfxm.compose.render import export_recipe, render_recipe
+from darq_xray.compose.render import export_recipe, render_recipe
 
 
 def _scale_bar_box(ax):
@@ -104,7 +104,7 @@ def test_render_two_maps_exact_boxes_and_labels(tmp_path):
     h5 = _write_obl(tmp_path / "obl.h5")
     res = render_recipe(_two_panel_recipe(h5))
     assert res.n_panels == 2 and res.n_rendered == 2
-    from dfxm.common.plotting import measured_box_in
+    from darq_xray.common.plotting import measured_box_in
 
     for pid in ("a", "b"):
         w, h = measured_box_in(res.figure, res.axes_by_id[pid])
@@ -132,7 +132,7 @@ def test_profiles_ref_panel_has_single_scale_bar(tmp_path):
     # the surviving bar must be the deferred, final-scale one: its Rectangle
     # thickness should match the panel's rendered box width, not some other
     # (e.g. pre-placement) geometry.
-    from dfxm.common.plotting import PlotStyle, measured_box_in
+    from darq_xray.common.plotting import PlotStyle, measured_box_in
 
     style = PlotStyle()
     w_in, _h_in = measured_box_in(res.figure, ax)
@@ -175,7 +175,7 @@ def test_missing_file_renders_placeholder_and_notes(tmp_path):
 
 def test_degenerate_roi_extent_renders_placeholder_not_singular_imshow(tmp_path):
     """A panel whose ROI crops to a single column (zero x-extent) is downgraded
-    to a placeholder BOX by size_cells (dfxm/compose/layout.py's _map_cell),
+    to a placeholder BOX by size_cells (darq_xray/compose/layout.py's _map_cell),
     but that alone used to leave the panel's loaded PanelData.kind untouched
     ("slice_plane") — the per-leaf draw loop in render_recipe dispatches on
     the cell's kind, sees "placeholder", yet still handed draw_panel the
@@ -287,7 +287,7 @@ def test_pinned_width_rescales_scale_bar_thickness(tmp_path):
     r = _two_panel_recipe(h5)
     r.compose.pinned_width_cm = 6.0  # forces a large rescale off the natural width
     res = render_recipe(r)
-    from dfxm.common.plotting import PlotStyle, measured_box_in
+    from darq_xray.common.plotting import PlotStyle, measured_box_in
 
     style = PlotStyle()  # matches the recipe's un-overridden scale_bar_thickness_pt
     for pid in ("a", "b"):
@@ -333,10 +333,10 @@ def test_zero_length_trace_renders_placeholder_lockstep(tmp_path, monkeypatch):
     placeholder draw + note, never a zero-width trace axes (no mpl warnings)."""
     import warnings
 
-    from dfxm.compose.adapters import PanelData
+    from darq_xray.compose.adapters import PanelData
 
     monkeypatch.setattr(
-        "dfxm.compose.render.load_panel",
+        "darq_xray.compose.render.load_panel",
         lambda p, cache=None: PanelData(kind="profiles_trace", length_um=0.0, payload={}),
     )
     p = PanelDef("t", PanelSource("/x.h5", "profiles_trace", {"job": JOB, "field": "strain"}))
@@ -786,7 +786,7 @@ def test_render_trace_autoscale_matches_column_map_width_and_notes(tmp_path):
         [pm, pt],
     )
     res = render_recipe(r)
-    from dfxm.common.plotting import measured_box_in
+    from darq_xray.common.plotting import measured_box_in
 
     wm, _hm = measured_box_in(res.figure, res.axes_by_id["m"])
     wt, _ht = measured_box_in(res.figure, res.axes_by_id["t"])
@@ -811,7 +811,7 @@ def _fig_with_two_axes():
 
 
 def test_collision_detector_flags_cross_axes_overlap_with_suggestions():
-    from dfxm.compose.render import _detect_text_collisions
+    from darq_xray.compose.render import _detect_text_collisions
 
     fig, ax1, ax2 = _fig_with_two_axes()
     # two texts from DIFFERENT axes pinned to the same figure spot -> collide
@@ -826,7 +826,7 @@ def test_collision_detector_flags_cross_axes_overlap_with_suggestions():
 
 
 def test_collision_detector_ignores_same_axes_overlaps_and_clean_figures():
-    from dfxm.compose.render import _detect_text_collisions
+    from darq_xray.compose.render import _detect_text_collisions
 
     fig, ax1, ax2 = _fig_with_two_axes()
     # overlapping texts on the SAME axes: matplotlib's business, not ours
@@ -836,7 +836,7 @@ def test_collision_detector_ignores_same_axes_overlaps_and_clean_figures():
 
 
 def test_collision_detector_cost_guard_skips_past_400_texts():
-    from dfxm.compose.render import _detect_text_collisions
+    from darq_xray.compose.render import _detect_text_collisions
 
     fig, ax1, ax2 = _fig_with_two_axes()
     for i in range(401):
@@ -850,7 +850,7 @@ def test_detect_text_collisions_owner_group_exempts_same_group_pair():
     """F7: two owners sharing a group (e.g. a panel and its own per-panel
     colorbar) must be exempted like a same-axes overlap, even though their
     text genuinely intersects."""
-    from dfxm.compose.render import _detect_text_collisions
+    from darq_xray.compose.render import _detect_text_collisions
 
     fig, ax1, ax2 = _fig_with_two_axes()
     ax1.text(0.5, 0.5, "own decoration", transform=fig.transFigure)
@@ -877,7 +877,7 @@ def test_detect_text_collisions_bar_owners_is_an_explicit_set_not_a_name_pattern
     "... colorbar" must still report a real collision, and a per-panel
     colorbar (never added to bar_owners by render_recipe) colliding with a
     DIFFERENT panel's own colorbar must still report too."""
-    from dfxm.compose.render import _detect_text_collisions
+    from darq_xray.compose.render import _detect_text_collisions
 
     fig, ax1, ax2 = _fig_with_two_axes()
     ax1.text(0.5, 0.5, "left", transform=fig.transFigure)
@@ -897,10 +897,10 @@ def test_detect_text_collisions_bar_owners_is_an_explicit_set_not_a_name_pattern
 
 
 def test_collision_presuggestions_trace_tiny_only_when_flag_off():
-    from dfxm.common.plotting import PlotStyle
-    from dfxm.compose.adapters import PanelData
-    from dfxm.compose.layout import size_cells
-    from dfxm.compose.render import _collision_presuggestions
+    from darq_xray.common.plotting import PlotStyle
+    from darq_xray.compose.adapters import PanelData
+    from darq_xray.compose.layout import size_cells
+    from darq_xray.compose.render import _collision_presuggestions
 
     m, t = PanelRef("m"), PanelRef("t")
     layout = Col([m, t])
@@ -931,7 +931,7 @@ def test_render_runs_collision_check_at_end_and_clean_figure_has_no_note(tmp_pat
     res = render_recipe(_two_panel_recipe(h5))
     assert not any("text overlaps" in n for n in res.notes)  # spacious -> clean
 
-    import dfxm.compose.render as render_mod
+    import darq_xray.compose.render as render_mod
 
     seen = {}
 
@@ -989,7 +989,7 @@ def test_owners_include_per_panel_colorbar_and_text_cell_axes(tmp_path, monkeypa
     r = _two_panel_recipe(h5)
     r.layout = Row([PanelRef("a"), PanelRef("b"), TextCell("caption")])
 
-    import dfxm.compose.render as render_mod
+    import darq_xray.compose.render as render_mod
 
     seen = {}
 
@@ -1008,7 +1008,7 @@ def test_axes_texts_filters_tick_labels_outside_view_interval():
     """F3: get_xticklabels()/get_yticklabels() include labels for ticks the
     locator proposed but matplotlib never draws (outside the view interval) —
     _axes_texts must filter by the axis's actual view interval."""
-    from dfxm.compose.render import _axes_texts
+    from darq_xray.compose.render import _axes_texts
 
     fig, ax1, _ax2 = _fig_with_two_axes()
     ax1.set_xlim(0, 123)
@@ -1133,7 +1133,7 @@ def test_profiles_ref_panel_follows_font_scale_and_axes_mode(tmp_path):
 
 
 def test_scale_bar_cell_draws_shared_bar_and_suppresses_panel_bars(tmp_path):
-    from dfxm.compose.recipe import ScaleBarCell
+    from darq_xray.compose.recipe import ScaleBarCell
 
     h5 = _write_obl(tmp_path / "obl.h5")
     r = _two_panel_recipe(h5, scale_bar=True, scale_bar_length_um=5.0)
@@ -1153,7 +1153,7 @@ def test_scale_bar_cell_draws_shared_bar_and_suppresses_panel_bars(tmp_path):
 
 
 def test_scale_bar_cell_falls_back_to_auto_length_when_bar_would_not_fit(tmp_path):
-    from dfxm.compose.recipe import ScaleBarCell
+    from darq_xray.compose.recipe import ScaleBarCell
 
     h5 = _write_obl(tmp_path / "obl.h5")
     r = _two_panel_recipe(h5, scale_bar=True, scale_bar_length_um=500.0)  # 50 cm at 10 µm/cm
@@ -1167,7 +1167,7 @@ def test_scale_bar_cell_falls_back_to_auto_length_when_bar_would_not_fit(tmp_pat
 
 
 def test_scale_bar_cell_without_maps_leaves_note(tmp_path):
-    from dfxm.compose.recipe import ScaleBarCell
+    from darq_xray.compose.recipe import ScaleBarCell
 
     h5 = _write_obl(tmp_path / "obl.h5")
     pt = PanelDef("t", PanelSource(h5, "profiles_trace", {"job": JOB, "field": "strain"}))
@@ -1183,7 +1183,7 @@ def test_scale_bar_cell_without_maps_leaves_note(tmp_path):
 
 
 def test_image_panel_lettered_between_maps_sized_by_width_no_colorbar(tmp_path):
-    from dfxm.common.plotting import measured_box_in
+    from darq_xray.common.plotting import measured_box_in
 
     h5 = _write_obl(tmp_path / "obl.h5")
     png = _write_png(tmp_path / "ref.png")

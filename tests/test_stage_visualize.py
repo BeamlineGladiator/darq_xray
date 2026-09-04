@@ -1,4 +1,4 @@
-"""Tests for dfxm.stages.visualize — produces aligned 2D products and records
+"""Tests for darq_xray.stages.visualize — produces aligned 2D products and records
 datasets; alignment reuses the golden-tested common.alignment primitives.
 """
 
@@ -12,7 +12,7 @@ import h5py
 import numpy as np
 import pytest
 
-from dfxm.stages import visualize as V
+from darq_xray.stages import visualize as V
 
 L, NY, NX = 4, 6, 8
 
@@ -282,7 +282,7 @@ def test_parse_pair_and_display_info():
 
 def test_figures_resolve_cmap_from_style(tmp_path):
     """Visualize FigureSpecs resolve their colormap from the style at build time."""
-    from dfxm.common.plotting import PlotStyle
+    from darq_xray.common.plotting import PlotStyle
 
     proc, raw = _setup(tmp_path)
     out = tmp_path / "viz"
@@ -308,9 +308,9 @@ def test_figures_resolve_cmap_from_style(tmp_path):
 def test_visualize_make_build_threads_group(monkeypatch):
     import numpy as np
 
-    from dfxm.common import render as R
-    from dfxm.common.plotting import PlotStyle
-    from dfxm.stages import visualize as V
+    from darq_xray.common import render as R
+    from darq_xray.common.plotting import PlotStyle
+    from darq_xray.stages import visualize as V
 
     captured = {}
     real = R.layer_figure
@@ -789,7 +789,7 @@ def test_renderers_use_only_the_duck_type_layersource_implements(tmp_path):
     construction; what is at risk is the *renderers* growing a use it cannot
     serve, so they are what this drives.
     """
-    from dfxm.common import render as Rnd
+    from darq_xray.common import render as Rnd
 
     vol = _StrictVolume(np.random.default_rng(0).standard_normal((3, 5, 7)))
     z_um = np.array([0.0, 1.0, 2.0])
@@ -846,7 +846,7 @@ def _infinity_volume():
 
 def _assert_mean_reductions_disagree(data):
     """The two mean reductions must actually differ on *data*, or nothing is pinned."""
-    from dfxm.common import volumeio
+    from darq_xray.common import volumeio
 
     finite = data[np.isfinite(data)]
     compensated = np.float64(volumeio.stream_mean([finite])).tobytes()
@@ -991,7 +991,7 @@ def test_visualize_peak_stays_under_budget(tmp_path):
         "save_animation": False,
         "_budget_bytes": 16 << 20,
     }
-    result = assert_peak_under("dfxm.stages.visualize:run", params, 200 << 20, timeout=900)
+    result = assert_peak_under("darq_xray.stages.visualize:run", params, 200 << 20, timeout=900)
     assert len(result.datasets) == 4, "the run must actually have visualized the fields"
 
 
@@ -1021,7 +1021,7 @@ def test_rss_floor_covers_the_measured_process_image(tmp_path):
     }
     assert_floor_covers(
         V.RSS_FLOOR_BYTES,
-        "dfxm.stages.visualize:run",
+        "darq_xray.stages.visualize:run",
         params,
         data_bytes=4 * L * NY * NX * 8,
     )
@@ -1345,8 +1345,8 @@ def test_a_raw_file_without_a_frame_index_is_titled_without_a_number(tmp_path):
 
 
 def test_visualize_prefills_the_aligned_files_from_the_experiment(tmp_path):
-    from dfxm.config.models import Experiment
-    from gui.bindings import experiment_overrides
+    from darq_xray.config.models import Experiment
+    from darq_xray.gui.bindings import experiment_overrides
 
     proc = tmp_path / "proc"
     proc.mkdir()
@@ -1399,7 +1399,7 @@ def test_figures_fail_by_name_when_a_raw_path_has_been_cleared(tmp_path):
     os.PathLike object, not NoneType`. Datasets from the file that is still
     named must keep building.
     """
-    from dfxm.common.errors import StageUserError
+    from darq_xray.common.errors import StageUserError
 
     p = _raw_params(tmp_path, tmp_path / "viz")
     res = V.run(p)
@@ -1418,7 +1418,7 @@ def test_a_raw_only_run_writes_beside_its_volume_not_into_the_cwd(tmp_path, monk
 
     The default was derived from the stacked pair alone, so a run given only the
     aligned raw volumes joined `os.path.dirname("")` — the empty string — and
-    wrote its whole output tree wherever `python3 -m gui.app` had been launched
+    wrote its whole output tree wherever `python3 -m darq_xray.gui.app` had been launched
     from, then handed a RELATIVE `output_dir` to the summary, to "open output
     folder" and to anything the result was chained into. Rendering raw volumes
     without a stacked one is a first-class configuration now.
@@ -1578,7 +1578,7 @@ def test_a_dataset_without_an_override_still_gets_the_globals_at_the_scene(tmp_p
 @pytest.mark.parametrize("bad", ["abc", "1.5", "-0.2", "0,5"])
 def test_an_unusable_opacity_override_is_a_user_error(tmp_path, bad):
     """Fail before a voxel is read, with a hint — not 20 minutes into a run."""
-    from dfxm.common.errors import StageUserError
+    from darq_xray.common.errors import StageUserError
 
     proc, raw = _setup(tmp_path)
     with pytest.raises(StageUserError) as exc:
@@ -1589,7 +1589,7 @@ def test_an_unusable_opacity_override_is_a_user_error(tmp_path, bad):
 
 def test_the_opacity_check_runs_before_any_volume_is_read(tmp_path, monkeypatch):
     """Precondition guard for the test above: it must not be a late failure."""
-    from dfxm.common.errors import StageUserError
+    from darq_xray.common.errors import StageUserError
 
     proc, raw = _setup(tmp_path)
     monkeypatch.setattr(
@@ -1663,7 +1663,7 @@ def test_round_clim_leaves_an_explicit_limit_alone(tmp_path):
     """Explicit wins: a typed limit is used as typed, an automatic one still rounds."""
     import json as _json
 
-    from dfxm.common.plotting import PlotStyle, style_to_json
+    from darq_xray.common.plotting import PlotStyle, style_to_json
 
     proc, raw = _setup(tmp_path)
     style = _json.loads(style_to_json(PlotStyle(round_clim=True)))
@@ -1728,7 +1728,7 @@ def test_aligned_field_applies_the_same_override(tmp_path):
 )
 def test_an_unusable_clim_override_is_a_user_error(tmp_path, bad, monkeypatch):
     """Every failure mode names the problem and fires before any volume is read."""
-    from dfxm.common.errors import StageUserError
+    from darq_xray.common.errors import StageUserError
 
     proc, raw = _setup(tmp_path)
     monkeypatch.setattr(

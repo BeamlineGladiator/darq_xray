@@ -9,7 +9,7 @@ import pytest
 
 pv = pytest.importorskip("pyvista")
 
-from dfxm.common import render3d as R3  # noqa: E402
+from darq_xray.common import render3d as R3  # noqa: E402
 
 
 def _gl_available() -> bool:

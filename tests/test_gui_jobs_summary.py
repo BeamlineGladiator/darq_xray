@@ -12,9 +12,9 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 
 _app = QApplication.instance() or QApplication([])
 
-from dfxm.config.models import Param, ParamType  # noqa: E402
-from gui.widgets.jobs_summary import JobsSummaryEditor, summarize_jobs  # noqa: E402
-from gui.widgets.param_form import ParamForm  # noqa: E402
+from darq_xray.config.models import Param, ParamType  # noqa: E402
+from darq_xray.gui.widgets.jobs_summary import JobsSummaryEditor, summarize_jobs  # noqa: E402
+from darq_xray.gui.widgets.param_form import ParamForm  # noqa: E402
 
 _TWO_JOBS = """
 [{"name": "oblique_full", "offset_um": 0.0},

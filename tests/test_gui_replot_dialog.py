@@ -7,8 +7,8 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
-from dfxm.common.figures import ReplotGroup  # noqa: E402
-from gui.widgets.replot_dialog import ReplotDialog  # noqa: E402
+from darq_xray.common.figures import ReplotGroup  # noqa: E402
+from darq_xray.gui.widgets.replot_dialog import ReplotDialog  # noqa: E402
 
 _app = QApplication.instance() or QApplication([])
 
@@ -163,8 +163,8 @@ def test_generic_dialog_filter_and_check_all_visible(tmp_path):
 def test_pick_roi_fills_boxes(tmp_path, monkeypatch):
     import numpy as np
 
-    from dfxm.common.figures import ReplotGroup
-    from gui.widgets.replot_dialog import ReplotDialog
+    from darq_xray.common.figures import ReplotGroup
+    from darq_xray.gui.widgets.replot_dialog import ReplotDialog
 
     _ = QApplication.instance() or QApplication([])
 
@@ -181,7 +181,7 @@ def test_pick_roi_fills_boxes(tmp_path, monkeypatch):
     dlg = ReplotDialog("nofile.h5", catalog_fn, lambda *a, **k: [], preview_fn=preview_fn)
 
     # stub the modal picker: pretend the user dragged (r0,r1,c0,c1)
-    import gui.widgets.replot_dialog as RD
+    import darq_xray.gui.widgets.replot_dialog as RD
 
     class _FakePicker:
         def __init__(self, *a, **k):

@@ -5,13 +5,13 @@ dropped: a stage can stream its read and then materialise a float64 copy
 anyway, which is exactly the class of mistake the phase-1-4 estimators made
 (they under-predicted real peak RSS by ~1.66x on the real dataset). This
 samples the real child process, so it measures the thing rather than the model
-of it. `dfxm/runner.py` already spawns every stage in a child, so there is
+of it. `darq_xray/runner.py` already spawns every stage in a child, so there is
 nothing to build here — only to watch.
 
 Two things this module is **not**, both of which the phase-5 conversions must
 keep straight:
 
-* **`tracemalloc` is not RSS.** `dfxm/common/alignment.py`'s working-set model
+* **`tracemalloc` is not RSS.** `darq_xray/common/alignment.py`'s working-set model
   is expressed in Python-level allocations; every figure here is resident set
   size, which additionally carries the interpreter, the extension modules,
   h5py's chunk cache, a memmap's resident pages and allocator fragmentation.
@@ -35,7 +35,7 @@ import time
 
 import psutil
 
-from dfxm.runner import StageRunner
+from darq_xray.runner import StageRunner
 
 # A CPython child under `spawn` re-imports the interpreter and the stage's
 # modules before it touches any data; its RSS is tens of MiB by the time the
@@ -231,7 +231,7 @@ def assert_peak_under(target: str, params: dict, limit_bytes: int, **kwargs) -> 
 #         params = _trivial_params(tmp_path)          # smallest real export
 #         assert_floor_covers(
 #             MY_STAGE.RSS_FLOOR_BYTES,
-#             "dfxm.stages.my_stage:run",
+#             "darq_xray.stages.my_stage:run",
 #             params,
 #             data_bytes=<bytes of that input>,
 #         )

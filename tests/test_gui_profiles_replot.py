@@ -1,5 +1,5 @@
 """Offscreen construction + threaded-batch tests for the profiles Replot dialog
-(delegates rendering to the tested Qt-free core in dfxm.stages.profiles).
+(delegates rendering to the tested Qt-free core in darq_xray.stages.profiles).
 
 Fixture pattern mirrors gui_smoke.py step [33]."""
 
@@ -55,7 +55,7 @@ def _job():
 
 
 def test_dialog_populates_tree_and_renders(tmp_path):
-    from gui.widgets.profiles_replot import ProfilesReplotDialog
+    from darq_xray.gui.widgets.profiles_replot import ProfilesReplotDialog
 
     h5 = tmp_path / "oblique_slices.h5"
     _mini(str(h5))
@@ -73,7 +73,7 @@ def test_dialog_populates_tree_and_renders(tmp_path):
 
 
 def test_on_render_runs_batch_with_overlay_and_status(tmp_path):
-    from gui.widgets.profiles_replot import ProfilesReplotDialog
+    from darq_xray.gui.widgets.profiles_replot import ProfilesReplotDialog
     from tests.qt_helpers import wait_batch_idle
 
     h5 = tmp_path / "oblique_slices.h5"
@@ -101,7 +101,7 @@ def test_on_batch_done_marks_cancelled_result(tmp_path):
     thread reaches _whole_batch, so _result_box is still empty when
     _on_batch_done runs. Status must still carry the 'cancelled — ' prefix
     (parity with slice_replot.py / replot_dialog.py)."""
-    from gui.widgets.profiles_replot import ProfilesReplotDialog
+    from darq_xray.gui.widgets.profiles_replot import ProfilesReplotDialog
 
     h5 = tmp_path / "oblique_slices.h5"
     _mini(str(h5))
@@ -117,8 +117,8 @@ def test_on_batch_done_marks_cancelled_result(tmp_path):
 def test_reject_while_running_cancels_instead_of_closing(tmp_path, monkeypatch):
     import threading
 
-    from dfxm.stages import profiles as pr
-    from gui.widgets.profiles_replot import ProfilesReplotDialog
+    from darq_xray.gui.widgets.profiles_replot import ProfilesReplotDialog
+    from darq_xray.stages import profiles as pr
     from tests.qt_helpers import wait_batch_idle
 
     h5 = tmp_path / "oblique_slices.h5"

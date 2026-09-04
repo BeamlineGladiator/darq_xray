@@ -6,7 +6,7 @@
 
 **Architecture:** A removal refactor across four areas, each its own commit kept green: (1) the strain stage + its GUI glue + tests, (2) the `Experiment` config + preset + config tests, (3) the two Obsidian docs, (4) final verification. The `ccmth_only` path already exists, so the numeric core barely changes — most work is deleting the mu branch and its parameters.
 
-**Tech Stack:** Python 3.10, numpy, h5py, scipy, PySide6 (GUI, not exercised by `pytest -q`), ruff, pytest. Run from repo root `dfxm_pipeline` on branch `remove-mu-strain-term`.
+**Tech Stack:** Python 3.10, numpy, h5py, scipy, PySide6 (GUI, not exercised by `pytest -q`), ruff, pytest. Run from repo root `darq_xray` on branch `remove-mu-strain-term`.
 
 **Reference spec:** `docs/superpowers/specs/2026-06-07-remove-mu-strain-term-design.md`
 
@@ -187,7 +187,7 @@ def test_parse_helpers():
 
 - [ ] **Step 2: Run the new tests to verify they fail**
 
-Run: `cd dfxm_pipeline && python3 -m pytest tests/test_stage_strain.py -q`
+Run: `cd darq_xray && python3 -m pytest tests/test_stage_strain.py -q`
 Expected: FAIL — `compute_strain` still requires/returns the old 4-arg / 3-tuple form, so `test_compute_strain_is_cot_ccmth` and the `run` tests error (e.g. `KeyError: 'method'` inside `run`, or tuple/shape mismatch).
 
 - [ ] **Step 3: Make `compute_strain` ccmth-only**
@@ -381,18 +381,18 @@ In `gui/bindings.py` `experiment_overrides`, the `if stage_name == "strain":` bl
 
 - [ ] **Step 12: Run strain tests + the full suite**
 
-Run: `cd dfxm_pipeline && python3 -m pytest tests/test_stage_strain.py -q && python3 -m pytest -q`
+Run: `cd darq_xray && python3 -m pytest tests/test_stage_strain.py -q && python3 -m pytest -q`
 Expected: `test_stage_strain.py` passes (the two `_legacy` tests skip — legacy not vendored); the full suite still passes (config/gui tests untouched yet — `Experiment.mu_ref_deg` still exists, so they remain green).
 
 - [ ] **Step 13: Lint**
 
-Run: `cd dfxm_pipeline && ~/.local/bin/ruff check dfxm/stages/strain.py gui/stage_view.py gui/bindings.py tests/test_stage_strain.py`
+Run: `cd darq_xray && ~/.local/bin/ruff check dfxm/stages/strain.py gui/stage_view.py gui/bindings.py tests/test_stage_strain.py`
 Expected: clean (no unused imports — e.g. confirm `cot` is still used, `mu`-only helpers are gone).
 
 - [ ] **Step 14: Commit**
 
 ```bash
-cd dfxm_pipeline
+cd darq_xray
 git add dfxm/stages/strain.py gui/stage_view.py gui/bindings.py tests/test_stage_strain.py
 git commit -m "strain: make ccmth-only; remove the mu-term method
 
@@ -433,7 +433,7 @@ In `tests/test_config.py`:
 
 - [ ] **Step 2: Run config tests to verify they fail**
 
-Run: `cd dfxm_pipeline && python3 -m pytest tests/test_config.py -q`
+Run: `cd darq_xray && python3 -m pytest tests/test_config.py -q`
 Expected: FAIL — `test_schema_matches_dataclass` and `test_calibration_fields_flagged` still see `mu_ref_deg`/`mu_com_path` in the live dataclass+schema, so the flagged-set assertion now mismatches.
 
 - [ ] **Step 3: Remove the two fields from the `Experiment` dataclass**
@@ -478,18 +478,18 @@ In `tests/gui_smoke.py`:
 
 - [ ] **Step 8: Run config tests + full suite**
 
-Run: `cd dfxm_pipeline && python3 -m pytest tests/test_config.py -q && python3 -m pytest -q`
+Run: `cd darq_xray && python3 -m pytest tests/test_config.py -q && python3 -m pytest -q`
 Expected: PASS. `test_schema_matches_dataclass` confirms dataclass↔schema still lock-step; `test_preset_round_trip` passes (preset no longer carries unknown keys, so no warning).
 
 - [ ] **Step 9: Lint**
 
-Run: `cd dfxm_pipeline && ~/.local/bin/ruff check dfxm/config/models.py dfxm/config/presets.py gui/experiment_panel.py tests/test_config.py`
+Run: `cd darq_xray && ~/.local/bin/ruff check dfxm/config/models.py dfxm/config/presets.py gui/experiment_panel.py tests/test_config.py`
 Expected: clean.
 
 - [ ] **Step 10: Commit**
 
 ```bash
-cd dfxm_pipeline
+cd darq_xray
 git add dfxm/config/models.py dfxm/config/presets.py gui/experiment_panel.py experiments/STO2_overnight.yaml tests/test_config.py tests/gui_smoke.py
 git commit -m "config: drop orphaned mu_ref_deg/mu_com_path from Experiment + preset
 
@@ -555,13 +555,13 @@ ccmth-only) → stacked 3-D volume.
 
 - [ ] **Step 6: Verify no stray mu_ref left in docs**
 
-Run: `cd dfxm_pipeline && grep -rni "mu_ref\|11.5015\|11.2491\|ccmth_mu" docs/Usage.md docs/Codebase.md`
+Run: `cd darq_xray && grep -rni "mu_ref\|11.5015\|11.2491\|ccmth_mu" docs/Usage.md docs/Codebase.md`
 Expected: no matches.
 
 - [ ] **Step 7: Commit**
 
 ```bash
-cd dfxm_pipeline
+cd darq_xray
 git add docs/Usage.md docs/Codebase.md
 git commit -m "docs: update Usage + Codebase for ccmth-only strain
 
@@ -579,32 +579,32 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 
 - [ ] **Step 1: Full test suite**
 
-Run: `cd dfxm_pipeline && python3 -m pytest -q`
+Run: `cd darq_xray && python3 -m pytest -q`
 Expected: all pass; the two `_legacy` strain tests report as skipped.
 
 - [ ] **Step 2: GUI smoke (not auto-collected by pytest)**
 
-Run: `cd dfxm_pipeline && QT_QPA_PLATFORM=offscreen python3 tests/gui_smoke.py`
+Run: `cd darq_xray && QT_QPA_PLATFORM=offscreen python3 tests/gui_smoke.py`
 Expected: exits 0; prints the `[2] STO2 preset loaded` line and runs the strain stage through the UI without referencing mu. (If PySide6/offscreen is unavailable in this environment, note it as skipped rather than failing the task.)
 
 - [ ] **Step 3: Lint the whole repo**
 
-Run: `cd dfxm_pipeline && ~/.local/bin/ruff check .`
+Run: `cd darq_xray && ~/.local/bin/ruff check .`
 Expected: clean.
 
 - [ ] **Step 4: CLI no longer advertises mu/method**
 
-Run: `cd dfxm_pipeline && python3 -m dfxm.stages.strain -h`
+Run: `cd darq_xray && python3 -m dfxm.stages.strain -h`
 Expected: help text shows no `--method` and no `--mu-ref`.
 
 - [ ] **Step 5: Residual-reference scan**
 
-Run: `cd dfxm_pipeline && grep -rni "mu_ref\|ccmth_mu\|11.5015\|11.2491" dfxm/ gui/ experiments/ tests/ docs/Usage.md docs/Codebase.md | grep -v "superpowers/specs\|superpowers/plans"`
+Run: `cd darq_xray && grep -rni "mu_ref\|ccmth_mu\|11.5015\|11.2491" dfxm/ gui/ experiments/ tests/ docs/Usage.md docs/Codebase.md | grep -v "superpowers/specs\|superpowers/plans"`
 Expected: no matches (the only surviving mentions are in this plan + the design spec, which intentionally record the history).
 
 - [ ] **Step 6: Confirm mosaicity mu read is intact**
 
-Run: `cd dfxm_pipeline && grep -n "mu_com_path" dfxm/stages/mosaicity.py`
+Run: `cd darq_xray && grep -n "mu_com_path" dfxm/stages/mosaicity.py`
 Expected: still present (the legitimate misorientation read was not touched).
 
 - [ ] **Step 7: Hand off to finishing-a-development-branch**

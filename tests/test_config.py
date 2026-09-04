@@ -1,4 +1,4 @@
-"""Tests for dfxm.config (models + presets)."""
+"""Tests for darq_xray.config (models + presets)."""
 
 from __future__ import annotations
 
@@ -6,8 +6,8 @@ from dataclasses import fields
 
 import pytest
 
-from dfxm.config import presets
-from dfxm.config.models import (
+from darq_xray.config import presets
+from darq_xray.config.models import (
     EXPERIMENT_SCHEMA,
     Experiment,
     Param,
@@ -92,7 +92,7 @@ def test_stage_spec_estimator_resolves_lazily():
         label="X",
         description="d",
         params=(),
-        estimate="dfxm.common.sort:natural_sort_key",
+        estimate="darq_xray.common.sort:natural_sort_key",
     )
     fn = spec.estimator()
     assert callable(fn)
@@ -102,7 +102,7 @@ def test_stage_spec_estimator_resolves_lazily():
 def test_cost_estimate_is_frozen_and_carries_chunkability():
     import dataclasses
 
-    from dfxm.config.models import CostEstimate
+    from darq_xray.config.models import CostEstimate
 
     est = CostEstimate(
         peak_bytes=1000, input_bytes=500, shape=(10, 10, 5), chunkable=True, note=None

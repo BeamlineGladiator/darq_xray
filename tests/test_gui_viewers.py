@@ -1,5 +1,5 @@
 """Tests for the interactive-viewer glue (headless parts only):
-visualize.aligned_field, gui.viewers.volume_sources, and inject_line_into_jobs.
+visualize.aligned_field, darq_xray.gui.viewers.volume_sources, and inject_line_into_jobs.
 The Qt/GL widgets themselves are exercised by tests/gui_smoke.py.
 """
 
@@ -12,8 +12,8 @@ import h5py
 import numpy as np
 import pytest
 
-from dfxm.stages import visualize as V
-from gui import viewers
+from darq_xray.gui import viewers
+from darq_xray.stages import visualize as V
 
 L, NY, NX = 4, 6, 8
 
@@ -83,7 +83,7 @@ def test_aligned_field_unknown_raises(tmp_path):
         V.aligned_field(_params(proc, raw), "nope")
 
 
-# -- gui.viewers.volume_sources ----------------------------------------------
+# -- darq_xray.gui.viewers.volume_sources ----------------------------------------------
 def _make_aligned_h5(tmp_path):
     """Build a synthetic aligned_raw_rocking_volumes.h5 and return its path."""
     aligned = tmp_path / "aligned_raw_rocking_volumes.h5"
@@ -113,7 +113,9 @@ def test_volume_sources_visualize_lazy(tmp_path):
 
 
 def test_visualize_source_spec_loader_is_jsonable(monkeypatch):
-    monkeypatch.setattr("dfxm.stages.visualize.available_fields", lambda p: ["chi_Center_of_mass"])
+    monkeypatch.setattr(
+        "darq_xray.stages.visualize.available_fields", lambda p: ["chi_Center_of_mass"]
+    )
     params = {"mosa_volume_file": "/x/maps.h5"}
     sources = viewers.volume_sources("visualize", object(), params)
     spec = sources["chi_Center_of_mass"]
@@ -192,7 +194,7 @@ def test_viewer3d_status_carries_the_decimation_note():
     ``tests/test_gui_viewer3d.py`` is deselected in this environment.
     """
     pytest.importorskip("PySide6")
-    from gui.widgets.viewer3d_window import Viewer3DWindow
+    from darq_xray.gui.widgets.viewer3d_window import Viewer3DWindow
 
     loaded = types.SimpleNamespace(notes=("decimated 4x for display",))
     stand_in = types.SimpleNamespace(loaded=loaded)
@@ -211,7 +213,7 @@ def test_viewer3d_rebuild_surfaces_the_note_without_gl():
     whose `ensure()` is False), so no GL context and no Qt widget is needed.
     """
     pytest.importorskip("PySide6")
-    from gui.widgets.viewer3d_window import Viewer3DWindow
+    from darq_xray.gui.widgets.viewer3d_window import Viewer3DWindow
 
     class _Label:
         def __init__(self):

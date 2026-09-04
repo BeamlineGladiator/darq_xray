@@ -7,7 +7,7 @@ import os
 import numpy as np
 import pytest
 
-from dfxm.common import render3d as R3
+from darq_xray.common import render3d as R3
 
 
 def _gradient_frame(i):
@@ -44,7 +44,7 @@ def test_video_from_frames_both_prefers_mp4_or_falls_back(tmp_path):
 
 
 def test_video_from_frames_failed_mp4_is_removed(tmp_path, monkeypatch):
-    from dfxm.common import render
+    from darq_xray.common import render
 
     class BoomWriter:
         def __init__(self, *a, **kw):
