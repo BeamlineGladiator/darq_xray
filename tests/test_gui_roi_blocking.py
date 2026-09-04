@@ -125,16 +125,31 @@ def test_the_stage_form_still_has_no_pick_roi_button():
         win.close()
 
 
-def test_slices_advanced_roi_field_is_revealed_when_run_is_refused(monkeypatch):
+def test_slices_advanced_roi_field_is_revealed_when_run_is_refused(monkeypatch, tmp_path):
     """slices keeps its ROI inside the collapsed Advanced expander, so the red
     note under the field is out of sight — the banner names it, and the Run
     click reveals it. Its params are `align_roi_*`, which also proves the check
-    is schema-driven rather than keyed on the name `roi_x`."""
+    is schema-driven rather than keyed on the name `roi_x`.
+
+    Every `must_exist` path is pointed at a real file first, because that check
+    runs *before* ROI validation and refuses with its own banner: the shipped
+    preset pre-fills those fields with the genericised `/path/to/data/...`
+    placeholders, which exist nowhere. Without this the run is refused for a
+    missing file, the ROI is never reached, and the expander never opens.
+    """
     win, view = _view("slices")
     try:
         monkeypatch.setattr(view, "_start_runner", lambda params: None)
         assert not view._form._adv_toggle.isChecked()  # precondition
-        view._form.set_values({"align_roi_y": "1330,630"})
+
+        existing = {}
+        for p in view._spec.params:
+            if not getattr(p, "must_exist", False):
+                continue
+            target = tmp_path / p.name
+            target.mkdir() if "root" in p.name else target.write_bytes(b"")
+            existing[p.name] = str(target)
+        view._form.set_values({**existing, "align_roi_y": "1330,630"})
         view._on_run()
         assert view._form._adv_toggle.isChecked()
         assert "Map ROI Y" in view._banner.text() or "ROI Y" in view._banner.text()

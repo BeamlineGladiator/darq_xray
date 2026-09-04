@@ -574,8 +574,23 @@ def centring_scaffold_bytes(method: str, n_values: int) -> tuple[int, int]:
 
     ``median``: the histogram's ``_QUANTILE_BINS + 1`` edges, the weights and
     temporaries :func:`_bin_edges` builds them from, the counts and their
-    cumulative sum — four bin-widths (measured 1.58 MB against 2.10 MB
-    charged). Plus the survivors of one bin: at most ``_QUANTILE_EXACT_CAP``
+    cumulative sum — **five** bin-widths (2.62 MB charged).
+
+    Five, not four, because the measured cost is not machine-independent. Four
+    bounded every local run — 1.58 MB on numpy 1.26.4 and 1.58 MB on numpy
+    2.5.2, both ~3.0 bin-widths — but the first CI run (2026-09-04, ubuntu
+    runner, whole suite in one process) measured **2 098 235 B**, 4.001
+    bin-widths, which overran a 2 097 696 B charge by 539 B and failed
+    ``test_centring_scaffold_bytes_covers_what_the_reductions_actually_allocate``
+    on both 3.10/numpy 2.2.6 and 3.12/numpy 2.5.2. The extra full bin-width is
+    a temporary that survives to the peak there and not here, so tuning the
+    figure to whichever machine last measured it is the wrong move: this is a
+    *promise*, and it has to hold on the machine that runs the code, not the
+    one that measured it. Five bin-widths clears the worst observation with a
+    whole bin-width of headroom. Over-charging only shrinks blocks — the safe
+    direction, per the last paragraph.
+
+    Plus the survivors of one bin: at most ``_QUANTILE_EXACT_CAP``
     float64, which the loop accumulates once and then holds **three** times over
     (the list, the concatenation, the sort) after the traversal ends — hence the
     two figures. The bound is a genuine worst case, reached only when one bin of
@@ -587,7 +602,7 @@ def centring_scaffold_bytes(method: str, n_values: int) -> tuple[int, int]:
     if m == "mean":
         return 16 * 8 * NEUMAIER_LANES, 0
     if m == "median":
-        histogram = 4 * 8 * (_QUANTILE_BINS + 1)
+        histogram = 5 * 8 * (_QUANTILE_BINS + 1)
         survivors = 8 * min(_QUANTILE_EXACT_CAP, max(0, int(n_values)))
         return histogram + survivors, 3 * survivors
     raise ValueError(f"centring_scaffold_bytes: unknown method {method!r} (expected mean/median)")

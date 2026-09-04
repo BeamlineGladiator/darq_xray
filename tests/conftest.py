@@ -1,4 +1,4 @@
-"""Shared fixtures: tiny synthetic BLISS-style HDF5 files.
+"""Shared fixtures: tiny synthetic BLISS-style HDF5 files, and QSettings isolation.
 
 The fixtures build files with the same structure the real ID03 data has —
 ``<entry>/instrument/pco_ff/image`` detector stacks and an
@@ -12,6 +12,36 @@ from __future__ import annotations
 import h5py
 import numpy as np
 import pytest
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _isolated_qsettings(tmp_path_factory):
+    """Point QSettings at a throwaway directory for the whole session.
+
+    A GUI test that builds a `MainWindow` gets the *developer's* saved state
+    otherwise: `FormStateStore` restores per-experiment form values from
+    ``~/.config/dfxm/pipeline.conf``, so a test's outcome depends on how the
+    person running it last used the app. That is not hypothetical —
+    ``test_gui_roi_blocking.py`` passed for years on the author's machine and
+    failed on the first CI run that ever executed, because his saved state
+    supplied data paths that exist locally and nowhere else.
+
+    Session-scoped and autouse so it is in place before the first `QSettings()`
+    is constructed. A no-op when Qt is absent, keeping the Qt-free core suite
+    runnable without PySide6.
+    """
+    try:
+        from PySide6.QtCore import QSettings
+    except ImportError:  # Qt-free run: nothing to isolate
+        yield
+        return
+
+    home = tmp_path_factory.mktemp("qsettings")
+    QSettings.setDefaultFormat(QSettings.Format.IniFormat)
+    for scope in (QSettings.Scope.UserScope, QSettings.Scope.SystemScope):
+        QSettings.setPath(QSettings.Format.IniFormat, scope, str(home))
+    yield
+
 
 FRAME_H, FRAME_W = 2, 3
 

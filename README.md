@@ -87,7 +87,9 @@ you are pulling in. `tests/test_docs_dependencies.py` fails if this list and
 <!-- deps:end -->
 
 Only lower bounds are declared, and the suite is kept green across the span
-they allow. Both ends are exercised: **numpy 1.26.4 / scipy 1.11.4 /
+they allow. Both ends are exercised **by CI on every push** — the `pytest`
+matrix runs Python 3.10 and 3.12, which resolve to the old and new
+generations respectively — spanning **numpy 1.26.4 / scipy 1.11.4 /
 matplotlib 3.6.3** and **numpy 2.5.2 / scipy 1.18.1 / matplotlib 3.11.1**. The
 two numpy generations genuinely differ where it matters here — `np.percentile`
 on a float32 array returns float64 on 1.x and float32 on 2.x — so tests derive
@@ -95,7 +97,12 @@ their oracle from the installed numpy rather than hardcoding one generation's
 value. Two constants that price memory are pinned to versions they were
 *measured* against and fail loudly on an unverified one, rather than drifting
 quietly: `tests/test_common_alignment.py::VERIFIED_SCIPY_VERSIONS` and
-`slices.RSS_FLOOR_BYTES`.
+`slices.RSS_FLOOR_BYTES`. A third, `volumeio.centring_scaffold_bytes`, is a
+*bound* rather than a pin and carries deliberate headroom, because its measured
+cost varies with the machine and not only the numpy version — see its
+docstring. Tests also run against an isolated `QSettings` store
+(`tests/conftest.py`), so a result never depends on how the person running them
+last used the app.
 
 ## Running
 
