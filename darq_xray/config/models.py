@@ -1,4 +1,4 @@
-"""Typed configuration models for the DFXM pipeline.
+"""Typed configuration models for the DARQ DFXM pipeline.
 
 Two complementary pieces live here:
 

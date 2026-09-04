@@ -54,7 +54,7 @@ class MainWindow(QMainWindow):
 
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle("DFXM pipeline")
+        self.setWindowTitle("DARQ — DFXM pipeline")
         self.resize(1100, 720)
         self._window_state = WindowState()
         self._form_state = FormStateStore()

@@ -1,4 +1,4 @@
-"""Shared HDF5 I/O primitives for the DFXM pipeline.
+"""Shared HDF5 I/O primitives for the DARQ DFXM pipeline.
 
 These are the reusable, stage-agnostic pieces: locating the input ``.h5``,
 filtering BLISS entries, building detector virtual datasets (VDS), reading

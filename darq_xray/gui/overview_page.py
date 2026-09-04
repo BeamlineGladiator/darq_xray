@@ -35,7 +35,7 @@ class OverviewPage(QWidget):
         super().__init__(parent)
         self._status_labels: dict[str, QLabel] = {}
 
-        title = QLabel("<h2>DFXM pipeline — overview</h2>")
+        title = QLabel("<h2>DARQ — DFXM pipeline overview</h2>")
         intro = QLabel(
             "Run the stages top to bottom. <b>Concat is optional</b> — skip it if "
             "your scans are already concatenated. <b>darfix runs outside this "
