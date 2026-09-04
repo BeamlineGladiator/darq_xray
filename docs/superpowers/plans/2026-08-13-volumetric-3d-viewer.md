@@ -2037,8 +2037,8 @@ ruff check . && ruff format --check .
 python3 -m pytest tests/test_render3d_gl.py -v
 # Headless stage run on real data (adjust paths to the STO2 experiment; small ROI to keep it quick):
 python3 -m dfxm.stages.visualize \
-  --mosa_volume_file /media/albert/DIC_SSD_3/ESRF/ma6778/id03/20251029/PROCESSED_DATA/STO2_overnight/stacked_volumes.h5 \
-  --raw_root /media/albert/DIC_SSD_3/ESRF/ma6778/id03/20251029/RAW_DATA \
+  --mosa_volume_file /path/to/data/ESRF/ma6778/id03/20251029/PROCESSED_DATA/STO2_overnight/stacked_volumes.h5 \
+  --raw_root /path/to/data/ESRF/ma6778/id03/20251029/RAW_DATA \
   --save_layers false --save_animation false --save_topview true --save_rotation true \
   --rotation_frames 36 --output_format mp4 \
   --output_dir /tmp/claude-1000/-home-albert-Desktop-dfxm-pipeline/09b341dc-cf83-47b4-b973-e975d32c1493/scratchpad/vis3d_canary

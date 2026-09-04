@@ -2831,9 +2831,12 @@ offsets:
 
 ## Tips & troubleshooting
 
-> [!tip] Hardcoded data lives on the external SSD
-> Default paths point at `/media/albert/DIC_SSD_3/ESRF/…`. On another machine,
-> edit the experiment roots first.
+> [!tip] The shipped preset's paths are placeholders
+> `STO2_overnight` carries real, measured calibration (angles, pixel scales,
+> ROIs) but its `raw_root`/`processed_root` are written as
+> `/path/to/data/ESRF/…`, showing the expected ESRF layout rather than any real
+> location. Point them at your own copy of the data before running a stage — or
+> use **Initialize from data…**, which fills both in from a `RAW_DATA` folder.
 
 - **A stage is greyed out / "no volumes":** an upstream output doesn't exist yet —
   run the earlier stage (or fix the file path).

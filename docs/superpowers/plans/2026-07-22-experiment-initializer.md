@@ -1609,7 +1609,7 @@ git commit -m "feat(gui): Initialize from data… — detection review wired int
 2. `ruff check . && ruff format --check .` — clean.
 3. `python3 tests/gui_smoke.py` — 35/35.
 4. Real-data CLI check (SSD mounted):
-   `python3 -m dfxm.config.detect /media/albert/DIC_SSD_3/ESRF/ma6778/id03/20251029/RAW_DATA/STO2_overnight --processed-root /media/albert/DIC_SSD_3/ESRF/ma6778/id03/20251029/PROCESSED_DATA/STO2_overnight`
+   `python3 -m dfxm.config.detect /path/to/data/ESRF/ma6778/id03/20251029/RAW_DATA/STO2_overnight --processed-root /path/to/data/ESRF/ma6778/id03/20251029/PROCESSED_DATA/STO2_overnight`
    Expected: `folder_pattern STO2_overnight_layer_2x_energy_strain__*`,
    pixel sizes ≈ 0.151733 / 0.387584, `ccmth_ref_deg` ≈ 7.1442 (median note),
    `darfix_roi` `?,?,1832,1266` row (preset ROI not passed on the CLI).

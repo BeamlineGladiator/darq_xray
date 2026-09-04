@@ -2132,7 +2132,7 @@ auto-fill from the experiment + the previous stage's outputs.
 | `docs/Codebase.md` | This file. |
 | `docs/examples/figure5_style_recipe.json` | A worked figure-builder recipe. |
 | `docs/superpowers/` | Development archive: the implementation plans, design specs and session handoffs the pipeline was built from. Not part of the running code. |
-| `experiments/STO2_overnight.yaml` | The shipped preset (paths, calibrated angles, pixel scales). Its `raw_root`/`processed_root` point at the machine the dataset was analysed on — repoint them, or use **Initialize from data…**, on any other machine. |
+| `experiments/STO2_overnight.yaml` | The shipped preset. Its calibration (angles, pixel scales, ROIs) is real and measured; its `raw_root`/`processed_root` are `/path/to/data/ESRF/…` placeholders showing the expected ESRF layout — repoint them, or use **Initialize from data…**. |
 | `tools/pin_slice.py` | Standalone helper, outside the stage pipeline. |
 
 ---

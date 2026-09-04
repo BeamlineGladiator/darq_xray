@@ -2183,7 +2183,7 @@ from dfxm.common.advice import headroom_bytes, plan_run
 from dfxm.common.machine import profile
 from dfxm.stages import mosaicity, paraview, slices, strain, visualize
 
-ROOT = "/media/albert/DIC_SSD_3/ESRF/ma6778/id03/20251029/PROCESSED_DATA/STO2_overnight"
+ROOT = "/path/to/data/ESRF/ma6778/id03/20251029/PROCESSED_DATA/STO2_overnight"
 p = profile()
 print(f"headroom here: {headroom_bytes(p) / 1024**3:.2f} GB")
 

@@ -1,8 +1,12 @@
+# Reference preset. The calibration below (angles, pixel scales, ROIs) is real
+# and measured; the two roots are placeholders showing the ESRF directory
+# layout. Repoint them at your own copy of the data, or let
+# "Initialize from data..." fill them in from a RAW_DATA folder.
 name: STO2_overnight
 description: STO2 overnight — ESRF ID03, proposal ma6778, beamtime 2025-10-29
 notes: STO2 overnight reference dataset.
-raw_root: /media/albert/DIC_SSD_3/ESRF/ma6778/id03/20251029/RAW_DATA/STO2_overnight
-processed_root: /media/albert/DIC_SSD_3/ESRF/ma6778/id03/20251029/PROCESSED_DATA/STO2_overnight
+raw_root: /path/to/data/ESRF/ma6778/id03/20251029/RAW_DATA/STO2_overnight
+processed_root: /path/to/data/ESRF/ma6778/id03/20251029/PROCESSED_DATA/STO2_overnight
 folder_pattern: STO2_overnight_layer_2x_energy_strain__*
 mosa_pattern: STO2_overnight_layer_2x_mosa__*
 rocking_pattern: STO2_overnight_layer_2x_rocking__*

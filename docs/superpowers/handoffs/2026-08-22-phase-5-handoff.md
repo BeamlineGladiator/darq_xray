@@ -132,7 +132,7 @@ Options if you want it bounded: decimate the saved 3-D products the way the view
 ## 4. Hazards — read before running anything on real data
 
 1. **STO2 lives on the external SSD**, not `/mnt/data`:
-   `/media/albert/DIC_SSD_3/ESRF/ma6778/id03/20251029/` (`PROCESSED_DATA/STO2_overnight` =
+   `/path/to/data/ESRF/ma6778/id03/20251029/` (`PROCESSED_DATA/STO2_overnight` =
    76 mosa + 76 strain layer folders; `RAW_DATA` alongside). `/mnt/data` holds only derived products.
 2. **`strain` and `mosaicity` write their stacked volume into the BATCH ROOT.** Pointing
    `root_folder` at the real data directory **overwrites** `stacked_volumes.h5` /
