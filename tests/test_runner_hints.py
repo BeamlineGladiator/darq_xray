@@ -73,14 +73,25 @@ def test_peak_rss_sees_a_large_allocation():
     """The harness's own reason to exist: it must observe a real allocation."""
     from tests.peak_rss import measure_peak_rss
 
-    small, baseline = measure_peak_rss("tests.peak_rss:_hungry_target", {"mib": 8})
-    big, hungry = measure_peak_rss("tests.peak_rss:_hungry_target", {"mib": 256})
+    t_small: dict = {}
+    t_big: dict = {}
+    small, baseline = measure_peak_rss("tests.peak_rss:_hungry_target", {"mib": 8}, trace=t_small)
+    big, hungry = measure_peak_rss("tests.peak_rss:_hungry_target", {"mib": 256}, trace=t_big)
     # Precondition: the target really ran (and really allocated) in both runs,
     # rather than the child dying early and leaving two comparable near-zeros.
     assert small == {"sum": 1.0} and big == {"sum": 1.0}
     assert baseline > MIB, f"baseline {baseline} B is not a real child's RSS"
+    # The trace is in the message because this failed on CI and nowhere else:
+    # a *baseline* child reported 1.55 GB while the deliberately hungry one
+    # reported 301 MB. Reproducing it locally failed twice — a 1.46 GB parent
+    # did not leak into the child's reading, and numpy 2.5.2 alone did not do
+    # it either — so the sample series is what distinguishes "sampled the wrong
+    # process", "sampled at the wrong moment" and "the child really allocated
+    # that" on a machine nobody can attach a debugger to.
     assert hungry - baseline > 128 * MIB, (
-        f"harness did not observe the allocation: {baseline} -> {hungry}"
+        f"harness did not observe the allocation: {baseline} -> {hungry}\n"
+        f"  8 MiB run: {t_small}\n"
+        f"256 MiB run: {t_big}"
     )
 
 

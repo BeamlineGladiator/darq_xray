@@ -116,7 +116,12 @@ def _drain_to_finish(runner: StageRunner, grace: float = _DRAIN_GRACE) -> None:
 
 
 def measure_peak_rss(
-    target: str, params: dict, *, interval: float = 0.02, timeout: float = 300.0
+    target: str,
+    params: dict,
+    *,
+    interval: float = 0.02,
+    timeout: float = 300.0,
+    trace: dict | None = None,
 ) -> tuple[object, int]:
     """Run *target* in a child and return ``(result, peak_rss_bytes)``.
 
@@ -141,6 +146,15 @@ def measure_peak_rss(
     proc = _attach(runner.pid)
     peak = 0
     samples = 0
+    # *trace*, when given, is filled with the raw sample series. It exists
+    # because a peak that is wrong is indistinguishable from one that is right:
+    # `test_peak_rss_sees_a_large_allocation` failed on CI with a *baseline*
+    # child reporting 1.55 GB, and the bare figure said nothing about whether
+    # the sampler read the wrong process, read it at the wrong moment, or the
+    # child really did allocate that. Costs one list append per sample and is
+    # inert unless a caller asks.
+    series: list[tuple[float, int]] = []
+    started = time.monotonic()
     deadline = time.monotonic() + timeout
     try:
         while True:
@@ -148,6 +162,8 @@ def measure_peak_rss(
             if rss is not None:
                 samples += 1
                 peak = max(peak, rss)
+                if trace is not None:
+                    series.append((time.monotonic() - started, rss))
             runner.poll()
             if runner.finished or not runner.is_alive():
                 break
@@ -186,6 +202,15 @@ def measure_peak_rss(
             f"that every sample caught spawn's pre-import RSS (interval={interval}s, "
             f"{samples} sample(s)) — in which case lower `interval`. Refusing to "
             "report the figure either way: it is not this stage's peak."
+        )
+    if trace is not None:
+        trace.update(
+            pid=runner.pid,
+            samples=samples,
+            peak=peak,
+            first=series[:6],
+            largest=sorted(series, key=lambda s: -s[1])[:6],
+            last=series[-3:],
         )
     return runner.result, peak
 
