@@ -27,6 +27,7 @@ backticked text is never a link in the first place.
 
 from __future__ import annotations
 
+import os.path
 import re
 from pathlib import Path
 
@@ -120,7 +121,10 @@ def unresolved_anchors(rel_path: str) -> list[str]:
             where = rel_path
         else:
             target = doc if doc.endswith(".md") else f"{doc}.md"
-            where = target if "/" in target else f"{Path(rel_path).parent}/{target}"
+            # Always relative to the *linking document's* directory, so both
+            # `docs/Usage.md` from the README and `../README.md` from docs/
+            # resolve. Anything else silently misjudges one of the two.
+            where = os.path.normpath(str(Path(rel_path).parent / target))
             if not (ROOT / where).exists():
                 bad.append(f"#{anchor} -> missing document {where}")
                 continue

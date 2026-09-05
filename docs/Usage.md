@@ -6,26 +6,37 @@ aliases: [DARQ Usage, Pipeline Guide, How to use the pipeline]
 
 # DARQ — Usage Guide
 
-> [!NOTE] What this is
-> A desktop (PySide6) application that takes **Dark-Field X-ray Microscopy**
-> (DFXM) data from the ESRF ID03 beamline all the way from raw detector files to
-> finished **strain** and **mosaicity** maps, aligned 3-D volumes, ParaView
-> exports, oblique slices and line profiles. Every original analysis script is
-> reproduced here as one stage of a 9-stage pipeline you drive from a single
-> window.
+> [!NOTE]
+> How to *use* DARQ: every stage, every viewer, the figure builder, and a
+> glossary of the terms the rest of this guide assumes. For how to install it
+> see the [README](../README.md); for how the code is put together see
+> [Codebase.md](Codebase.md).
 
 > [!NOTE] This document is kept in sync with the code
 > When stages, parameters, outputs, or behaviour change, this guide is updated
 > in the same change (see [Maintaining this guide](#maintaining-this-guide)). If something here
 > disagrees with the app, the app wins — please report or fix the drift.
 
+<!--
+  Add a screenshot: save the main window as images/main-window.png
+  (see images/README.md), then delete this comment block and uncomment
+  the line below.
+
+![The DARQ main window](images/main-window.png)
+-->
+
 ## Contents
 
-- [Quick start](#quick-start)
+- [What this app does](#what-this-app-does)
+- [Before you start](#before-you-start)
+- [Install and launch](#install-and-launch)
+- [Words you'll meet](#words-youll-meet)
+- [Your first analysis, end to end](#your-first-analysis-end-to-end)
 - [Core concepts](#core-concepts)
   - [Regions of interest: two windows, two frames](#regions-of-interest-two-windows-two-frames)
 - [The pipeline at a glance](#the-pipeline-at-a-glance)
 - [Stage reference](#stage-reference)
+- [Publication export](#publication-export)
 - [Figure builder](#figure-builder)
 - [Interactive viewers](#interactive-viewers)
 - [Tips and troubleshooting](#tips-and-troubleshooting)
@@ -34,27 +45,81 @@ aliases: [DARQ Usage, Pipeline Guide, How to use the pipeline]
 
 ---
 
-## Quick start
+## What this app does
 
-> [!TIP] Launch the app
-> ```bash
-> cd darq_xray
-> source .venv/bin/activate    # only if you installed into a venv (see below)
-> python3 -m darq_xray.gui.app   # or just `darq_xray`
-> ```
+**Dark-Field X-ray Microscopy (DFXM)** images a single crystal grain deep
+inside a sample, through its diffracted beam. You rock the crystal through its
+diffraction condition while the detector records frame after frame, so every
+pixel ends up holding a small intensity-versus-angle curve. Fitting that curve
+pixel by pixel tells you how the lattice is spaced and which way it is tilted —
+**strain** and **mosaicity**.
 
-**Install** — one command, run once from the project folder:
+DARQ drives that analysis end to end for data from the **ESRF ID03** beamline:
+nine stages, from raw beamline files to finished maps, aligned 3-D volumes,
+ParaView exports, oblique slices, line profiles and publication figures. You
+drive all of it from one window — each stage is a form you fill in and a
+**Run** button — and the settings the stages share live in a named, reusable
+**experiment preset** rather than being retyped.
 
-```bash
-python3 -m venv .venv && source .venv/bin/activate
-pip install -e ".[test]"
+One step in the middle is not DARQ's. **darfix**, the ESRF tool that does the
+per-pixel curve fitting, is a separate program that you run yourself. DARQ
+*brackets* it: the `concat` stage prepares darfix's input, and every map stage
+downstream reads the `maps.h5` that darfix writes.
+
+## Before you start
+
+**On the machine:**
+
+- **Python 3.10 or newer**, and DARQ installed — see
+  [Install and launch](#install-and-launch) below.
+- **A display.** This is a windowed application. Every stage also has a
+  command-line form for batch work (see
+  [Running without the GUI](#running-without-the-gui-cli)), but the app needs
+  a screen.
+- **darfix**, installed separately. Not bundled here.
+- **`ffmpeg`** *(optional)*, on your `PATH`. With it, animations export as MP4;
+  without it, as GIF.
+
+**Data-wise**, you need one or both of:
+
+- **Raw scan folders** from ID03 — BLISS-written `.h5` files, one folder per
+  sample layer. These are what `concat` and `rocking` read.
+- **A darfix `maps.h5`** per layer. This is what `strain` and `mosaicity` read.
+
+**Where darfix fits.** The pipeline is not a single unbroken chain. It runs:
+
+```
+your raw scans  →  concat  →  [ you run darfix ]  →  strain / mosaicity  →  everything else
 ```
 
-It reads `pyproject.toml`, so it always installs *everything* the app needs;
-there is no hand-typed list to fall behind. `-e` is editable mode — the app
-still runs from this folder and your edits take effect immediately. On a
-Debian/Ubuntu system Python without a venv, pip refuses to install (PEP 668)
-unless you add `--break-system-packages`.
+`concat` is optional — skip it if your scans are already joined into single
+darfix-ready files. darfix is not optional and not automatable from here; DARQ
+shows it in the pipeline rail as a greyed, non-clickable row so the gap is
+visible rather than surprising. Everything after it works from darfix's output.
+
+## Install and launch
+
+If DARQ is not installed yet:
+
+```bash
+git clone https://github.com/BeamlineGladiator/darq_xray.git
+cd darq_xray
+python3 -m venv venv
+source venv/bin/activate          # Windows: venv\Scripts\activate
+pip install -e .
+```
+
+Then, in any terminal:
+
+```bash
+source venv/bin/activate    # once per terminal
+darq_xray
+```
+
+The [README](../README.md#install) explains what each of those lines does and
+what to try when one fails — what a virtual environment is,
+`error: externally-managed-environment` on Debian and Ubuntu, and why the `-e`
+matters.
 
 > [!WARNING] Keep the `-e`
 > The shipped experiment presets live in `experiments/`, beside the package
@@ -62,38 +127,107 @@ unless you add `--break-system-packages`.
 > the `-e` and the app starts with an empty preset dropdown and no
 > calibration.
 
-For reference, that pulls in:
+That single command installs everything DARQ needs, because it reads
+`pyproject.toml` — the one place dependencies are declared. For reference, it
+pulls in:
 
 <!-- deps:start -->
 `numpy`, `h5py`, `scipy`, `matplotlib`, `pyyaml`, `psutil`, `PySide6`,
 `pyvista`, `pyvistaqt`, `vtk`
 <!-- deps:end -->
 
-plus `pytest` from the `[test]` extra. One optional non-Python dependency:
-`ffmpeg` on `PATH` enables MP4 export (otherwise animations fall back to GIF).
+> [!WARNING] Don't install by picking packages off that list
+> The list above used to omit **`psutil` and `pyyaml`**, and installing by hand
+> from it left the app without `psutil` — which silently made the status bar
+> report **8 GB free on a machine with 467 GB free**, and made every stage plan
+> to stream when it could have run in memory. Use `pip install -e .` and let
+> `pyproject.toml` decide. (A test now fails if this list and `pyproject.toml`
+> ever disagree, which is why it is safe to read — but not to type from.)
 
-> [!WARNING] Don't skip `psutil` or `pyyaml`
-> This list used to omit both, and installing by hand from it left the app
-> without `psutil` — which silently made the status bar report **8 GB free on a
-> machine with 467 GB free**, and made every stage plan to stream when it could
-> have run in memory. Use the command above rather than picking packages off
-> the list.
+## Words you'll meet
 
-**Typical first run:**
+The rest of this guide uses these constantly. You do not need to memorise them;
+come back when one turns up.
 
-1. The app opens on the **Overview** page — the pipeline drawn left-to-right
-   with one sentence per stage. Concat is **optional** (skip it if your scans
-   are already concatenated) and **darfix runs outside the app**, between
-   concat and the map stages.
-2. Pick an **experiment preset** from the dropdown (ships with `STO2_overnight`).
-   The one-line summary shows its calibration; **Edit…** opens the full editor.
-3. Click a stage in the pipeline rail (or its chip on the Overview page). The
-   form shows the stage's **essentials**; everything else is under
-   **Advanced (N settings)**, grouped by theme.
-4. Click into any field — the **help panel** under the form explains it. Press
-   **Run**. Progress shows next to the buttons; results land in **Results**, a
-   preview in **Output**, and a green/red **banner** summarises the outcome
-   (with a fix-it hint when an input was wrong).
+| Term | What it means |
+|---|---|
+| **DFXM** | Dark-Field X-ray Microscopy. Imaging one crystal grain deep inside a sample through its diffracted beam, rather than through the beam that passes straight on. |
+| **ID03** | The ESRF beamline this pipeline was built around. Its motor names, file layout and calibration are what DARQ expects by default. |
+| **darfix** | The separate ESRF tool that fits the rocking curve at every pixel. **You run it yourself**, between `concat` and the map stages. DARQ never launches it. |
+| **`maps.h5`** | darfix's output: the fitted results for one layer. Every map stage reads this. |
+| **rocking curve** | At one pixel, intensity plotted against crystal angle, measured by rotating the sample through its diffraction condition. The raw quantity everything else is derived from. |
+| **COM** | Centre of mass of that curve — the angle the pixel diffracts at. Shifts in it are what become strain and mosaicity. |
+| **FWHM** | Full width at half maximum of that curve — how *spread out* the diffraction is at that pixel, a measure of local disorder. |
+| **ccmth** | The monochromator angle motor. Its **reference value** sets where strain reads zero, so it is calibration: get it wrong and every strain number is wrong by a constant. |
+| **axial strain** | Relative change in lattice spacing along the scattering direction, computed from the COM angle by the cot method. Dimensionless, typically ~10⁻⁴. |
+| **mosaicity** | Local misorientation — how much the lattice tilts from one place to another within the same grain. |
+| **samy / samz** | The sample translation motors. `samz` steps between layers; `samy` steps across the beam, and correcting its sub-pixel shift is a fixed part of the alignment. |
+| **layer** | One `samz` position — a single 2-D slice through the sample. A dataset is a stack of them. |
+| **stack / volume** | Layers assembled into one 3-D array on a common grid. Every volume stage produces one. |
+| **alignment** | The fixed sequence that puts every volume into the same coordinate frame, so a strain volume and a raw volume can be overlaid. One implementation, shared by every stage that makes a volume. |
+| **ROI** | Region of interest — the part of the data you want to work on. There are **two of them here, in two different coordinate frames**; see [Regions of interest](#regions-of-interest-two-windows-two-frames). |
+| **VDS** | HDF5 *Virtual DataSet*: a file that **references** data in other files instead of copying it. Fast and small, but it breaks if you move the originals. |
+| **PVTI** | The ParaView image-data file format the `paraview` stage writes. |
+| **experiment / preset** | A named YAML file in `experiments/` holding what every stage shares: data roots, folder patterns, calibration angles, pixel scales and ROIs. Pick one from the dropdown; edit it once, and every stage follows. |
+| **stage** | One step of the pipeline: a form, a **Run** button, and files out. There are nine. |
+| **replot** | Redrawing a stage's figures from the volume it already produced, without re-running the analysis. Most map stages offer it. |
+
+## Your first analysis, end to end
+
+This walks the shortest path that produces a real result: raw scans in, strain
+maps out. Later sections cover each step in full detail.
+
+1. **Launch the app.** It opens on the **Overview** page: the pipeline drawn
+   left to right, one sentence per stage. The same stages are listed in the
+   **rail** down the left edge, each with a status glyph (— idle, ▶ running,
+   ✓ ok, ✗ failed). Click either to open a stage.
+
+2. **Choose an experiment.** The dropdown at the top of the left column lists
+   the presets in `experiments/`; `STO2_overnight` ships with the app. The line
+   beneath it summarises that preset's calibration. Click **Edit…** for the
+   full editor.
+
+   > [!IMPORTANT]
+   > The shipped preset's `raw_root` and `processed_root` are written as
+   > `/path/to/data/ESRF/…`. They show the expected ESRF folder layout — they
+   > are **not** a real location. Point them at your own copy of the data
+   > before running anything.
+
+   Rather than hand-filling the editor, click **Initialize from data…**: it
+   scans the roots you have typed and proposes folder patterns, pixel sizes,
+   the ccmth reference and the darfix ROI size, each with an *Apply* checkbox
+   so nothing overwrites a value you set deliberately. See
+   [Initializing an experiment from data](#initializing-an-experiment-from-data).
+
+3. **Concatenate your scans** — stage 1, and **optional**. It joins the
+   per-scan `.h5` files of each layer into the single `entry_0000` file darfix
+   expects. Skip it if that is already done. See
+   [1. Concatenate](#1-concatenate).
+
+4. **Leave DARQ and run darfix** on those files. It fits the rocking curve at
+   every pixel and writes a `maps.h5` per layer, under your processed root.
+   DARQ cannot do this step for you.
+
+5. **Run Axial strain** — stage 2. Point it at the parent folder of your
+   darfix output and check the calibration fields; the app marks them in red.
+   Click into any field and the **help panel** under the form explains it;
+   everything non-essential is collapsed under **Advanced**. Below the **Run**
+   button a **cost line** tells you what the run needs in memory, disk and time
+   *before* you start it. See [2. Axial strain](#2-axial-strain).
+
+6. **Read the result.** Progress runs beside the buttons. When it finishes, a
+   banner across the top says what happened — green for success, red with a
+   fix-it hint when an input was wrong. **Results** lists the files written,
+   **Output** previews them, **Log** has the detail. You should now have:
+
+   - `stacked_strain_volumes.h5` — every layer aligned into one 3-D volume;
+   - a folder of PNG maps, one per layer per quantity.
+
+7. **Keep going.** Every later stage pre-fills its inputs from what you have
+   already produced, so from here you can run
+   [Mosaicity](#3-mosaicity-volume), [Visualize](#5-visualize-volumes),
+   [ParaView export](#6-paraview-export) or
+   [Oblique slices](#7-oblique-slices) without retyping a path.
 
 > [!WARNING] Calibration values are physical
 > `ccmth reference` and the pixel scales (µm/px) are flagged with **⚠ calibration**
@@ -3040,6 +3174,6 @@ stderr.
 ## See also
 
 - [Codebase.md](Codebase.md) — file-by-file code reference (what every module/function does).
-- `CLAUDE.md` — architecture & contributor conventions.
-- `README.md` — short project summary.
+- [README.md](../README.md) — what DARQ is, how to install it, and what the nine stages do.
+- [CLAUDE.md](../CLAUDE.md) — architecture and contributor conventions.
 - `experiments/STO2_overnight.yaml` — the shipped preset (paths, calibrated angles, pixel scales).
