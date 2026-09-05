@@ -182,8 +182,10 @@ a fixed µm-per-cm scale.
 - **[`CLAUDE.md`](CLAUDE.md)** — contributor conventions and the invariants the
   suite enforces (Qt-free core, one alignment implementation, docs-in-the-same-change).
 
-Both docs are Obsidian-flavoured (`[[wiki links]]`, `> [!note]` callouts); they
-render fine on GitHub, and fully in Obsidian.
+Both docs are written to render identically on GitHub and in Obsidian —
+standard Markdown links, `<details>` blocks, and only the five alert types
+(`> [!NOTE]`, `> [!TIP]`, `> [!IMPORTANT]`, `> [!WARNING]`, `> [!CAUTION]`)
+that both tools understand. `tests/test_docs_links.py` enforces it.
 
 ## License
 

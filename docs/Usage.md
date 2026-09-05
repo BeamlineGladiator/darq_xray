@@ -6,7 +6,7 @@ aliases: [DARQ Usage, Pipeline Guide, How to use the pipeline]
 
 # DARQ — Usage Guide
 
-> [!info] What this is
+> [!NOTE] What this is
 > A desktop (PySide6) application that takes **Dark-Field X-ray Microscopy**
 > (DFXM) data from the ESRF ID03 beamline all the way from raw detector files to
 > finished **strain** and **mosaicity** maps, aligned 3-D volumes, ParaView
@@ -14,29 +14,29 @@ aliases: [DARQ Usage, Pipeline Guide, How to use the pipeline]
 > reproduced here as one stage of a 9-stage pipeline you drive from a single
 > window.
 
-> [!note] This document is kept in sync with the code
+> [!NOTE] This document is kept in sync with the code
 > When stages, parameters, outputs, or behaviour change, this guide is updated
-> in the same change (see [[#Maintaining this guide]]). If something here
+> in the same change (see [Maintaining this guide](#maintaining-this-guide)). If something here
 > disagrees with the app, the app wins — please report or fix the drift.
 
 ## Contents
 
-- [[#Quick start]]
-- [[#Core concepts]]
-  - [[#Regions of interest — two windows, two frames]]
-- [[#The pipeline at a glance]]
-- [[#Stage reference]]
-- [[#Figure builder]]
-- [[#Interactive viewers]]
-- [[#Tips & troubleshooting]]
-- [[#Running without the GUI (CLI)]]
-- [[#Maintaining this guide]]
+- [Quick start](#quick-start)
+- [Core concepts](#core-concepts)
+  - [Regions of interest: two windows, two frames](#regions-of-interest-two-windows-two-frames)
+- [The pipeline at a glance](#the-pipeline-at-a-glance)
+- [Stage reference](#stage-reference)
+- [Figure builder](#figure-builder)
+- [Interactive viewers](#interactive-viewers)
+- [Tips and troubleshooting](#tips-and-troubleshooting)
+- [Running without the GUI (CLI)](#running-without-the-gui-cli)
+- [Maintaining this guide](#maintaining-this-guide)
 
 ---
 
 ## Quick start
 
-> [!example] Launch the app
+> [!TIP] Launch the app
 > ```bash
 > cd darq_xray
 > source .venv/bin/activate    # only if you installed into a venv (see below)
@@ -56,7 +56,7 @@ still runs from this folder and your edits take effect immediately. On a
 Debian/Ubuntu system Python without a venv, pip refuses to install (PEP 668)
 unless you add `--break-system-packages`.
 
-> [!warning] Keep the `-e`
+> [!WARNING] Keep the `-e`
 > The shipped experiment presets live in `experiments/`, beside the package
 > rather than inside it, so they are **not** installed as package data. Drop
 > the `-e` and the app starts with an empty preset dropdown and no
@@ -72,7 +72,7 @@ For reference, that pulls in:
 plus `pytest` from the `[test]` extra. One optional non-Python dependency:
 `ffmpeg` on `PATH` enables MP4 export (otherwise animations fall back to GIF).
 
-> [!warning] Don't skip `psutil` or `pyyaml`
+> [!WARNING] Don't skip `psutil` or `pyyaml`
 > This list used to omit both, and installing by hand from it left the app
 > without `psutil` — which silently made the status bar report **8 GB free on a
 > machine with 467 GB free**, and made every stage plan to stream when it could
@@ -95,7 +95,7 @@ plus `pytest` from the `[test]` extra. One optional non-Python dependency:
    preview in **Output**, and a green/red **banner** summarises the outcome
    (with a fix-it hint when an input was wrong).
 
-> [!warning] Calibration values are physical
+> [!WARNING] Calibration values are physical
 > `ccmth reference` and the pixel scales (µm/px) are flagged with **⚠ calibration**
 > in red. Wrong values produce *meaningless* strain maps — confirm them against the
 > beamline calibration for your experiment.
@@ -173,7 +173,7 @@ Each row pairs a measured value with what it means for your settings:
   necessarily where your data or a stage's output lives — this dialog never
   reads a stage's `output_dir` (it measures `os.getcwd()`). For the figure
   that actually gates a given run, look at that stage's own cost line instead
-  (below its Run button — see "The cost line" under [[#The stage panel]]),
+  (below its Run button — see "The cost line" under [The stage panel](#the-stage-panel)),
   which does measure the right disk.
 - **OpenGL** — the renderer and its 3-D texture size cap. On a software
   (CPU) renderer the row says so and recommends surface mode, because volume
@@ -198,7 +198,7 @@ glob patterns, calibration angles, pixel scales, and the beamline HDF5/motor
 paths. Define it once; every stage inherits it. Presets are YAML files in
 `experiments/` and are chosen from a dropdown.
 
-> [!tip]
+> [!TIP]
 > Editing a calibration field updates only this session until you **Save as…**.
 > Keep one preset per sample/beamtime.
 
@@ -279,7 +279,7 @@ save the preset YAML — otherwise the values live only in this session.
 The same detection runs headless:
 `python3 -m darq_xray.config.detect RAW_ROOT --processed-root PROC_ROOT`.
 
-### Regions of interest — two windows, two frames
+### Regions of interest: two windows, two frames
 
 Every DFXM dataset carries **two** regions of interest, and they are not the
 same kind of thing:
@@ -311,13 +311,13 @@ Enter the darfix window and the analysis window **once**, in the experiment
 editor — every stage form pre-fills its own ROI field(s) in its own frame from
 those two, so you never hand-convert map pixels to detector pixels again. If
 you then edit a stage's ROI so it no longer matches what the experiment would
-derive, the field's label grows a **⚠** (see [[#ROI deviation markers]]) —
+derive, the field's label grows a **⚠** (see [ROI deviation markers](#roi-deviation-markers)) —
 that's fine for a deliberate one-off, but treat an unexpected ⚠ as a prompt to
 re-check which frame you typed in. The slices stage's Y-height check remains
 the last-line guard: if the volumes it's about to combine disagree on physical
 Y height by more than ~5%, it warns before you go further.
 
-> [!warning] The classic mistake
+> [!WARNING] The classic mistake
 > On 2026-07-18 a real STO2 run had darfix's origin+size numbers (`230,1266`)
 > typed directly into rocking's `roi_y`, which expects **start,end** — instead
 > of the correct `630,1330`. The result was a ~154 µm Y-misregistration between
@@ -371,9 +371,9 @@ Every stage uses the same layout:
 | **Run / Cancel + progress** | Runs the stage in a **separate process**; the bar and step text track progress; **Cancel** truly kills it. Before launching, input paths are checked on disk — a missing one blocks the run and focuses the offending field. Once a run/batch is more than 5 % done and has been going for more than 2 seconds, the progress text may also show a `~… left` estimate; the estimate starts fresh every time you click **Run**, so it never carries a stale reading over from a previous run. It is measured from the run's **recent** pace rather than its average, counts down while a stage is busy without reporting, and **goes quiet rather than showing `~1 s left`** once a run has outlasted its own estimate — no number means it genuinely does not know. Every stage now reports **continuously** rather than at phase boundaries — the bar advances per layer, per volume, per `.vti` piece, per animation frame, per plane, per job — so it no longer stands still through long stretches of a run (`visualize` used to sit at 60 % for its entire strain half, and `paraview` reported four times for a whole export). Switching a product off shortens the bar rather than skipping part of it: with **Save layers** unticked the run no longer jumps by the layer PNGs' share, and the step text never names a product the run was not asked to make. Likewise a `paraview` export of only one volume fills the whole bar instead of sitting at its top, and a `profiles` **preview** reports while its figure renders. A step text names work already done rather than work about to start, so cancelling a run does not leave the bar claiming a file that was never written. It is still an estimate: it re-bases on the run's current pace, so it can step up or down when a stage moves from one kind of work to another. |
 | **Status banner** (above the tabs) | Green one-liner on success; on failure, the error in plain language plus an actionable hint (the full traceback stays in **Log**); on **Run**, a blue-grey banner states the same cost line the form already showed, so the number you saw before clicking is still visible once the run is underway. |
 | **Log** tab | Live progress + streamed messages. |
-| **Results** tab | A text summary of what was produced — including every skipped layer/input and the reason. For a run started from the GUI it ends with a `Rendered with publication style (colormaps / font): …` line naming the four group colormaps and the font scale **that run** used — see [[#The "Publication style…" editor]]. |
+| **Results** tab | A text summary of what was produced — including every skipped layer/input and the reason. For a run started from the GUI it ends with a `Rendered with publication style (colormaps / font): …` line naming the four group colormaps and the font scale **that run** used — see [The Publication style editor](#the-publication-style-editor). |
 | **Output** tab | A representative image preview. |
-| **3D** tab | (visualize & rocking only) interactive volume viewer — see [[#Interactive viewers]]. |
+| **3D** tab | (visualize & rocking only) interactive volume viewer — see [Interactive viewers](#interactive-viewers). |
 
 A help box under the form shows the current stage's description by default. Click
 a field and it shows that field's help; click away (or open another stage) and it
@@ -679,7 +679,7 @@ flowchart TD
     A -->|9. matched| L[rocking layers matched to strain]
 ```
 
-> [!note] darfix runs outside this app
+> [!NOTE] darfix runs outside this app
 > `darfix` (the ESRF tool that fits per-pixel rocking curves into `maps.h5`) is a
 > separate program. The app **brackets** it: `concat` prepares its input; the
 > map stages consume its `maps.h5` output. Run darfix yourself between the two.
@@ -688,12 +688,12 @@ flowchart TD
 
 ## Stage reference
 
-> [!info] Every parameter is explained in the app
+> [!NOTE] Every parameter is explained in the app
 > Tables below list the **key** parameters only. In the app, click into any
 > field and the help panel under the form explains it (hover tooltips work
 > too). Each stage shows its essentials first; the rest live under *Advanced*.
 
-### 1. Concatenate (`concat`)
+### 1. Concatenate
 
 Combine the `*.1` entries of BLISS scan files into a single darfix-compatible
 `entry_0000` (a detector **VDS** or copy, plus merged positioners).
@@ -711,24 +711,28 @@ Combine the `*.1` entries of BLISS scan files into a single darfix-compatible
 | `vds_policy` | `relative` (portable) / `absolute` |
 | `copy_data` | **False** = VDS (fast, but breaks if sources move); **True** = self-contained copy |
 
-> [!warning] VDS fragility
+> [!WARNING] VDS fragility
 > With `copy_data = False` the output only *references* the original `.h5` files.
 > If you move/delete them, the concatenated file breaks. Use `copy_data = True`
 > for an archival, self-contained file.
 
-> [!note]- Advanced fields
-> Collapsed in the form under **Advanced**; defaults are right for ESRF ID03
-> data as darfix writes it. Text is the field's own hover help.
-> 
-> | Field | Parameter | Meaning |
-> |---|---|---|
-> | Detector read path | `detector_read_path` | HDF5 path to the detector frames inside each scan entry. Only change if your beamline files use a different detector or layout. |
-> | Detector write path | `detector_write_path` | HDF5 path where the merged detector data is written inside the output entry (darfix reads this location). |
-> | H5 filename override | `h5_filename_override` | Name of the .h5 file inside the input folder, if it is not '<folder name>.h5'. Leave blank to auto-detect (single mode). |
-> | Output entry | `output_entry` | Name of the single merged entry in the output file. darfix expects 'entry_0000'. |
-> | Positioners path | `positioners_path` | HDF5 path to the motor-position group inside each scan entry; positions are merged across scans. |
+<details>
+<summary><b>Advanced fields</b></summary>
 
-### 2. Axial strain (`strain`)
+Collapsed in the form under **Advanced**; defaults are right for ESRF ID03
+data as darfix writes it. Text is the field's own hover help.
+
+| Field | Parameter | Meaning |
+|---|---|---|
+| Detector read path | `detector_read_path` | HDF5 path to the detector frames inside each scan entry. Only change if your beamline files use a different detector or layout. |
+| Detector write path | `detector_write_path` | HDF5 path where the merged detector data is written inside the output entry (darfix reads this location). |
+| H5 filename override | `h5_filename_override` | Name of the .h5 file inside the input folder, if it is not '<folder name>.h5'. Leave blank to auto-detect (single mode). |
+| Output entry | `output_entry` | Name of the single merged entry in the output file. darfix expects 'entry_0000'. |
+| Positioners path | `positioners_path` | HDF5 path to the motor-position group inside each scan entry; positions are merged across scans. |
+
+</details>
+
+### 2. Axial strain
 
 Per-pixel axial strain (cot method) from darfix `maps.h5`, then stacked into a
 3-D volume.
@@ -746,18 +750,18 @@ Per-pixel axial strain (cot method) from darfix `maps.h5`, then stacked into a
 | `roi` | `r0,r1,c0,c1` in map pixels, relative to the darfix window (blank = full image); pre-filled from the experiment's analysis window |
 | `vmin` / `vmax` | colour limits (blank = symmetric auto) |
 
-> [!important] Detrend before ROI
+> [!IMPORTANT] Detrend before ROI
 > The full map is **detrended first** (separable 2-D arctan fit), then the ROI
 > is cropped. This order is a physics constraint and is not configurable.
 
-> [!warning] ROI must fit the map
+> [!WARNING] ROI must fit the map
 > If `roi` does not fit inside the loaded map (e.g. the experiment's analysis
 > window was set up for a different dataset), the run stops with an error
 > naming the ROI values and the map's actual shape — rather than silently
 > cropping to an empty or unexpected array. Blank the ROI or fix the
 > experiment's analysis window.
 
-> [!tip] Picking the run-time ROI interactively
+> [!TIP] Picking the run-time ROI interactively
 > Click **Pick ROI…** (in the button row alongside Run/Cancel) to open a visual
 > picker that shows the ccmth Center-of-mass map loaded from the current
 > `maps.h5`. Drag a rectangle on the CoM map and click **OK** — the `roi` field
@@ -807,14 +811,14 @@ rules as the live export: both `vmin`/`vmax` blank → symmetric auto-limits
 kind** present in the file — strain has a single kind, so it is one row; `clim`
 is passed to the core as a `{kind: (vmin, vmax)}` mapping.
 
-> [!note] Colour limits are per kind, not per layer
+> [!NOTE] Colour limits are per kind, not per layer
 > The **vmin** / **vmax** you set for a kind apply to every selected layer *of
 > that kind* in the batch. To apply different limits to individual layers, run
 > the dialog twice with different selections. The **Output dir** pre-fills to a
 > timestamped `replots/<stamp>/` subfolder beside the loaded h5 and follows the
 > file if you Browse/Load a different one (until you edit it by hand).
 
-> [!note] ROI and axis caveats for replot
+> [!NOTE] ROI and axis caveats for replot
 > When a pixel-bounds `roi=(r0, r1, c0, c1)` is supplied the layer is cropped
 > to that rectangle and the resulting figure uses a **zero-origin extent** — the
 > µm-axis labels start at 0 rather than reflecting the position within the
@@ -830,25 +834,29 @@ is passed to the core as a `{kind: (vmin, vmax)}` mapping.
 > is the run's already-ROI-cropped layer — i.e. the largest region a replot crop
 > can reach; a wider frame needs a re-run.)
 
-> [!tip] Picking an ROI interactively
+> [!TIP] Picking an ROI interactively
 > Click **Pick ROI…** (beside the four pixel boxes) to open a visual picker that
 > shows the middle Z-layer of each plot-kind group at its natural pixel scale.
 > Drag a rectangle on the preview and click **OK** — the four boxes (r0, r1, c0,
 > c1) are filled automatically. The preview is oriented exactly like the exported
 > maps (rows = Y, columns = X), so the coordinates transfer directly.
 
-> [!note]- Advanced fields
-> Collapsed in the form under **Advanced**; defaults are right for ESRF ID03
-> data as darfix writes it. Text is the field's own hover help.
-> 
-> | Field | Parameter | Meaning |
-> |---|---|---|
-> | Save plots | `save_plots` | Write the per-layer diagnostic PNGs (raw, detrended, strain). Turn off for a faster volume-only run. |
-> | ccmth COM path | `ccmth_com_path` | HDF5 path of the ccmth centre-of-mass dataset inside maps.h5, as written by darfix. Only change for a non-standard darfix export. |
-> | maps filename | `maps_filename` | Filename of the darfix output inside each layer folder (normally maps.h5). |
-> | Stacked filename | `stacked_filename` | Filename of the stacked 3-D strain volume written to the input/root folder. Downstream stages expect stacked_strain_volumes.h5. |
+<details>
+<summary><b>Advanced fields</b></summary>
 
-### 3. Mosaicity volume (`mosaicity`)
+Collapsed in the form under **Advanced**; defaults are right for ESRF ID03
+data as darfix writes it. Text is the field's own hover help.
+
+| Field | Parameter | Meaning |
+|---|---|---|
+| Save plots | `save_plots` | Write the per-layer diagnostic PNGs (raw, detrended, strain). Turn off for a faster volume-only run. |
+| ccmth COM path | `ccmth_com_path` | HDF5 path of the ccmth centre-of-mass dataset inside maps.h5, as written by darfix. Only change for a non-standard darfix export. |
+| maps filename | `maps_filename` | Filename of the darfix output inside each layer folder (normally maps.h5). |
+| Stacked filename | `stacked_filename` | Filename of the stacked 3-D strain volume written to the input/root folder. Downstream stages expect stacked_strain_volumes.h5. |
+
+</details>
+
+### 3. Mosaicity volume
 
 Stack per-layer χ/μ **Center-of-mass** and **FWHM** maps into a 3-D volume.
 
@@ -903,20 +911,24 @@ ROI…** (beside the four pixel boxes) to open a visual picker showing the middl
 Z-layer of each dataset; drag a rectangle and click **OK** to fill the boxes
 automatically. The preview is oriented exactly like the exported maps.
 
-> [!note]- Advanced fields
-> Collapsed in the form under **Advanced**; defaults are right for ESRF ID03
-> data as darfix writes it. Text is the field's own hover help.
-> 
-> | Field | Parameter | Meaning |
-> |---|---|---|
-> | chi COM path | `chi_com_path` | HDF5 path of the χ centre-of-mass map inside maps.h5 (darfix layout). χ CoM is the local lattice tilt about the rocking axis. |
-> | chi FWHM path | `chi_fwhm_path` | HDF5 path of the χ FWHM map — the local rocking-curve width, a measure of mosaic spread. |
-> | maps filename | `maps_filename` | Filename of the darfix output inside each layer folder (normally maps.h5). |
-> | mu COM path | `mu_com_path` | HDF5 path of the μ centre-of-mass map — the local lattice tilt about the second tilt axis. |
-> | mu FWHM path | `mu_fwhm_path` | HDF5 path of the μ FWHM map — the local curve width about the second tilt axis. |
-> | Stacked filename | `stacked_filename` | Filename of the stacked mosaicity volume. Downstream stages expect stacked_volumes.h5. |
+<details>
+<summary><b>Advanced fields</b></summary>
 
-### 4. Aligned rocking volumes (`rocking`)
+Collapsed in the form under **Advanced**; defaults are right for ESRF ID03
+data as darfix writes it. Text is the field's own hover help.
+
+| Field | Parameter | Meaning |
+|---|---|---|
+| chi COM path | `chi_com_path` | HDF5 path of the χ centre-of-mass map inside maps.h5 (darfix layout). χ CoM is the local lattice tilt about the rocking axis. |
+| chi FWHM path | `chi_fwhm_path` | HDF5 path of the χ FWHM map — the local rocking-curve width, a measure of mosaic spread. |
+| maps filename | `maps_filename` | Filename of the darfix output inside each layer folder (normally maps.h5). |
+| mu COM path | `mu_com_path` | HDF5 path of the μ centre-of-mass map — the local lattice tilt about the second tilt axis. |
+| mu FWHM path | `mu_fwhm_path` | HDF5 path of the μ FWHM map — the local curve width about the second tilt axis. |
+| Stacked filename | `stacked_filename` | Filename of the stacked mosaicity volume. Downstream stages expect stacked_volumes.h5. |
+
+</details>
+
+### 4. Aligned rocking volumes
 
 Build aligned 3-D volumes from raw scans — either the rocking scans or the
 mosaicity scans — producing an integrated **sum** image and one **specific
@@ -927,7 +939,7 @@ frame**, anchored to the mosaicity reference so they overlay the other volumes.
 - **Output:** `aligned_raw_rocking_volumes.h5` (rocking mode) or
   `aligned_raw_mosa_volumes.h5` (mosaicity mode) + per-layer PNGs, animation,
   3-D top-view (a styled figure with colourbar and scale bar, like the
-  [[#5. Visualize volumes (`visualize`)|visualize]] one).
+  [visualize](#5-visualize-volumes) one).
 
 **Essentials:** raw root, ROI X/Y, specific frame, output dir
 
@@ -939,7 +951,7 @@ frame**, anchored to the mosaicity reference so they overlay the other volumes.
 | `specific_frame_idx` | which frame to extract (blank = central) |
 | `normalize_sum` | divide the summed intensity by frame count |
 | `subtract_background` | subtract each pixel's median across the scan's frames before summing, so only above-background signal accumulates — applies to whichever scan type the run reads (default on; turn off for a plain intensity sum, e.g. a mosa-scan topograph where the background level itself is meaningful) |
-| `volume_downsample` | coarsening applied before the 3-D top view, a block-average over N×N pixels in Y and X (Z untouched). `0` (default) picks the smallest factor that fits this machine's GL 3-D texture limit — which the aligned rocking volume, the widest in the pipeline, normally needs on software GL; `1` never coarsens and renders **blank** when over the limit; `N` applies exactly N. Same field, same meaning, as [[#5. Visualize volumes (`visualize`)|visualize]]'s |
+| `volume_downsample` | coarsening applied before the 3-D top view, a block-average over N×N pixels in Y and X (Z untouched). `0` (default) picks the smallest factor that fits this machine's GL 3-D texture limit — which the aligned rocking volume, the widest in the pipeline, normally needs on software GL; `1` never coarsens and renders **blank** when over the limit; `N` applies exactly N. Same field, same meaning, as [visualize](#5-visualize-volumes)'s |
 
 **Source scan selector (`source_scan`)**
 
@@ -953,7 +965,7 @@ frame**, anchored to the mosaicity reference so they overlay the other volumes.
   clobbers the rocking file. Run the stage once per source to build both
   volumes side-by-side.
 
-> [!tip]
+> [!TIP]
 > An explicit value is always respected; each default is substituted
 > independently. The filename is auto-renamed to the mosa variant whenever
 > `aligned_h5_name` is still at its rocking default; the output directory is
@@ -1004,7 +1016,7 @@ four pixel boxes) to open a visual picker showing the middle Z-layer of each
 product; drag a rectangle and click **OK** to fill the boxes automatically. The
 preview is oriented exactly like the exported maps.
 
-> [!info] Blank colour limits: large volumes no longer have to fit in memory
+> [!NOTE] Blank colour limits: large volumes no longer have to fit in memory
 > When both vmin/vmax boxes for a product are blank, its default limits are the
 > run's own 1st/99th percentiles. A volume small enough for this machine is read
 > in one piece and costs exactly what it always did; only one too large for that
@@ -1023,23 +1035,27 @@ preview is oriented exactly like the exported maps.
 > 202 MB replot takes 0.44 s instead of 15.4 s. Leave one box blank and the
 > percentile still runs, because the blank side needs a default.
 
-> [!note]- Advanced fields
-> Collapsed in the form under **Advanced**; defaults are right for ESRF ID03
-> data as darfix writes it. Text is the field's own hover help.
-> 
-> | Field | Parameter | Meaning |
-> |---|---|---|
-> | samz tolerance | `samz_tol_mm` | Extra tolerance in mm when deciding which rocking scans fall inside the mosaicity/strain Z range. |
-> | Colorbar pct high | `cbar_pct_hi` | Upper intensity percentile for the colour scale of the rendered images. |
-> | Colorbar pct low | `cbar_pct_lo` | Lower intensity percentile for the colour scale of the rendered images. |
-> | Detector path | `detector_path` | HDF5 path to the detector frames inside each rocking scan file. |
-> | samy path | `samy_path` | HDF5 path to the sample-Y motor position inside each scan file (under the first BLISS entry). Only change for a different beamline file layout. |
-> | samz path | `samz_path` | HDF5 path to the sample-Z motor position inside each scan file (under the first BLISS entry). Only change for a different beamline file layout. |
-> | Save aligned HDF5 | `save_aligned_h5` | Write the aligned volume file (needed by the slices stage). |
-> | Save animation | `save_animation` | Write the layer-by-layer animation. |
-> | Save layer PNGs | `save_layers` | Write one PNG per layer. |
+<details>
+<summary><b>Advanced fields</b></summary>
 
-### 5. Visualize volumes (`visualize`)
+Collapsed in the form under **Advanced**; defaults are right for ESRF ID03
+data as darfix writes it. Text is the field's own hover help.
+
+| Field | Parameter | Meaning |
+|---|---|---|
+| samz tolerance | `samz_tol_mm` | Extra tolerance in mm when deciding which rocking scans fall inside the mosaicity/strain Z range. |
+| Colorbar pct high | `cbar_pct_hi` | Upper intensity percentile for the colour scale of the rendered images. |
+| Colorbar pct low | `cbar_pct_lo` | Lower intensity percentile for the colour scale of the rendered images. |
+| Detector path | `detector_path` | HDF5 path to the detector frames inside each rocking scan file. |
+| samy path | `samy_path` | HDF5 path to the sample-Y motor position inside each scan file (under the first BLISS entry). Only change for a different beamline file layout. |
+| samz path | `samz_path` | HDF5 path to the sample-Z motor position inside each scan file (under the first BLISS entry). Only change for a different beamline file layout. |
+| Save aligned HDF5 | `save_aligned_h5` | Write the aligned volume file (needed by the slices stage). |
+| Save animation | `save_animation` | Write the layer-by-layer animation. |
+| Save layer PNGs | `save_layers` | Write one PNG per layer. |
+
+</details>
+
+### 5. Visualize volumes
 
 Align the stacked mosaicity/strain volumes and render them — and render the
 rocking stage's already-aligned raw volumes alongside them.
@@ -1047,11 +1063,11 @@ rocking stage's already-aligned raw volumes alongside them.
 - **Input:** `stacked_volumes.h5` and/or `stacked_strain_volumes.h5` (+ raw
   motors for alignment), and optionally
   `aligned_raw_rocking_volumes.h5` / `aligned_raw_mosa_volumes.h5` from the
-  [[#4. Aligned rocking volumes (`rocking`)|rocking]] stage.
+  [rocking](#4-aligned-rocking-volumes) stage.
 - **Output:** per-layer PNGs, a layer animation (MP4→GIF fallback), a 3-D
   top-view, an optional rotating 3-D orbit video
   (`<name>_rotation.mp4`/`.gif`), and an interactive
-  [[#3-D volume viewer|3-D view]] — one set per dataset, in its own
+  [3-D view](#3-d-volume-viewer) — one set per dataset, in its own
   sub-directory.
 
 **Essentials:** the two stacked volume files, the two aligned raw volume files,
@@ -1079,7 +1095,7 @@ raw root, Map ROI X/Y, output dir
 | `rotation_frames` | frames in one 360° orbit of the rotation video (default 180, 15 fps) |
 | `log_scale` | logarithmic colour mapping for the 3-D top view and rotation video. Falls back to linear — with a note recorded on the dataset — whenever the colour range includes zero or negative values (e.g. Center-of-mass and strain, which straddle zero) |
 
-> [!note] The 3-D top view and the orbit video are publication figures
+> [!NOTE] The 3-D top view and the orbit video are publication figures
 > Both are rendered in `render_mode` (`volume` by default — true volumetric
 > rendering shaded by `opacity_mapping`; `surface`/`isosurface` are lighter
 > legacy looks) and then composed into a styled figure — white background, the
@@ -1092,7 +1108,7 @@ raw root, Map ROI X/Y, output dir
 > scale bar in every frame, and each frame is rendered at an absolute camera
 > pose along the orbit, so the movie really does turn all the way round.
 
-> [!warning] "3-D volume coarsened 2x to fit this machine's GL 3-D texture limit"
+> [!WARNING] "3-D volume coarsened 2x to fit this machine's GL 3-D texture limit"
 > `render_mode=volume` uploads the whole volume as one 3-D texture, and every
 > graphics stack caps its size (2048 px per axis on software/llvmpipe GL —
 > narrower than a typical 2891 px-wide aligned volume). Over that cap the
@@ -1111,9 +1127,9 @@ raw root, Map ROI X/Y, output dir
 > Set `volume_downsample` to `1` if you would rather have full resolution and
 > the warning. Once this session's one-time GL check has run, the same
 > information appears under the **3D downsample** field before you ever click
-> Run (see [[#Per-field notes]] above).
+> Run (see [Per-field notes](#per-field-notes) above).
 
-> [!tip] Choosing what renders, and how transparent each volume is
+> [!TIP] Choosing what renders, and how transparent each volume is
 > **Advanced → Volumes** lists all nine volumes this stage can render — the four
 > mosaicity fields, strain, and the four raw ones — each with its own checkbox,
 > all ticked. Untick one and it is skipped entirely: no PNGs, no animation, no
@@ -1132,13 +1148,13 @@ raw root, Map ROI X/Y, output dir
 > video, which come off one shared render. An opacity that is not a number
 > between 0 and 1 blocks the run before any volume is read, naming the field.
 >
-> The pop-out [[#3-D volume viewer|3-D viewer]] has always had its own live
+> The pop-out [3-D viewer](#3-d-volume-viewer) has always had its own live
 > **Opacity** slider and mapping combo per volume; these fields are what carry
 > the same choice into the *saved* top view and rotation video.
 >
 > **Colour limits** works the same way, one row up in Appearance. Click
 > **Edit colour limits…** for a dialog with the same nine labelled `vmin`/`vmax`
-> rows the [[#Replotting mosaicity layers without re-running|replot dialogs]] use — "Mosaicity COM
+> rows the [replot dialogs](#replotting-mosaicity-layers-without-re-running) use — "Mosaicity COM
 > (χ)", "Raw mosa frame" and so on. Leave a box blank and that limit stays
 > automatic, so you can pin a floor and let the ceiling follow the data. A limit
 > you set is used **exactly as given**: `round_clim` still tidies the automatic
@@ -1146,8 +1162,8 @@ raw root, Map ROI X/Y, output dir
 > apply to the layer PNGs, the animation, the 3-D top view, the rotation video
 > and the pop-out viewer alike, and they are what the figure builder exports.
 
-> [!note] The raw volumes are rendered **as stored** — the Map ROI does not touch them
-> The [[#4. Aligned rocking volumes (`rocking`)|rocking]] stage has already done
+> [!NOTE] The raw volumes are rendered **as stored** — the Map ROI does not touch them
+> The [rocking](#4-aligned-rocking-volumes) stage has already done
 > the alignment: it cropped to its detector ROI, applied the samy X-shift and
 > interpolated onto the uniform Z grid, all anchored to the same mosaicity
 > reference the stacked volumes use. So this stage reads those volumes and
@@ -1160,7 +1176,7 @@ raw root, Map ROI X/Y, output dir
 > µm-per-pixel scales (recorded by the rocking run that wrote it), not at this
 > form's **Pixel size X/Y**. Their colours come from the shared **raw** colormap
 > group in *Publication style…*, exactly as in
-> [[#7. Oblique slices (`slices`)|slices]], and they carry the same four names
+> [slices](#7-oblique-slices), and they carry the same four names
 > and titles there — `raw_sum`, `raw_specific`, `raw_mosa_sum`,
 > `raw_mosa_specific`. Run the rocking stage twice to get all four: once with
 > **Source scan = rocking**, once with **Source scan = mosaicity**. A
@@ -1177,7 +1193,7 @@ raw root, Map ROI X/Y, output dir
 > that has since **moved**: listing the figures always works, and only the
 > rebuild that needs the voxels fails.
 
-> [!warning] "these volumes will NOT overlay"
+> [!WARNING] "these volumes will NOT overlay"
 > The raw and stacked volumes are co-registered only when the rocking run's
 > **detector** ROI covers the same window as this run's **Map ROI**. Both are
 > pre-filled from the experiment's darfix + analysis windows, so they normally
@@ -1188,7 +1204,7 @@ raw root, Map ROI X/Y, output dir
 > pre-filled ROI. With no stacked volume in the run there is nothing to compare
 > against, and no note is made.
 
-> [!tip] Picking the run-time ROI interactively
+> [!TIP] Picking the run-time ROI interactively
 > Click **Pick ROI…** (in the button row alongside Run/Cancel) to open a visual
 > picker that shows the middle Z-layer of the χ/μ Center-of-mass and strain
 > volumes. Drag a rectangle and click **OK** — the `roi_x` and `roi_y` fields
@@ -1196,10 +1212,10 @@ raw root, Map ROI X/Y, output dir
 > read. The aligned raw volumes are not offered in the picker — the ROI does not
 > apply to them.
 
-> [!info] Volumes too big for this machine are streamed — same images, more patience
+> [!NOTE] Volumes too big for this machine are streamed — same images, more patience
 > It measures the machine's free memory first and takes whichever of two routes
-> fits — the same ladder the [[#6. ParaView export (`paraview`)|ParaView export]]
-> and [[#7. Oblique slices (`slices`)|slices]] use:
+> fits — the same ladder the [ParaView export](#6-paraview-export)
+> and [slices](#7-oblique-slices) use:
 >
 > - **It fits.** The volume is aligned in one piece and everything runs exactly
 >   as it always has, at the same speed. This is the normal case on a
@@ -1226,7 +1242,7 @@ raw root, Map ROI X/Y, output dir
 >   were for every other map. Before, a single infinity collapsed that map's
 >   colour scale so every real voxel rendered as one colour. This affects both
 >   readers of those limits — the rendered PNGs and animation from a run, **and
->   the interactive [[#3-D volume viewer|3-D view]]**, which derives its colour
+>   the interactive [3-D view](#3-d-volume-viewer)**, which derives its colour
 >   range the same way, so the two continue to agree.
 >
 > **One exception, and it is the default.** The 3-D top view and the rotating
@@ -1256,26 +1272,30 @@ raw root, Map ROI X/Y, output dir
 > it always did. Such a run produces an *unaligned* volume, which is not a
 > usable product, so the fix is the pattern rather than the memory: check
 > **Raw root** and the mosaicity/strain pattern.
-> [[#7. Oblique slices (`slices`)|Slices]] does bound this fallback; this stage
+> [Slices](#7-oblique-slices) does bound this fallback; this stage
 > and the ParaView export deliberately do not.
 
-> [!note]
+> [!NOTE]
 > Colourmaps follow the publication-style **Colormaps** dropdowns (misorientation
 > defaults to ParaView's `fast`, FWHM to `magma`, strain to diverging `RdBu_r`
 > pinned at ε = 0).
 
-> [!note]- Advanced fields
-> Collapsed in the form under **Advanced**; defaults are right for ESRF ID03
-> data as darfix writes it. Text is the field's own hover help.
-> 
-> | Field | Parameter | Meaning |
-> |---|---|---|
-> | samy path | `samy_path` | HDF5 path to the sample-Y motor position inside each scan file (under the first BLISS entry). Only change for a different beamline file layout. |
-> | samz path | `samz_path` | HDF5 path to the sample-Z motor position inside each scan file (under the first BLISS entry). Only change for a different beamline file layout. |
-> | Save animation | `save_animation` | Write the layer-by-layer animation. |
-> | Save layer PNGs | `save_layers` | Write one PNG per layer of each volume. |
+<details>
+<summary><b>Advanced fields</b></summary>
 
-### 6. ParaView export (`paraview`)
+Collapsed in the form under **Advanced**; defaults are right for ESRF ID03
+data as darfix writes it. Text is the field's own hover help.
+
+| Field | Parameter | Meaning |
+|---|---|---|
+| samy path | `samy_path` | HDF5 path to the sample-Y motor position inside each scan file (under the first BLISS entry). Only change for a different beamline file layout. |
+| samz path | `samz_path` | HDF5 path to the sample-Z motor position inside each scan file (under the first BLISS entry). Only change for a different beamline file layout. |
+| Save animation | `save_animation` | Write the layer-by-layer animation. |
+| Save layer PNGs | `save_layers` | Write one PNG per layer of each volume. |
+
+</details>
+
+### 6. ParaView export
 
 Align the volumes and write a partitioned **PVTI** dataset for parallel ParaView
 rendering, with a `valid_mask` and NaN sentinels.
@@ -1293,14 +1313,14 @@ rendering, with a `valid_mask` and NaN sentinels.
 | `anchor_origin_to_reference` | place the world origin in the raw-detector frame so all volumes co-register |
 | `mosa_darfix_origin_xy` / `strain_darfix_origin_xy` | the darfix crop origin for the mosaicity / strain maps, in absolute detector pixels `x,y` — copy verbatim from darfix's ROI widget. Only used when `anchor_origin_to_reference` is on; NOT pre-filled from the experiment, so update them by hand for a non-STO2 dataset |
 
-> [!tip] Picking the run-time ROI interactively
+> [!TIP] Picking the run-time ROI interactively
 > Click **Pick ROI…** (in the button row alongside Run/Cancel) to open a visual
 > picker that shows the middle Z-layer of the χ/μ Center-of-mass and strain
 > volumes. Drag a rectangle and click **OK** — the `roi_x` and `roi_y` fields
 > are filled automatically. Returns no preview when the volume files cannot be
 > read.
 
-> [!info] Volumes too big for this machine are streamed — same files, more patience
+> [!NOTE] Volumes too big for this machine are streamed — same files, more patience
 > This is the heaviest stage in the pipeline. Like the visualize and slices
 > stages, it measures the machine's free memory first and takes whichever of two
 > routes fits:
@@ -1351,7 +1371,7 @@ rendering, with a `valid_mask` and NaN sentinels.
 > *unaligned* volume, so the fix is the pattern rather than the memory: check
 > **Raw root** and the mosaicity/strain pattern.
 
-> [!note] Scratch files
+> [!NOTE] Scratch files
 > With **Centre method = median** the export may cache an aligned volume on disk
 > while it computes the statistic, in a `.dfxm_scratch/` folder inside the output
 > directory. It is deleted when the run ends. If the disk is too full for it, the
@@ -1366,48 +1386,52 @@ rendering, with a `valid_mask` and NaN sentinels.
 > **mean** is a single pass and caches nothing.
 >
 > This is the only stage that caches. [[#5. Visualize volumes (`visualize`)|Visualize
-> volumes]] and [[#7. Oblique slices (`slices`)|Oblique slices]] re-read instead,
+> volumes]] and [Oblique slices](#7-oblique-slices) re-read instead,
 > on every setting, so they never need scratch disk and are never held up for
 > the want of it.
 
-> [!example] ParaView workflow
+> [!TIP] ParaView workflow
 > ```bash
 > mpirun -np 16 pvserver        # terminal 1
 > paraview                      # terminal 2 → Connect cs://localhost:11111 → open the .pvti
 > ```
 > Then Threshold on `valid_mask` in (0.5, 1.5) and set Representation = Volume.
 
-> [!note]- Advanced fields
-> Collapsed in the form under **Advanced**; defaults are right for ESRF ID03
-> data as darfix writes it. Text is the field's own hover help.
-> 
-> | Field | Parameter | Meaning |
-> |---|---|---|
-> | abs() FWHM | `abs_mosa_fwhm` | Export FWHM as absolute values (darfix fits can produce negative widths). |
-> | Centre mosa CoM | `center_mosa_com` | Subtract the centre statistic from the χ/μ CoM volumes so misorientation is relative to the bulk orientation. |
-> | Centre strain | `center_strain` | Also centre the strain volume (usually off — strain is already relative to the reference angle). |
-> | samy path | `samy_path` | HDF5 path to the sample-Y motor position inside each scan file (under the first BLISS entry). Only change for a different beamline file layout. |
-> | samz path | `samz_path` | HDF5 path to the sample-Z motor position inside each scan file (under the first BLISS entry). Only change for a different beamline file layout. |
-> | Export mosaicity | `export_mosaicity` | Export the mosaicity (χ/μ) volumes. |
-> | Export strain | `export_strain` | Export the strain volume. |
-> | Compress pieces | `piece_compression` | Compress the .vti pieces (smaller files, slower write). |
-> | Replace NaN | `replace_nan` | Replace NaN padding with a sentinel value so ParaView's volume renderer behaves. |
-> | Write valid_mask | `write_valid_mask` | Write a 0/1 valid_mask field — threshold on it in ParaView to hide the padding. |
+<details>
+<summary><b>Advanced fields</b></summary>
 
-### 7. Oblique slices (`slices`)
+Collapsed in the form under **Advanced**; defaults are right for ESRF ID03
+data as darfix writes it. Text is the field's own hover help.
+
+| Field | Parameter | Meaning |
+|---|---|---|
+| abs() FWHM | `abs_mosa_fwhm` | Export FWHM as absolute values (darfix fits can produce negative widths). |
+| Centre mosa CoM | `center_mosa_com` | Subtract the centre statistic from the χ/μ CoM volumes so misorientation is relative to the bulk orientation. |
+| Centre strain | `center_strain` | Also centre the strain volume (usually off — strain is already relative to the reference angle). |
+| samy path | `samy_path` | HDF5 path to the sample-Y motor position inside each scan file (under the first BLISS entry). Only change for a different beamline file layout. |
+| samz path | `samz_path` | HDF5 path to the sample-Z motor position inside each scan file (under the first BLISS entry). Only change for a different beamline file layout. |
+| Export mosaicity | `export_mosaicity` | Export the mosaicity (χ/μ) volumes. |
+| Export strain | `export_strain` | Export the strain volume. |
+| Compress pieces | `piece_compression` | Compress the .vti pieces (smaller files, slower write). |
+| Replace NaN | `replace_nan` | Replace NaN padding with a sentinel value so ParaView's volume renderer behaves. |
+| Write valid_mask | `write_valid_mask` | Write a 0/1 valid_mask field — threshold on it in ParaView to hide the padding. |
+
+</details>
+
+### 7. Oblique slices
 
 Cut arbitrary planes (defined in physical µm, optionally swept along the normal)
 through the aligned volumes — all in one world frame so the slices co-register.
 
 - **Input:** stacked volumes + the aligned rocking volume + (optionally) the aligned mosa volume (`aligned_raw_mosa_volumes.h5` from the rocking stage run with Source scan = mosaicity).
-- **Output:** `oblique_slices.h5` (consumed by [[#8. Line profiles (`profiles`)|profiles]]) + a PNG per plane. Per-plane PNGs are written into one subfolder per slice direction: `<output_dir>/<slice name>/`. For example, a slice named `oblique` produces `<output_dir>/oblique/mosa_com_chi.png`, etc. Slice PNGs honour the publication-style "Scale (µm/cm)" field once it's set — the map renders at a fixed physical scale instead of a fixed figure size (full knob documentation lands with the GUI field).
+- **Output:** `oblique_slices.h5` (consumed by [profiles](#8-line-profiles)) + a PNG per plane. Per-plane PNGs are written into one subfolder per slice direction: `<output_dir>/<slice name>/`. For example, a slice named `oblique` produces `<output_dir>/oblique/mosa_com_chi.png`, etc. Slice PNGs honour the publication-style "Scale (µm/cm)" field once it's set — the map renders at a fixed physical scale instead of a fixed figure size (full knob documentation lands with the GUI field).
 
 **Essentials:** three volume files, raw root, slices JSON, output dir
 
 | Param | Meaning |
 |---|---|
 | `slices_json` | a JSON list of plane specs (see below) |
-| `use_pinned` | run only the planes in `pinned_slices_json` instead of the full sweep — see [[#Pinned planes (fast re-runs)]] |
+| `use_pinned` | run only the planes in `pinned_slices_json` instead of the full sweep — see [Pinned planes (fast re-runs)](#pinned-planes-fast-re-runs) |
 | `pinned_slices_json` | JSON list of pinned single-plane specs, normally written by **Pin planes…**; only used when `use_pinned` is ticked — blank there raises an error asking you to open **Pin planes…** or untick it |
 | `include_*` | which volumes to slice (χ/μ CoM/FWHM, strain, raw rocking sum/specific, mosa-scan sum/specific) |
 | `aligned_mosa_file` | path to `aligned_raw_mosa_volumes.h5`; leave blank to skip the mosa raw fields |
@@ -1416,14 +1440,14 @@ through the aligned volumes — all in one world frame so the slices co-register
 | `center_method` / `range_pct` | CoM colour centring |
 | `align_roi_x` / `align_roi_y` | map-frame crop (`c0,c1` / `r0,r1` map pixels, relative to the darfix window) used during alignment — must match the crop from visualize/paraview runs (blank = full width/height); pre-filled from the experiment's analysis window |
 
-> [!tip] Picking the alignment ROI interactively
+> [!TIP] Picking the alignment ROI interactively
 > Click **Pick ROI…** (in the button row alongside Run/Cancel) to open a visual
 > picker that shows the middle Z-layer of the χ/μ Center-of-mass and strain
 > volumes. Drag a rectangle and click **OK** — the `align_roi_x` and
 > `align_roi_y` fields are filled automatically. Returns no preview when the
 > volume files cannot be read.
 
-> [!example] A slice spec
+> [!TIP] A slice spec
 > ```json
 > [
 >   {"name": "z_sweep", "normal": [0,0,1], "origin": [0,0,0],
@@ -1436,17 +1460,17 @@ through the aligned volumes — all in one world frame so the slices co-register
 > only need `normal`. Otherwise give `half_u`, `half_v` (µm) and optional
 > `du`/`dv` (in-plane step).
 
-> [!warning] Mixed pixel scales → mixed plane grids
+> [!WARNING] Mixed pixel scales → mixed plane grids
 > Without an explicit `du`/`dv`, each volume is sampled at **its own** pixel
 > scale — volumes carrying a different scale (typically the `raw_mosa_*` ones)
 > then land on a slightly different `(u, v)` grid for the *same* plane. The run
 > still succeeds, but the Results summary warns
 > (`slice '…': plane grids differ across volumes — …`), and downstream
-> [[#8. Line profiles (`profiles`)|profiles]] jobs can only mix fields that
+> [profiles](#8-line-profiles) jobs can only mix fields that
 > share a grid. Set explicit `du`/`dv` in the slice spec to sample every volume
 > onto one common grid.
 
-> [!warning] Mismatched volume heights → Y misregistration
+> [!WARNING] Mismatched volume heights → Y misregistration
 > All volumes anchor at Y=0 in the shared world frame, so they only co-register
 > vertically if they cover the **same detector-row window**. If an aligned raw
 > volume (from the rocking stage) was built with a different `roi_y` than the
@@ -1459,8 +1483,8 @@ through the aligned volumes — all in one world frame so the slices co-register
 > stretches the raw volume. Rebuild the flagged volume with the same
 > detector-row window the map volumes use.
 
-> [!info] Volumes too big for this machine are sliced in Z-blocks — same planes, more patience
-> Like the [[#5. Visualize volumes (`visualize`)|visualize]] stage and the
+> [!NOTE] Volumes too big for this machine are sliced in Z-blocks — same planes, more patience
+> Like the [visualize](#5-visualize-volumes) stage and the
 > ParaView export, this stage measures the machine's free memory first and takes
 > whichever of two routes fits:
 >
@@ -1505,7 +1529,7 @@ through the aligned volumes — all in one world frame so the slices co-register
 > `du`/`dv` or shrink the extent if a sweep is what makes a run too large —
 > never the step.
 
-> [!warning] A run killed mid-sweep leaves the planes it never reached as NaN
+> [!WARNING] A run killed mid-sweep leaves the planes it never reached as NaN
 > Because the dataset is sized before sampling, a slices run that is interrupted
 > — killed, or out of memory — leaves an `oblique_slices.h5` whose finished
 > planes are real and whose unreached planes are **all-NaN**. They are readable,
@@ -1514,14 +1538,14 @@ through the aligned volumes — all in one world frame so the slices co-register
 > Before this change an interrupted run left the volume's whole group missing
 > instead, which was more obvious but no more recoverable.
 
-> [!note] Plot orientation
+> [!NOTE] Plot orientation
 > Slice plots follow the same convention as the per-layer renders: the vertical
 > plot axis (`v`) is the detector-vertical Y-like in-plane direction (world Y,
 > i.e. lab-frame X) and the horizontal axis (`u`) the detector-X-like one (for a
 > z-normal plane, u/v are exactly X/Y). Add an `"up": [x,y,z]` entry to a slice
 > spec to override the vertical direction.
 
-> [!tip] Pinning one plane from a sweep
+> [!TIP] Pinning one plane from a sweep
 > Prefer picking visually? **Mark planes…** (below) lets you browse the sweep
 > and star the interesting offsets without typing any JSON.
 > A sweep writes many parallel planes; each plane's offset along the normal is in
@@ -1545,7 +1569,7 @@ through the aligned volumes — all in one world frame so the slices co-register
 > python3 tools/pin_slice.py oblique_slices.h5 oblique_full --offset 24
 > ```
 > It prints a ready-to-paste one-element `slices_json`. The
-> [[#8. Line profiles (`profiles`)|profiles]] stage selects the same way — a job's
+> [profiles](#8-line-profiles) stage selects the same way — a job's
 > `offset_um` picks the nearest plane in the swept slice group (within
 > `offset_tol_um`), so you can also feed that offset straight to a profile job
 > without re-slicing. The **Pinned planes (fast re-runs)** feature below
@@ -1586,13 +1610,13 @@ the sweep's output file:
    default, the run writes to `oblique_slices_pinned.h5` instead of
    `oblique_slices.h5` — a clobber guard so a fast pinned re-run never
    overwrites the full sweep file that
-   [[#8. Line profiles (`profiles`)|profiles]] reads. Set an explicit
+   [profiles](#8-line-profiles) reads. Set an explicit
    **Output filename** to override (an edited name is always respected).
 
 Untick **Run pinned planes only** to go back to running the full sweep in
 `slices_json` — the pinned JSON stays in the field, ready to re-tick later.
 
-> [!tip] Profiling a pinned file
+> [!TIP] Profiling a pinned file
 > Point the profiles stage's **Slices file** at `oblique_slices_pinned.h5`
 > (browse to it — the pre-fill defaults to the sweep file) and run your
 > existing jobs unchanged: a job whose slice name (e.g. `oblique_full`) is
@@ -1681,7 +1705,7 @@ batch is running) stops the batch **after the item currently rendering
 completes** — any PNGs already written stay on disk, and the status line is
 prefixed `cancelled — ` alongside the usual `wrote N PNG(s) → …` summary.
 
-> [!note] ROI crop for slices replot
+> [!NOTE] ROI crop for slices replot
 > `render_replot` and `_rebuild_plane_figure` accept an optional
 > `roi=(r0, r1, c0, c1)` pixel-index crop. Both the 2-D slice array **and** the
 > stored `u_um` (columns) / `v_um` (rows) axis arrays are trimmed to the same
@@ -1717,24 +1741,28 @@ already flagged interesting.
    (prefixed onto the row label), and a **★ only** checkbox appears next to
    the filter box whenever the loaded file has any marks, to narrow the list
    down to just the starred planes. Marked planes feed **Jobs from marks…** on
-   the [[#8. Line profiles (`profiles`)|profiles]] stage to turn them straight
+   the [profiles](#8-line-profiles) stage to turn them straight
    into profile jobs.
 
 Re-running the slices stage rewrites `oblique_slices.h5` from scratch, so
 marks don't survive a fresh sweep — mark planes again after re-running.
 
-> [!note]- Advanced fields
-> Collapsed in the form under **Advanced**; defaults are right for ESRF ID03
-> data as darfix writes it. Text is the field's own hover help.
-> 
-> | Field | Parameter | Meaning |
-> |---|---|---|
-> | abs() FWHM | `abs_fwhm` | Use absolute FWHM values (darfix fits can produce negative widths). |
-> | samy path | `samy_path` | HDF5 path to the sample-Y motor position inside each scan file (under the first BLISS entry). Only change for a different beamline file layout. |
-> | samz path | `samz_path` | HDF5 path to the sample-Z motor position inside each scan file (under the first BLISS entry). Only change for a different beamline file layout. |
-> | Save PNGs | `save_png` | Write a PNG per plane in addition to the HDF5. |
+<details>
+<summary><b>Advanced fields</b></summary>
 
-### 8. Line profiles (`profiles`)
+Collapsed in the form under **Advanced**; defaults are right for ESRF ID03
+data as darfix writes it. Text is the field's own hover help.
+
+| Field | Parameter | Meaning |
+|---|---|---|
+| abs() FWHM | `abs_fwhm` | Use absolute FWHM values (darfix fits can produce negative widths). |
+| samy path | `samy_path` | HDF5 path to the sample-Y motor position inside each scan file (under the first BLISS entry). Only change for a different beamline file layout. |
+| samz path | `samz_path` | HDF5 path to the sample-Z motor position inside each scan file (under the first BLISS entry). Only change for a different beamline file layout. |
+| Save PNGs | `save_png` | Write a PNG per plane in addition to the HDF5. |
+
+</details>
+
+### 8. Line profiles
 
 Profile a straight line (or a band of parallel lines) across one slice plane —
 **every** scalar field is profiled at the *same* in-plane positions, so intensity,
@@ -1752,11 +1780,11 @@ strain and misorientation line up.
 | `reference_volume_id` | which field is the top image (global default) |
 | `volume_ids` | comma-separated field ids to profile, in order (global default; blank = all) |
 
-> [!tip] Don't type coordinates by hand
+> [!TIP] Don't type coordinates by hand
 > Use **Pick line…** to click the endpoints on the plane — see
-> [[#Line picker (profiles)]]. Already starred planes on the slices stage?
+> [Line picker (profiles)](#line-picker-profiles). Already starred planes on the slices stage?
 > **Jobs from marks…** turns them into jobs in one guided pass — see
-> [[#Jobs from marks… (profiles)]].
+> [Jobs from marks (profiles)](#jobs-from-marks-profiles).
 
 #### The jobs summary row
 
@@ -1892,7 +1920,7 @@ profiles run in the current session is not required (cold-start).
    moment you click, so fill them in (or use **Pick line…**) first.
 2. The tree lists each **job once**, expandable into a checkbox per **field**
    the job can profile. A job's own `"fields"` list (see
-   [[#Jobs JSON: per-job `fields` and `reference`]]) seeds which children start
+   [Jobs JSON: per-job `fields` and `reference`](#jobs-json-per-job-fields-and-reference)) seeds which children start
    checked; when a job has no `"fields"` override, every field present for
    that slice opens checked. Uncheck individual fields, or a whole job, to
    narrow the batch — **Render** is disabled while nothing is checked.
@@ -1938,21 +1966,25 @@ under way the batch always completes and reports the normal
 
 A job whose `"fields"` override names only ids **absent** from this file (a
 reference-only job in a run — see
-[[#Jobs JSON: per-job `fields` and `reference`]]) opens with every child
+[Jobs JSON: per-job `fields` and `reference`](#jobs-json-per-job-fields-and-reference)) opens with every child
 unchecked and is skipped if left that way; there is nothing to re-render for
 it here — run the stage itself to reproduce that job's reference-only output.
 
-> [!note]- Advanced fields
-> Collapsed in the form under **Advanced**; defaults are right for ESRF ID03
-> data as darfix writes it. Text is the field's own hover help.
-> 
-> | Field | Parameter | Meaning |
-> |---|---|---|
-> | Figure DPI | `fig_dpi` | Resolution of the saved figures, in dots per inch. |
-> | Geometry tol | `geom_tol_um` | Maximum allowed geometry mismatch between fields sharing a plane, in µm — guards against profiling mis-registered slices. |
-> | Save CSV | `save_csv` | Write one CSV per profiled field. |
+<details>
+<summary><b>Advanced fields</b></summary>
 
-### 9. Rocking-matched layers (`matched`)
+Collapsed in the form under **Advanced**; defaults are right for ESRF ID03
+data as darfix writes it. Text is the field's own hover help.
+
+| Field | Parameter | Meaning |
+|---|---|---|
+| Figure DPI | `fig_dpi` | Resolution of the saved figures, in dots per inch. |
+| Geometry tol | `geom_tol_um` | Maximum allowed geometry mismatch between fields sharing a plane, in µm — guards against profiling mis-registered slices. |
+| Save CSV | `save_csv` | Write one CSV per profiled field. |
+
+</details>
+
+### 9. Rocking-matched layers
 
 For each strain layer, find the nearest rocking scan by `(samy, samz)`, load a
 background-subtracted frame, apply the same samy shift, and save grayscale PNGs
@@ -1968,7 +2000,7 @@ pixel-aligned with the strain/mosaicity layer images.
 | `frame_index` | which detector frame to show |
 | `match_threshold_mm` | max `(samy,samz)` distance to accept a match |
 
-> [!warning] In the app these layers now follow the publication style — expect a different look
+> [!WARNING] In the app these layers now follow the publication style — expect a different look
 > matched used to colour its layers from its own `Colormap` dropdown
 > (**Advanced → Appearance**), even in the GUI. It no longer does. Like every
 > other figure stage, a run **from the app** now draws matched's one quantity —
@@ -2000,9 +2032,9 @@ pixel-aligned with the strain/mosaicity layer images.
 > the same style** — an export renders with the style as it is *at export time*,
 > while the run rendered with the style captured when you pressed Run, so edit
 > the Raw-intensity colormap in between and the export and the saved PNG will
-> differ (see [[#The "Publication style…" editor]]).
+> differ (see [The Publication style editor](#the-publication-style-editor)).
 
-> [!info] Long detector stacks no longer decide how much memory this needs
+> [!NOTE] Long detector stacks no longer decide how much memory this needs
 > The background this stage subtracts is the per-pixel median **down the frame
 > axis**, so each pixel's background depends only on that pixel's own values.
 > The stack is therefore read a horizontal band at a time instead of whole, and
@@ -2027,21 +2059,25 @@ pixel-aligned with the strain/mosaicity layer images.
 
 ---
 
-> [!note]- Advanced fields
-> Collapsed in the form under **Advanced**; defaults are right for ESRF ID03
-> data as darfix writes it. Text is the field's own hover help.
-> 
-> | Field | Parameter | Meaning |
-> |---|---|---|
-> | Auto pct high | `auto_pct_hi` | Percentile used for the automatic upper intensity limit. |
-> | Auto pct low | `auto_pct_lo` | Percentile used for the automatic lower intensity limit. |
-> | Detector path | `pco_ff_path` | HDF5 path to the detector frames inside each rocking scan file. |
-> | samy path | `samy_path` | HDF5 path to the sample-Y motor position inside each scan file (under the first BLISS entry). Only change for a different beamline file layout. |
-> | samz path | `samz_path` | HDF5 path to the sample-Z motor position inside each scan file (under the first BLISS entry). Only change for a different beamline file layout. |
+<details>
+<summary><b>Advanced fields</b></summary>
+
+Collapsed in the form under **Advanced**; defaults are right for ESRF ID03
+data as darfix writes it. Text is the field's own hover help.
+
+| Field | Parameter | Meaning |
+|---|---|---|
+| Auto pct high | `auto_pct_hi` | Percentile used for the automatic upper intensity limit. |
+| Auto pct low | `auto_pct_lo` | Percentile used for the automatic lower intensity limit. |
+| Detector path | `pco_ff_path` | HDF5 path to the detector frames inside each rocking scan file. |
+| samy path | `samy_path` | HDF5 path to the sample-Y motor position inside each scan file (under the first BLISS entry). Only change for a different beamline file layout. |
+| samz path | `samz_path` | HDF5 path to the sample-Z motor position inside each scan file (under the first BLISS entry). Only change for a different beamline file layout. |
+
+</details>
 
 ## Publication export
 
-After a stage runs successfully, the **Output** tab gains two buttons at the bottom right. Both are greyed out until then and say so on hover — see [[#Hover help on the buttons]]:
+After a stage runs successfully, the **Output** tab gains two buttons at the bottom right. Both are greyed out until then and say so on hover — see [Hover help on the buttons](#hover-help-on-the-buttons):
 
 - **Export…** — single-figure export: opens a dialog with a live preview, a figure selector drop-down (if the stage produced multiple figures), per-figure style controls, and an **Export** button that writes into a folder you pick.
 - **Export all…** — batch export: exports every figure the stage produced into a single folder you pick via a folder-chooser dialog. Progress is shown per-figure in a banner; one bad figure never aborts the rest. The banner and a warning dialog report how many figures succeeded and what went wrong with any failures.
@@ -2050,19 +2086,19 @@ Files are written **flat** into the folder you choose (e.g. `/tmp/my_exports/`).
 
 Exported figures are **rebuilt from the saved data to match the figure the run produced** — same colour scale (strain maps stay symmetric and zero-centred; misorientation maps stay centred), the same ROI axis offset, and the same axes — only the publication styling differs.
 
-### The "Publication style…" editor
+### The Publication style editor
 
 A **Publication style…** button lives in the **left column of the main window**, below the pipeline rail. It holds one **session-global** `PlotStyle` — restored from your previous session (saved automatically via QSettings when you close the dialog or the app), else seeded from `PUBLICATION_STYLE` — and shared by every export dialog opened from any stage.
 
 Clicking it opens a scrollable style editor (the same control set as the per-figure export dialog). Each **Export…** dialog starts from a private copy of the session style and lets you adjust it per-figure without changing the global.
 
-> [!note] Need several panels in one figure?
+> [!NOTE] Need several panels in one figure?
 > Everything on this page exports **one stage's own figure at a time**. To
 > arrange panels from one or more stages (maps, slices, line traces) side by
 > side into a single multi-panel publication figure, use the **Figure
-> builder…** button next to Publication style — see [[#Figure builder]].
+> builder…** button next to Publication style — see [Figure builder](#figure-builder).
 
-> [!important] Runs use the current style
+> [!IMPORTANT] Runs use the current style
 > Every stage **run** renders its own PNGs/animations (layer maps, slice PNGs,
 > profile companions, strain diagnostics, matched layers) with the publication
 > style **as it is at the moment you press Run**. Edit the style, re-run, and
@@ -2106,7 +2142,7 @@ plots that quantity (runs, previews, exports and the 3-D viewers alike):
 
 The choices persist across sessions together with the rest of the style.
 
-> [!tip] The stage forms point here
+> [!TIP] The stage forms point here
 > Colormaps are **not** on the stage forms, which is where people look for
 > them first. Every figure-producing stage — strain, mosaicity, rocking,
 > visualize, slices, profiles and matched — therefore shows a *See also* line
@@ -2139,7 +2175,7 @@ it (and the `--colormap` flag behind it) still decides. A *See also* line under
 that dropdown (inside **Advanced**) says exactly that; the same text is appended
 to the dropdown's entry in the help panel when you click into it, and to the
 dropdown's own hover tooltip. See
-[[#9. Rocking-matched layers (`matched`)|the matched stage]] for what changed
+[the matched stage](#9-rocking-matched-layers) for what changed
 and why your next matched run will not look like your last one.
 
 **Scale bar**
@@ -2156,7 +2192,7 @@ and why your next matched run will not look like your last one.
 | Background box | Optionally draw a semi-transparent box behind the bar + label. The box sizes itself to the rendered label and bar at any font scale, with the label centred over the bar |
 | Box colour / alpha / margin | Control the background box appearance; margin is the padding inside the box, in points |
 
-> [!note] Scale bars on maps only
+> [!NOTE] Scale bars on maps only
 > Scale bars are drawn **only on physical map panels** (per-layer volume maps, strain maps, mosaicity maps, slice maps, and the reference map panel of the line-profile companion/overview figures). Histograms, detrend diagnostics, and the 1-D trace panels have no scale bar — for those figures the scale-bar controls are ignored. Physical aspect ratio is always preserved on maps (`aspect="equal"`).
 
 **Text**
@@ -2183,13 +2219,13 @@ and why your next matched run will not look like your last one.
 | Colourbar — per group | One row per quantity group (Mosa misorientation, Mosa FWHM, Strain, Raw intensity), each with **Tick format** + **offset size** + **offset position**. Tick format: **auto** (matplotlib default), **scientific (×10ⁿ offset)** (forces offset notation), **arbitrary units (no ticks)** (drops numeric ticks and marks the label "arb. units" — the default for Raw), or a digit-count (**0/1/2/3 decimals**). Offset size scales the scientific `×10ⁿ` exponent; offset position places it at the **top** or **bottom** of the bar (both only take effect when that group's format is scientific). |
 | Round colour limits | When checked, auto-computed colour limits are rounded **outward** to the nearest "nice" value (2 significant digits, last digit 0 or 5), so evenly spaced colourbar ticks land on round numbers (e.g. ±0.0778 → ±0.08). Applies to: the **slices** stage (per volume; raw limits stored as `vmin_raw`/`vmax_raw` in `oblique_slices.h5`); the **strain map** (auto path only); the **visualize** stage (per mosaicity dataset and strain); the **rocking** stage (per rendered volume); and the **matched** stage (when both `vmin`/`vmax` are blank — a half-manual pair is never half-rounded; pre-round values stored in `MatchedResult.vmin_raw`/`vmax_raw`). User-specified limits are never rounded. Each rounded dataset is noted in the run log and the Results summary — except the **strain** stage, which discards the note (rounding is visible on the colourbar but strain has no per-run notes surface). |
 
-> [!tip] Why does my colourbar say ×10⁻²?
+> [!TIP] Why does my colourbar say ×10⁻²?
 > The **scientific** tick-format forces offset notation: the ticks show plain multipliers (e.g. −8, 0, 8) and a `×10⁻³` exponent is drawn separately. That exponent is now a styleable label — set its **offset size** and **offset position** (top/bottom) per group. Prefer full numbers? Switch that group's Tick format to a digit-count (e.g. **3 decimals**) or **auto**. For images with no absolute scale (raw intensity), choose **arbitrary units (no ticks)**.
 > The per-group tick formats also style the **profiles trace value axes** (2026-07-25): set Strain to **scientific** and only the strain traces get mantissa ticks with a `×10ⁿ` exponent at the top of the y-axis — mosaicity and raw traces keep their own group's format. (**arbitrary units** is ignored on traces — a curve's value numbers are never hidden.)
 
 **Figure**
 
-> [!note] Constrained layout on styled figures
+> [!NOTE] Constrained layout on styled figures
 > When the publication style is active, all figure builders use matplotlib's **constrained layout**: every text element (title, axis labels, colourbar, and the ×10ⁿ offset label) is measured at its final font size, and the axes shrink to make room for all of them. The figure keeps its exact requested width (single or double column) — titles, axis labels and colourbars are placed without overlapping each other (tick density at extreme Font scales can still crowd). The legacy plain-layout path (headless CLI runs) is close to — but not byte-identical with — the pre-export renderers.
 
 | Control | Meaning |
@@ -2199,7 +2235,7 @@ and why your next matched run will not look like your last one.
 | Trace scale (µm/cm) | Separate fixed scale for the profiles **trace** figures only. Blank = follow Scale (µm/cm). **Hint:** traces usually need a *smaller* value than the maps — start at about half the map scale or less; at the map's own scale the trace box tends to come out too small. |
 | Trace height (cm) | Fixed height of every trace plot box, in cm of page — only takes effect once a fixed scale (Scale and/or Trace scale) is set. Blank = 3 cm (default). All traces of one run/replot share this height, so they align side-by-side; pairs with **Trace scale (µm/cm)**, which sets the box width via the line length. |
 
-> [!tip] Fixed physical scale across figures
+> [!TIP] Fixed physical scale across figures
 > Setting **Scale (µm/cm)** fits every map's data box (per-layer maps, slices,
 > the strain diagnostic, the matched stage's rocking-matched layer maps, and
 > the profiles reference/overview panels — and, once a fixed scale is set,
@@ -2269,14 +2305,14 @@ and why your next matched run will not look like your last one.
 
 ## Figure builder
 
-> [!example] Opening the builder
+> [!TIP] Opening the builder
 > Click **Figure builder…** in the left column of the main window, just below
 > **Publication style…**. The window is non-modal (the rest of the app stays
 > usable) and reused — clicking the button again re-raises the same window
 > instead of opening a second one, so a recipe you're mid-edit on is never
 > silently orphaned.
 >
-> [!example] A "reference maps + trace stacks" figure (the Figure-5 look)
+> [!TIP] A "reference maps + trace stacks" figure (the Figure-5 look)
 > Two profiles jobs → outline `Row[ Col[ ref A, Scale bar, ref B ] (One
 > colorbar for this group), Col[ A's traces ] (Shared x, gap 0, **Fill
 > height**, group label "A2"), Col[ B's traces ] (same, "B2") ]`; on the two
@@ -2361,7 +2397,7 @@ a composed figure looks consistent with the per-stage exports above.
   total can drift from the pin by that amount (the note still reports the
   equal split that was computed).
 - **Physical scales** — like every other exported map (see the "Scale
-  (µm/cm)" control under [[#Publication export]] above), a panel's box can be
+  (µm/cm)" control under [Publication export](#publication-export) above), a panel's box can be
   sized from an exact µm/cm scale rather than a fixed inch size, so panels
   drawn from different crops still print at a common, comparable scale.
 - **Placeholders** — a panel whose source data can't be read at render time
@@ -2386,7 +2422,7 @@ Clicking **Add panels…** opens a two-step dialog:
    the figure as an ordinary map panel, drawn in the shared **raw** colormap
    group. One caveat: the picker stamps every map panel with the experiment's
    **Pixel size X/Y**, while a `raw_mosa_*` volume typically carries its own,
-   different pixel scale (see [[#7. Oblique slices (`slices`)|slices]]) — if
+   different pixel scale (see [slices](#7-oblique-slices)) — if
    they differ, correct that panel's `"sx"`/`"sy"` in the saved recipe's
    selector so its extent and scale bar stay true.
 2. **Step 2 — arrange (optional).** A drag grid seeded with one column per
@@ -2560,7 +2596,7 @@ figure…** button pinned below it (outside the scroll area, so it stays visible
 far you scroll the sections — see the Export bullet at the end of this list):
 
 - *Style* — the full per-figure style control set (the same
-  `StyleControls` widget used by [[#Publication export]]), bound to an
+  `StyleControls` widget used by [Publication export](#publication-export)), bound to an
   independent working copy of the `PlotStyle` the builder window was opened
   with — editing it here never touches the app-wide session style. Every
   change serialises the whole style into `recipe.style` (a plain JSON-safe
@@ -2809,7 +2845,7 @@ and a hint print to stderr in every `2` case.
 
 ## Interactive viewers
 
-> [!note] Loaded only when you ask
+> [!NOTE] Loaded only when you ask
 > Both viewers initialise lazily — no 3-D/OpenGL libraries are imported and no
 > data is loaded until you explicitly open them. If your machine has no OpenGL
 > context, the 3-D view degrades to a message instead of crashing.
@@ -2867,7 +2903,7 @@ threshold/clip", which on its own pointed at the threshold for something
 the ROI had done. The empty note stays put while you work the
 **Downsample** spin, since no factor can undo it.
 
-> [!warning] A volume too big for this machine is decimated for display
+> [!WARNING] A volume too big for this machine is decimated for display
 > The 3-D view needs the whole volume in memory at once, so a **rocking**
 > volume that would not fit inside this machine's memory headroom is read with
 > a stride — every 2nd, 4th, 8th … voxel along each axis — instead of failing
@@ -2921,7 +2957,7 @@ On the **profiles** view, click **Pick line…** to open the picker:
    `reference` into `jobs_json`.
 6. Press **Run** to profile.
 
-### Jobs from marks… (profiles)
+### Jobs from marks (profiles)
 
 Once you've starred planes with **Mark planes…** on the slices stage, **Jobs
 from marks…** turns them straight into profile jobs without hand-typing
@@ -2948,9 +2984,9 @@ offsets:
 
 ---
 
-## Tips & troubleshooting
+## Tips and troubleshooting
 
-> [!tip] The shipped preset's paths are placeholders
+> [!TIP] The shipped preset's paths are placeholders
 > `STO2_overnight` carries real, measured calibration (angles, pixel scales,
 > ROIs) but its `raw_root`/`processed_root` are written as
 > `/path/to/data/ESRF/…`, showing the expected ESRF layout rather than any real
@@ -2982,7 +3018,7 @@ ruff check . && ruff format . # lint + format
 ```
 
 `python3 -m darq_xray.compose render` re-renders a **figure recipe** (see
-[[#Figure builder]]) without launching the GUI — handy for CI or a batch of
+[Figure builder](#figure-builder)) without launching the GUI — handy for CI or a batch of
 figures from a script. Exit code `0` means at least one panel rendered
 (placeholder/drift notes still print); `1` means every panel was a
 placeholder; `2` means nothing rendered at all — an unreadable recipe path,
@@ -2994,7 +3030,7 @@ stderr.
 
 ## Maintaining this guide
 
-> [!important] For contributors (and future Claude sessions)
+> [!IMPORTANT] For contributors (and future Claude sessions)
 > This file is the user-facing companion to `CLAUDE.md`. **Whenever you change a
 > stage's parameters, behaviour, inputs/outputs, add or remove a stage, or change
 > how a viewer works, update the matching section here in the same change.** The
@@ -3003,7 +3039,7 @@ stderr.
 
 ## See also
 
-- [[Codebase]] — file-by-file code reference (what every module/function does).
+- [Codebase.md](Codebase.md) — file-by-file code reference (what every module/function does).
 - `CLAUDE.md` — architecture & contributor conventions.
 - `README.md` — short project summary.
 - `experiments/STO2_overnight.yaml` — the shipped preset (paths, calibrated angles, pixel scales).
