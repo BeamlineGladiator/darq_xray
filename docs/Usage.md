@@ -238,6 +238,11 @@ maps out. Later sections cover each step in full detail.
 
 ## Core concepts
 
+These apply to every stage: the window and what it tells you about your
+machine, the experiment preset that holds everything the stages share, the two
+regions of interest, and how one stage's output becomes the next one's input.
+Read this once and the stage reference below will read much faster.
+
 ### The main window
 
 The left column is a **pipeline rail**: *Overview* first, then the stages in
@@ -793,6 +798,10 @@ all show the wait cursor for the duration of the load/save.
 
 ## The pipeline at a glance
 
+Read the diagram as files in boxes and stages on arrows. The one arrow DARQ
+does not drive is `darfix · external`, in the middle — everything above it
+prepares darfix's input, everything below it consumes darfix's output.
+
 ```mermaid
 flowchart TD
     A[Raw BLISS .h5 scans] -->|1. concat| B[entry_0000 .h5 darfix-ready]
@@ -828,6 +837,13 @@ flowchart TD
 > too). Each stage shows its essentials first; the rest live under *Advanced*.
 
 ### 1. Concatenate
+
+*Stage id `concat` · headless: `python3 -m darq_xray.stages.concat --help`*
+
+One sample layer is measured as several separate BLISS scan files. darfix
+wants a single file per layer, so this stage joins them — the detector frames
+end to end, the motor positions merged to match. Skip it if your data already
+comes that way.
 
 Combine the `*.1` entries of BLISS scan files into a single darfix-compatible
 `entry_0000` (a detector **VDS** or copy, plus merged positioners).
@@ -867,6 +883,13 @@ data as darfix writes it. Text is the field's own hover help.
 </details>
 
 ### 2. Axial strain
+
+*Stage id `strain` · headless: `python3 -m darq_xray.stages.strain --help`*
+
+Converts darfix's fitted diffraction angles into a physical quantity: how far
+the lattice spacing at each pixel departs from an unstrained reference. This
+is the stage the `ccmth reference` calibration matters most for — it is what
+defines zero.
 
 Per-pixel axial strain (cot method) from darfix `maps.h5`, then stacked into a
 3-D volume.
@@ -992,6 +1015,12 @@ data as darfix writes it. Text is the field's own hover help.
 
 ### 3. Mosaicity volume
 
+*Stage id `mosaicity` · headless: `python3 -m darq_xray.stages.mosaicity --help`*
+
+Assembles darfix's per-layer orientation maps into a single 3-D volume, so
+lattice tilt can be read through the whole grain at once instead of layer by
+layer.
+
 Stack per-layer χ/μ **Center-of-mass** and **FWHM** maps into a 3-D volume.
 
 - **Input:** `maps.h5` per mosaicity layer folder.
@@ -1063,6 +1092,12 @@ data as darfix writes it. Text is the field's own hover help.
 </details>
 
 ### 4. Aligned rocking volumes
+
+*Stage id `rocking` · headless: `python3 -m darq_xray.stages.rocking --help`*
+
+Rebuilds the *measured* intensity as a 3-D volume on the same grid as the
+strain and mosaicity volumes — so raw data and fitted result can be put side
+by side, and you can see what a fit was made from.
 
 Build aligned 3-D volumes from raw scans — either the rocking scans or the
 mosaicity scans — producing an integrated **sum** image and one **specific
@@ -1190,6 +1225,12 @@ data as darfix writes it. Text is the field's own hover help.
 </details>
 
 ### 5. Visualize volumes
+
+*Stage id `visualize` · headless: `python3 -m darq_xray.stages.visualize --help`*
+
+Turns the volumes into pictures: per-layer maps, top views and rotating 3-D
+animations. It aligns and renders what other stages produced, and derives no
+new physical quantity of its own.
 
 Align the stacked mosaicity/strain volumes and render them — and render the
 rocking stage's already-aligned raw volumes alongside them.
@@ -1431,6 +1472,12 @@ data as darfix writes it. Text is the field's own hover help.
 
 ### 6. ParaView export
 
+*Stage id `paraview` · headless: `python3 -m darq_xray.stages.paraview --help`*
+
+Writes the volumes in ParaView's own format, so you can cut, threshold and
+compare them interactively in ParaView rather than in DARQ. Every volume lands
+in one shared coordinate frame, so they overlay correctly there.
+
 Align the volumes and write a partitioned **PVTI** dataset for parallel ParaView
 rendering, with a `valid_mask` and NaN sentinels.
 
@@ -1553,6 +1600,12 @@ data as darfix writes it. Text is the field's own hover help.
 </details>
 
 ### 7. Oblique slices
+
+*Stage id `slices` · headless: `python3 -m darq_xray.stages.slices --help`*
+
+Cuts flat planes at any angle through the volumes, so you can look straight
+along a feature — a boundary, a wall, a band — that does not happen to lie on
+X, Y or Z.
 
 Cut arbitrary planes (defined in physical µm, optionally swept along the normal)
 through the aligned volumes — all in one world frame so the slices co-register.
@@ -1898,6 +1951,12 @@ data as darfix writes it. Text is the field's own hover help.
 
 ### 8. Line profiles
 
+*Stage id `profiles` · headless: `python3 -m darq_xray.stages.profiles --help`*
+
+Measures how values change along a line drawn across one of those slices.
+Every field is sampled at the same positions, so intensity, strain and
+misorientation can share one axis and be compared point for point.
+
 Profile a straight line (or a band of parallel lines) across one slice plane —
 **every** scalar field is profiled at the *same* in-plane positions, so intensity,
 strain and misorientation line up.
@@ -2120,6 +2179,12 @@ data as darfix writes it. Text is the field's own hover help.
 
 ### 9. Rocking-matched layers
 
+*Stage id `matched` · headless: `python3 -m darq_xray.stages.matched --help`*
+
+Pairs each strain layer with the raw rocking frame measured at the same sample
+position, shifted the same way — so a feature in a strain map can be checked
+directly against the data it came from.
+
 For each strain layer, find the nearest rocking scan by `(samy, samz)`, load a
 background-subtracted frame, apply the same samy shift, and save grayscale PNGs
 pixel-aligned with the strain/mosaicity layer images.
@@ -2210,6 +2275,11 @@ data as darfix writes it. Text is the field's own hover help.
 </details>
 
 ## Publication export
+
+How a figure gets out of DARQ and into a paper: two export buttons on every
+stage's **Output** tab, and one session-wide style — fonts, colour maps, scale
+bars, an exact µm-per-cm scale — that every export obeys, so figures made from
+different stages still look like one set.
 
 After a stage runs successfully, the **Output** tab gains two buttons at the bottom right. Both are greyed out until then and say so on hover — see [Hover help on the buttons](#hover-help-on-the-buttons):
 
@@ -2438,6 +2508,10 @@ and why your next matched run will not look like your last one.
 ---
 
 ## Figure builder
+
+Composes maps, traces and images that stages have already produced into a
+single multi-panel figure, arranged by dragging, sized at an exact physical
+scale, and saved as a reusable recipe you can re-render later.
 
 > [!TIP] Opening the builder
 > Click **Figure builder…** in the left column of the main window, just below
@@ -2979,6 +3053,10 @@ and a hint print to stderr in every `2` case.
 
 ## Interactive viewers
 
+Three things you drive by clicking rather than by filling in a form: a 3-D
+volume view, a picker that sets a profile's line by dragging it on a slice,
+and a way to turn planes you marked earlier into profile jobs.
+
 > [!NOTE] Loaded only when you ask
 > Both viewers initialise lazily — no 3-D/OpenGL libraries are imported and no
 > data is loaded until you explicitly open them. If your machine has no OpenGL
@@ -3141,7 +3219,11 @@ offsets:
 
 ## Running without the GUI (CLI)
 
-Every stage is also a headless command (handy for batch/scripting):
+Reach for this when you want to batch many datasets, script a re-run
+reproducibly, or work on a machine with no display. Every stage takes the same
+parameters here as it does in its form.
+
+Every stage is also a plain command:
 
 ```bash
 python3 -m darq_xray.stages.strain --help
