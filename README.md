@@ -1,191 +1,286 @@
 # DARQ
 
-A single Qt desktop application that drives the whole ESRF ID03 **Dark-Field
-X-ray Microscopy (DFXM)** analysis flow — from raw/darfix output to finished data
-products (strain/mosaicity maps, aligned volumes, ParaView PVTI, oblique slices,
-line profiles, rocking-matched layers).
+**A desktop app that turns X-ray microscopy measurements of a crystal into
+maps of how that crystal is stretched and bent inside.**
 
-Parameters are entered in forms or chosen from dropdowns; calibration constants
-and paths are saved as reusable, named **experiment presets**.
+The technique is **Dark-Field X-ray Microscopy (DFXM)**: you image a single
+grain deep inside a sample through its diffracted beam, rocking the crystal
+through its diffraction condition so that every detector pixel records a small
+intensity-versus-angle curve. Fitting those curves tells you, pixel by pixel,
+how the lattice is spaced and which way it is tilted — **strain** and
+**mosaicity**.
 
-> **Origin.** The pipeline began as a collection of standalone per-analysis
-> scripts (the `Scripts2` set). Each is reproduced here as one stage, and the
-> originals were used as reference oracles while porting. Those scripts are
-> *not* vendored into this repository, so the parity tests that compare against
-> them self-skip on a fresh clone; everything else in the suite runs.
+DARQ takes that measurement from the raw beamline files all the way to finished
+figures, in one window: nine stages, forms instead of scripts, and your
+calibration saved as a reusable preset. It is built around data from the
+**ESRF ID03** beamline.
 
-## Architecture
+<!--
+  Add a screenshot: save the main window as docs/images/main-window.png
+  (see docs/images/README.md), then delete this comment block and uncomment
+  the line below.
 
-- **`darq_xray/` (excluding `gui/`) — the Qt-free core library.** Pure Python
-  implementations of every analysis stage, plus shared helpers. *Nothing outside
-  `darq_xray/gui/` imports Qt*, so every stage stays runnable headless
-  (CLI / `python3 -m darq_xray.stages.<name>`) and unit-testable.
-- **`darq_xray/gui/` — the PySide6 desktop app.** Builds parameter forms from each stage's
-  typed schema, runs stages, and embeds matplotlib + pyvista viewers. It only
-  *calls* the core.
+![The DARQ main window](docs/images/main-window.png)
+-->
 
-This split is deliberate: confining Qt to the single `darq_xray.gui` subpackage
-makes the "core never imports Qt" invariant easy to enforce and test.
+## Contents
 
-## Layout
+- [Is this for you?](#is-this-for-you)
+- [What you need first](#what-you-need-first)
+- [Install](#install)
+- [Launch it](#launch-it)
+- [Your first run](#your-first-run)
+- [What the nine stages do](#what-the-nine-stages-do)
+- [Before you trust a strain map](#before-you-trust-a-strain-map)
+- [Documentation](#documentation)
+- [Development](#development)
+- [License](#license)
 
-```
-darq_xray/                  # the repository
-  pyproject.toml            # metadata + dependencies + ruff/pytest config
-  LICENSE                   # MIT
-  experiments/              # named presets (YAML): paths, patterns, angles, scales
-    STO2_overnight.yaml
-  darq_xray/                # the importable package
-    config/                 # Experiment model + per-stage param schemas; preset I/O
-    common/                 # natural sort, HDF5 I/O, alignment, raster, plotting helpers
-    stages/                 # one module per script family; each exposes run(params, progress)
-    compose/                # publication figure composer (also Qt-free)
-    runner.py               # child-process execution + progress/log/cancel protocol
-    gui/                    # PySide6 app (entry point: `darq_xray`, or python3 -m darq_xray.gui.app)
-      widgets/              # param-form, matplotlib canvas, pyvista canvas, log console
-  tests/                    # synthetic-fixture unit tests + golden reproduction tests
-  docs/                     # Usage.md (user guide) + Codebase.md (code reference)
-  tools/                    # small standalone helpers
-  .github/workflows/        # CI: ruff + pytest on push and PR
-```
+## Is this for you?
+
+Probably yes, if:
+
+- you have **DFXM scans from ESRF ID03** — BLISS-written `.h5` files, one
+  folder per sample layer;
+- you use **darfix** (the ESRF tool that fits the rocking curve at every pixel)
+  and end up with a `maps.h5`;
+- and what you want out is **axial strain maps**, **mosaicity maps**, aligned
+  3-D volumes, **ParaView** exports, oblique slices through those volumes, line
+  profiles across them, or publication figures composed from any of the above.
+
+Probably not, if your data comes from a different beamline or instrument. The
+motor names, the file layout and the calibration are ID03-specific. They are
+all overridable settings rather than hard-coded constants, so adapting is
+possible — but it is adapting, not configuring.
+
+> [!NOTE]
+> DARQ does not replace darfix and does not run it. It **brackets** it: DARQ
+> prepares darfix's input, you run darfix yourself, and DARQ picks up again
+> from the `maps.h5` that darfix writes.
+
+## What you need first
+
+| | |
+|---|---|
+| **Python 3.10 or newer** | Check with `python3 --version`. |
+| **A desktop with a display** | This is a windowed application. (Every stage *also* has a command-line version — see [Running without the GUI](docs/Usage.md#running-without-the-gui-cli) — but the app itself needs a screen.) |
+| **darfix**, installed separately | Not bundled here. You run it between two of DARQ's stages. |
+| **Your data** | The raw scan folders, and/or the `maps.h5` darfix produced from them. |
+| `ffmpeg` *(optional)* | On your `PATH`, it lets DARQ export animations as MP4. Without it they come out as GIF instead — nothing else changes. |
+
+Disk and memory depend entirely on your dataset. DARQ measures your machine and
+tells you what a run will cost *before* you start it, and falls back to
+streaming from disk when a volume does not fit in RAM.
 
 ## Install
 
-One command, from a clone:
+Copy these five lines into a terminal:
 
 ```bash
-git clone https://github.com/BeamlineGladiator/darq_xray.git && cd darq_xray
-python3 -m venv .venv && source .venv/bin/activate
-pip install -e ".[test]"
+git clone https://github.com/BeamlineGladiator/darq_xray.git
+cd darq_xray
+python3 -m venv venv
+source venv/bin/activate          # Windows: venv\Scripts\activate
+pip install -e .
 ```
 
-That reads `pyproject.toml`, which is the **single source of truth** for what
-this program needs — there is no separate list to keep in sync. `-e` installs
-in *editable* mode, so the app still runs from the checkout exactly as before
-and edits take effect without reinstalling.
+That is it — the last line installs everything DARQ needs.
 
-Drop `[test]` if you don't intend to run the suite; it adds only `pytest`.
+<details>
+<summary><b>What those lines do, and what to try if one fails</b></summary>
 
-> **Why the venv.** On a Debian/Ubuntu system Python, pip refuses to install
-> into the system environment at all — `error: externally-managed-environment`
-> (PEP 668) — and tells you to add `--break-system-packages`. A venv sidesteps
-> that, keeps this project's fairly heavy Qt/VTK stack off your system Python,
-> and is what CI would use.
+**`python3 -m venv venv` — what is a venv, and why?**
+A *virtual environment* is a private folder of Python packages belonging to
+this project alone. DARQ needs a fairly heavy graphics stack (Qt, VTK); a venv
+keeps all of it out of your system Python, where it could collide with
+something else you have installed. The folder is called `venv` and appears
+right inside the clone. Delete it and re-run the two commands to start over —
+nothing else is affected.
 
-**One non-Python dependency, optional:** `ffmpeg` on `PATH` enables MP4 export.
-Without it, animations fall back to GIF — nothing else changes.
+You must run `source venv/bin/activate` **once per terminal** before launching
+DARQ. Your prompt shows `(venv)` when it is active.
+
+**`error: externally-managed-environment`**
+You skipped the venv. On Debian, Ubuntu and their derivatives the system Python
+refuses to install anything into itself and suggests `--break-system-packages`.
+Do not do that — make the venv instead. That is exactly what it is for.
+
+**`pip install -e .` — why the `-e`?**
+`-e` means *editable*: DARQ runs from this folder rather than being copied
+elsewhere. **This is not optional here.** The shipped experiment presets live
+in `experiments/`, beside the package rather than inside it, so they are not
+installed as package data. After a plain `pip install .` the app starts with an
+empty preset dropdown and no calibration.
+
+**`pip` is not found, or installs into the wrong Python**
+Use `python3 -m pip install -e .` instead — that guarantees the pip belonging
+to the Python you just made the venv with.
+
+</details>
+
+## Launch it
+
+```bash
+source venv/bin/activate    # once per terminal
+darq_xray
+```
+
+## Your first run
+
+1. **The app opens on the Overview page** — the pipeline drawn left to right,
+   one sentence per stage. Clicking a stage there, or in the rail down the left
+   edge, opens its form.
+
+2. **Pick an experiment preset** from the dropdown at the top. One ships with
+   the app, `STO2_overnight`. An *experiment* holds everything the stages
+   share: where your data lives, the calibration angles, the pixel scales, the
+   regions of interest.
+
+   Its `raw_root` and `processed_root` are written as `/path/to/data/ESRF/…`
+   placeholders — they show the expected layout, not a real location. Open
+   **Edit…** and point them at your own copy. Better still, use **Initialize
+   from data…**, which reads your files and proposes the values for you.
+
+3. **Run `Concatenate`** if your scans are not already joined into single
+   darfix-ready files. It is marked *(optional)* in the rail, and it is: skip
+   it if that is already done.
+
+4. **Leave the app and run darfix yourself** on those files. It writes a
+   `maps.h5`. DARQ shows darfix as a greyed-out row in the pipeline for exactly
+   this reason — it is the one step DARQ does not perform.
+
+5. **Come back and run `Axial strain`**, pointing it at the folder holding your
+   `maps.h5` files. Click into any field and the help panel under the form
+   explains it. Below the **Run** button, a cost line tells you what the run
+   will need in memory, disk and time before you commit to it.
+
+6. **You should now have** `stacked_strain_volumes.h5` and a folder of PNG maps
+   under your output directory, and a green banner across the top of the panel.
+   If the banner is red instead, it names what went wrong and, usually, how to
+   fix it.
+
+From there, `Mosaicity`, `Visualize`, `ParaView export` and the rest all read
+what you have just produced — each stage pre-fills its inputs from the one
+before it.
+
+The full walkthrough, field by field, is in
+**[the user guide](docs/Usage.md)**.
+
+## What the nine stages do
+
+| Stage | What it does |
+|---|---|
+| [**Concatenate**](docs/Usage.md#1-concatenate) | Joins the per-scan `.h5` files of one sample layer into the single file darfix expects. *Optional* — skip it if your data is already in that form. |
+| *darfix* | **External — you run this yourself.** Fits the rocking curve at every pixel and writes `maps.h5`. Not part of DARQ. |
+| [**Axial strain**](docs/Usage.md#2-axial-strain) | Turns darfix's fitted angles into maps of relative lattice-spacing change, then stacks the layers into a 3-D volume. |
+| [**Mosaicity volume**](docs/Usage.md#3-mosaicity-volume) | Stacks darfix's orientation maps into a 3-D volume showing how the lattice tilts from place to place. |
+| [**Aligned rocking volumes**](docs/Usage.md#4-aligned-rocking-volumes) | Rebuilds the raw measured intensity as a 3-D volume on the same grid as the maps above, so raw and fitted data can be compared directly. |
+| [**Visualize volumes**](docs/Usage.md#5-visualize-volumes) | Figures and animations of any of those volumes — slice views, top views, rotating 3-D. |
+| [**ParaView export**](docs/Usage.md#6-paraview-export) | Writes the volumes as `.pvti` files, all in one shared coordinate frame, for viewing in ParaView. |
+| [**Oblique slices**](docs/Usage.md#7-oblique-slices) | Cuts flat planes at any angle through the volumes, so you can look along a feature that does not lie on X, Y or Z. |
+| [**Line profiles**](docs/Usage.md#8-line-profiles) | Measures values along a line drawn across those slices, as a figure and as CSV. |
+| [**Rocking-matched layers**](docs/Usage.md#9-rocking-matched-layers) | Plots raw rocking data beside the strain result for the same layer, matched up. |
+
+On top of these, a **figure builder** composes finished maps, traces and images
+into multi-panel publication figures at a fixed, exact µm-per-cm scale.
+
+## Before you trust a strain map
+
+> [!WARNING]
+> **The calibration is physical, and it is yours.** The reference angle
+> (`ccmth reference`) and the pixel scales in µm/px describe *your* beamtime and
+> *your* optics. Get them wrong and DARQ will happily produce a strain map that
+> looks entirely plausible and means nothing.
+>
+> The app marks these fields in red with **⚠ calibration** so they are hard to
+> set carelessly, and its **Compute pixel size from scan…** button derives the
+> pixel scales from your own scan's motor positions. Confirm them against the
+> beamline calibration before you draw any conclusion from a map.
+
+Two more things worth knowing before interpreting output, both explained in the
+user guide: a DFXM dataset carries **two different regions of interest in two
+different coordinate frames**
+([which is which](docs/Usage.md#regions-of-interest-two-windows-two-frames)),
+and every volume stage co-registers through **one shared alignment**, so
+coordinates stay comparable between them.
+
+## Documentation
+
+| | For | |
+|---|---|---|
+| **[docs/Usage.md](docs/Usage.md)** | Anyone using the app | Every stage, every viewer, the figure builder — and a glossary of the terms the rest of it assumes. |
+| **[docs/Codebase.md](docs/Codebase.md)** | Anyone changing the code | Module by module, class by class, function by function. |
+| **[CLAUDE.md](CLAUDE.md)** | Contributors | The conventions and the invariants the test suite enforces. |
+
+Both docs are written to render identically on GitHub and in Obsidian —
+standard Markdown links, `<details>` blocks, and only the five alert types
+(`> [!NOTE]`, `> [!TIP]`, `> [!IMPORTANT]`, `> [!WARNING]`, `> [!CAUTION]`)
+that both tools understand. `tests/test_docs_links.py` enforces it.
+
+## Development
+
+```bash
+pip install -e ".[test]"      # the test extra: pytest + pytest-timeout
+python3 -m pytest -q          # the suite
+ruff check . && ruff format . # lint + format
+```
+
+CI runs both on every push and pull request.
+
+The code is two layers with a one-way dependency. **`darq_xray/`** is the
+Qt-free core: one module per stage under `darq_xray/stages/`, each exposing
+`run(params, progress)` and its own `__main__` CLI, plus shared helpers in
+`darq_xray/common/`. **`darq_xray/gui/`** is the PySide6 app on top, building
+each stage's form from that stage's declared parameter schema. Nothing outside
+`darq_xray/gui/` imports Qt, which is what keeps every stage runnable and
+testable headless. `docs/Codebase.md` maps the whole thing.
+
+Two rules are worth knowing before your first change, because tests enforce
+them: `pyproject.toml` is the single source of truth for dependencies and is
+checked against the lists in `README.md` and `docs/Usage.md`; and a change to a
+stage's parameters or behaviour must update `docs/Usage.md` and
+`docs/Codebase.md` in the *same* change.
 
 ### Dependencies
 
-Installed for you by the command above; listed here only so you can see what
-you are pulling in. `tests/test_docs_dependencies.py` fails if this list and
-`pyproject.toml` ever disagree.
+Installed for you by the install command; listed here only so you can see what
+you are pulling in.
 
 <!-- deps:start -->
 `numpy`, `h5py`, `scipy`, `matplotlib`, `pyyaml`, `psutil`, `PySide6`,
 `pyvista`, `pyvistaqt`, `vtk`
 <!-- deps:end -->
 
+<details>
+<summary><b>How the supported dependency range is tested</b></summary>
+
 Only lower bounds are declared, and the suite is kept green across the span
 they allow. Both ends are exercised **by CI on every push**: one matrix leg
 **pins the declared floor** — **numpy 1.26.4 / scipy 1.11.4 / matplotlib
 3.6.3** — and the other takes the newest compatible release, currently
-**numpy 2.5.2 / scipy 1.18.1 / matplotlib 3.11.1**. The pin is deliberate: an
-older Python alone does not select old dependencies (pip resolves the newest
-compatible wheel), so without it CI silently tested an untried middle set and
-neither end. The
-two numpy generations genuinely differ where it matters here — `np.percentile`
-on a float32 array returns float64 on 1.x and float32 on 2.x — so tests derive
-their oracle from the installed numpy rather than hardcoding one generation's
-value. Two constants that price memory are pinned to versions they were
-*measured* against and fail loudly on an unverified one, rather than drifting
-quietly: `tests/test_common_alignment.py::VERIFIED_SCIPY_VERSIONS` and
+**numpy 2.5.2 / scipy 1.18.1 / matplotlib 3.11.1**.
+
+The pin is deliberate. An older Python alone does **not** select old
+dependencies — pip resolves the newest compatible wheel — so without it CI
+silently tested an untried middle set and neither end.
+
+The two numpy generations genuinely differ where it matters here:
+`np.percentile` on a float32 array returns float64 on 1.x and float32 on 2.x.
+Tests therefore derive their oracle from the installed numpy rather than
+hardcoding one generation's value.
+
+Two constants that price memory are pinned to the versions they were *measured*
+against and fail loudly on an unverified one, rather than drifting quietly:
+`tests/test_common_alignment.py::VERIFIED_SCIPY_VERSIONS` and
 `slices.RSS_FLOOR_BYTES`. A third, `volumeio.centring_scaffold_bytes`, is a
 *bound* rather than a pin and carries deliberate headroom, because its measured
 cost varies with the machine and not only the numpy version — see its
-docstring. Tests also run against an isolated `QSettings` store
-(`tests/conftest.py`), so a result never depends on how the person running them
-last used the app.
+docstring.
 
-## Running
+Tests also run against an isolated `QSettings` store (`tests/conftest.py`), so
+a result never depends on how the person running them last used the app.
 
-The app **runs in place** from the checkout — the editable install above adds
-its dependencies, not a launcher.
-
-> **Editable is not optional.** The shipped experiment presets live in
-> `experiments/`, beside the package rather than inside it, so they are not
-> installed as package data. After a plain `pip install .` the app starts with
-> an empty preset dropdown and no calibration. Use `pip install -e`.
-
-```bash
-cd darq_xray
-python3 -m darq_xray.gui.app     # or just `darq_xray` after the editable install
-```
-
-Stages are also runnable headless, without the GUI:
-
-```bash
-cd darq_xray
-python3 -m darq_xray.stages.concat --help
-```
-
-And the test suite:
-
-```bash
-python3 -m pytest -q
-```
-
-## Pipeline / stage map
-
-The app **brackets darfix**: it prepares input (concat), you run darfix yourself,
-then the app resumes from darfix's `maps.h5`. It validates `maps.h5` before the
-downstream stages; it does **not** launch darfix.
-
-| Stage | What it does | Ported from |
-|---|---|---|
-| `concat` | join per-scan `.h5` into one darfix input | `concatenate_h5_scans_v3` + `batch_concatenate_h5_scans_v1` |
-| *(darfix)* | **external — you run it** | → produces `maps.h5` |
-| `strain` | axial strain maps from `maps.h5` | `y_calc_axial_strain_v6_batch` (ccmth+mu) / `calc_axial_strain_v7_batch` (ccmth-only) |
-| `mosaicity` | stack darfix volumes into mosaicity maps | `stack_h5_darfix_volumes` |
-| `visualize` | aligned-volume figures & animations | `visualize_aligned_volumes_v6` |
-| `rocking` | aligned raw rocking volumes | `build_aligned_raw_rocking_volumes_v3` |
-| `paraview` | PVTI export in the shared world frame | `export_aligned_volumes_to_paraview_v6_pvti` |
-| `slices` | oblique slices through the volumes | `extract_oblique_slices_v5` |
-| `profiles` | line profiles across those slices | `line_profile_oblique_slices_v2` |
-| `matched` | rocking-matched layer plots | `plot_rocking_matched_layers_v3` |
-
-All nine are implemented. A **figure builder** on top of them composes the
-resulting maps, traces and images into publication-ready multi-panel figures at
-a fixed µm-per-cm scale.
-
-## Domain constraints carried into the core
-
-- **Reference angles are experiment-specific.** Wrong angles → meaningless strain
-  maps. The shipped `STO2_overnight` preset flags its calibration fields.
-- **Detrend before ROI.** Strain stages always polynomial-detrend the full map,
-  then crop the ROI. This order is fixed and not reorderable in the UI.
-- **Fixed alignment order:** `abs (FWHM only) → ROI → samy sub-pixel shift
-  (X-canvas expand) → Z interpolation onto a uniform grid → centre (CoM/strain
-  only)`. One implementation in `common/alignment.py`, shared by visualization,
-  PVTI export, slices, and rocking, so ParaView coordinates stay interchangeable.
-- **VDS fragility.** Concat defaults to virtual datasets that reference the
-  original `.h5` files; a `copy_data` toggle makes a self-contained copy.
-- **Motor paths.** `samy`/`samz` are read from `…/instrument/positioners/`; the
-  detector lives at `…/measurement/pco_ff`. These are overridable constants.
-
-## Documentation
-
-- **[`docs/Usage.md`](docs/Usage.md)** — the user guide: how to drive each stage,
-  viewer and the figure builder.
-- **[`docs/Codebase.md`](docs/Codebase.md)** — the code reference: every module,
-  class and public function.
-- **[`CLAUDE.md`](CLAUDE.md)** — contributor conventions and the invariants the
-  suite enforces (Qt-free core, one alignment implementation, docs-in-the-same-change).
-
-Both docs are written to render identically on GitHub and in Obsidian —
-standard Markdown links, `<details>` blocks, and only the five alert types
-(`> [!NOTE]`, `> [!TIP]`, `> [!IMPORTANT]`, `> [!WARNING]`, `> [!CAUTION]`)
-that both tools understand. `tests/test_docs_links.py` enforces it.
+</details>
 
 ## License
 
