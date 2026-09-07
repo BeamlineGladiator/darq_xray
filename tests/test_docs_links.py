@@ -44,7 +44,12 @@ _FENCE = re.compile(r"^\s*(?:```|~~~)")
 #: An inline code span. Longest-run-first so ``double`` backticks win.
 _CODE_SPAN = re.compile(r"``[^`\n]+``|`[^`\n]+`")
 _HEADING = re.compile(r"^#{1,6}[ \t]+(.+?)[ \t]*$", re.MULTILINE)
-_WIKI = re.compile(r"\[\[[^\]\n]+\]\]")
+#: A wiki link. The target MUST be allowed to span lines: these docs wrap at
+#: ~78 columns, and one `[[#5. Visualize volumes …|Visualize\nvolumes]]` broke
+#: across a line break and so survived both the conversion sweep and the first
+#: version of this pattern, which excluded newlines. Bounded so an unmatched
+#: `[[` cannot swallow the rest of the file.
+_WIKI = re.compile(r"\[\[[^\]]{1,300}\]\]")
 _CALLOUT = re.compile(r"^>\s*\[!([A-Za-z]+)\][-+]?", re.MULTILINE)
 #: `](#anchor)` and `](Other.md#anchor)`; the doc part may be empty. The
 #: character class excludes ":" and so never matches an external URL fragment.
@@ -190,6 +195,51 @@ def test_callouts_use_types_github_renders(rel_path):
         f"{rel_path} uses callout type(s) GitHub does not render: {unsupported}. "
         f"GitHub supports only {sorted(GITHUB_ALERT_TYPES)} (Obsidian renders "
         "those too). Map [!info] -> [!NOTE] and [!example] -> [!TIP]."
+    )
+
+
+@pytest.mark.parametrize("rel_path", DOCS)
+def test_callouts_are_written_in_the_form_github_renders(rel_path):
+    r"""The right *type* is not enough — the *form* decides whether it renders.
+
+    Both rules below were confirmed against GitHub's own renderer
+    (`POST /markdown`, mode=gfm), after a first pass fixed the types and left
+    60 callouts still rendering as plain blockquotes with a literal `[!TYPE]`
+    on show:
+
+    1. **The marker must be alone on its line.** Obsidian accepts a title
+       there (`> [!WARNING] Keep the -e`); GitHub does not, and silently
+       degrades the whole callout. Put the title on the next line as `> **…**`,
+       which renders in both.
+    2. **An alert cannot be nested inside a list item.** Indented, GitHub does
+       not apply alert treatment even with the marker alone. Use a plain
+       blockquote with a bold lead line there instead.
+    3. **The marker must be the FIRST line of its blockquote.** A second
+       `> [!TIP]` further down the same quote (after a bare `>`) renders
+       literally; a blank line ends the quote and starts a new one, and then
+       both render.
+    """
+    offenders: list[str] = []
+    lines = _prose(_read(rel_path)).splitlines()
+    for n, line in enumerate(lines, 1):
+        m = re.match(r"^(\s*)>\s*\[!([A-Za-z]+)\][-+]?(.*)$", line)
+        if not m:
+            continue
+        indent, kind, rest = m.groups()
+        if indent:
+            offenders.append(f"line {n}: [!{kind}] is indented inside a list — never an alert")
+        elif rest.strip():
+            offenders.append(
+                f"line {n}: [!{kind}] has a title on the marker line: {rest.strip()[:40]!r}"
+            )
+        elif n >= 2 and lines[n - 2].startswith(">"):
+            offenders.append(
+                f"line {n}: [!{kind}] is not the first line of its blockquote "
+                "— end the quote with a blank line first"
+            )
+    assert not offenders, (
+        f"{rel_path} has {len(offenders)} callout(s) GitHub renders as a plain "
+        "blockquote with the literal marker visible:\n  " + "\n  ".join(offenders)
     )
 
 

@@ -12,7 +12,8 @@ aliases: [DARQ Usage, Pipeline Guide, How to use the pipeline]
 > see the [README](../README.md); for how the code is put together see
 > [Codebase.md](Codebase.md).
 
-> [!NOTE] This document is kept in sync with the code
+> [!NOTE]
+> **This document is kept in sync with the code**
 > When stages, parameters, outputs, or behaviour change, this guide is updated
 > in the same change (see [Maintaining this guide](#maintaining-this-guide)). If something here
 > disagrees with the app, the app wins — please report or fix the drift.
@@ -117,7 +118,8 @@ what to try when one fails — what a virtual environment is,
 `error: externally-managed-environment` on Debian and Ubuntu, and why the `-e`
 matters.
 
-> [!WARNING] Keep the `-e`
+> [!WARNING]
+> **Keep the `-e`**
 > The shipped experiment presets live in `experiments/`, beside the package
 > rather than inside it, so they are **not** installed as package data. Drop
 > the `-e` and the app starts with an empty preset dropdown and no
@@ -132,7 +134,8 @@ pulls in:
 `pyvista`, `pyvistaqt`, `vtk`
 <!-- deps:end -->
 
-> [!WARNING] Don't install by picking packages off that list
+> [!WARNING]
+> **Don't install by picking packages off that list**
 > The list above used to omit **`psutil` and `pyyaml`**, and installing by hand
 > from it left the app without `psutil` — which silently made the status bar
 > report **8 GB free on a machine with 467 GB free**, and made every stage plan
@@ -183,7 +186,7 @@ maps out. Later sections cover each step in full detail.
    beneath it summarises that preset's calibration. Click **Edit…** for the
    full editor.
 
-   > [!IMPORTANT]
+   > **Important**
    > The shipped preset's `raw_root` and `processed_root` are written as
    > `/path/to/data/ESRF/…`. They show the expected ESRF folder layout — they
    > are **not** a real location. Point them at your own copy of the data
@@ -225,7 +228,8 @@ maps out. Later sections cover each step in full detail.
    [ParaView export](#6-paraview-export) or
    [Oblique slices](#7-oblique-slices) without retyping a path.
 
-> [!WARNING] Calibration values are physical
+> [!WARNING]
+> **Calibration values are physical**
 > `ccmth reference` and the pixel scales (µm/px) are flagged with **⚠ calibration**
 > in red. Wrong values produce *meaningless* strain maps — confirm them against the
 > beamline calibration for your experiment.
@@ -452,7 +456,8 @@ re-check which frame you typed in. The slices stage's Y-height check remains
 the last-line guard: if the volumes it's about to combine disagree on physical
 Y height by more than ~5%, it warns before you go further.
 
-> [!WARNING] The classic mistake
+> [!WARNING]
+> **The classic mistake**
 > On 2026-07-18 a real STO2 run had darfix's origin+size numbers (`230,1266`)
 > typed directly into rocking's `roi_y`, which expects **start,end** — instead
 > of the correct `630,1330`. The result was a ~154 µm Y-misregistration between
@@ -818,7 +823,8 @@ flowchart TD
     A -->|9. matched| L[rocking layers matched to strain]
 ```
 
-> [!NOTE] darfix runs outside this app
+> [!NOTE]
+> **darfix runs outside this app**
 > `darfix` (the ESRF tool that fits per-pixel rocking curves into `maps.h5`) is a
 > separate program. The app **brackets** it: `concat` prepares its input; the
 > map stages consume its `maps.h5` output. Run darfix yourself between the two.
@@ -827,7 +833,8 @@ flowchart TD
 
 ## Stage reference
 
-> [!NOTE] Every parameter is explained in the app
+> [!NOTE]
+> **Every parameter is explained in the app**
 > Tables below list the **key** parameters only. In the app, click into any
 > field and the help panel under the form explains it (hover tooltips work
 > too). Each stage shows its essentials first; the rest live under *Advanced*.
@@ -857,7 +864,8 @@ Combine the `*.1` entries of BLISS scan files into a single darfix-compatible
 | `vds_policy` | `relative` (portable) / `absolute` |
 | `copy_data` | **False** = VDS (fast, but breaks if sources move); **True** = self-contained copy |
 
-> [!WARNING] VDS fragility
+> [!WARNING]
+> **VDS fragility**
 > With `copy_data = False` the output only *references* the original `.h5` files.
 > If you move/delete them, the concatenated file breaks. Use `copy_data = True`
 > for an archival, self-contained file.
@@ -903,18 +911,21 @@ Per-pixel axial strain (cot method) from darfix `maps.h5`, then stacked into a
 | `roi` | `r0,r1,c0,c1` in map pixels, relative to the darfix window (blank = full image); pre-filled from the experiment's analysis window |
 | `vmin` / `vmax` | colour limits (blank = symmetric auto) |
 
-> [!IMPORTANT] Detrend before ROI
+> [!IMPORTANT]
+> **Detrend before ROI**
 > The full map is **detrended first** (separable 2-D arctan fit), then the ROI
 > is cropped. This order is a physics constraint and is not configurable.
 
-> [!WARNING] ROI must fit the map
+> [!WARNING]
+> **ROI must fit the map**
 > If `roi` does not fit inside the loaded map (e.g. the experiment's analysis
 > window was set up for a different dataset), the run stops with an error
 > naming the ROI values and the map's actual shape — rather than silently
 > cropping to an empty or unexpected array. Blank the ROI or fix the
 > experiment's analysis window.
 
-> [!TIP] Picking the run-time ROI interactively
+> [!TIP]
+> **Picking the run-time ROI interactively**
 > Click **Pick ROI…** (in the button row alongside Run/Cancel) to open a visual
 > picker that shows the ccmth Center-of-mass map loaded from the current
 > `maps.h5`. Drag a rectangle on the CoM map and click **OK** — the `roi` field
@@ -964,14 +975,16 @@ rules as the live export: both `vmin`/`vmax` blank → symmetric auto-limits
 kind** present in the file — strain has a single kind, so it is one row; `clim`
 is passed to the core as a `{kind: (vmin, vmax)}` mapping.
 
-> [!NOTE] Colour limits are per kind, not per layer
+> [!NOTE]
+> **Colour limits are per kind, not per layer**
 > The **vmin** / **vmax** you set for a kind apply to every selected layer *of
 > that kind* in the batch. To apply different limits to individual layers, run
 > the dialog twice with different selections. The **Output dir** pre-fills to a
 > timestamped `replots/<stamp>/` subfolder beside the loaded h5 and follows the
 > file if you Browse/Load a different one (until you edit it by hand).
 
-> [!NOTE] ROI and axis caveats for replot
+> [!NOTE]
+> **ROI and axis caveats for replot**
 > When a pixel-bounds `roi=(r0, r1, c0, c1)` is supplied the layer is cropped
 > to that rectangle and the resulting figure uses a **zero-origin extent** — the
 > µm-axis labels start at 0 rather than reflecting the position within the
@@ -987,7 +1000,8 @@ is passed to the core as a `{kind: (vmin, vmax)}` mapping.
 > is the run's already-ROI-cropped layer — i.e. the largest region a replot crop
 > can reach; a wider frame needs a re-run.)
 
-> [!TIP] Picking an ROI interactively
+> [!TIP]
+> **Picking an ROI interactively**
 > Click **Pick ROI…** (beside the four pixel boxes) to open a visual picker that
 > shows the middle Z-layer of each plot-kind group at its natural pixel scale.
 > Drag a rectangle on the preview and click **OK** — the four boxes (r0, r1, c0,
@@ -1181,7 +1195,8 @@ four pixel boxes) to open a visual picker showing the middle Z-layer of each
 product; drag a rectangle and click **OK** to fill the boxes automatically. The
 preview is oriented exactly like the exported maps.
 
-> [!NOTE] Blank colour limits: large volumes no longer have to fit in memory
+> [!NOTE]
+> **Blank colour limits: large volumes no longer have to fit in memory**
 > When both vmin/vmax boxes for a product are blank, its default limits are the
 > run's own 1st/99th percentiles. A volume small enough for this machine is read
 > in one piece and costs exactly what it always did; only one too large for that
@@ -1266,7 +1281,8 @@ raw root, Map ROI X/Y, output dir
 | `rotation_frames` | frames in one 360° orbit of the rotation video (default 180, 15 fps) |
 | `log_scale` | logarithmic colour mapping for the 3-D top view and rotation video. Falls back to linear — with a note recorded on the dataset — whenever the colour range includes zero or negative values (e.g. Center-of-mass and strain, which straddle zero) |
 
-> [!NOTE] The 3-D top view and the orbit video are publication figures
+> [!NOTE]
+> **The 3-D top view and the orbit video are publication figures**
 > Both are rendered in `render_mode` (`volume` by default — true volumetric
 > rendering shaded by `opacity_mapping`; `surface`/`isosurface` are lighter
 > legacy looks) and then composed into a styled figure — white background, the
@@ -1279,7 +1295,8 @@ raw root, Map ROI X/Y, output dir
 > scale bar in every frame, and each frame is rendered at an absolute camera
 > pose along the orbit, so the movie really does turn all the way round.
 
-> [!WARNING] "3-D volume coarsened 2x to fit this machine's GL 3-D texture limit"
+> [!WARNING]
+> **"3-D volume coarsened 2x to fit this machine's GL 3-D texture limit"**
 > `render_mode=volume` uploads the whole volume as one 3-D texture, and every
 > graphics stack caps its size (2048 px per axis on software/llvmpipe GL —
 > narrower than a typical 2891 px-wide aligned volume). Over that cap the
@@ -1300,7 +1317,8 @@ raw root, Map ROI X/Y, output dir
 > information appears under the **3D downsample** field before you ever click
 > Run (see [Per-field notes](#per-field-notes) above).
 
-> [!TIP] Choosing what renders, and how transparent each volume is
+> [!TIP]
+> **Choosing what renders, and how transparent each volume is**
 > **Advanced → Volumes** lists all nine volumes this stage can render — the four
 > mosaicity fields, strain, and the four raw ones — each with its own checkbox,
 > all ticked. Untick one and it is skipped entirely: no PNGs, no animation, no
@@ -1333,7 +1351,8 @@ raw root, Map ROI X/Y, output dir
 > apply to the layer PNGs, the animation, the 3-D top view, the rotation video
 > and the pop-out viewer alike, and they are what the figure builder exports.
 
-> [!NOTE] The raw volumes are rendered **as stored** — the Map ROI does not touch them
+> [!NOTE]
+> **The raw volumes are rendered as stored — the Map ROI does not touch them**
 > The [rocking](#4-aligned-rocking-volumes) stage has already done
 > the alignment: it cropped to its detector ROI, applied the samy X-shift and
 > interpolated onto the uniform Z grid, all anchored to the same mosaicity
@@ -1364,7 +1383,8 @@ raw root, Map ROI X/Y, output dir
 > that has since **moved**: listing the figures always works, and only the
 > rebuild that needs the voxels fails.
 
-> [!WARNING] "these volumes will NOT overlay"
+> [!WARNING]
+> **"these volumes will NOT overlay"**
 > The raw and stacked volumes are co-registered only when the rocking run's
 > **detector** ROI covers the same window as this run's **Map ROI**. Both are
 > pre-filled from the experiment's darfix + analysis windows, so they normally
@@ -1375,7 +1395,8 @@ raw root, Map ROI X/Y, output dir
 > pre-filled ROI. With no stacked volume in the run there is nothing to compare
 > against, and no note is made.
 
-> [!TIP] Picking the run-time ROI interactively
+> [!TIP]
+> **Picking the run-time ROI interactively**
 > Click **Pick ROI…** (in the button row alongside Run/Cancel) to open a visual
 > picker that shows the middle Z-layer of the χ/μ Center-of-mass and strain
 > volumes. Drag a rectangle and click **OK** — the `roi_x` and `roi_y` fields
@@ -1383,7 +1404,8 @@ raw root, Map ROI X/Y, output dir
 > read. The aligned raw volumes are not offered in the picker — the ROI does not
 > apply to them.
 
-> [!NOTE] Volumes too big for this machine are streamed — same images, more patience
+> [!NOTE]
+> **Volumes too big for this machine are streamed — same images, more patience**
 > It measures the machine's free memory first and takes whichever of two routes
 > fits — the same ladder the [ParaView export](#6-paraview-export)
 > and [slices](#7-oblique-slices) use:
@@ -1490,14 +1512,16 @@ rendering, with a `valid_mask` and NaN sentinels.
 | `anchor_origin_to_reference` | place the world origin in the raw-detector frame so all volumes co-register |
 | `mosa_darfix_origin_xy` / `strain_darfix_origin_xy` | the darfix crop origin for the mosaicity / strain maps, in absolute detector pixels `x,y` — copy verbatim from darfix's ROI widget. Only used when `anchor_origin_to_reference` is on; NOT pre-filled from the experiment, so update them by hand for a non-STO2 dataset |
 
-> [!TIP] Picking the run-time ROI interactively
+> [!TIP]
+> **Picking the run-time ROI interactively**
 > Click **Pick ROI…** (in the button row alongside Run/Cancel) to open a visual
 > picker that shows the middle Z-layer of the χ/μ Center-of-mass and strain
 > volumes. Drag a rectangle and click **OK** — the `roi_x` and `roi_y` fields
 > are filled automatically. Returns no preview when the volume files cannot be
 > read.
 
-> [!NOTE] Volumes too big for this machine are streamed — same files, more patience
+> [!NOTE]
+> **Volumes too big for this machine are streamed — same files, more patience**
 > This is the heaviest stage in the pipeline. Like the visualize and slices
 > stages, it measures the machine's free memory first and takes whichever of two
 > routes fits:
@@ -1548,7 +1572,8 @@ rendering, with a `valid_mask` and NaN sentinels.
 > *unaligned* volume, so the fix is the pattern rather than the memory: check
 > **Raw root** and the mosaicity/strain pattern.
 
-> [!NOTE] Scratch files
+> [!NOTE]
+> **Scratch files**
 > With **Centre method = median** the export may cache an aligned volume on disk
 > while it computes the statistic, in a `.dfxm_scratch/` folder inside the output
 > directory. It is deleted when the run ends. If the disk is too full for it, the
@@ -1562,12 +1587,13 @@ rendering, with a `valid_mask` and NaN sentinels.
 > nothing to look for in the form. Only **median** needs scratch at all;
 > **mean** is a single pass and caches nothing.
 >
-> This is the only stage that caches. [[#5. Visualize volumes (`visualize`)|Visualize
-> volumes]] and [Oblique slices](#7-oblique-slices) re-read instead,
+> This is the only stage that caches. [Visualize volumes](#5-visualize-volumes)
+> and [Oblique slices](#7-oblique-slices) re-read instead,
 > on every setting, so they never need scratch disk and are never held up for
 > the want of it.
 
-> [!TIP] ParaView workflow
+> [!TIP]
+> **ParaView workflow**
 > ```bash
 > mpirun -np 16 pvserver        # terminal 1
 > paraview                      # terminal 2 → Connect cs://localhost:11111 → open the .pvti
@@ -1623,14 +1649,16 @@ through the aligned volumes — all in one world frame so the slices co-register
 | `center_method` / `range_pct` | CoM colour centring |
 | `align_roi_x` / `align_roi_y` | map-frame crop (`c0,c1` / `r0,r1` map pixels, relative to the darfix window) used during alignment — must match the crop from visualize/paraview runs (blank = full width/height); pre-filled from the experiment's analysis window |
 
-> [!TIP] Picking the alignment ROI interactively
+> [!TIP]
+> **Picking the alignment ROI interactively**
 > Click **Pick ROI…** (in the button row alongside Run/Cancel) to open a visual
 > picker that shows the middle Z-layer of the χ/μ Center-of-mass and strain
 > volumes. Drag a rectangle and click **OK** — the `align_roi_x` and
 > `align_roi_y` fields are filled automatically. Returns no preview when the
 > volume files cannot be read.
 
-> [!TIP] A slice spec
+> [!TIP]
+> **A slice spec**
 > ```json
 > [
 >   {"name": "z_sweep", "normal": [0,0,1], "origin": [0,0,0],
@@ -1643,7 +1671,8 @@ through the aligned volumes — all in one world frame so the slices co-register
 > only need `normal`. Otherwise give `half_u`, `half_v` (µm) and optional
 > `du`/`dv` (in-plane step).
 
-> [!WARNING] Mixed pixel scales → mixed plane grids
+> [!WARNING]
+> **Mixed pixel scales → mixed plane grids**
 > Without an explicit `du`/`dv`, each volume is sampled at **its own** pixel
 > scale — volumes carrying a different scale (typically the `raw_mosa_*` ones)
 > then land on a slightly different `(u, v)` grid for the *same* plane. The run
@@ -1653,7 +1682,8 @@ through the aligned volumes — all in one world frame so the slices co-register
 > share a grid. Set explicit `du`/`dv` in the slice spec to sample every volume
 > onto one common grid.
 
-> [!WARNING] Mismatched volume heights → Y misregistration
+> [!WARNING]
+> **Mismatched volume heights → Y misregistration**
 > All volumes anchor at Y=0 in the shared world frame, so they only co-register
 > vertically if they cover the **same detector-row window**. If an aligned raw
 > volume (from the rocking stage) was built with a different `roi_y` than the
@@ -1666,7 +1696,8 @@ through the aligned volumes — all in one world frame so the slices co-register
 > stretches the raw volume. Rebuild the flagged volume with the same
 > detector-row window the map volumes use.
 
-> [!NOTE] Volumes too big for this machine are sliced in Z-blocks — same planes, more patience
+> [!NOTE]
+> **Volumes too big for this machine are sliced in Z-blocks — same planes, more patience**
 > Like the [visualize](#5-visualize-volumes) stage and the
 > ParaView export, this stage measures the machine's free memory first and takes
 > whichever of two routes fits:
@@ -1712,7 +1743,8 @@ through the aligned volumes — all in one world frame so the slices co-register
 > `du`/`dv` or shrink the extent if a sweep is what makes a run too large —
 > never the step.
 
-> [!WARNING] A run killed mid-sweep leaves the planes it never reached as NaN
+> [!WARNING]
+> **A run killed mid-sweep leaves the planes it never reached as NaN**
 > Because the dataset is sized before sampling, a slices run that is interrupted
 > — killed, or out of memory — leaves an `oblique_slices.h5` whose finished
 > planes are real and whose unreached planes are **all-NaN**. They are readable,
@@ -1721,14 +1753,16 @@ through the aligned volumes — all in one world frame so the slices co-register
 > Before this change an interrupted run left the volume's whole group missing
 > instead, which was more obvious but no more recoverable.
 
-> [!NOTE] Plot orientation
+> [!NOTE]
+> **Plot orientation**
 > Slice plots follow the same convention as the per-layer renders: the vertical
 > plot axis (`v`) is the detector-vertical Y-like in-plane direction (world Y,
 > i.e. lab-frame X) and the horizontal axis (`u`) the detector-X-like one (for a
 > z-normal plane, u/v are exactly X/Y). Add an `"up": [x,y,z]` entry to a slice
 > spec to override the vertical direction.
 
-> [!TIP] Pinning one plane from a sweep
+> [!TIP]
+> **Pinning one plane from a sweep**
 > Prefer picking visually? **Mark planes…** (below) lets you browse the sweep
 > and star the interesting offsets without typing any JSON.
 > A sweep writes many parallel planes; each plane's offset along the normal is in
@@ -1799,7 +1833,8 @@ the sweep's output file:
 Untick **Run pinned planes only** to go back to running the full sweep in
 `slices_json` — the pinned JSON stays in the field, ready to re-tick later.
 
-> [!TIP] Profiling a pinned file
+> [!TIP]
+> **Profiling a pinned file**
 > Point the profiles stage's **Slices file** at `oblique_slices_pinned.h5`
 > (browse to it — the pre-fill defaults to the sweep file) and run your
 > existing jobs unchanged: a job whose slice name (e.g. `oblique_full`) is
@@ -1888,7 +1923,8 @@ batch is running) stops the batch **after the item currently rendering
 completes** — any PNGs already written stay on disk, and the status line is
 prefixed `cancelled — ` alongside the usual `wrote N PNG(s) → …` summary.
 
-> [!NOTE] ROI crop for slices replot
+> [!NOTE]
+> **ROI crop for slices replot**
 > `render_replot` and `_rebuild_plane_figure` accept an optional
 > `roi=(r0, r1, c0, c1)` pixel-index crop. Both the 2-D slice array **and** the
 > stored `u_um` (columns) / `v_um` (rows) axis arrays are trimmed to the same
@@ -1969,7 +2005,8 @@ strain and misorientation line up.
 | `reference_volume_id` | which field is the top image (global default) |
 | `volume_ids` | comma-separated field ids to profile, in order (global default; blank = all) |
 
-> [!TIP] Don't type coordinates by hand
+> [!TIP]
+> **Don't type coordinates by hand**
 > Use **Pick line…** to click the endpoints on the plane — see
 > [Line picker (profiles)](#line-picker-profiles). Already starred planes on the slices stage?
 > **Jobs from marks…** turns them into jobs in one guided pass — see
@@ -2195,7 +2232,8 @@ pixel-aligned with the strain/mosaicity layer images.
 | `frame_index` | which detector frame to show |
 | `match_threshold_mm` | max `(samy,samz)` distance to accept a match |
 
-> [!WARNING] In the app these layers now follow the publication style — expect a different look
+> [!WARNING]
+> **In the app these layers now follow the publication style — expect a different look**
 > matched used to colour its layers from its own `Colormap` dropdown
 > (**Advanced → Appearance**), even in the GUI. It no longer does. Like every
 > other figure stage, a run **from the app** now draws matched's one quantity —
@@ -2229,7 +2267,8 @@ pixel-aligned with the strain/mosaicity layer images.
 > the Raw-intensity colormap in between and the export and the saved PNG will
 > differ (see [The Publication style editor](#the-publication-style-editor)).
 
-> [!NOTE] Long detector stacks no longer decide how much memory this needs
+> [!NOTE]
+> **Long detector stacks no longer decide how much memory this needs**
 > The background this stage subtracts is the per-pixel median **down the frame
 > axis**, so each pixel's background depends only on that pixel's own values.
 > The stack is therefore read a horizontal band at a time instead of whole, and
@@ -2292,13 +2331,15 @@ A **Publication style…** button lives in the **left column of the main window*
 
 Clicking it opens a scrollable style editor (the same control set as the per-figure export dialog). Each **Export…** dialog starts from a private copy of the session style and lets you adjust it per-figure without changing the global.
 
-> [!NOTE] Need several panels in one figure?
+> [!NOTE]
+> **Need several panels in one figure?**
 > Everything on this page exports **one stage's own figure at a time**. To
 > arrange panels from one or more stages (maps, slices, line traces) side by
 > side into a single multi-panel publication figure, use the **Figure
 > builder…** button next to Publication style — see [Figure builder](#figure-builder).
 
-> [!IMPORTANT] Runs use the current style
+> [!IMPORTANT]
+> **Runs use the current style**
 > Every stage **run** renders its own PNGs/animations (layer maps, slice PNGs,
 > profile companions, strain diagnostics, matched layers) with the publication
 > style **as it is at the moment you press Run**. Edit the style, re-run, and
@@ -2342,7 +2383,8 @@ plots that quantity (runs, previews, exports and the 3-D viewers alike):
 
 The choices persist across sessions together with the rest of the style.
 
-> [!TIP] The stage forms point here
+> [!TIP]
+> **The stage forms point here**
 > Colormaps are **not** on the stage forms, which is where people look for
 > them first. Every figure-producing stage — strain, mosaicity, rocking,
 > visualize, slices, profiles and matched — therefore shows a *See also* line
@@ -2392,7 +2434,8 @@ and why your next matched run will not look like your last one.
 | Background box | Optionally draw a semi-transparent box behind the bar + label. The box sizes itself to the rendered label and bar at any font scale, with the label centred over the bar |
 | Box colour / alpha / margin | Control the background box appearance; margin is the padding inside the box, in points |
 
-> [!NOTE] Scale bars on maps only
+> [!NOTE]
+> **Scale bars on maps only**
 > Scale bars are drawn **only on physical map panels** (per-layer volume maps, strain maps, mosaicity maps, slice maps, and the reference map panel of the line-profile companion/overview figures). Histograms, detrend diagnostics, and the 1-D trace panels have no scale bar — for those figures the scale-bar controls are ignored. Physical aspect ratio is always preserved on maps (`aspect="equal"`).
 
 **Text**
@@ -2419,13 +2462,15 @@ and why your next matched run will not look like your last one.
 | Colourbar — per group | One row per quantity group (Mosa misorientation, Mosa FWHM, Strain, Raw intensity), each with **Tick format** + **offset size** + **offset position**. Tick format: **auto** (matplotlib default), **scientific (×10ⁿ offset)** (forces offset notation), **arbitrary units (no ticks)** (drops numeric ticks and marks the label "arb. units" — the default for Raw), or a digit-count (**0/1/2/3 decimals**). Offset size scales the scientific `×10ⁿ` exponent; offset position places it at the **top** or **bottom** of the bar (both only take effect when that group's format is scientific). |
 | Round colour limits | When checked, auto-computed colour limits are rounded **outward** to the nearest "nice" value (2 significant digits, last digit 0 or 5), so evenly spaced colourbar ticks land on round numbers (e.g. ±0.0778 → ±0.08). Applies to: the **slices** stage (per volume; raw limits stored as `vmin_raw`/`vmax_raw` in `oblique_slices.h5`); the **strain map** (auto path only); the **visualize** stage (per mosaicity dataset and strain); the **rocking** stage (per rendered volume); and the **matched** stage (when both `vmin`/`vmax` are blank — a half-manual pair is never half-rounded; pre-round values stored in `MatchedResult.vmin_raw`/`vmax_raw`). User-specified limits are never rounded. Each rounded dataset is noted in the run log and the Results summary — except the **strain** stage, which discards the note (rounding is visible on the colourbar but strain has no per-run notes surface). |
 
-> [!TIP] Why does my colourbar say ×10⁻²?
+> [!TIP]
+> **Why does my colourbar say ×10⁻²?**
 > The **scientific** tick-format forces offset notation: the ticks show plain multipliers (e.g. −8, 0, 8) and a `×10⁻³` exponent is drawn separately. That exponent is now a styleable label — set its **offset size** and **offset position** (top/bottom) per group. Prefer full numbers? Switch that group's Tick format to a digit-count (e.g. **3 decimals**) or **auto**. For images with no absolute scale (raw intensity), choose **arbitrary units (no ticks)**.
 > The per-group tick formats also style the **profiles trace value axes** (2026-07-25): set Strain to **scientific** and only the strain traces get mantissa ticks with a `×10ⁿ` exponent at the top of the y-axis — mosaicity and raw traces keep their own group's format. (**arbitrary units** is ignored on traces — a curve's value numbers are never hidden.)
 
 **Figure**
 
-> [!NOTE] Constrained layout on styled figures
+> [!NOTE]
+> **Constrained layout on styled figures**
 > When the publication style is active, all figure builders use matplotlib's **constrained layout**: every text element (title, axis labels, colourbar, and the ×10ⁿ offset label) is measured at its final font size, and the axes shrink to make room for all of them. The figure keeps its exact requested width (single or double column) — titles, axis labels and colourbars are placed without overlapping each other (tick density at extreme Font scales can still crowd). The legacy plain-layout path (headless CLI runs) is close to — but not byte-identical with — the pre-export renderers.
 
 | Control | Meaning |
@@ -2435,7 +2480,8 @@ and why your next matched run will not look like your last one.
 | Trace scale (µm/cm) | Separate fixed scale for the profiles **trace** figures only. Blank = follow Scale (µm/cm). **Hint:** traces usually need a *smaller* value than the maps — start at about half the map scale or less; at the map's own scale the trace box tends to come out too small. |
 | Trace height (cm) | Fixed height of every trace plot box, in cm of page — only takes effect once a fixed scale (Scale and/or Trace scale) is set. Blank = 3 cm (default). All traces of one run/replot share this height, so they align side-by-side; pairs with **Trace scale (µm/cm)**, which sets the box width via the line length. |
 
-> [!TIP] Fixed physical scale across figures
+> [!TIP]
+> **Fixed physical scale across figures**
 > Setting **Scale (µm/cm)** fits every map's data box (per-layer maps, slices,
 > the strain diagnostic, the matched stage's rocking-matched layer maps, and
 > the profiles reference/overview panels — and, once a fixed scale is set,
@@ -2509,14 +2555,16 @@ Composes maps, traces and images that stages have already produced into a
 single multi-panel figure, arranged by dragging, sized at an exact physical
 scale, and saved as a reusable recipe you can re-render later.
 
-> [!TIP] Opening the builder
+> [!TIP]
+> **Opening the builder**
 > Click **Figure builder…** in the left column of the main window, just below
 > **Publication style…**. The window is non-modal (the rest of the app stays
 > usable) and reused — clicking the button again re-raises the same window
 > instead of opening a second one, so a recipe you're mid-edit on is never
 > silently orphaned.
->
-> [!TIP] A "reference maps + trace stacks" figure (the Figure-5 look)
+
+> [!TIP]
+> **A "reference maps + trace stacks" figure (the Figure-5 look)**
 > Two profiles jobs → outline `Row[ Col[ ref A, Scale bar, ref B ] (One
 > colorbar for this group), Col[ A's traces ] (Shared x, gap 0, **Fill
 > height**, group label "A2"), Col[ B's traces ] (same, "B2") ]`; on the two
@@ -3053,7 +3101,8 @@ Three things you drive by clicking rather than by filling in a form: a 3-D
 volume view, a picker that sets a profile's line by dragging it on a slice,
 and a way to turn planes you marked earlier into profile jobs.
 
-> [!NOTE] Loaded only when you ask
+> [!NOTE]
+> **Loaded only when you ask**
 > Both viewers initialise lazily — no 3-D/OpenGL libraries are imported and no
 > data is loaded until you explicitly open them. If your machine has no OpenGL
 > context, the 3-D view degrades to a message instead of crashing.
@@ -3111,7 +3160,8 @@ threshold/clip", which on its own pointed at the threshold for something
 the ROI had done. The empty note stays put while you work the
 **Downsample** spin, since no factor can undo it.
 
-> [!WARNING] A volume too big for this machine is decimated for display
+> [!WARNING]
+> **A volume too big for this machine is decimated for display**
 > The 3-D view needs the whole volume in memory at once, so a **rocking**
 > volume that would not fit inside this machine's memory headroom is read with
 > a stride — every 2nd, 4th, 8th … voxel along each axis — instead of failing
@@ -3194,7 +3244,8 @@ offsets:
 
 ## Tips and troubleshooting
 
-> [!TIP] The shipped preset's paths are placeholders
+> [!TIP]
+> **The shipped preset's paths are placeholders**
 > `STO2_overnight` carries real, measured calibration (angles, pixel scales,
 > ROIs) but its `raw_root`/`processed_root` are written as
 > `/path/to/data/ESRF/…`, showing the expected ESRF layout rather than any real
@@ -3242,7 +3293,8 @@ stderr.
 
 ## Maintaining this guide
 
-> [!IMPORTANT] For contributors (and future Claude sessions)
+> [!IMPORTANT]
+> **For contributors (and future Claude sessions)**
 > This file is the user-facing companion to `CLAUDE.md`. **Whenever you change a
 > stage's parameters, behaviour, inputs/outputs, add or remove a stage, or change
 > how a viewer works, update the matching section here in the same change.** The

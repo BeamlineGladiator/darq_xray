@@ -6,13 +6,15 @@ aliases: [Codebase Reference, Architecture, Code Map, Every Part Explained]
 
 # DARQ — Codebase Reference
 
-> [!NOTE] What this is
+> [!NOTE]
+> **What this is**
 > A file-by-file, part-by-part explanation of the **entire** codebase: what each
 > module, class, and function does and how the pieces fit together. For *how to
 > use* the app see [Usage.md](Usage.md); for contributor conventions see `CLAUDE.md`. This
 > document focuses on *what the code is*.
 
-> [!NOTE] Keep this in sync
+> [!NOTE]
+> **Keep this in sync**
 > When you add/remove a module, class, or public function — or change what one
 > does — update the matching entry here in the same change (see
 > [Maintaining this reference](#maintaining-this-reference)).
@@ -58,7 +60,8 @@ flowchart LR
     TESTS --> GUI
 ```
 
-> [!IMPORTANT] The core invariant
+> [!IMPORTANT]
+> **The core invariant**
 > **Nothing outside `darq_xray/gui/` imports Qt.** The GUI imports the core; the
 > core never imports the GUI. That is what lets every stage run headless (CLI/tests) and keeps the
 > stage **worker process** lightweight. Heavy optional deps (`pyvista`/`vtk`)
@@ -768,10 +771,12 @@ lives in [`render3d.py`](#render3dpy), which reuses this module's `_save_animati
 - `save_layer_animation(..., *, style=None, group=None, progress=None)` — layer flip-through movie via `_save_animation`; `group` forwarded to `layer_figure`. `progress` takes a **local** 0..1 fraction and fires once per composed frame from inside the `FuncAnimation` update callback — this is the second of the two long inner loops in a dataset, and a run with the layer PNGs switched off has nothing else to report between its product boundaries. The denominator counts render *passes*, not layers (`fmt="both"` drives the animation twice, once per container), and it is a **prediction**: an MP4 that fails partway and falls back to GIF (see `_save_animation`) replays the whole animation without having said it would. The running count is therefore **clamped** to that denominator, and the message quotes the same two numbers as the fraction rather than the per-container frame index, so the two can never contradict each other — the worst case is the bar reaching the end of the call's share slightly early, the safe direction for an unpredicted replay. Two earlier versions were wrong: counting raw calls ran the fraction a frame ahead of the frame it named (`FuncAnimation` composes the first frame once at setup and again when the save loop reaches it), and suppressing that repeat by comparing against the previous `z` stalled a **single-layer** volume at half, where every call has `z == 0`.
 - `_save_animation(anim, base_path, fmt, fps, dpi)` — the single MP4 (ffmpeg) → GIF fallback policy shared by `save_layer_animation` and `render3d._video_from_frames`: `fmt` is `mp4`/`gif`/`both`; a failed MP4 write removes the partial `.mp4` before falling back to GIF; returns the written path.
 
-> [!NOTE] `render.add_scale_bar` was removed
+> [!NOTE]
+> **`render.add_scale_bar` was removed**
 > The old `render.add_scale_bar` function was deleted. Scale bars are now drawn by `plotting.draw_scale_bar` and are called from `render.layer_figure` (and from stage builders) when a `PlotStyle` with `scale_bar=True` is supplied.
 
-> [!NOTE] the 3-D functions moved to `render3d.py`
+> [!NOTE]
+> **the 3-D functions moved to `render3d.py`**
 > `_pyvista_grid`, `_volume_plotter`, `save_top_view`, `save_rotation_video` and `_write_image_video` were deleted from `render.py` (2026-08-13) and replaced by the `Scene3D`-based equivalents in [`render3d.py`](#render3dpy). `render.py` is 2-D only; the stages call `render3d.save_top_view` / `render3d.save_rotation_video` with a `Scene3D`.
 
 #### `render3d.py`
@@ -2093,7 +2098,8 @@ instance and passes it to every `StageView`.
 | `equivalence.py` | **Not a pytest file** — no `test_` prefix, imported by test modules instead. `DEFAULT_DIVISORS = (1, 2, 3, 7, 1000)`; `assert_budget_independent(fn, dset, *, budgets=None, nbytes=None)` runs `fn(dset, budget_bytes=b)` at several memory budgets (derived from `nbytes`/`dset.nbytes` via `DEFAULT_DIVISORS` when `budgets` isn't given) and asserts every result is bit-identical to the first (`np.array_equal(..., equal_nan=True)`, so NaN placement is part of the guarantee). `_materialise(result)` normalises an `ndarray`, a scalar, or a generator of `(slice, block)` pairs (as `volumeio.two_pass` yields) into one comparable array. This is the harness every phase-5 chunked-conversion task reuses — exercised both ways by `test_common_volumeio.py`'s `test_harness_passes_a_budget_independent_function` / `test_harness_catches_a_budget_dependent_function`. |
 | `peak_rss.py` | **Not a pytest file** — no `test_` prefix, imported by test modules instead. Measures what a stage *actually* costs, because `budget_bytes` proves only that the streaming code path runs, not that the peak dropped (a stage can stream its read and then materialise a float64 copy anyway — the phase-1-4 estimators under-predicted real peak RSS by ~1.66× on the real dataset). `measure_peak_rss(target, params, *, interval=0.02, timeout=300.0, trace=None) -> (result, peak_rss_bytes)` runs *target* through `StageRunner` — the same `spawn` child the GUI uses — and samples `psutil.Process(runner.pid).memory_info().rss` every `interval` until the child reports `Done`/`Failed`. **Samples taken before the child has exec'd are discarded:** `spawn` forks and only then execs, and in that window /proc reports the *parent's* pages — on CI the first sample, 0.1 ms after `start()`, read 1 555 800 064 B (the pytest parent's whole RSS) for a child allocating 8 MiB, and since `peak` is a max that one reading became the answer. The window is identified exactly, by the child's argv still being the parent's, rather than by guessing a delay; `_EXEC_GRACE` (2 s) bounds it so a `fork` child — whose argv never changes — is still measured instead of yielding no samples at all. The existing `MIN_PLAUSIBLE_RSS` floor cannot catch this: it guards the low side only. It it raises `RuntimeError` on stage failure, timeout, or an exit with no result. Passing a dict as `trace` fills it with the raw sample series (`pid`, `samples`, `peak`, `first`, `largest`, `last`) — inert and cost-free unless asked for. It exists because a wrong peak is indistinguishable from a right one: `test_peak_rss_sees_a_large_allocation` failed on CI with the *baseline* child reporting 1.55 GB against the deliberately hungry one's 301 MB, and neither a 1.46 GB parent nor numpy 2.5.2 reproduced it locally, so the series is what separates "sampled the wrong process", "sampled at the wrong moment" and "the child really allocated that" on a runner nobody can attach a debugger to. **`timeout` bounds the run, not the call:** it caps how long the child may be working, and on top of it the call may spend up to 5 s draining for the terminal message plus 5 s in `join()`, so worst-case wall clock is about `timeout + 10 s` (a `timeout=600` CI budget can take 610 s to return). `assert_peak_under(target, params, limit_bytes, **kwargs)` wraps it and asserts the peak stayed under the limit, returning the result so a caller can assert on the product too. **The measurement cannot silently die:** if not one sample was read, or the peak comes back under `MIN_PLAUSIBLE_RSS` (4 MiB — no CPython `spawn` child is under ~17 MiB), both helpers raise instead of returning; `assert_peak_under` also rejects a `limit_bytes` below that floor rather than "failing" a stage against a limit nothing could meet. `measure_process_floor(target, params, *, samples=3, **kwargs) -> int` and `assert_floor_covers(floor_bytes, target, params, *, data_bytes, **kwargs) -> int` pin the **RSS floor** a streaming stage declares for `advice.working_set_budget_bytes` (e.g. `paraview.RSS_FLOOR_BYTES`). `measure_process_floor` runs the stage on input small enough that the data is noise and returns the **largest** of *samples* runs, not the mean, because it feeds a `floor >= measured` assertion and the pessimistic reading is the one that keeps that assertion meaningful. `assert_floor_covers` fails in **both** directions: below the measured image is unsafe (the derived budget comes out too large — `RSS_FLOOR_BYTES = 1` otherwise passes every formula test in `test_common_advice.py`), and more than `_FLOOR_SLACK_LIMIT` (2.5×) above it is the signature of a number copied from another stage rather than measured for this one. Required `data_bytes` is the precondition assert: a probe reading more than `_FLOOR_DATA_FRACTION` (5%) of the measured peak is measuring an export, not a process image, and raises rather than passing vacuously. **This pair is the recipe every streaming stage copies** — the call, never another stage's number; the template is the section comment above `measure_process_floor` (`tests/peak_rss.py:218`), and `advice.working_set_budget_bytes`'s docstring points here from the other end. `_sleepy_target` / `_hungry_target` / `_boom_target` are the module's own controls (`_hungry_target` uses `np.ones`, not `np.empty`, because only a written page is resident). Two quantities it deliberately does not conflate: these are **RSS**, not the `tracemalloc` Python-allocation figures `alignment.py`'s working-set model is expressed in; and a sampled peak is a **lower bound** — an allocation living less than one `interval` can be missed, which is the safe direction for a pass/fail assertion (a passing stage may be better than measured, never worse) but is not a certificate. The default `interval=0.02 s` costs ~18 µs per sample (≈0.1% of one core) and is far below the ~50-100 ms it takes merely to write a few-hundred-MiB array, so no allocation big enough to matter against an 8 GB ceiling can hide between samples. It watches the single stage child, not its descendants. |
 
-> [!NOTE] "vs-legacy" tests self-skip here
+> [!NOTE]
+> **"vs-legacy" tests self-skip here**
 > Several parity tests import the original ESRF scripts as oracles. In this
 > standalone repo those scripts aren't vendored, so those tests **skip**
 > gracefully (parity was confirmed where the originals live).
@@ -2147,7 +2153,8 @@ auto-fill from the experiment + the previous stage's outputs.
 
 ## Maintaining this reference
 
-> [!IMPORTANT] For contributors (and future Claude sessions)
+> [!IMPORTANT]
+> **For contributors (and future Claude sessions)**
 > This file mirrors the code structure. **When you add, remove, or change a
 > module, class, or public function — or what it does — update the matching entry
 > here in the same change**, alongside the user-facing [Usage.md](Usage.md) guide. The
