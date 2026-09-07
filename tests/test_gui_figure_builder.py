@@ -1268,6 +1268,16 @@ def test_async_render_shows_overlay_then_clears(tmp_path):
     w = _win()
     w.show()  # BusyOverlay.active reads isVisible(), which needs a shown ancestor chain
     w.add_panels(_obl_recipe_panels(tmp_path))
+    # add_panels() -> _after_mutation() -> schedule_preview() arms the 300 ms
+    # debounce, which is wired straight to render_now(). wait_builder_idle()
+    # exits as soon as _worker is None and then calls processEvents() once more
+    # — and a debounce that came due in that instant fires THERE, starting a
+    # second render and putting the overlay back up before the assert below
+    # reads it. Whole-suite load is what makes the timer late enough to land in
+    # that window: this failed only in the full run, never in this file alone.
+    # Same cause, and the same one-line defence, as
+    # test_latest_wins_two_rapid_renders_one_canvas below (fix wave F5).
+    w._debounce.stop()
     w.render_now()
     # synchronous guarantee: the overlay is up and buttons gated BEFORE return
     assert w._overlay.active and not w._refresh_btn.isEnabled()

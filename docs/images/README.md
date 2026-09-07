@@ -1,13 +1,17 @@
 # Screenshots
 
-Drop the files below in here, then uncomment the matching `![...]` line in
-`README.md` (and in `docs/Usage.md` for the first one).
+Used by [`README.md`](../../README.md) and [`Usage.md`](../Usage.md). Retake one
+when the thing it shows changes shape — a screenshot that no longer matches the
+app is worse than none. `tests/test_docs_links.py` checks that every image a doc
+embeds actually exists; it cannot check that the picture is still current.
 
-| File | What to capture |
+| File | What it shows |
 |---|---|
-| `main-window.png` | The whole window on the **Overview** page — the pipeline rail, the experiment header, the stage chips. |
-| `stage-panel.png` | A stage mid-run: the parameter form, the cost line under the Run button, the Log tab. |
-| `figure-builder.png` | A finished strain map, or a composed multi-panel figure from the figure builder. |
+| `main-window.png` | The Overview page: the pipeline rail, the active experiment preset and its calibration line, and one sentence per stage. |
+| `stage-panel.png` | A stage mid-run — the parameter form, progress and time-remaining under the **Run** button, the live log on the right. |
+| `figure-builder.png` | The figure builder: a composed multi-panel figure, the panel outline on the left, the style controls on the right. |
 
-Use the app's **light** theme — a screenshot on a white background reads on
-both GitHub themes. PNG, and crop to the window rather than the whole desktop.
+**When taking a new one:** use the app's **light** theme, so it reads on both of
+GitHub's themes; crop to the window, with no strip of whatever is behind it; and
+check the shot for anything you would not publish — a stage panel shows the data
+paths you typed, and a window title can show your home directory.

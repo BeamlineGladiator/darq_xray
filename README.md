@@ -15,13 +15,9 @@ figures, in one window: nine stages, forms instead of scripts, and your
 calibration saved as a reusable preset. It is built around data from the
 **ESRF ID03** beamline.
 
-<!--
-  Add a screenshot: save the main window as docs/images/main-window.png
-  (see docs/images/README.md), then delete this comment block and uncomment
-  the line below.
-
-![The DARQ main window](docs/images/main-window.png)
--->
+![The DARQ main window: the pipeline rail on the left, the active experiment
+preset above it, and one sentence per stage on the Overview
+page](docs/images/main-window.png)
 
 ## Contents
 
@@ -159,6 +155,10 @@ darq_xray
    If the banner is red instead, it names what went wrong and, usually, how to
    fix it.
 
+![A stage running: the parameter form in the middle, progress and the estimated
+time remaining under the Run button, and the live log on the
+right](docs/images/stage-panel.png)
+
 From there, `Mosaicity`, `Visualize`, `ParaView export` and the rest all read
 what you have just produced — each stage pre-fills its inputs from the one
 before it.
@@ -183,6 +183,10 @@ The full walkthrough, field by field, is in
 
 On top of these, a **figure builder** composes finished maps, traces and images
 into multi-panel publication figures at a fixed, exact µm-per-cm scale.
+
+![The figure builder: a multi-panel figure assembled from maps and line
+profiles, with the panel outline on the left and the style controls on the
+right](docs/images/figure-builder.png)
 
 ## Before you trust a strain map
 

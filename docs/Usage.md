@@ -17,13 +17,9 @@ aliases: [DARQ Usage, Pipeline Guide, How to use the pipeline]
 > in the same change (see [Maintaining this guide](#maintaining-this-guide)). If something here
 > disagrees with the app, the app wins — please report or fix the drift.
 
-<!--
-  Add a screenshot: save the main window as images/main-window.png
-  (see images/README.md), then delete this comment block and uncomment
-  the line below.
-
-![The DARQ main window](images/main-window.png)
--->
+![The DARQ main window: the pipeline rail on the left, the active experiment
+preset above it, and one sentence per stage on the Overview
+page](images/main-window.png)
 
 ## Contents
 

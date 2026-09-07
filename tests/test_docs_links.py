@@ -49,6 +49,9 @@ _CALLOUT = re.compile(r"^>\s*\[!([A-Za-z]+)\][-+]?", re.MULTILINE)
 #: `](#anchor)` and `](Other.md#anchor)`; the doc part may be empty. The
 #: character class excludes ":" and so never matches an external URL fragment.
 _ANCHOR = re.compile(r"\]\(([A-Za-z0-9_./-]*)#([^)\s]+)\)")
+#: `![alt](src)`. The alt text may wrap across lines, so the class must not
+#: exclude newlines — it is prose, and these docs wrap at ~78 columns.
+_IMAGE = re.compile(r"!\[[^\]]*\]\(([^)\s]+)\)")
 
 
 def slugify(heading: str) -> str:
@@ -146,6 +149,30 @@ def test_every_anchor_resolves_to_a_heading(rel_path):
 
 
 @pytest.mark.parametrize("rel_path", DOCS)
+def test_every_embedded_image_exists(rel_path):
+    """A doc must not embed a screenshot that is not in the repository.
+
+    The screenshots arrived after the prose that references them, written first
+    as commented-out placeholders. A stale reference is the natural failure of
+    that order, and on GitHub it renders as a broken-image icon on the landing
+    page — the most visible possible place for it.
+    """
+    missing = []
+    for src in _IMAGE.findall(_prose(_read(rel_path))):
+        if src.startswith(("http://", "https://", "data:")):
+            continue
+        where = os.path.normpath(str(Path(rel_path).parent / src))
+        if not (ROOT / where).exists():
+            missing.append(f"{src} -> {where}")
+    assert not missing, (
+        f"{rel_path} embeds {len(missing)} image(s) that do not exist:\n  "
+        + "\n  ".join(missing)
+        + "\n\nAdd the file, or remove the reference — GitHub renders a missing "
+        "image as a broken-image icon, it does not hide it."
+    )
+
+
+@pytest.mark.parametrize("rel_path", DOCS)
 def test_no_obsidian_wiki_links(rel_path):
     found = _WIKI.findall(_prose(_read(rel_path)))
     assert not found, (
@@ -196,3 +223,5 @@ def test_the_check_can_actually_fail():
     # A `# comment` in a bash fence is not a heading.
     assert heading_slugs("```bash\n# not a heading\n```\n\n## Real\n") == {"Real": "real"}
     assert _CALLOUT.findall("> [!info] x") == ["info"]
+    # Alt text wraps across lines in these docs; the pattern must survive it.
+    assert _IMAGE.findall("![a very long\nalt text](images/x.png)") == ["images/x.png"]
