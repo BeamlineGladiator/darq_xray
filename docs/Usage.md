@@ -39,6 +39,7 @@ page](images/main-window.png)
 - [Tips and troubleshooting](#tips-and-troubleshooting)
 - [Running without the GUI (CLI)](#running-without-the-gui-cli)
 - [Maintaining this guide](#maintaining-this-guide)
+- [Acknowledgements](#acknowledgements)
 
 ---
 
@@ -3300,6 +3301,13 @@ stderr.
 > how a viewer works, update the matching section here in the same change.** The
 > repo's `CLAUDE.md` records this as a standing rule, and a PostToolUse hook
 > reminds you when you edit `darq_xray/stages/` or `darq_xray/gui/`.
+
+## Acknowledgements
+
+DARQ was developed at the Karlsruhe Institute of Technology (KIT) by Albert
+Zelenika, at the Institute for Applied Materials – Mechanics of Materials and
+Interfaces (IAM-MMI), under the supervision of Dr. habil. Xufei Fang and with
+the help of Dr. Oliver Preuss.
 
 ## See also
 

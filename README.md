@@ -30,6 +30,7 @@ page](docs/images/main-window.png)
 - [Before you trust a strain map](#before-you-trust-a-strain-map)
 - [Documentation](#documentation)
 - [Development](#development)
+- [Acknowledgements](#acknowledgements)
 - [License](#license)
 
 ## Is this for you?
@@ -285,6 +286,13 @@ Tests also run against an isolated `QSettings` store (`tests/conftest.py`), so
 a result never depends on how the person running them last used the app.
 
 </details>
+
+## Acknowledgements
+
+DARQ was developed at the **Karlsruhe Institute of Technology (KIT)** by
+**Albert Zelenika**, at the **Institute for Applied Materials – Mechanics of
+Materials and Interfaces (IAM-MMI)**, under the supervision of
+**Dr. habil. Xufei Fang** and with the help of **Dr. Oliver Preuss**.
 
 ## License
 
