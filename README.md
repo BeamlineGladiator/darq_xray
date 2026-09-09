@@ -28,6 +28,7 @@ page](docs/images/main-window.png)
 - [Your first run](#your-first-run)
 - [What the nine stages do](#what-the-nine-stages-do)
 - [Before you trust a strain map](#before-you-trust-a-strain-map)
+- [Using DARQ after darfix](#using-darq-after-darfix)
 - [Documentation](#documentation)
 - [Development](#development)
 - [Acknowledgements](#acknowledgements)
@@ -51,9 +52,12 @@ all overridable settings rather than hard-coded constants, so adapting is
 possible — but it is adapting, not configuring.
 
 > [!NOTE]
-> DARQ does not replace darfix and does not run it. It **brackets** it: DARQ
+> DARQ is an **analysis program for the output of
+> [darfix](https://gitlab.esrf.fr/XRD/darfix)** — it starts where darfix stops.
+> It does not replace darfix and does not run it. It **brackets** it: DARQ
 > prepares darfix's input, you run darfix yourself, and DARQ picks up again
-> from the `maps.h5` that darfix writes.
+> from the `maps.h5` that darfix writes. See
+> [Using DARQ after darfix](#using-darq-after-darfix).
 
 ## What you need first
 
@@ -61,7 +65,7 @@ possible — but it is adapting, not configuring.
 |---|---|
 | **Python 3.10 or newer** | Check with `python3 --version`. |
 | **A desktop with a display** | This is a windowed application. (Every stage *also* has a command-line version — see [Running without the GUI](docs/Usage.md#running-without-the-gui-cli) — but the app itself needs a screen.) |
-| **darfix**, installed separately | Not bundled here. You run it between two of DARQ's stages. |
+| **[darfix](https://gitlab.esrf.fr/XRD/darfix)**, installed separately | Not bundled here. You run it between two of DARQ's stages. |
 | **Your data** | The raw scan folders, and/or the `maps.h5` darfix produced from them. |
 | `ffmpeg` *(optional)* | On your `PATH`, it lets DARQ export animations as MP4. Without it they come out as GIF instead — nothing else changes. |
 
@@ -208,6 +212,35 @@ different coordinate frames**
 ([which is which](docs/Usage.md#regions-of-interest-two-windows-two-frames)),
 and every volume stage co-registers through **one shared alignment**, so
 coordinates stay comparable between them.
+
+## Using DARQ after darfix
+
+DARQ is **post-darfix analysis**. Fitting the rocking curve at every pixel is
+darfix's job, not DARQ's. What DARQ does is take the per-pixel results darfix
+has already fitted and turn them into physics you can publish: calibrated
+strain, mosaicity, co-registered 3-D volumes, ParaView exports, slices,
+profiles and figures. Two stages touch raw scan files — `concat`, which
+prepares darfix's input, and `rocking`, which builds an aligned raw volume
+alongside the fitted maps. Everything else works from `maps.h5`.
+
+The division of labour, in one line:
+
+```
+raw scans → [ DARQ: concat ] → [ darfix: fit every pixel → maps.h5 ] → [ DARQ: everything downstream ]
+```
+
+darfix is a separate program by a separate group, and DARQ neither bundles nor
+launches it. Install it from its own repository and run it yourself:
+
+- **Source:** <https://gitlab.esrf.fr/XRD/darfix>
+- **Documentation:** <http://www.edna-site.org/pub/doc/darfix/latest>
+
+If darfix contributed to a result you publish, cite the darfix paper:
+
+> Garriga Ferrer, J., Rodríguez-Lamas, R., Payno, H., De Nolf, W., Cook, P.,
+> Solé, V. A., Yildirim, C. & Detlefs, C. (2023). *darfix* — data analysis for
+> dark-field X-ray microscopy. *Journal of Synchrotron Radiation* **30**,
+> 527–537. <https://doi.org/10.1107/S1600577523001674>
 
 ## Documentation
 

@@ -59,10 +59,11 @@ drive all of it from one window — each stage is a form you fill in and a
 **Run** button — and the settings the stages share live in a named, reusable
 **experiment preset** rather than being retyped.
 
-One step in the middle is not DARQ's. **darfix**, the ESRF tool that does the
-per-pixel curve fitting, is a separate program that you run yourself. DARQ
-*brackets* it: the `concat` stage prepares darfix's input, and every map stage
-downstream reads the `maps.h5` that darfix writes.
+One step in the middle is not DARQ's. **[darfix](https://gitlab.esrf.fr/XRD/darfix)**,
+the ESRF tool that does the per-pixel curve fitting, is a separate program that
+you run yourself. Most of DARQ is therefore an *analysis program for darfix's
+output*: it *brackets* darfix, in that the `concat` stage prepares darfix's
+input, and every map stage downstream reads the `maps.h5` that darfix writes.
 
 ## Before you start
 
@@ -94,6 +95,17 @@ your raw scans  →  concat  →  [ you run darfix ]  →  strain / mosaicity  �
 darfix-ready files. darfix is not optional and not automatable from here; DARQ
 shows it in the pipeline rail as a greyed, non-clickable row so the gap is
 visible rather than surprising. Everything after it works from darfix's output.
+
+**Getting darfix, and citing it.** darfix is developed at the ESRF and is not
+bundled here. Install it from its own repository,
+<https://gitlab.esrf.fr/XRD/darfix> (documentation:
+<http://www.edna-site.org/pub/doc/darfix/latest>). If it contributed to a
+result you publish, cite the darfix paper:
+
+> Garriga Ferrer, J., Rodríguez-Lamas, R., Payno, H., De Nolf, W., Cook, P.,
+> Solé, V. A., Yildirim, C. & Detlefs, C. (2023). *darfix* — data analysis for
+> dark-field X-ray microscopy. *Journal of Synchrotron Radiation* **30**,
+> 527–537. <https://doi.org/10.1107/S1600577523001674>
 
 ## Install and launch
 
@@ -153,7 +165,7 @@ come back when one turns up.
 |---|---|
 | **DFXM** | Dark-Field X-ray Microscopy. Imaging one crystal grain deep inside a sample through its diffracted beam, rather than through the beam that passes straight on. |
 | **ID03** | The ESRF beamline this pipeline was built around. Its motor names, file layout and calibration are what DARQ expects by default. |
-| **darfix** | The separate ESRF tool that fits the rocking curve at every pixel. **You run it yourself**, between `concat` and the map stages. DARQ never launches it. |
+| **[darfix](https://gitlab.esrf.fr/XRD/darfix)** | The separate ESRF tool that fits the rocking curve at every pixel. **You run it yourself**, between `concat` and the map stages. DARQ never launches it. |
 | **`maps.h5`** | darfix's output: the fitted results for one layer. Every map stage reads this. |
 | **rocking curve** | At one pixel, intensity plotted against crystal angle, measured by rotating the sample through its diffraction condition. The raw quantity everything else is derived from. |
 | **COM** | Centre of mass of that curve — the angle the pixel diffracts at. Shifts in it are what become strain and mosaicity. |
