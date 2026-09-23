@@ -321,6 +321,7 @@ class MainWindow(QMainWindow):
         import json
 
         from .bindings import experiment_overrides
+        from .widgets.panel_picker import RAW_SCAN
 
         exp = self._experiment_panel.current_experiment()
         sx, sy = exp.pixel_size_x_um, exp.pixel_size_y_um
@@ -352,6 +353,9 @@ class MainWindow(QMainWindow):
                 "sy": sy,
                 "jobs": jobs if isinstance(jobs, list) else [],
             }
+        # raw scan frames: no output file to guess — Browse… starts in the
+        # experiment's raw-data root instead
+        out[RAW_SCAN] = {"h5": "", "sx": sx, "sy": sy, "jobs": [], "dir": exp.raw_root or ""}
         return out
 
     @staticmethod

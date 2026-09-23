@@ -86,6 +86,7 @@ def test_panel_group_hint_covers_kinds():
 
     assert panel_group_hint(p("map_layer", {"stage": "strain", "z": 0})) == "strain"
     assert panel_group_hint(p("map_layer", {"stage": "rocking", "dataset": "d"})) == "raw"
+    assert panel_group_hint(p("map_layer", {"stage": "raw", "dataset": "d"})) == "raw"
     assert panel_group_hint(p("map_layer", {"stage": "mosaicity", "dataset": "/chi/FWHM"})) == (
         "mosa_fwhm"
     )

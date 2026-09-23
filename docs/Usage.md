@@ -2639,7 +2639,9 @@ a composed figure looks consistent with the per-stage exports above.
   own.
 - **Panels** — each panel (`PanelDef`) points at one dataset inside a stage's
   output h5 (`strain`/`mosaicity`/`rocking` map layer, an `oblique_slices.h5`
-  plane, or a `profiles` job's reference image/line trace), or — since
+  plane, or a `profiles` job's reference image/line trace), a single
+  detector frame from a **raw scan** file (since 2026-09-24, see **Add
+  panels…** below), or — since
   2026-09-02 — an external **image file** (PNG/JPEG/TIFF, see **Add image…**
   below), plus optional
   per-panel overrides (ROI crop or crop-to-data, colour limits, colormap, label
@@ -2690,6 +2692,36 @@ Clicking **Add panels…** opens a two-step dialog:
    different pixel scale (see [slices](#7-oblique-slices)) — if
    they differ, correct that panel's `"sx"`/`"sy"` in the saved recipe's
    selector so its extent and scale bar stay true.
+
+   **Raw scan frames (`raw scan` entry).** The last entry in the stage
+   dropdown isn't a stage: it reads detector frames straight out of any
+   compatible raw scan `.h5`, for example an ESRF ID03 file such as
+   `…_rocking__48.h5`. You don't need to run any pipeline stage first. Its
+   **Browse…** starts in the experiment's raw-data root. **Load** lists
+   every image dataset in the file, once each and under its familiar
+   `measurement/` name (for example
+   `/1.1/measurement/pco_ff   (40×2048×2048 uint16)`), with one checkable
+   leaf per frame (`frame 0` … `frame 39`). A single 2-D image shows as one
+   `image` leaf. The same frame numbers appear in silx's *Dimension 0* slider.
+   A **Pixel x / Pixel y (µm)** row appears for this entry only. It is
+   pre-filled from the experiment's **Pixel size X/Y**, and the values are
+   read when you click Next/OK, so an edit after Load still applies.
+   **These pixel sizes are calibration.** They give the frame its physical
+   size and scale bar, so check them against your beamline setup. Raw frames
+   are never binned, so if darfix binned your maps, the maps' pixel size is
+   not the frame's.
+
+   Each checked frame becomes an ordinary map panel: the **ROI crop**, its
+   **Pick…** picker (on the full 2048×2048 frame), colour limits, colormap,
+   crop-to-data and every scale-bar mode work as they do for a stage map.
+   The frame is drawn the way silx shows it, with row 0 at the bottom. The
+   colormap is the shared **raw** group's (grey by default). Its default
+   colour limits are that frame's own 1st–99th intensity percentiles, the
+   same rule the rocking stage uses; type your own in the panel's colour
+   limits to change them. Like any map panel, it needs a **Scale (µm/cm)**
+   in the style, or a pinned row height or column width, before the figure
+   can be sized. On a dark frame, pick a light scale-bar colour in the
+   style so the bar shows up.
 2. **Step 2 — arrange (optional).** A drag grid seeded with one column per
    staged panel — each tile a schematic chip (colour-coded by quantity group:
    strain/raw/mosa FWHM/mosa COM/trace) labelled with the panel's captured

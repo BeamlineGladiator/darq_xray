@@ -15,7 +15,10 @@ Selector shapes (per ``PanelSource.kind``):
   is fixed to ``"strain"`` and ``sx``/``sy`` default from the file attrs
   ``scale_x_um``/``scale_y_um``; for ``mosaicity``/``rocking`` ``sx``/``sy``
   are required inputs (the GUI/recipe author supplies them, matching the
-  replot defaults 0.152/0.385 when omitted).
+  replot defaults 0.152/0.385 when omitted). ``stage="raw"`` reads one detector
+  frame straight out of a raw scan file (not a stage output): ``dataset`` is
+  the image stack's HDF5 path (see :func:`raw_scan_catalog`), ``z`` the frame
+  (ignored for a 2-D dataset), ``sx``/``sy`` the pixel sizes in µm.
 - ``slice_plane``: ``{"volume_id": str, "slice_name": str, "plane": int}``.
 - ``profiles_ref``: ``{"job": dict, "field": str | None}`` (``None`` picks the
   job's reference field).
@@ -100,9 +103,9 @@ def _load_map_layer(h5_path, sel, roi, *, crop_to_data=False):
     import h5py
 
     stage = sel.get("stage")
-    if stage not in ("strain", "mosaicity", "rocking"):
+    if stage not in ("strain", "mosaicity", "rocking", "raw"):
         raise StageUserError(
-            f"map_layer selector needs stage strain/mosaicity/rocking (got {stage!r})",
+            f"map_layer selector needs stage strain/mosaicity/rocking/raw (got {stage!r})",
             hint='Set selector["stage"], e.g. {"stage": "mosaicity", "dataset": ..., "z": 0}.',
         )
     if stage != "strain" and "dataset" not in sel:
@@ -127,17 +130,33 @@ def _load_map_layer(h5_path, sel, roi, *, crop_to_data=False):
 
                 group, cbar, title = _KEY_DISPLAY.get(sel["dataset"], (None, "(°)", sel["dataset"]))
                 cmap = "magma"
-            else:
+            elif stage == "rocking":
                 from ..stages.rocking import _DATASET_DISPLAY, _replot_default_clim
 
                 title, cbar = _DATASET_DISPLAY.get(sel["dataset"], (sel["dataset"], "Intensity"))
                 group, cmap = "raw", "gray"
+            else:  # raw: one detector frame straight out of a scan file
+                title = sel["dataset"].rstrip("/").rsplit("/", 1)[-1]
+                if dset.ndim == 3:
+                    title += f" frame {int(sel.get('z', 0))}"
+                cbar, group, cmap = "Intensity", "raw", "gray"
         z = int(sel.get("z", 0))
-        layer = dset[z][...]
+        if stage == "raw":
+            layer = _raw_frame(dset, z)
+        else:
+            layer = dset[z][...]
         if stage == "mosaicity":
             vmin, vmax = _streamed_clim(dset)
         elif stage == "rocking":
             vmin, vmax = _replot_default_clim(dset, {}, None)
+        elif stage == "raw":
+            # this frame's own percentiles, at the rocking stage's defaults —
+            # never the whole stack (a scan is hundreds of MB)
+            from ..stages.rocking import STAGE as _ROCKING
+            from ..stages.rocking import _colorbar_range
+
+            rd = _ROCKING.defaults()
+            vmin, vmax = _colorbar_range(layer, rd["cbar_pct_lo"], rd["cbar_pct_hi"])
         else:
             vmin, vmax = symmetric_limits(layer)
     roi = _effective_roi(layer, roi, crop_to_data)
@@ -153,6 +172,20 @@ def _load_map_layer(h5_path, sel, roi, *, crop_to_data=False):
         vmax=float(vmax),
         payload={"layer": layer, "sx": sx, "sy": sy, "title": title, "cbar": cbar, "cmap": cmap},
     )
+
+
+def _raw_frame(dset, z: int):
+    """Frame *z* of a raw ``(frames, y, x)`` stack as float32 — or the whole
+    dataset when it is a single 2-D image (*z* ignored). An out-of-range *z*
+    raises ``IndexError``, which ``load_panel`` turns into a placeholder."""
+    import numpy as np
+
+    if dset.ndim == 2:
+        return np.asarray(dset[...], dtype="f4")
+    n = dset.shape[0]
+    if not 0 <= z < n:
+        raise IndexError(f"frame {z} out of range — {dset.name} has frames 0..{n - 1}")
+    return np.asarray(dset[z], dtype="f4")
 
 
 def _load_slice_plane(h5_path, sel, roi, *, crop_to_data=False):
@@ -511,6 +544,69 @@ def panel_preview(panel: PanelDef):
     if data.kind == "profiles_ref":
         return pay["plane"], _step(pay["u"]), _step(pay["v"])
     raise ValueError(f"no preview for panel kind {data.kind!r}")
+
+
+@dataclass
+class RawStack:
+    """One image dataset found in a raw scan file by :func:`raw_scan_catalog`."""
+
+    path: str  # absolute HDF5 path, e.g. "/1.1/measurement/pco_ff"
+    shape: tuple[int, ...]  # (frames, y, x) or (y, x)
+    dtype: str
+
+    @property
+    def n_frames(self) -> int:
+        return self.shape[0] if len(self.shape) == 3 else 1
+
+
+_RAW_MIN_SIDE = 16  # px; thinner 2-D datasets are tables (positioners etc.), not images
+
+
+def raw_scan_catalog(h5_path: str) -> list[RawStack]:
+    """Every image-like dataset in a raw scan file (any h5, not a stage output).
+
+    An image is a numeric dataset of 2 or 3 dimensions whose last two sides
+    are both at least ``_RAW_MIN_SIDE`` px. Soft and external links to such a
+    dataset are followed — ESRF ID03 (bliss) files expose the camera as
+    ``/<scan>/measurement/<camera>``, a soft link to
+    ``/<scan>/instrument/<camera>/image`` — and each dataset is listed ONCE,
+    under its ``measurement/`` name when it has one, else its first path in
+    sorted order. Dangling links are skipped. Sorted by path.
+    """
+    import h5py
+
+    found: dict = {}  # dataset ObjectID -> RawStack (ObjectIDs compare by object)
+
+    def consider(path, obj):
+        if not isinstance(obj, h5py.Dataset) or obj.ndim not in (2, 3):
+            return
+        if obj.dtype.kind not in "uif" or min(obj.shape[-2:]) < _RAW_MIN_SIDE:
+            return
+        entry = RawStack(path, tuple(int(n) for n in obj.shape), str(obj.dtype))
+        old = found.get(obj.id)
+        if old is None or _raw_path_rank(path) < _raw_path_rank(old.path):
+            found[obj.id] = entry
+
+    def visit(name, obj):
+        if isinstance(obj, h5py.Group):
+            for key in obj:
+                if isinstance(obj.get(key, getlink=True), (h5py.SoftLink, h5py.ExternalLink)):
+                    try:
+                        target = obj.get(key)
+                    except (KeyError, OSError):
+                        target = None
+                    consider(f"{obj.name.rstrip('/')}/{key}", target)
+        else:
+            consider("/" + name, obj)
+
+    with h5py.File(h5_path, "r") as f:
+        visit("", f)  # visititems never calls back for the root group itself
+        f.visititems(visit)
+    return sorted(found.values(), key=lambda e: e.path)
+
+
+def _raw_path_rank(path: str):
+    return ("/measurement/" not in path, path)
 
 
 def draw_placeholder(ax, reason: str) -> None:

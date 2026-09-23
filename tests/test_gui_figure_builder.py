@@ -204,6 +204,44 @@ def test_panel_picker_pins_loaded_h5_path_not_live_field_text(tmp_path):
     assert panels[0].source.h5_path == str(h5)
 
 
+def test_panel_picker_raw_scan_lists_frames_and_applies_pixel_sizes(tmp_path):
+    import h5py
+    import numpy as np
+    from PySide6.QtCore import Qt
+
+    from darq_xray.gui.widgets.panel_picker import RAW_SCAN, AddPanelDialog
+
+    h5 = tmp_path / "scan.h5"
+    with h5py.File(h5, "w") as f:
+        f.create_dataset("/1.1/instrument/cam/image", data=np.zeros((3, 32, 40), "u2"))
+        f["/1.1/measurement/cam"] = h5py.SoftLink("/1.1/instrument/cam/image")
+    dlg = AddPanelDialog({RAW_SCAN: {"h5": str(h5), "sx": 0.5, "sy": 0.25, "jobs": []}})
+    assert dlg._px_row.isHidden()  # pixel-size fields belong to raw scans only
+    dlg._stage.setCurrentText(RAW_SCAN)
+    assert not dlg._px_row.isHidden()
+    assert (dlg._sx.value(), dlg._sy.value()) == (0.5, 0.25)
+    assert dlg._tree.topLevelItemCount() == 1
+    top = dlg._tree.topLevelItem(0)
+    assert top.childCount() == 3
+    top.child(1).setCheckState(0, Qt.CheckState.Checked)
+    dlg._sx.setValue(0.2)  # edited after Load: read when the panels are built
+    panels = dlg._build_panels()
+    assert len(panels) == 1
+    p = panels[0]
+    assert p.id == "raw_scan_0" and p.source.kind == "map_layer"
+    assert p.source.h5_path == str(h5)
+    assert p.source.selector == {
+        "stage": "raw",
+        "dataset": "/1.1/measurement/cam",
+        "z": 1,
+        "sx": 0.2,
+        "sy": 0.25,
+    }
+    assert p.title == "scan: /1.1/measurement/cam / frame 1"
+    dlg._stage.setCurrentText("slices")
+    assert dlg._px_row.isHidden()
+
+
 # -- preview + cache ----------------------------------------------------------
 def _obl_recipe_panels(tmp_path):
     import h5py
@@ -595,6 +633,13 @@ def test_builder_defaults_prefill_stage_output_h5_not_folder():
     for stage in ("strain", "mosaicity", "rocking"):
         h5 = defaults[stage]["h5"]
         assert h5 == "" or h5.endswith(".h5"), f"{stage} default {h5!r} is not an h5 path"
+    # raw scans: no file to guess, Browse… starts in the experiment's raw root,
+    # pixel sizes from the experiment calibration
+    from darq_xray.gui.widgets.panel_picker import RAW_SCAN
+
+    raw = defaults[RAW_SCAN]
+    assert raw["h5"] == "" and raw["dir"] == "/data/raw"
+    assert (raw["sx"], raw["sy"]) == (exp.pixel_size_x_um, exp.pixel_size_y_um)
 
 
 # -- node inspector (T4) ------------------------------------------------------
