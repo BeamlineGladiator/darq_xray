@@ -188,12 +188,19 @@ class FigureBuilderWindow(QMainWindow):
     style pane built in Task 12.
     """
 
-    def __init__(self, defaults_provider, style: PlotStyle, parent=None) -> None:
+    def __init__(
+        self, defaults_provider, style: PlotStyle, parent=None, *, style_provider=None
+    ) -> None:
         super().__init__(parent)
         self._defaults_provider = defaults_provider
         # Independent working copy — builder edits (via the Style pane below)
         # must never mutate the app-wide session style the caller passed in.
         self._style = dc_replace(style)
+        # What New recipe resets the Style pane to: the caller's LIVE session
+        # style when it supplies a provider (the main window does), else the
+        # style this window was opened with. Always copied before use.
+        self._style_provider = style_provider
+        self._opening_style = dc_replace(style)
         self._override_panel: PanelDef | None = None
         # Seed the new recipe's style overrides from the session's live style
         # so a freshly opened builder (and any recipe built from here without
@@ -271,6 +278,13 @@ class FigureBuilderWindow(QMainWindow):
         layout.addWidget(recipe_header)
 
         file_row = QHBoxLayout()
+        self._new_btn = QPushButton("New recipe")
+        self._new_btn.setToolTip(
+            "Start again from an empty, unsaved recipe — no panels, default compose "
+            "settings and the app's current style. Asks first if there are unsaved "
+            "changes. " + RECIPE_VS_EXPORT_TIP
+        )
+        self._new_btn.clicked.connect(self.new_recipe)
         open_btn = QPushButton("Open recipe…")
         open_btn.setToolTip(
             "Load a saved .json recipe — the panel layout, style and compose "
@@ -289,6 +303,7 @@ class FigureBuilderWindow(QMainWindow):
             "file. " + RECIPE_VS_EXPORT_TIP
         )
         save_as_btn.clicked.connect(self._on_save_as)
+        file_row.addWidget(self._new_btn)
         file_row.addWidget(open_btn)
         file_row.addWidget(save_btn)
         file_row.addWidget(save_as_btn)
@@ -1947,7 +1962,8 @@ class FigureBuilderWindow(QMainWindow):
         path, _ = QFileDialog.getOpenFileName(
             self, "Open figure recipe", "", "Figure recipe (*.json);;All files (*)"
         )
-        if not path:
+        # asked only once a file is chosen — cancelling the dialog costs nothing
+        if not path or not self._confirm_discard("opening another recipe"):
             return
         try:
             self.load_recipe_file(path)
@@ -2002,6 +2018,58 @@ class FigureBuilderWindow(QMainWindow):
         except Exception as exc:  # noqa: BLE001 — surface save errors, never crash
             QMessageBox.warning(self, "Save failed", str(exc))
 
+    def _confirm_discard(self, action: str) -> bool:
+        """``True`` when it is fine to throw the current recipe away for
+        *action* (e.g. ``"closing"``): nothing unsaved, or the user picked
+        Discard, or picked Save and the save went through. ``False`` on Cancel,
+        and on a Save whose Save-as dialog was cancelled."""
+        if not self._dirty:
+            return True
+        ret = QMessageBox.question(
+            self,
+            "Unsaved changes",
+            f"Save changes before {action}?",
+            QMessageBox.StandardButton.Save
+            | QMessageBox.StandardButton.Discard
+            | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Save,
+        )
+        if ret == QMessageBox.StandardButton.Cancel:
+            return False
+        if ret == QMessageBox.StandardButton.Save:
+            self._on_save()
+            return not self._dirty  # Save As was cancelled — keep the unsaved work
+        return True
+
+    def new_recipe(self) -> bool:
+        """Start over from an empty, unsaved ``untitled`` recipe — what a freshly
+        opened builder shows — after :meth:`_confirm_discard`. Returns ``False``
+        (nothing changed) when the user cancels.
+
+        Resets the panels, layout, compose settings, file path and the Style
+        pane (to a copy of the live session style, see ``style_provider``), and
+        forgets the last export's file name so the next figure is not
+        pre-named after this one; the last export folder and the loader cache
+        are kept. The empty recipe's ``render_now`` drops any queued work and
+        any in-flight result, and clears the preview.
+        """
+        if not self._confirm_discard("starting a new recipe"):
+            return False
+        base = self._style_provider() if self._style_provider is not None else None
+        self._style = dc_replace(base if base is not None else self._opening_style)
+        self._recipe = FigureRecipe("untitled", asdict(self._style), ComposeStyle(), Row([]), [])
+        self._current_path = None
+        self._dirty = False
+        self._export_stem = None
+        self._tree.setCurrentItem(None)  # no stale node survives into the inspector
+        self._controls.set_style(self._style)
+        self._load_compose_into_widgets()
+        self._rebuild_tree()
+        self._update_title()
+        self._debounce.stop()
+        self.render_now()
+        return True
+
     # -- recipe file I/O --------------------------------------------------------
     def load_recipe_file(self, path: str) -> None:
         base_dir = os.path.dirname(os.path.abspath(path)) or None
@@ -2032,30 +2100,9 @@ class FigureBuilderWindow(QMainWindow):
 
     # -- lifecycle ----------------------------------------------------------------
     def closeEvent(self, event) -> None:  # noqa: N802 — Qt override signature
-        if not self._dirty:
-            self._debounce.stop()
-            self._pending_render = False
-            self._pending_export = None
-            self._generation += 1  # any in-flight worker result is now stale — dropped on arrival
-            event.accept()
-            return
-        ret = QMessageBox.question(
-            self,
-            "Unsaved changes",
-            "Save changes before closing?",
-            QMessageBox.StandardButton.Save
-            | QMessageBox.StandardButton.Discard
-            | QMessageBox.StandardButton.Cancel,
-            QMessageBox.StandardButton.Save,
-        )
-        if ret == QMessageBox.StandardButton.Cancel:
+        if not self._confirm_discard("closing"):
             event.ignore()
             return
-        if ret == QMessageBox.StandardButton.Save:
-            self._on_save()
-            if self._dirty:  # Save As was cancelled — don't close with unsaved work
-                event.ignore()
-                return
         # A pending 300 ms debounce (schedule_preview) must not fire after
         # close — Qt keeps a QTimer parented to this window alive until the
         # event loop next turns, so an in-flight timer can call render_now()

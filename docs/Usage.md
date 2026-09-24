@@ -2590,12 +2590,23 @@ scale, and saved as a reusable recipe you can re-render later.
 > `h5_path`s point at the STO2 `oblique_slices_v2.h5`; edit them for your data).
 > The Style pane's Font scale now goes up to 20 (was 5) for large pages.
 >
+> **Starting over.** **New recipe** (first button under the **Recipe** header)
+> gives you an empty, unsaved `untitled` recipe without restarting the app,
+> the same state as a freshly opened builder. It clears the panels, layout
+> and compose settings, and resets the Style pane to the app's current
+> publication style. It also forgets the last export's file name, so the next
+> figure isn't pre-named after the previous one, but keeps the last export
+> folder. If the current recipe has unsaved changes it first asks *Save /
+> Discard / Cancel*, as closing the window does. **Open recipe…** now asks the
+> same question after you pick a file; before, it silently dropped unsaved
+> work.
+>
 > **Recipe files** are JSON. **Save recipe as…** appends `.json` when you type
 > a name without an extension, and **Open recipe…** lists `*.json` by default —
 > switch its file-type dropdown to *All files* to open a recipe saved under
 > another name.
 >
-> **Recipe ≠ picture.** The three buttons under the left pane's **Recipe**
+> **Recipe ≠ picture.** The four buttons under the left pane's **Recipe**
 > header read and write the `.json` layout; the only control that writes image
 > files is **Export figure…** at the bottom of the right pane. Each one's
 > tooltip points at the other, so neither can be mistaken for the other.

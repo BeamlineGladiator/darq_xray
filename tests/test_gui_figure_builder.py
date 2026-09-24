@@ -145,6 +145,128 @@ def test_save_open_round_trip_and_dirty_state(tmp_path):
     assert w2.recipe().name == "r"
 
 
+# -- New recipe -----------------------------------------------------------------
+def _answer(monkeypatch, button: str) -> list:
+    """Stub the Save/Discard/Cancel prompt with *button*; returns the call log."""
+    from PySide6.QtWidgets import QMessageBox
+
+    asked: list = []
+
+    def fake(*args, **kwargs):
+        asked.append(args)
+        return getattr(QMessageBox.StandardButton, button)
+
+    monkeypatch.setattr(QMessageBox, "question", fake)
+    return asked
+
+
+def test_new_recipe_resets_to_a_fresh_untitled_recipe(tmp_path, monkeypatch):
+    from darq_xray.compose.recipe import ComposeStyle
+
+    live = PlotStyle(scale_um_per_cm=25.0)  # the app's session style, changed since opening
+    w = _track(
+        FigureBuilderWindow(
+            lambda: {}, PlotStyle(scale_um_per_cm=10.0), style_provider=lambda: live
+        )
+    )
+    w.add_panels([_panel("a")])
+    w.recipe().compose.gutter_cm = 1.5
+    w.save_recipe_file(str(tmp_path / "r.json"))  # clean, and it has a path
+    w._export_dir, w._export_stem = str(tmp_path), "old_fig"
+    w._tree.setCurrentItem(w._tree.topLevelItem(0).child(0))  # panel inspector showing
+    asked = _answer(monkeypatch, "Cancel")
+
+    w._new_btn.click()
+
+    assert asked == []  # nothing unsaved: no prompt
+    r = w.recipe()
+    assert r.name == "untitled" and r.panels == [] and r.layout == Row([])
+    assert r.compose == ComposeStyle()
+    assert not w.is_dirty() and w._current_path is None
+    assert w.windowTitle().endswith("(unsaved)")
+    # a COPY of the live session style, never the session object itself
+    assert w._style.scale_um_per_cm == 25.0 and w._style is not live
+    assert r.style["scale_um_per_cm"] == 25.0
+    # the next export must not be pre-named after the previous figure
+    assert w._export_stem is None and w._export_dir == str(tmp_path)
+    assert w._override_panel is None and w._inspector.currentWidget() is w._page_hint
+    assert w._tree.topLevelItem(0).childCount() == 0
+    assert w._notes_label.text() == "add panels to preview"
+
+
+def test_new_recipe_without_style_provider_uses_the_opening_style(monkeypatch):
+    w = _win()  # opened with scale_um_per_cm=10.0
+    w._style.scale_um_per_cm = 99.0  # edited in the Style pane
+    assert w.new_recipe() is True
+    assert w._style.scale_um_per_cm == 10.0
+
+
+def test_new_recipe_cancel_keeps_unsaved_work(monkeypatch):
+    w = _win()
+    w.add_panels([_panel("a")])
+    w._debounce.stop()
+    asked = _answer(monkeypatch, "Cancel")
+    assert w.new_recipe() is False
+    assert len(asked) == 1
+    assert [p.id for p in w.recipe().panels] == ["a"] and w.is_dirty()
+
+
+def test_new_recipe_discard_drops_unsaved_work(monkeypatch):
+    w = _win()
+    w.add_panels([_panel("a")])
+    _answer(monkeypatch, "Discard")
+    assert w.new_recipe() is True
+    assert w.recipe().panels == [] and not w.is_dirty()
+
+
+def test_new_recipe_save_writes_the_old_recipe_first(tmp_path, monkeypatch):
+    from darq_xray.compose.recipe import recipe_from_json
+
+    w = _win()
+    w.add_panels([_panel("a")])
+    path = tmp_path / "r.json"
+    w.save_recipe_file(str(path))
+    w.add_panels([_panel("b")])  # unsaved edit on a recipe that has a file
+    _answer(monkeypatch, "Save")
+    assert w.new_recipe() is True
+    saved = recipe_from_json(path.read_text(), base_dir=str(tmp_path))
+    assert [p.id for p in saved.panels] == ["a", "b"]
+    assert w.recipe().panels == []
+
+
+def test_new_recipe_save_as_cancelled_keeps_unsaved_work(monkeypatch):
+    from PySide6.QtWidgets import QFileDialog
+
+    w = _win()
+    w.add_panels([_panel("a")])  # never saved: Save goes through Save as…
+    w._debounce.stop()
+    _answer(monkeypatch, "Save")
+    monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *a, **k: ("", ""))
+    assert w.new_recipe() is False
+    assert [p.id for p in w.recipe().panels] == ["a"] and w.is_dirty()
+
+
+def test_open_recipe_asks_before_discarding_unsaved_work(tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QFileDialog
+
+    other = _win()
+    other.add_panels([_panel("x")])
+    path = str(tmp_path / "other.json")
+    other.save_recipe_file(path)
+
+    w = _win()
+    w.add_panels([_panel("a")])
+    w._debounce.stop()
+    monkeypatch.setattr(QFileDialog, "getOpenFileName", lambda *a, **k: (path, ""))
+    asked = _answer(monkeypatch, "Cancel")
+    w._on_open()
+    assert len(asked) == 1
+    assert [p.id for p in w.recipe().panels] == ["a"] and w.is_dirty()
+    _answer(monkeypatch, "Discard")
+    w._on_open()
+    assert [p.id for p in w.recipe().panels] == ["x"] and not w.is_dirty()
+
+
 def test_set_selected_label_on_spacer_is_a_noop():
     w = _win()
     w.add_spacer()
@@ -607,6 +729,19 @@ def test_main_window_launches_builder_non_modal():
     first = win._figure_builder
     win._on_figure_builder()  # reuse, not a second window
     assert win._figure_builder is first
+
+
+def test_new_recipe_in_main_window_builder_takes_the_live_session_style():
+    from darq_xray.gui.main_window import MainWindow
+
+    win = MainWindow()
+    win._on_figure_builder()
+    b = win._figure_builder
+    win._plot_style.scale_um_per_cm = 42.0  # Publication style… edits it in place
+    assert b.new_recipe() is True
+    assert b._style.scale_um_per_cm == 42.0
+    assert b._style is not win._plot_style  # builder edits must never leak back
+    b.close()
 
 
 def test_builder_defaults_prefill_stage_output_h5_not_folder():

@@ -281,7 +281,12 @@ class MainWindow(QMainWindow):
 
         if self._figure_builder is None:
             self._figure_builder = FigureBuilderWindow(
-                self._builder_defaults, replace(self._plot_style), parent=self
+                self._builder_defaults,
+                replace(self._plot_style),
+                parent=self,
+                # New recipe resets to the session style as it is THEN (the
+                # builder copies it; this window keeps editing it in place)
+                style_provider=lambda: self._plot_style,
             )
         self._figure_builder.show()
         self._figure_builder.raise_()
