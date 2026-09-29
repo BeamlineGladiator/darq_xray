@@ -1971,10 +1971,14 @@ class FigureBuilderWindow(QMainWindow):
             QMessageBox.warning(self, "Open failed", str(exc))
 
     def _on_save(self) -> None:
-        if self._current_path:
-            self.save_recipe_file(self._current_path)
-        else:
+        if not self._current_path:
             self._on_save_as()
+            return
+        try:
+            self.save_recipe_file(self._current_path)
+        except Exception as exc:  # noqa: BLE001 — surface save errors, never crash
+            # still dirty, so a _confirm_discard caller keeps the unsaved work
+            QMessageBox.warning(self, "Save failed", str(exc))
 
     def _default_save_dir(self) -> str:
         """Where an unsaved recipe's Save-as dialog should open.
@@ -1984,6 +1988,8 @@ class FigureBuilderWindow(QMainWindow):
         data, so it belongs beside it — then the first non-empty ``h5`` the
         ``defaults_provider`` offers, for a recipe with no panels yet. Falls
         back to ``""`` (Qt's last-used directory), which is what it did before.
+        Raw-scan-frame panels are skipped: their file sits in the beamline's
+        RAW_DATA tree, read-only after the experiment and no place for figures.
 
         It walks ``recipe.panels`` and not ``iter_leaves(recipe.layout)``: the
         layout's leaves are ``PanelRef`` ids, and only the ``PanelDef`` list
@@ -1995,6 +2001,8 @@ class FigureBuilderWindow(QMainWindow):
         if self._current_path:
             return self._current_path
         for panel in self._recipe.panels:
+            if (panel.source.selector or {}).get("stage") == "raw":
+                continue
             h5 = getattr(panel.source, "h5_path", "") or ""
             if h5:
                 return os.path.dirname(os.path.abspath(h5))

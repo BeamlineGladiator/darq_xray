@@ -234,6 +234,23 @@ def test_new_recipe_save_writes_the_old_recipe_first(tmp_path, monkeypatch):
     assert w.recipe().panels == []
 
 
+def test_new_recipe_failed_save_warns_and_keeps_unsaved_work(tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+
+    w = _win()
+    w.add_panels([_panel("a")])
+    w.save_recipe_file(str(tmp_path / "r.json"))
+    w.add_panels([_panel("b")])
+    w._debounce.stop()
+    w._current_path = str(tmp_path / "gone" / "r.json")  # its folder has vanished
+    warned: list = []
+    monkeypatch.setattr(QMessageBox, "warning", lambda *a, **k: warned.append(a[1]))
+    _answer(monkeypatch, "Save")
+    assert w.new_recipe() is False  # no traceback out of the slot
+    assert warned == ["Save failed"]
+    assert [p.id for p in w.recipe().panels] == ["a", "b"] and w.is_dirty()
+
+
 def test_new_recipe_save_as_cancelled_keeps_unsaved_work(monkeypatch):
     from PySide6.QtWidgets import QFileDialog
 
@@ -362,6 +379,24 @@ def test_panel_picker_raw_scan_lists_frames_and_applies_pixel_sizes(tmp_path):
     assert p.title == "scan: /1.1/measurement/cam / frame 1"
     dlg._stage.setCurrentText("slices")
     assert dlg._px_row.isHidden()
+    # a stage round-trip keeps the edited calibration, not the pre-fill
+    dlg._stage.setCurrentText(RAW_SCAN)
+    assert (dlg._sx.value(), dlg._sy.value()) == (0.2, 0.25)
+
+
+def test_panel_picker_raw_scan_master_file_shows_the_hint(tmp_path):
+    import h5py
+
+    from darq_xray.gui.widgets.panel_picker import RAW_SCAN, AddPanelDialog
+
+    master = tmp_path / "ma1234_coll.h5"
+    with h5py.File(master, "w") as f:
+        f["coll_0001_1.1"] = h5py.ExternalLink("coll_0001/coll_0001.h5", "/1.1")
+    dlg = AddPanelDialog({RAW_SCAN: {"h5": str(master), "sx": 0.5, "sy": 0.25, "jobs": []}})
+    dlg._stage.setCurrentText(RAW_SCAN)
+    assert dlg._tree.topLevelItemCount() == 0
+    text = dlg._status.text()
+    assert "1 scan(s)" in text and "coll_0001.h5" in text
 
 
 # -- preview + cache ----------------------------------------------------------
@@ -1966,6 +2001,22 @@ def test_default_save_dir_prefers_current_path_then_panel_then_provider(tmp_path
         )
     )
     assert w2._default_save_dir() == str(data)
+
+
+def test_default_save_dir_skips_raw_scan_frames(tmp_path):
+    """A raw frame's file sits in RAW_DATA (read-only after the experiment):
+    the recipe goes beside the first STAGE output instead, or Qt's default."""
+    raw = tmp_path / "RAW_DATA" / "scan.h5"
+    out = tmp_path / "PROCESSED" / "stacked.h5"
+    for f in (raw, out):
+        f.parent.mkdir()
+        f.write_text("")
+    frame = {"stage": "raw", "dataset": "/1.1/measurement/cam", "z": 0, "sx": 1, "sy": 1}
+    w = _win()
+    w.add_panels([PanelDef("r", PanelSource(str(raw), "map_layer", frame))])
+    assert w._default_save_dir() == ""
+    w.add_panels([PanelDef("s", PanelSource(str(out), "map_layer", {"stage": "strain", "z": 0}))])
+    assert w._default_save_dir() == str(out.parent)
 
 
 def test_default_save_dir_survives_a_broken_defaults_provider():

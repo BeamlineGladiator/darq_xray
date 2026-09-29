@@ -2599,7 +2599,8 @@ scale, and saved as a reusable recipe you can re-render later.
 > folder. If the current recipe has unsaved changes it first asks *Save /
 > Discard / Cancel*, as closing the window does. **Open recipe…** now asks the
 > same question after you pick a file; before, it silently dropped unsaved
-> work.
+> work. If you pick *Save* and the save fails (say the recipe's folder is
+> gone), a **Save failed** message says why and your unsaved recipe stays open.
 >
 > **Recipe files** are JSON. **Save recipe as…** appends `.json` when you type
 > a name without an extension, and **Open recipe…** lists `*.json` by default —
@@ -2617,6 +2618,8 @@ scale, and saved as a reusable recipe you can re-render later.
 > as…** opens beside the data the recipe describes: the folder of its first
 > panel's h5, or (for a recipe with no panels yet) the folder of the first h5
 > the stage forms currently point at, falling back to the last folder you used.
+> Raw scan frames don't count here. Their folder is the beamline's raw data,
+> which is read-only after the experiment and no place for figures.
 
 The figure builder (`darq_xray/compose/`) assembles a **multi-panel publication
 figure** — several map/slice/trace panels from one or more stage outputs,
@@ -2708,15 +2711,20 @@ Clicking **Add panels…** opens a two-step dialog:
    dropdown isn't a stage: it reads detector frames straight out of any
    compatible raw scan `.h5`, for example an ESRF ID03 file such as
    `…_rocking__48.h5`. You don't need to run any pipeline stage first. Its
-   **Browse…** starts in the experiment's raw-data root. **Load** lists
+   **Browse…** starts in the experiment's raw-data root. Open a scan's own
+   file, `<sample>/<dataset>/<dataset>.h5`. The `<proposal>_<name>.h5` files
+   higher up only link to thousands of scans kept in other files. Loading one
+   of those shows no frames; instead, the status line names a scan file to
+   open. **Load** lists
    every image dataset in the file, once each and under its familiar
    `measurement/` name (for example
    `/1.1/measurement/pco_ff   (40×2048×2048 uint16)`), with one checkable
    leaf per frame (`frame 0` … `frame 39`). A single 2-D image shows as one
    `image` leaf. The same frame numbers appear in silx's *Dimension 0* slider.
    A **Pixel x / Pixel y (µm)** row appears for this entry only. It is
-   pre-filled from the experiment's **Pixel size X/Y**, and the values are
-   read when you click Next/OK, so an edit after Load still applies.
+   pre-filled from the experiment's **Pixel size X/Y** the first time you pick
+   the entry, so switching to another stage and back keeps your edit. The
+   values are read when you click Next/OK, so an edit after Load still applies.
    **These pixel sizes are calibration.** They give the frame its physical
    size and scale bar, so check them against your beamline setup. Raw frames
    are never binned, so if darfix binned your maps, the maps' pixel size is

@@ -90,6 +90,7 @@ class AddPanelDialog(QDialog):
         # with; read when the panels are built, so an edit after Load applies
         self._sx = self._px_spin()
         self._sy = self._px_spin()
+        self._px_prefilled = False  # pre-fill ONCE: a stage round-trip keeps your edit
         self._px_row = QWidget()
         px_layout = QHBoxLayout(self._px_row)
         px_layout.setContentsMargins(0, 0, 0, 0)
@@ -175,7 +176,8 @@ class AddPanelDialog(QDialog):
         d = self._defaults.get(stage, {})
         self._h5_edit.setText(d.get("h5", "") or "")
         self._px_row.setVisible(stage == RAW_SCAN)
-        if stage == RAW_SCAN:
+        if stage == RAW_SCAN and not self._px_prefilled:
+            self._px_prefilled = True
             for spin, key in ((self._sx, "sx"), (self._sy, "sy")):
                 if d.get(key):
                     spin.setValue(float(d[key]))
@@ -219,7 +221,8 @@ class AddPanelDialog(QDialog):
         except Exception as exc:  # noqa: BLE001 — catalog reload: show status, never crash
             self._catalog = []
             self._tree.clear()
-            self._status.setText(f"cannot read: {exc}")
+            hint = getattr(exc, "hint", "")
+            self._status.setText(f"cannot read: {exc}" + (f". {hint}" if hint else ""))
             return
         self._status.setText(f"{len(self._catalog)} item(s)")
 

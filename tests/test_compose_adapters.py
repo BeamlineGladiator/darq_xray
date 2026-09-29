@@ -586,6 +586,33 @@ def test_raw_scan_catalog_lists_image_stacks_once_preferring_measurement(tmp_pat
     assert cat[0].n_frames == 3 and cat[1].n_frames == 1
 
 
+def test_raw_scan_catalog_refuses_a_bliss_master_file_naming_a_scan_file(tmp_path):
+    from darq_xray.compose.adapters import raw_scan_catalog
+
+    # the collection file only links to per-scan files; the targets need not
+    # even exist, because none of them may be opened (there are thousands)
+    master = tmp_path / "ma1234_coll.h5"
+    with h5py.File(master, "w") as f:
+        f["coll_0001_1.1"] = h5py.ExternalLink("coll_0001/coll_0001.h5", "/1.1")
+        f["coll_0001_2.1"] = h5py.ExternalLink("coll_0001/coll_0001.h5", "/2.1")
+    with pytest.raises(StageUserError) as info:
+        raw_scan_catalog(str(master))
+    assert "2 scan(s)" in str(info.value)
+    assert str(tmp_path / "coll_0001" / "coll_0001.h5") in info.value.hint
+
+
+def test_raw_scan_catalog_root_with_a_real_group_is_not_a_master_file(tmp_path):
+    from darq_xray.compose.adapters import raw_scan_catalog
+
+    h5, _ = _write_raw_scan(tmp_path / "scan.h5")
+    with h5py.File(h5, "a") as f:
+        f["elsewhere"] = h5py.ExternalLink("missing.h5", "/1.1")
+    assert [e.path for e in raw_scan_catalog(h5)] == [
+        "/1.1/measurement/cam",
+        "/1.2/instrument/still/image",
+    ]
+
+
 def test_load_map_layer_raw_frame_extents_group_and_clim(tmp_path):
     h5, stack = _write_raw_scan(tmp_path / "scan.h5")
     sel = {"stage": "raw", "dataset": "/1.1/measurement/cam", "z": 1, "sx": 0.5, "sy": 0.25}

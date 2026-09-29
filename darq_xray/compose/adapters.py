@@ -10,7 +10,7 @@ recipe-authoring bug, not a data-availability issue.
 
 Selector shapes (per ``PanelSource.kind``):
 
-- ``map_layer``: ``{"stage": "strain"|"mosaicity"|"rocking", "dataset": str,
+- ``map_layer``: ``{"stage": "strain"|"mosaicity"|"rocking"|"raw", "dataset": str,
   "z": int, "sx": float?, "sy": float?}`` — for ``stage="strain"`` the dataset
   is fixed to ``"strain"`` and ``sx``/``sy`` default from the file attrs
   ``scale_x_um``/``scale_y_um``; for ``mosaicity``/``rocking`` ``sx``/``sy``
@@ -116,6 +116,8 @@ def _load_map_layer(h5_path, sel, roi, *, crop_to_data=False):
         )
     if not os.path.exists(h5_path):
         raise FileNotFoundError(f"{h5_path} not found")
+    if stage == "raw":
+        return _load_raw_frame(h5_path, sel, roi, crop_to_data=crop_to_data)
     with h5py.File(h5_path, "r") as f:
         if stage == "strain":
             dset = f["strain"]
@@ -130,35 +132,26 @@ def _load_map_layer(h5_path, sel, roi, *, crop_to_data=False):
 
                 group, cbar, title = _KEY_DISPLAY.get(sel["dataset"], (None, "(°)", sel["dataset"]))
                 cmap = "magma"
-            elif stage == "rocking":
+            else:
                 from ..stages.rocking import _DATASET_DISPLAY, _replot_default_clim
 
                 title, cbar = _DATASET_DISPLAY.get(sel["dataset"], (sel["dataset"], "Intensity"))
                 group, cmap = "raw", "gray"
-            else:  # raw: one detector frame straight out of a scan file
-                title = sel["dataset"].rstrip("/").rsplit("/", 1)[-1]
-                if dset.ndim == 3:
-                    title += f" frame {int(sel.get('z', 0))}"
-                cbar, group, cmap = "Intensity", "raw", "gray"
         z = int(sel.get("z", 0))
-        if stage == "raw":
-            layer = _raw_frame(dset, z)
-        else:
-            layer = dset[z][...]
+        layer = dset[z][...]
         if stage == "mosaicity":
             vmin, vmax = _streamed_clim(dset)
         elif stage == "rocking":
             vmin, vmax = _replot_default_clim(dset, {}, None)
-        elif stage == "raw":
-            # this frame's own percentiles, at the rocking stage's defaults —
-            # never the whole stack (a scan is hundreds of MB)
-            from ..stages.rocking import STAGE as _ROCKING
-            from ..stages.rocking import _colorbar_range
-
-            rd = _ROCKING.defaults()
-            vmin, vmax = _colorbar_range(layer, rd["cbar_pct_lo"], rd["cbar_pct_hi"])
         else:
             vmin, vmax = symmetric_limits(layer)
+    return _map_layer_data(
+        layer, roi, crop_to_data, sx, sy, group, vmin, vmax, title=title, cbar=cbar, cmap=cmap
+    )
+
+
+def _map_layer_data(layer, roi, crop_to_data, sx, sy, group, vmin, vmax, *, title, cbar, cmap):
+    """The ROI-cropped ``map_layer`` :class:`PanelData` every map loader returns."""
     roi = _effective_roi(layer, roi, crop_to_data)
     layer = crop_roi_2d(layer, roi)
     if layer is None:
@@ -171,6 +164,41 @@ def _load_map_layer(h5_path, sel, roi, *, crop_to_data=False):
         vmin=float(vmin),
         vmax=float(vmax),
         payload={"layer": layer, "sx": sx, "sy": sy, "title": title, "cbar": cbar, "cmap": cmap},
+    )
+
+
+def _load_raw_frame(h5_path, sel, roi, *, crop_to_data=False):
+    """``map_layer`` with ``stage="raw"``: one detector frame straight out of a
+    raw scan file (not a stage output), drawn like a rocking panel — group
+    ``"raw"``, grey. Its colour limits are this frame's own percentiles at the
+    rocking stage's defaults, never the whole stack (a scan is hundreds of MB)."""
+    import h5py
+
+    from ..stages.rocking import STAGE as _ROCKING
+    from ..stages.rocking import _colorbar_range
+
+    z = int(sel.get("z", 0))
+    with h5py.File(h5_path, "r") as f:
+        dset = f[sel["dataset"]]
+        layer = _raw_frame(dset, z)
+        title = sel["dataset"].rstrip("/").rsplit("/", 1)[-1]
+        if dset.ndim == 3:
+            title += f" frame {z}"
+    rd = _ROCKING.defaults()
+    vmin, vmax = _colorbar_range(layer, rd["cbar_pct_lo"], rd["cbar_pct_hi"])
+    sx, sy = float(sel.get("sx", 0.152)), float(sel.get("sy", 0.385))
+    return _map_layer_data(
+        layer,
+        roi,
+        crop_to_data,
+        sx,
+        sy,
+        "raw",
+        vmin,
+        vmax,
+        title=title,
+        cbar="Intensity",
+        cmap="gray",
     )
 
 
@@ -572,6 +600,11 @@ def raw_scan_catalog(h5_path: str) -> list[RawStack]:
     ``/<scan>/instrument/<camera>/image`` — and each dataset is listed ONCE,
     under its ``measurement/`` name when it has one, else its first path in
     sorted order. Dangling links are skipped. Sorted by path.
+
+    A bliss *master* file — the proposal- or collection-level
+    ``<proposal>_<name>.h5`` whose root holds nothing but external links, one
+    per scan (thousands of them) — raises :class:`StageUserError` naming a
+    scan's own file instead, without opening any linked file.
     """
     import h5py
 
@@ -600,6 +633,7 @@ def raw_scan_catalog(h5_path: str) -> list[RawStack]:
             consider("/" + name, obj)
 
     with h5py.File(h5_path, "r") as f:
+        _refuse_master_file(h5_path, f)
         visit("", f)  # visititems never calls back for the root group itself
         f.visititems(visit)
     return sorted(found.values(), key=lambda e: e.path)
@@ -607,6 +641,21 @@ def raw_scan_catalog(h5_path: str) -> list[RawStack]:
 
 def _raw_path_rank(path: str):
     return ("/measurement/" not in path, path)
+
+
+def _refuse_master_file(h5_path: str, f) -> None:
+    """Raise when *f*'s root is nothing but external links (a bliss master file)."""
+    import h5py
+
+    links = [f.get(key, getlink=True) for key in f]
+    if not links or not all(isinstance(link, h5py.ExternalLink) for link in links):
+        return
+    example = os.path.normpath(os.path.join(os.path.dirname(h5_path), links[0].filename))
+    raise StageUserError(
+        f"{os.path.basename(h5_path)} only links to {len(links)} scan(s) kept in "
+        "other files — it holds no detector images itself",
+        hint=f"Browse to one scan's own file instead, e.g. {example}",
+    )
 
 
 def draw_placeholder(ax, reason: str) -> None:
