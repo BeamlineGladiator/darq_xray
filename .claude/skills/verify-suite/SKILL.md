@@ -37,9 +37,7 @@ output, and never report green with a check skipped.
 - gui_smoke hang or core dump (exit 144): capture output, then kill by
   **stored PID** — run it via `python3 tests/gui_smoke.py & PID=$!` and
   `kill $PID`. Never `pkill -f gui_smoke` or `pkill -f spawn_main`: the
-  pattern matches your own shell (6 self-kills in one past session). Before
-  deep Qt debugging, inspect the smoke test itself for variable shadowing —
-  that was the actual root cause last time.
+  pattern matches your own shell.
 
 ## Red flags — the report is invalid if you catch yourself thinking
 

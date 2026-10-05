@@ -24,12 +24,12 @@ single 9-stage pipeline. (DFXM — never call it XRD / X-ray diffraction.)
   override so they inherit the session model. Reach for a different tier only
   when a particular dispatch clearly warrants it, and say which and why when you
   do. The custom `planner`, `supervisor` (both Fable 5, `effort: high`,
-  read-only) and `sonnet-4-6` agent types still exist but are opt-in: use them
-  when asked for by name. A Fable review is not a required step of any flow.
+  read-only) and `sonnet-4-6` agent types are opt-in: use them when asked for
+  by name. A Fable review is not a required step of any flow.
 - **Kickoff confirmation:** before starting any autonomous multi-task run
   (subagent-driven-development, executing-plans), confirm via AskUserQuestion:
   (1) the stop point — a named task/phase boundary or "run to completion", and
-  (2) execution mode — full SDD (per-task implementer + dual reviewers) vs
+  (2) execution mode — full SDD (per-task implementer + task reviewer) vs
   inline execution with a single end review; recommend inline when the plan is
   <= ~4 small tasks in one subsystem.
 - **Bare "resume":** on a bare resume request, first state the resume point and
@@ -107,7 +107,7 @@ enables MP4 export (GIF fallback without it).
   `StageUserError(message, hint)`; the GUI banner shows both. Don't convert
   the skip-based reporting (empty results list reasons) into exceptions.
 - **Read before first Edit.** Any file not created this session — especially
-  `memory/MEMORY.md` and `.superpowers/sdd/progress.md` — must be Read once
+  `memory/MEMORY.md` and `.superpowers/sdd/<plan>/progress.md` — must be Read once
   before its first Edit.
 - **Never reconstruct `old_string` from memory or sibling files.** Known hazards
   here: `hint=` strings in `darq_xray/stages/*.py` contain em-dashes and sit at 12
@@ -125,17 +125,14 @@ enables MP4 export (GIF fallback without it).
   `tests/gui_smoke.py` (no `test_` prefix; it is not a pytest file).
 - `stage_view.py` and all Qt code live under `darq_xray/gui/`, never elsewhere in
   `darq_xray/` — grep for a filename before Read if unsure which tree it's in.
-- **Check for a git remote before any push/PR step.** The repo was developed
-  entirely locally; if `git remote -v` is empty, skip pull/push/PR in any
-  branch flow rather than trying to create one.
+- **Check for a git remote before any push/PR step** (`git remote -v`); if it
+  is empty, skip pull/push/PR in any branch flow rather than trying to create one.
 - `~/.claude/projects/.../memory/` is not git-tracked; writing the file is the save.
 - Custom agent-type files (`~/.claude/agents/*.md`) load at **session start**
   only — don't test-dispatch a just-written type; tell the user it needs a restart.
-- Subagent resume via SendMessage works in this harness — prefer SendMessage to
-  resume a reviewer for re-review (preserves context, avoids re-priming) and an
-  implementer for small fixes; dispatch a fresh fix agent only when the original
-  agent has exited or the fix needs a clean context. (Fact dated 2026-07;
-  date-stamp harness facts so stale ones get retired.)
+- Prefer SendMessage to resume a reviewer for re-review (preserves context,
+  avoids re-priming) and an implementer for small fixes; dispatch a fresh fix
+  agent only when the original agent has exited or the fix needs a clean context.
 - If a dispatched subagent runs well past the typical duration for its task class
   (e.g. a read-only review outlasting an implementation), check on it instead of
   waiting indefinitely; before re-dispatching, verify the worktree/git state is
