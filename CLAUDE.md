@@ -23,9 +23,7 @@ single 9-stage pipeline. (DFXM — never call it XRD / X-ray diffraction.)
 - **Subagent model tier:** no pinned tiers — dispatch subagents with no `model`
   override so they inherit the session model. Reach for a different tier only
   when a particular dispatch clearly warrants it, and say which and why when you
-  do. The custom `planner` and `supervisor` (read-only, session model and
-  effort) and `sonnet-4-6` (pinned to Sonnet 4.6) agent types are opt-in: use
-  them when asked for by name. A Fable review is not a required step of any flow.
+  do. Use Claude Code's built-in agent types; there are no custom ones.
 - **Kickoff confirmation:** before starting any autonomous multi-task run
   (subagent-driven-development, executing-plans), confirm via AskUserQuestion:
   (1) the stop point — a named task/phase boundary or "run to completion", and
