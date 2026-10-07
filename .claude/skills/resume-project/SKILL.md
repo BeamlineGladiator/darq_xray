@@ -9,27 +9,23 @@ Safely re-enter a multi-session project from its handoff note. A bare "resume"
 authorizes *scoping*, not execution.
 
 **Never auto-launch a no-check-in skill (subagent-driven-development,
-executing-plans) from a bare resume.** That exact misfire happened: agents were
-dispatched within seconds and the user had to hard-interrupt. The SDD "execute
-all tasks without stopping" rule applies *after* scope is confirmed — not to
-scoping itself.
+executing-plans) from a bare resume** — they dispatch agents within seconds,
+leaving the user to hard-interrupt. The SDD "execute all tasks without
+stopping" rule applies *after* scope is confirmed — not to scoping itself.
 
 ## Steps
 
-1. **Load state, Read-first.** Read `MEMORY.md` (it is injected into context at
-   session start, but the Edit tool still requires a real Read — 6 past
-   sessions hit "File has not been read yet" on it). Read the relevant project
-   note. For an SDD/worktree flow, also Read `.superpowers/sdd/progress.md`
-   and the plan file **once, now** — later, slice the plan with
-   `offset`/`limit` per task; never re-read it in full per cycle (9 full
-   re-reads wasted in one session).
+1. **Load state, Read-first.** Read `MEMORY.md` (its injected copy does not
+   count as a Read for the Edit tool). Read the relevant project note. For an
+   SDD/worktree flow, also Read `.superpowers/sdd/<plan>/progress.md` and the plan
+   file **once, now** — later, slice the plan with `offset`/`limit` per task
+   instead of re-reading it in full each cycle.
 2. **Verify reality matches the note.** Worktree exists? Branch name?
    `git log --oneline -3` vs the note's recorded HEAD/rollback point?
    `git status --short` clean? Any mismatch → stop and report the discrepancy
    before executing anything.
 3. **Honor standing preferences from memory** without being re-told (check the
-   project notes; note that subagent model routing is back to default — no
-   pinned tiers, subagents inherit the session model).
+   project notes).
 4. **State the resume point and the single next action** — e.g. "Task 3
    implemented at d48e8ff but unreviewed; next: dispatch its review."
 5. **Ask scope via AskUserQuestion** (numbered, per CLAUDE.md):
