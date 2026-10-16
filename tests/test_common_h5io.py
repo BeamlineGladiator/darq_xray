@@ -193,6 +193,42 @@ def test_stacked_volume_file_set_attrs_before_append_raises(tmp_path):
         out.shape("strain")
 
 
+def test_stacked_volume_file_set_dataset_attrs(tmp_path):
+    """Attributes land on the named dataset, not on the file or its siblings."""
+    path = str(tmp_path / "stacked.h5")
+    with StackedVolumeFile(path, compression=None) as out:
+        out.append("chi/Center of mass", np.zeros((2, 3)))
+        out.append("chi/FWHM", np.zeros((2, 3)))
+        out.set_dataset_attrs("chi/Center of mass", detrend="arctan_2d")
+    with h5py.File(path, "r") as f:
+        assert f["chi/Center of mass"].attrs["detrend"] == "arctan_2d"
+        assert "detrend" not in f["chi/FWHM"].attrs
+        assert "detrend" not in f.attrs
+
+
+def test_stacked_volume_file_set_dataset_attrs_unknown_dataset_raises(tmp_path):
+    out = StackedVolumeFile(str(tmp_path / "stacked.h5"), compression=None)
+    with pytest.raises(ValueError, match="no layer has been appended"):
+        out.set_dataset_attrs("strain", detrend="arctan_2d")
+    out.append("strain", np.zeros((2, 3)))
+    with pytest.raises(KeyError, match="mu/FWHM"):
+        out.set_dataset_attrs("mu/FWHM", detrend="arctan_2d")
+    out.abort()
+
+
+def test_stacked_volume_file_leading_slash_names_the_same_dataset(tmp_path):
+    """h5py treats '/chi/x' and 'chi/x' as one dataset; so must the writer."""
+    path = str(tmp_path / "stacked.h5")
+    with StackedVolumeFile(path, compression=None) as out:
+        out.append("chi/Center of mass", np.zeros((2, 3)))
+        out.append("/chi/Center of mass", np.ones((2, 3)))
+        out.set_dataset_attrs("/chi/Center of mass", detrend="arctan_2d")
+        assert out.datasets() == ["chi/Center of mass"]
+    with h5py.File(path, "r") as f:
+        assert f["chi/Center of mass"].shape == (2, 2, 3)
+        assert f["chi/Center of mass"].attrs["detrend"] == "arctan_2d"
+
+
 def test_stacked_volume_file_rejects_dtype_change(tmp_path):
     """The dataset dtype is fixed by the first layer, so a wider later layer
     would be truncated on write where np.stack promoted. Refuse instead."""

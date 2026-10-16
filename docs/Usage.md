@@ -1047,14 +1047,55 @@ layer.
 Stack per-layer χ/μ **Center-of-mass** and **FWHM** maps into a 3-D volume.
 
 - **Input:** `maps.h5` per mosaicity layer folder.
-- **Output:** `stacked_volumes.h5` with `/chi` and `/mu` groups (CoM + FWHM).
+- **Output:** `stacked_volumes.h5` with `/chi` and `/mu` groups (CoM + FWHM),
+  always written to the input/root folder. With a detrend box ticked, also one
+  diagnostic PNG per layer and detrended quantity.
 
 **Essentials:** mode, input/root folder, output dir
 
 | Param | Meaning |
 |---|---|
 | `folder_pattern` | usually the `*_mosa__*` glob |
+| `output_dir` | where the detrend diagnostic PNGs go (blank = a `mosaicity_detrend/` folder in the input/root folder). The stacked volume never goes here |
 | `compression` | `gzip` / `lzf` / `none` |
+
+#### Detrending χ / μ
+
+A bent or curved sample tilts the lattice smoothly across the whole field of
+view, and that large-scale gradient in the χ (or μ) centre-of-mass map can
+swamp the local misorientation you are after. Tick **Detrend χ COM**
+(`detrend_chi_com`) and/or **Detrend μ COM** (`detrend_mu_com`) under
+**Advanced → Detrend** to remove it before stacking. Both are off by default.
+
+The detrend is the one [Axial strain](#2-axial-strain) applies to ccmth: one
+arctan fitted along X and one along Y on the **full** map, subtracted, with the
+map's median level kept. The FWHM maps are never detrended.
+
+- The stored `/chi/Center of mass` (or `/mu/…`) **is** the detrended map, so
+  every later stage (visualize, slices, profiles, paraview, the figure
+  builder) uses it with no extra setting. The dataset carries a
+  `detrend = "arctan_2d"` attribute and a `detrended_z` list of exactly the
+  slices that were detrended, so you can tell afterwards; to get the raw map
+  back, re-run with the box unticked.
+- For each layer, a 3-panel diagnostic (original / arctan surface / detrended)
+  is saved as `<layer>_chi_com_detrend_diag.png` (or `…_mu_com_…`) in
+  **Output dir**, coloured with the *Mosa misorientation* colormap. The same
+  diagnostic appears in the stage's figure list for **Export…**. A folder of
+  diagnostics (one holding `*_detrend_diag.png` but no `maps.h5`) is never
+  mistaken for a layer folder, even with the pattern `*` and even after you
+  change **Output dir**.
+- A map the fit cannot handle — not 2-D, all NaN, fewer than four columns or
+  rows of data, or values the fit chokes on (e.g. `inf`) — is stored **as read**, left
+  out of `detrended_z`, and named in the Results summary as a `note:`. The run
+  carries on.
+- If the diagnostics cannot be written (an unwritable **Output dir**, or a
+  path through a file), the summary says so once and the volume is still
+  written, detrended. A folder that does not exist yet is simply created.
+- Detrending adds roughly 64 MiB plus 56 bytes per map pixel to the run's
+  peak memory, once, whether one box or both are ticked. The cost line under
+  **Run** includes it.
+- Headless: `python3 -m darq_xray.stages.mosaicity --root-folder … --detrend-chi-com
+  --detrend-mu-com [--output-dir …]`.
 
 #### Replotting mosaicity layers without re-running
 
@@ -2389,9 +2430,9 @@ plots that quantity (runs, previews, exports and the 3-D viewers alike):
 
 | Group | Applies to | Default |
 |---|---|---|
-| Mosa misorientation | χ/μ centre-of-mass maps & slices | `fast` (ParaView's default map, registered with matplotlib) |
+| Mosa misorientation | χ/μ centre-of-mass maps & slices, mosaicity detrend diagnostics | `fast` (ParaView's default map, registered with matplotlib) |
 | Mosa FWHM | χ/μ peak-broadening maps & slices | `magma` |
-| Strain | strain maps, detrend diagnostics, strain slices | `RdBu_r` |
+| Strain | strain maps, strain detrend diagnostics, strain slices | `RdBu_r` |
 | Raw intensity | rocking volumes, raw slices, matched rocking-frame layers | `gray` |
 
 The choices persist across sessions together with the rest of the style.
@@ -2552,7 +2593,7 @@ and why your next matched run will not look like your last one.
 | Stage | Figures |
 |---|---|
 | `strain` | Per-layer strain map (`kind="map"`) + strain histogram (`kind="plot"`) + detrend diagnostic 3-panel (`kind="plot"`) |
-| `mosaicity` | Per-layer per-dataset map + histogram for each χ/μ CoM and FWHM dataset |
+| `mosaicity` | Per-layer per-dataset map + histogram for each χ/μ CoM and FWHM dataset, plus a detrend diagnostic 3-panel (`kind="plot"`) per detrended layer when a detrend box was ticked |
 | `rocking` | Per-layer maps for sum intensity and specific-frame intensity |
 | `visualize` | Per-layer maps for all aligned datasets |
 | `slices` | One map per plane per volume (`kind="map"`) |

@@ -85,6 +85,34 @@ def test_summarize_mosaicity_shows_skip_reasons():
     assert "skipped: 1" not in text
 
 
+def test_summarize_mosaicity_reports_the_detrend():
+    result = MosaicityResult(
+        stacked_path="/proc/stacked_volumes.h5",
+        datasets={"/chi/Center of mass": (2, 4, 5), "/mu/Center of mass": (2, 4, 5)},
+        layers=["lay1", "lay2"],
+        maps_paths=["/proc/lay1/maps.h5", "/proc/lay2/maps.h5"],
+        detrend_layers={"/chi/Center of mass": [(0, 0)]},
+        detrend_plots=["/proc/mosaicity_detrend/lay1_chi_com_detrend_diag.png"],
+        detrend_dir="/proc/mosaicity_detrend",
+        notes=["lay2: χ COM has too few finite pixels to fit a trend — stored as read"],
+    )
+    assert result.detrended == ["/chi/Center of mass"]
+    text = _summarize("mosaicity", result)
+    assert "detrended: χ COM" in text
+    assert "μ COM" not in text.split("detrended:")[1].splitlines()[0]
+    assert "/proc/mosaicity_detrend" in text
+    assert "note: lay2: χ COM has too few finite pixels" in text
+
+
+def test_summarize_mosaicity_without_detrend_says_nothing_about_it():
+    result = MosaicityResult(
+        stacked_path="/proc/stacked_volumes.h5",
+        datasets={"/chi/Center of mass": (2, 4, 5)},
+        layers=["lay1", "lay2"],
+    )
+    assert "detrend" not in _summarize("mosaicity", result)
+
+
 def test_summarize_mosaicity_empty_reports_no_layers():
     text = _summarize("mosaicity", MosaicityResult(skipped=["lay1: no datasets"]))
     assert "no mosaicity layers produced" in text

@@ -27,9 +27,14 @@ from dataclasses import dataclass, field
 import h5py
 import numpy as np
 from matplotlib.figure import Figure
-from scipy.optimize import curve_fit
 
 from ..common import progress as _progress_mod
+from ..common.detrend import (
+    DETREND_DIAG_DPI,
+    DETREND_DIAG_FIGSIZE,
+    build_detrend_diag,
+    detrend_arctan_2d,
+)
 from ..common.errors import StageUserError
 from ..common.figures import FigureSpec, ReplotGroup, crop_roi_2d, register, resolve_clim
 from ..common.h5io import StackedVolumeFile
@@ -299,48 +304,6 @@ def cot(angle_rad):
     return np.cos(angle_rad) / np.sin(angle_rad)
 
 
-def _arctan_model(x, a, b, c, d):
-    return a * np.arctan(b * (x - c)) + d
-
-
-def _fit_arctan_1d(coords: np.ndarray, profile: np.ndarray):
-    mid = coords[len(coords) // 2]
-    p0 = [(profile[-1] - profile[0]) / np.pi, 4.0 / len(coords), mid, np.nanmedian(profile)]
-    bounds_lo = [-np.inf, 0.0, coords[0], -np.inf]
-    bounds_hi = [np.inf, np.inf, coords[-1], np.inf]
-    try:
-        popt, _ = curve_fit(
-            _arctan_model, coords, profile, p0=p0, bounds=(bounds_lo, bounds_hi), maxfev=20000
-        )
-    except RuntimeError:
-        popt = np.array(p0)
-    return popt
-
-
-def detrend_arctan_2d(map_2d: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """Separable 2-D arctan detrend; preserves the original absolute level."""
-    ny, nx = map_2d.shape
-    xs = np.arange(nx, dtype=float)
-    ys = np.arange(ny, dtype=float)
-    original_median = np.nanmedian(map_2d)
-
-    profile_x = np.nanmedian(map_2d, axis=0)
-    finite_x = np.isfinite(profile_x)
-    popt_x = _fit_arctan_1d(xs[finite_x], profile_x[finite_x])
-    arctan_x_1d_noc = _arctan_model(xs, *popt_x) - popt_x[3]
-    residual_1 = map_2d - arctan_x_1d_noc[np.newaxis, :]
-
-    profile_y = np.nanmedian(residual_1, axis=1)
-    finite_y = np.isfinite(profile_y)
-    popt_y = _fit_arctan_1d(ys[finite_y], profile_y[finite_y])
-    arctan_y_1d_noc = _arctan_model(ys, *popt_y) - popt_y[3]
-    residual_2 = residual_1 - arctan_y_1d_noc[:, np.newaxis]
-
-    residual_2 += original_median - np.nanmedian(residual_2)
-    surface = arctan_x_1d_noc[np.newaxis, :] + arctan_y_1d_noc[:, np.newaxis]
-    return residual_2, surface
-
-
 def apply_roi(map_2d: np.ndarray, roi: list | None) -> np.ndarray:
     if roi is None:
         return map_2d
@@ -552,15 +515,13 @@ def _plot_canvas_pixels(p: dict, layer_shape: tuple[int, ...]) -> int:
 # -----------------------------------------------------------------------------
 # Plotting (Figure/Agg API — no pyplot)
 # -----------------------------------------------------------------------------
-# The dpi each per-layer plot is saved at, and the detrend diagnostic's fixed
-# figure size. Constants rather than literals at the `savefig` calls because
-# `estimate()` sizes the same canvases (`plotting.canvas_pixels`) and a dpi
-# changed in one place only would silently re-open the under-prediction this
-# recalibration closed.
+# The dpi each per-layer plot is saved at. Constants rather than literals at the
+# `savefig` calls because `estimate()` sizes the same canvases
+# (`plotting.canvas_pixels`) and a dpi changed in one place only would silently
+# re-open the under-prediction this recalibration closed. The detrend
+# diagnostic's size and dpi live with its builder in `common/detrend.py`.
 STRAIN_MAP_DPI = 200
 STRAIN_HIST_DPI = 150
-DETREND_DIAG_DPI = 120
-DETREND_DIAG_FIGSIZE = (20, 6)
 
 
 def strain_map_geometry(
@@ -672,41 +633,6 @@ def build_strain_histogram(
     for calling ``fig.savefig``.
     """
     return build_histogram(data, title=title, xlabel=xlabel, style=style)
-
-
-def build_detrend_diag(
-    original: np.ndarray,
-    detrended: np.ndarray,
-    surface: np.ndarray,
-    *,
-    style: PlotStyle | None = None,
-) -> Figure:
-    """Build and return a 3-panel detrend-diagnostic Figure.
-
-    When *style* is ``None`` the legacy look is reproduced exactly. The caller
-    is responsible for calling ``fig.savefig``.
-    """
-    fig = styled_figure(DETREND_DIAG_FIGSIZE, styled=style is not None)
-    axes = fig.subplots(1, 3)
-    for ax, title, d in zip(
-        axes,
-        ["Original (after ROI)", "Arctan surface", "Detrended"],
-        [original, surface, detrended],
-    ):
-        valid = d[np.isfinite(d)]
-        if valid.size == 0:
-            continue
-        vlo, vhi = np.percentile(valid, [1, 99])
-        im = ax.imshow(
-            d, origin="lower", cmap=resolve_cmap(style, "strain"), vmin=vlo, vmax=vhi, aspect="auto"
-        )
-        ax.set_title(title)
-        if style is not None:
-            add_colorbar(fig, im, ax, title, style, group="strain")
-            apply_text_scale(ax, style)
-        else:
-            fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-    return fig
 
 
 # -----------------------------------------------------------------------------
