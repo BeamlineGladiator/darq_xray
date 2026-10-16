@@ -914,7 +914,10 @@ Per-pixel axial strain (cot method) from darfix `maps.h5`, then stacked into a
 - **Input:** `maps.h5` per layer folder (under the processed root).
 - **Output:** per-layer diagnostic PNGs (`strain_maps/`, or the chosen *Output
   dir*) + `stacked_strain_volumes.h5` (always written to the input/root
-  folder, regardless of *Output dir*).
+  folder, regardless of *Output dir*). The PNG folder is never mistaken for
+  a layer folder, even with the default pattern `*` and even after you
+  change *Output dir*: a folder holding strain PNGs but no `maps.h5` is
+  skipped silently.
 
 **Essentials:** mode, input/root folder, ROI, output dir
 

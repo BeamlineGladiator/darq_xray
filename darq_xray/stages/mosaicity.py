@@ -44,7 +44,7 @@ from ..common.figures import (
 )
 from ..common.h5io import StackedVolumeFile
 from ..common.plotting import build_histogram, style_from_params
-from ..common.sort import find_matching_folders, resolve_layer_work
+from ..common.sort import drop_plot_dirs, find_matching_folders, resolve_layer_work
 from ..config.models import CostEstimate, Param, ParamType, SeeAlso, StageSpec
 
 ProgressFn = Callable[[float, str], None]
@@ -91,32 +91,13 @@ def _plot_dir(p: dict, out_root: str) -> str:
 
 
 def _drop_plot_dirs(folders: list[str], p: dict, root: str) -> list[str]:
-    """*folders* without the detrend diagnostics folders.
-
-    Once a detrend run has created one inside the root, a broad folder pattern
-    — the stage's own default ``*`` — matches it like a layer folder: every
-    later run then reported it as a skipped layer, and the estimate sized
-    ``work[0]``, which sorts first, and came back unknown. Dropped: the
-    configured ``output_dir``, the default folder, and any folder that holds
-    diagnostics but no maps file — that last one is how a folder an EARLIER
-    run wrote to is recognised after ``Output dir`` has been changed.
-    """
-    plot_dirs = {os.path.realpath(os.path.join(root, DETREND_DIR))}
-    if p.get("output_dir"):
-        plot_dirs.add(os.path.realpath(p["output_dir"]))
-    maps_filename = str(p.get("maps_filename") or "maps.h5")
-
-    def is_plot_dir(folder: str) -> bool:
-        if os.path.realpath(folder) in plot_dirs:
-            return True
-        if os.path.exists(os.path.join(folder, maps_filename)):
-            return False
-        try:
-            return any(n.endswith("_detrend_diag.png") for n in os.listdir(folder))
-        except OSError:
-            return False
-
-    return [f for f in folders if not is_plot_dir(f)]
+    """*folders* without the detrend diagnostics folders (see :func:`drop_plot_dirs`)."""
+    return drop_plot_dirs(
+        folders,
+        plot_dirs=(os.path.join(root, DETREND_DIR), p.get("output_dir")),
+        maps_filename=str(p.get("maps_filename") or "maps.h5"),
+        markers=("_detrend_diag.png",),
+    )
 
 
 STAGE = StageSpec(

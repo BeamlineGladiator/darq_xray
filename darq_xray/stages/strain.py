@@ -57,7 +57,7 @@ from ..common.plotting import (
     styled_figure,
     symmetric_limits,
 )
-from ..common.sort import find_matching_folders, resolve_layer_work
+from ..common.sort import drop_plot_dirs, find_matching_folders, resolve_layer_work
 from ..config.models import CostEstimate, Param, ParamType, SeeAlso, StageSpec
 
 ProgressFn = Callable[[float, str], None]
@@ -420,6 +420,10 @@ def estimate(params: dict) -> CostEstimate:
     p = {**STAGE.defaults(), **params}
     try:
         work = resolve_layer_work(p, maps_filename=str(p["maps_filename"] or "maps.h5"))
+        if p["mode"] != "single":
+            root = (p["root_folder"] or "").rstrip("/")
+            kept = set(_drop_plot_dirs([os.path.dirname(w) for w in work], p, root))
+            work = [w for w in work if os.path.dirname(w) in kept]
         if not work:
             return CostEstimate(0, 0, None, True, "no layer folders resolved yet")
         ds_path = str(p["ccmth_com_path"])
@@ -680,6 +684,20 @@ def _derive_maps_path(layer_name: str, params: dict) -> str:
         return os.path.join(root, layer_name, maps_filename)
 
 
+# Default folder for the per-layer PNGs, inside the input/root folder.
+PLOTS_DIR = "strain_maps"
+
+
+def _drop_plot_dirs(folders: list[str], p: dict, root: str) -> list[str]:
+    """*folders* without the per-layer PNG folders (see :func:`drop_plot_dirs`)."""
+    return drop_plot_dirs(
+        folders,
+        plot_dirs=(os.path.join(root, PLOTS_DIR), p.get("output_dir")),
+        maps_filename=str(p.get("maps_filename") or "maps.h5"),
+        markers=("_strain.png", "_hist.png", "_detrend_diag.png"),
+    )
+
+
 def roi_previews(params: dict) -> list:
     """Return ``(label, thunk)`` pairs for the ROI picker — the CoM map + pixel scales.
 
@@ -701,6 +719,7 @@ def roi_previews(params: dict) -> list:
         else:
             root = (p.get("root_folder", "") or "").rstrip("/")
             folders = find_matching_folders(root, p.get("folder_pattern", "")) if root else []
+            folders = _drop_plot_dirs(folders, p, root)
             if not folders:
                 return []
             maps_path = _derive_maps_path(os.path.basename(folders[0].rstrip("/")), p)
@@ -973,7 +992,7 @@ def run(params: dict, progress: ProgressFn | None = None) -> StrainResult:
                     "switch Mode to 'single'."
                 ),
             )
-        folders = find_matching_folders(root, p["folder_pattern"])
+        folders = _drop_plot_dirs(find_matching_folders(root, p["folder_pattern"]), p, root)
         if not folders:
             raise StageUserError(
                 f"no folders matching {p['folder_pattern']!r} in {root}",
@@ -985,7 +1004,7 @@ def run(params: dict, progress: ProgressFn | None = None) -> StrainResult:
         work = [(os.path.basename(f), os.path.join(f, maps_filename)) for f in folders]
         default_out_root = root
 
-    out_dir = p["output_dir"] or os.path.join(default_out_root, "strain_maps")
+    out_dir = p["output_dir"] or os.path.join(default_out_root, PLOTS_DIR)
     result = StrainResult(output_dir=out_dir)
 
     stacked_path = os.path.join(default_out_root, p["stacked_filename"])
