@@ -11,6 +11,7 @@ from __future__ import annotations
 import glob
 import os
 import re
+from collections.abc import Iterable
 
 
 def natural_sort_key(s: str) -> list:
@@ -49,3 +50,41 @@ def resolve_layer_work(params: dict, *, maps_filename: str) -> list[str]:
         root = str(params.get("root_folder") or "").rstrip("/")
         folders = find_matching_folders(root, params.get("folder_pattern") or "*") if root else []
     return [os.path.join(f, maps_filename) for f in folders if f]
+
+
+def drop_plot_dirs(
+    folders: list[str],
+    *,
+    plot_dirs: Iterable[str | None],
+    maps_filename: str,
+    markers: tuple[str, ...],
+) -> list[str]:
+    """*folders* without a stage's own diagnostics folders.
+
+    A stage that writes its PNGs into a folder inside the root — strain's
+    ``strain_maps``, mosaicity's ``mosaicity_detrend`` — has that folder
+    matched by a broad folder pattern (both stages default to ``*``) on every
+    later run: it was reported as a skipped layer, counted in the estimate's
+    layer total, and, when it sorted first, sized as ``work[0]``.
+
+    A folder holding *maps_filename* is a layer and is always kept, even when
+    the output folder points at it. Of the rest, dropped: every folder in
+    *plot_dirs* (the default and the configured output folder; blank entries
+    are ignored), and any folder holding a file ending in one of *markers* —
+    that last one is how a folder an EARLIER run wrote to is recognised after
+    the output folder has been changed. A folder with neither is kept, so the
+    stage still reports a layer whose maps file is missing.
+    """
+    named = {os.path.realpath(d) for d in plot_dirs if d}
+
+    def is_plot_dir(folder: str) -> bool:
+        if os.path.exists(os.path.join(folder, maps_filename)):
+            return False
+        if os.path.realpath(folder) in named:
+            return True
+        try:
+            return any(n.endswith(markers) for n in os.listdir(folder))
+        except OSError:
+            return False
+
+    return [f for f in folders if not is_plot_dir(f)]

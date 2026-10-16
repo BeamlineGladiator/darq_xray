@@ -315,7 +315,12 @@ class StackedVolumeFile:
         return self._f
 
     def append(self, dataset_path: str, layer: np.ndarray) -> None:
-        """Add one 2-D layer to *dataset_path*, creating the dataset if needed."""
+        """Add one 2-D layer to *dataset_path*, creating the dataset if needed.
+
+        A leading ``/`` is dropped, so ``"/chi/x"`` and ``"chi/x"`` name the
+        same dataset here as they do in h5py.
+        """
+        dataset_path = dataset_path.lstrip("/")
         layer = np.asarray(layer)
         seen = self._shapes.setdefault(dataset_path, set())
         seen.add(tuple(layer.shape))
@@ -361,6 +366,20 @@ class StackedVolumeFile:
         f = self._require_open("set file attributes")
         for key, value in attrs.items():
             f.attrs[key] = value
+
+    def set_dataset_attrs(self, dataset_path: str, **attrs) -> None:
+        """Set attributes on one dataset already created by :meth:`append`.
+
+        Raises ``KeyError`` for a dataset this writer never appended to, rather
+        than letting h5py create nothing and the attribute vanish. A leading
+        ``/`` is dropped, as in :meth:`append`.
+        """
+        f = self._require_open(f"set attributes on {dataset_path!r}")
+        dataset_path = dataset_path.lstrip("/")
+        if dataset_path not in self._shapes:
+            raise KeyError(f"{dataset_path!r} has no layers in this file")
+        for key, value in attrs.items():
+            f[dataset_path].attrs[key] = value
 
     def close(self) -> None:
         """Flush, close and move the part file into place.

@@ -219,6 +219,79 @@ def test_batch_missing_maps_file_records_reason(tmp_path):
     assert res.skipped == ["layer__2: maps.h5 not found"]
 
 
+def _two_layer_root(tmp_path):
+    root = tmp_path / "root"
+    for name in ["layer__1", "layer__2"]:
+        _write_maps(str(root / name), _synthetic_ccmth(ny=16, nx=20))
+    return root
+
+
+def _run_star(root, **extra):
+    """A batch run with the stage's own default pattern, '*'."""
+    return S.run(
+        {
+            "mode": "batch",
+            "root_folder": str(root),
+            "folder_pattern": "*",
+            "ccmth_ref_deg": 7.144,
+            **extra,
+        }
+    )
+
+
+def _estimate_star(root, **extra):
+    return S.estimate({"mode": "batch", "root_folder": str(root), "folder_pattern": "*", **extra})
+
+
+def test_the_plot_folder_is_never_taken_for_a_layer(tmp_path):
+    """The default pattern '*' matches every subfolder of the root, including
+    the strain_maps/ a previous run left there."""
+    root = _two_layer_root(tmp_path)
+    _run_star(root)
+    assert (root / "strain_maps").is_dir()
+    again = _run_star(root, save_plots=False)
+    assert [lr.name for lr in again.layers] == ["layer__1", "layer__2"]
+    assert again.skipped == []
+    est = _estimate_star(root)
+    assert est.shape == (2, 16, 20), est.note
+
+
+@pytest.mark.parametrize("folder, output_dir", [("strain_maps", None), ("my_plots", "my_plots")])
+def test_an_empty_plot_folder_is_never_taken_for_a_layer(tmp_path, folder, output_dir):
+    """Recognised by name — the default folder, or the configured 'Output dir' —
+    before it holds a single PNG."""
+    root = _two_layer_root(tmp_path)
+    (root / folder).mkdir()
+    extra = {"output_dir": str(root / output_dir)} if output_dir else {}
+    res = _run_star(root, save_plots=False, **extra)
+    assert res.skipped == []
+    est = _estimate_star(root, **extra)
+    assert est.shape == (2, 16, 20), est.note
+
+
+def test_an_earlier_runs_plot_folder_is_never_taken_for_a_layer(tmp_path):
+    """The folder a PREVIOUS run wrote to stays out of the layer list after
+    'Output dir' has been changed or cleared — it is recognised by what it
+    holds, not by the current form value."""
+    root = _two_layer_root(tmp_path)
+    _run_star(root, output_dir=str(root / "a_plots"))
+    again = _run_star(root, save_plots=False)
+    assert [lr.name for lr in again.layers] == ["layer__1", "layer__2"]
+    assert again.skipped == []
+    est = _estimate_star(root)
+    assert est.shape == (2, 16, 20), est.note
+
+
+def test_the_roi_preview_skips_the_plot_folder(tmp_path):
+    """'strain_maps' sorts before 'z_layer', so the preview used to look for a
+    maps.h5 inside the plot folder and offer nothing."""
+    root = tmp_path / "root"
+    _write_maps(str(root / "z_layer"), _synthetic_ccmth(ny=16, nx=20))
+    (root / "strain_maps").mkdir()
+    previews = S.roi_previews({"mode": "batch", "root_folder": str(root), "folder_pattern": "*"})
+    assert [label for label, _thunk in previews] == ["CoM map · maps.h5"]
+
+
 def test_detrend_runs_before_roi(tmp_path):
     """ROI must crop the detrended map, not detrend a pre-cropped map."""
     ccmth = _synthetic_ccmth()

@@ -12,13 +12,22 @@ axis) into ``stacked_volumes.h5`` with the structure::
 A folder is included if at least one of its four maps is present (matching the
 legacy behaviour); each output volume stacks only the layers where its map
 existed.
+
+Optionally (``detrend_chi_com`` / ``detrend_mu_com``, both off by default) the
+χ and/or μ centre-of-mass map of every layer is detrended before stacking with
+the same separable 2-D arctan fit strain applies to ccmth
+(:mod:`darq_xray.common.detrend`). The detrended map replaces the stored one,
+marked by a ``detrend`` attribute on its dataset, and a 3-panel diagnostic PNG
+is written per layer.
 """
 
 from __future__ import annotations
 
+import gc
 import os
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from typing import NamedTuple
 
 import h5py
 import numpy as np
@@ -34,8 +43,8 @@ from ..common.figures import (
     volume_layer_specs,
 )
 from ..common.h5io import StackedVolumeFile
-from ..common.plotting import build_histogram
-from ..common.sort import find_matching_folders, resolve_layer_work
+from ..common.plotting import build_histogram, style_from_params
+from ..common.sort import drop_plot_dirs, find_matching_folders, resolve_layer_work
 from ..config.models import CostEstimate, Param, ParamType, SeeAlso, StageSpec
 
 ProgressFn = Callable[[float, str], None]
@@ -52,6 +61,43 @@ _DATASETS = (
     ("mu_com_path", "/entry/mu/Center of mass/Center of mass", "mu", "Center of mass"),
     ("mu_fwhm_path", "/entry/mu/FWHM/FWHM", "mu", "FWHM"),
 )
+
+
+class _Detrendable(NamedTuple):
+    toggle: str  # the BOOL param that switches it on
+    src_param: str  # the param holding its HDF5 path inside maps.h5
+    out_key: str  # its dataset in stacked_volumes.h5
+    label: str
+
+
+# The detrendable maps. Only the centre-of-mass maps — a FWHM is a width, not a
+# tilt, and a background gradient across the field of view is not what
+# broadens it. Filename stems come from `_KEY_STEM`, like every other figure.
+_DETREND = (
+    _Detrendable("detrend_chi_com", "chi_com_path", "/chi/Center of mass", "χ COM"),
+    _Detrendable("detrend_mu_com", "mu_com_path", "/mu/Center of mass", "μ COM"),
+)
+
+# Output key -> label, for the GUI's result summary.
+DETREND_LABELS: dict[str, str] = {d.out_key: d.label for d in _DETREND}
+
+# Default folder for the detrend diagnostic PNGs, inside the input/root folder.
+DETREND_DIR = "mosaicity_detrend"
+
+
+def _plot_dir(p: dict, out_root: str) -> str:
+    """Where the detrend diagnostics go: ``output_dir``, else ``<out_root>/mosaicity_detrend``."""
+    return p["output_dir"] or os.path.join(out_root, DETREND_DIR)
+
+
+def _drop_plot_dirs(folders: list[str], p: dict, root: str) -> list[str]:
+    """*folders* without the detrend diagnostics folders (see :func:`drop_plot_dirs`)."""
+    return drop_plot_dirs(
+        folders,
+        plot_dirs=(os.path.join(root, DETREND_DIR), p.get("output_dir")),
+        maps_filename=str(p.get("maps_filename") or "maps.h5"),
+        markers=("_detrend_diag.png",),
+    )
 
 
 STAGE = StageSpec(
@@ -158,7 +204,11 @@ STAGE = StageSpec(
             "output_dir",
             ParamType.DIR,
             "Output dir",
-            help="Where stacked_volumes.h5 is written (blank = the input/root folder).",
+            help=(
+                "Where the detrend diagnostic PNGs go (default: a mosaicity_detrend folder in the"
+                " input/root folder). stacked_volumes.h5 is always written to the input/root"
+                " folder, not here."
+            ),
         ),
         Param(
             "stacked_filename",
@@ -182,6 +232,33 @@ STAGE = StageSpec(
             group="Output",
             help="HDF5 compression for the volume: gzip (small, slower), lzf (fast, larger), none.",
         ),
+        Param(
+            "detrend_chi_com",
+            ParamType.BOOL,
+            "Detrend χ COM",
+            default=False,
+            advanced=True,
+            group="Detrend",
+            help=(
+                "Remove a slowly varying background (e.g. sample bending) from each layer's χ"
+                " centre-of-mass map before stacking — the separable 2-D arctan fit strain applies"
+                " to ccmth, on the full map, keeping its median level. The stored χ CoM is then"
+                " the detrended map, so every later stage uses it; a diagnostic PNG per layer"
+                " goes to 'Output dir'."
+            ),
+        ),
+        Param(
+            "detrend_mu_com",
+            ParamType.BOOL,
+            "Detrend μ COM",
+            default=False,
+            advanced=True,
+            group="Detrend",
+            help=(
+                "Same as 'Detrend χ COM', for the μ centre-of-mass map. The FWHM maps are never"
+                " detrended."
+            ),
+        ),
     ),
     see_also=(
         SeeAlso(
@@ -199,10 +276,27 @@ class MosaicityResult:
     datasets: dict[str, tuple[int, ...]] = field(default_factory=dict)
     layers: list[str] = field(default_factory=list)
     skipped: list[str] = field(default_factory=list)
+    # The maps.h5 each entry of `layers` was read from, so figures() can rebuild
+    # the detrend diagnostic without re-deriving the folder from its name.
+    maps_paths: list[str] = field(default_factory=list)
+    # Per output key (e.g. "/chi/Center of mass"), one `(z, layer_index)` per
+    # detrended map: `z` is the slice in THAT dataset — which stacks only the
+    # layers carrying its map, so it can trail the layer index — and
+    # `layer_index` points into `layers`/`maps_paths`.
+    detrend_layers: dict[str, list[tuple[int, int]]] = field(default_factory=dict)
+    detrend_plots: list[str] = field(default_factory=list)
+    detrend_dir: str = ""
+    # Non-fatal remarks, e.g. a map too sparse to fit a trend to.
+    notes: list[str] = field(default_factory=list)
 
     @property
     def n_layers(self) -> int:
         return len(self.layers)
+
+    @property
+    def detrended(self) -> list[str]:
+        """Output keys holding at least one detrended slice, χ before μ."""
+        return [d.out_key for d in _DETREND if self.detrend_layers.get(d.out_key)]
 
 
 # Per-key display metadata (cmap, colorbar label, title prefix).
@@ -244,9 +338,85 @@ def _streamed_clim(dataset) -> tuple[float, float]:
     return vmin, vmax
 
 
+def _detrend_map(raw: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Detrend one CoM map in float64; return ``(detrended in raw's dtype, surface)``.
+
+    The stored map keeps the source dtype, so a float32 maps.h5 still yields a
+    float32 volume and the estimator's itemsize stays the source's own.
+    """
+    from ..common.detrend import detrend_arctan_2d
+
+    detrended, surface = detrend_arctan_2d(np.asarray(raw, dtype=np.float64))
+    return detrended.astype(raw.dtype, copy=False), surface
+
+
+def _detrend_diag(raw, detrended, surface, style):
+    """The 3-panel diagnostic for one map, coloured with the mosaicity CoM group.
+
+    The one place run() and figures() build it, so the PNG and the figure-list
+    entry cannot drift apart.
+    """
+    from ..common.detrend import build_detrend_diag
+
+    return build_detrend_diag(
+        raw, detrended, surface, style=style, group="mosa_com", original_title="Original"
+    )
+
+
+def _build_detrend(maps_path: str, src_path: str, label: str, style):
+    """Rebuild one layer's detrend diagnostic from its source maps.h5."""
+    from ..common.detrend import can_detrend
+
+    if not os.path.exists(maps_path):
+        raise FileNotFoundError(
+            f"source maps.h5 not found; the detrend diagnostic needs the original input"
+            f" (looked for {maps_path!r})"
+        )
+    with h5py.File(maps_path, "r") as f:
+        raw = _read_dataset(f, src_path)
+    if raw is None:
+        raise KeyError(f"{src_path!r} not in {maps_path!r}")
+    if not can_detrend(raw):
+        raise ValueError(f"{label} in {maps_path!r} {_unfittable(raw)}")
+    detrended, surface = _detrend_map(raw)
+    return _detrend_diag(raw, detrended, surface, style)
+
+
+def _unfittable(raw: np.ndarray) -> str:
+    """Why ``can_detrend`` refused *raw*, as the end of a sentence about the map."""
+    if raw.ndim != 2:
+        return f"is not a 2-D map (shape {tuple(raw.shape)})"
+    return "has too few finite pixels to fit a trend"
+
+
+def _detrend_specs(result: "MosaicityResult", params: dict) -> list[FigureSpec]:
+    """One ``plot`` FigureSpec per detrended layer per detrended quantity."""
+    p = {**STAGE.defaults(), **params}
+    specs: list[FigureSpec] = []
+    for d in _DETREND:
+        stem = _KEY_STEM[d.out_key]
+        for z, i in result.detrend_layers.get(d.out_key, []):
+            name, maps_path = result.layers[i], result.maps_paths[i]
+
+            def build(style, _mp=maps_path, _src=str(p[d.src_param]), _label=d.label):
+                return _build_detrend(_mp, _src, _label, style)
+
+            specs.append(
+                FigureSpec(
+                    figure_id=f"{stem}_detrend_z{z:04d}",
+                    title=f"{d.label} detrend diagnostic — {name}",
+                    kind="plot",
+                    filename=f"{name}_{stem}_detrend_diag",
+                    build=build,
+                )
+            )
+    return specs
+
+
 @register("mosaicity")
 def figures(result: "MosaicityResult", params: dict) -> list[FigureSpec]:
-    """Return one ``map`` + one ``plot`` (histogram) FigureSpec per Z layer per dataset key."""
+    """Return one ``map`` + one ``plot`` (histogram) FigureSpec per Z layer per dataset key,
+    plus one detrend diagnostic per detrended layer."""
     if not result.stacked_path or not result.datasets:
         return []
 
@@ -323,6 +493,7 @@ def figures(result: "MosaicityResult", params: dict) -> list[FigureSpec]:
                 )
             )
 
+    specs.extend(_detrend_specs(result, params))
     return specs
 
 
@@ -426,6 +597,27 @@ MOSAICITY_PROCESS_FLOOR_BYTES = 96 * 1024 * 1024
 # as the dataset-count-independent remainder, **1.77 layers** at both shapes.
 MOSAICITY_WRITER_LAYERS = 3
 
+# --- The optional χ/μ detrend, measured 2026-10-16 ----------------------------
+#
+# Charged once, whether one box or both is ticked: the two maps are detrended
+# one after the other and `run()` collects each diagnostic figure before the
+# next (without that, ticking both measured up to 38 MiB above ticking one).
+# Measured with `tests/peak_rss.py` over four layer shapes spanning 16x
+# (0.262 M to 4.194 M elements), float32 and float64, with and without the
+# publication style: chi-only and chi+mu peaks agree within 2 MiB everywhere.
+
+# What the first detrend adds regardless of size: scipy.optimize's import and
+# the diagnostic's fixed 20x6 in, 120 dpi Agg canvas (the style cannot grow it).
+# Measured as the detrend-on minus detrend-off intercept: 48.5 MiB (float32),
+# 48.6 (float64), 51.0 (float64, styled).
+MOSAICITY_DETREND_PROCESS_BYTES = 64 * 1024 * 1024
+
+# Per element of one layer: the float64 working copy, the fit's residuals and
+# surface, `np.nanmedian`'s copies, and the three `imshow` normalisations.
+# Measured slope 37.6 B/elem (float32) and 43.4 (float64, plain and styled);
+# 56 is seven float64 copies, the same figure strain charges for its chain.
+MOSAICITY_DETREND_BYTES_PER_ELEM = 56
+
 
 def _elems(shape: tuple[int, ...]) -> int:
     """Element count of *shape*; 0 for the empty tuple (no dataset seen yet)."""
@@ -471,6 +663,10 @@ def estimate(params: dict) -> CostEstimate:
     p = {**STAGE.defaults(), **params}
     try:
         work = resolve_layer_work(p, maps_filename=str(p["maps_filename"] or "maps.h5"))
+        if p["mode"] != "single":
+            root = (p["root_folder"] or "").rstrip("/")
+            kept = set(_drop_plot_dirs([os.path.dirname(w) for w in work], p, root))
+            work = [w for w in work if os.path.dirname(w) in kept]
         if not work:
             return CostEstimate(0, 0, None, True, "no layer folders resolved yet")
         present = 0
@@ -503,6 +699,10 @@ def estimate(params: dict) -> CostEstimate:
     peak_bytes = MOSAICITY_PROCESS_FLOOR_BYTES + (present + MOSAICITY_WRITER_LAYERS) * (
         layer_elems * itemsize
     )
+    if any(p.get(d.toggle) for d in _DETREND):
+        peak_bytes += MOSAICITY_DETREND_PROCESS_BYTES + MOSAICITY_DETREND_BYTES_PER_ELEM * (
+            layer_elems
+        )
     return CostEstimate(
         peak_bytes,
         input_bytes,
@@ -543,7 +743,7 @@ def run(params: dict, progress: ProgressFn | None = None) -> MosaicityResult:
                     "'Root folder', or switch Mode to 'single'."
                 ),
             )
-        folders = find_matching_folders(root, p["folder_pattern"])
+        folders = _drop_plot_dirs(find_matching_folders(root, p["folder_pattern"]), p, root)
         if not folders:
             raise StageUserError(
                 f"no folders matching {p['folder_pattern']!r} in {root}",
@@ -559,6 +759,20 @@ def run(params: dict, progress: ProgressFn | None = None) -> MosaicityResult:
     stacked_path = os.path.join(default_out_root, p["stacked_filename"])
     LAYERS_HI = 0.95
     result = MosaicityResult()
+
+    to_detrend = [d for d in _DETREND if p[d.toggle]]
+    if to_detrend:
+        from ..common.detrend import DETREND_DIAG_DPI, can_detrend
+
+        style = style_from_params(p)
+        result.detrend_dir = _plot_dir(p, default_out_root)
+    # With a detrend ticked, the reads give up half their share of the layer to
+    # it: the arctan fits and the diagnostic render are the slow step then.
+    read_hi = 0.3 if to_detrend else 0.6
+    # Slices appended so far per output key — a dataset stacks only the layers
+    # carrying its map, so its Z can trail the layer index.
+    z_next: dict[str, int] = {}
+    plot_error: OSError | None = None
 
     with StackedVolumeFile(stacked_path, compression=compression) as out:
         # Entry AND completion per layer, plus a report before the stacked
@@ -583,13 +797,75 @@ def run(params: dict, progress: ProgressFn | None = None) -> MosaicityResult:
                     data = {}
                     for di, (key, path) in enumerate(config.items()):
                         data[key] = _read_dataset(f, path)
-                        lp(0.6 * (di + 1) / max(1, len(config)), f"mosaicity: {name} {key}")
+                        lp(read_hi * (di + 1) / max(1, len(config)), f"mosaicity: {name} {key}")
             except OSError as exc:
                 result.skipped.append(f"{name}: {exc}")
                 continue
             if all(v is None for v in data.values()):
                 result.skipped.append(f"{name}: no datasets")
                 continue
+            layer_idx = len(result.layers)
+            for ki, d in enumerate(to_detrend):
+                # Two reports per map — the fit and the diagnostic render are
+                # each a slow step — and both fire whatever the map turns out
+                # to be, so the bar's granularity does not depend on the data.
+                k_lo, k_hi = _progress_mod.slice_for(ki, len(to_detrend), read_hi, 0.6)
+                k_mid = 0.5 * (k_lo + k_hi)
+                raw = data[d.src_param]
+                fitted = None
+                if raw is None:
+                    lp(k_mid, f"mosaicity: {name} no {d.label} to detrend")
+                elif not can_detrend(raw):
+                    result.notes.append(f"{name}: {d.label} {_unfittable(raw)} — stored as read")
+                    lp(k_mid, f"mosaicity: {name} could not detrend {d.label}")
+                else:
+                    # `can_detrend` is necessary, not sufficient (a column of
+                    # infs passes it), and a detrend is an option on top of the
+                    # stacking: a map the fit chokes on loses its detrend, never
+                    # the whole volume.
+                    try:
+                        fitted = _detrend_map(raw)
+                    except (ValueError, IndexError, TypeError, ArithmeticError) as exc:
+                        result.notes.append(
+                            f"{name}: {d.label} trend fit failed ({type(exc).__name__}: {exc})"
+                            " — stored as read"
+                        )
+                    what = "detrended" if fitted is not None else "could not detrend"
+                    lp(k_mid, f"mosaicity: {name} {what} {d.label}")
+                if fitted is not None:
+                    detrended, surface = fitted
+                    data[d.src_param] = detrended
+                    z = z_next.get(d.out_key, 0)
+                    result.detrend_layers.setdefault(d.out_key, []).append((z, layer_idx))
+                    if plot_error is None:
+                        png = os.path.join(
+                            result.detrend_dir,
+                            f"{name}_{_KEY_STEM[d.out_key]}_detrend_diag.png",
+                        )
+                        try:
+                            os.makedirs(result.detrend_dir, exist_ok=True)
+                            _detrend_diag(raw, detrended, surface, style).savefig(
+                                png, dpi=DETREND_DIAG_DPI, bbox_inches="tight", facecolor="white"
+                            )
+                            result.detrend_plots.append(png)
+                        except OSError as exc:
+                            # The diagnostics are a by-product: an unwritable
+                            # folder costs them, not the volume. Said once and
+                            # not retried — every later layer would fail the
+                            # same way, after a second-long render each.
+                            plot_error = exc
+                            result.notes.append(f"detrend diagnostics not saved: {exc}")
+                    del fitted, detrended, surface
+                    # A Figure and its artists form reference cycles, so the
+                    # diagnostic just saved — its canvas and the three maps it
+                    # drew — outlives this scope until the cyclic collector
+                    # happens to run. Collect now, or ticking both boxes peaks
+                    # with the χ figure still alive while the μ one renders.
+                    gc.collect()
+                # Not `del`: the name must not keep this layer's raw map alive
+                # into the next layer's reads, whichever branch ran.
+                raw = None
+                lp(k_hi, f"mosaicity: {name} {d.label} detrend done")
             # Appending a map to the stacked file is a write per key, and it is
             # the other half of a layer's cost. Reporting only the reads left
             # the whole write in one jump — 0.2 of a one-layer run's entire bar,
@@ -598,6 +874,8 @@ def run(params: dict, progress: ProgressFn | None = None) -> MosaicityResult:
                 if arr is not None:
                     group_name, ds_name = routing[key]
                     out.append(f"{group_name}/{ds_name}", arr)
+                    out_key = f"/{group_name}/{ds_name}"
+                    z_next[out_key] = z_next.get(out_key, 0) + 1
                     what = "wrote"
                 else:
                     # `_read_dataset` returns None for a path this maps.h5 does
@@ -610,6 +888,7 @@ def run(params: dict, progress: ProgressFn | None = None) -> MosaicityResult:
                 lp(0.6 + 0.4 * (wi + 1) / max(1, len(data)), f"mosaicity: {name} {what} {key}")
             del data
             result.layers.append(name)
+            result.maps_paths.append(maps_path)
             progress(lay_hi, f"mosaicity: {name} done")
 
         if not result.layers:
@@ -620,6 +899,14 @@ def run(params: dict, progress: ProgressFn | None = None) -> MosaicityResult:
         for ds_path in out.datasets():
             result.datasets[f"/{ds_path}"] = out.shape(ds_path)
         progress(LAYERS_HI, "writing stacked volume")
+        # `detrended_z` names exactly the slices that were detrended: a map
+        # the fit refused is stacked as read, so the method attribute alone
+        # would claim the whole volume.
+        for out_key in result.detrended:
+            zs = [z for z, _layer in result.detrend_layers[out_key]]
+            out.set_dataset_attrs(
+                out_key, detrend="arctan_2d", detrended_z=np.asarray(zs, dtype=np.int64)
+            )
         out.set_attrs(
             num_layers=len(result.layers),
             source_folders="\n".join(result.layers),
@@ -639,6 +926,13 @@ def _main(argv: list[str] | None = None) -> int:
     ap.add_argument("--input-folder", default="")
     ap.add_argument("--root-folder", default="")
     ap.add_argument("--folder-pattern", default="*")
+    ap.add_argument("--detrend-chi-com", action="store_true", help="detrend each χ CoM map")
+    ap.add_argument("--detrend-mu-com", action="store_true", help="detrend each μ CoM map")
+    ap.add_argument(
+        "--output-dir",
+        default="",
+        help=f"detrend diagnostics folder (default: <root>/{DETREND_DIR})",
+    )
     args = ap.parse_args(argv)
     res = run(
         dict(
@@ -646,10 +940,17 @@ def _main(argv: list[str] | None = None) -> int:
             input_folder=args.input_folder,
             root_folder=args.root_folder,
             folder_pattern=args.folder_pattern,
+            detrend_chi_com=args.detrend_chi_com,
+            detrend_mu_com=args.detrend_mu_com,
+            output_dir=args.output_dir,
         ),
         progress=lambda f, m: print(f"  [{f * 100:5.1f}%] {m}"),
     )
     print(f"\n{res.n_layers} layers; stacked -> {res.stacked_path}; datasets {list(res.datasets)}")
+    if res.detrended:
+        print(f"detrended {', '.join(res.detrended)}; diagnostics -> {res.detrend_dir}")
+    for note in res.notes:
+        print(f"note: {note}")
     return 0
 
 

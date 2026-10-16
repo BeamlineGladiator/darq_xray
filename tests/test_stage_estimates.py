@@ -207,6 +207,24 @@ def test_mosaicity_each_present_dataset_costs_exactly_one_layer(tmp_path):
     assert steps == [H * W * 4] * 3, f"per-dataset step is not one layer: {steps}"
 
 
+def test_mosaicity_detrend_is_charged_once_and_only_when_ticked(tmp_path):
+    """The χ and μ detrends run one after the other, so ticking both costs the
+    same as ticking one; ticking neither must leave the measured model untouched."""
+    from darq_xray.stages import mosaicity
+    from darq_xray.stages.mosaicity import estimate
+
+    root = _make_layers(tmp_path, n_layers=3, dtype="float32", mosa=True)
+    off = estimate(_mosa_params(root)).peak_bytes
+    assert off == mosaicity.MOSAICITY_PROCESS_FLOOR_BYTES + (
+        4 + mosaicity.MOSAICITY_WRITER_LAYERS
+    ) * (H * W * 4)
+    chi = estimate(_mosa_params(root, detrend_chi_com=True)).peak_bytes
+    mu = estimate(_mosa_params(root, detrend_mu_com=True)).peak_bytes
+    both = estimate(_mosa_params(root, detrend_chi_com=True, detrend_mu_com=True)).peak_bytes
+    assert chi > off
+    assert chi == mu == both
+
+
 def test_mosaicity_peak_does_not_grow_with_the_layer_count(tmp_path):
     """Measured flat: 176.1 MiB at one layer, 194.1 at four, eight and sixteen.
 

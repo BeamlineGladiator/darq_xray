@@ -1260,8 +1260,16 @@ def _summarize_mosaicity(result) -> str:
         lines = [f"layers: {result.n_layers}", f"stacked: {result.stacked_path}"]
         for key, shape in result.datasets.items():
             lines.append(f"  {key}: {shape}")
+        detrended = getattr(result, "detrended", [])
+        if detrended:
+            from darq_xray.stages.mosaicity import DETREND_LABELS
+
+            names = ", ".join(DETREND_LABELS.get(k, k) for k in detrended)
+            lines.append(f"detrended: {names} (arctan)")
+            lines.append(f"  diagnostics: {result.detrend_dir}")
     else:
         lines = ["no mosaicity layers produced"]
+    lines += [f"note: {n}" for n in getattr(result, "notes", [])]
     lines += [f"skipped: {s}" for s in result.skipped]
     return "\n".join(lines)
 

@@ -409,6 +409,20 @@ def test_mosaicity_progress_is_smooth_with_one_layer(tmp_path):
     assert not any("wrote mu_fwhm_path" in t for _, t in seen), [t for _, t in seen]
 
 
+def test_mosaicity_detrend_progress_is_smooth_with_one_layer(tmp_path):
+    """The fit and the diagnostic render are two slow steps per map, so each
+    reports: one report per map left a single-box, one-layer run silent for
+    0.285 of the whole bar."""
+    import tests.test_stage_mosaicity as T
+    from darq_xray.stages import mosaicity
+
+    root = T._trended_root(tmp_path, n=1)
+    params = {"mode": "batch", "root_folder": str(root), "folder_pattern": "layer__*"}
+    for ticked in ({"detrend_chi_com": True}, {"detrend_chi_com": True, "detrend_mu_com": True}):
+        seen = trace(mosaicity.run, {**params, **ticked})
+        assert_progress_wellformed(seen, label=f"mosaicity detrend {sorted(ticked)}")
+
+
 def test_rocking_reports_per_layer_while_rendering(tmp_path):
     """`_render` must forward its sub-range into `save_layer_pngs`.
 
