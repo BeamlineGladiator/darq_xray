@@ -415,6 +415,34 @@ def test_an_earlier_runs_plot_folder_is_never_taken_for_a_layer(tmp_path):
     assert est.shape == (2, 16, 20), est.note
 
 
+# Every folder the app writes into the processed root, which is the root strain
+# and mosaicity search for layers: each stage's own PNG folder, the replot
+# dialogs' default, and visualize / slices / paraview beside the stacked files.
+APP_FOLDERS = (
+    "strain_maps",
+    "mosaicity_detrend",
+    "replots",
+    "aligned_volume_visualizations",
+    "oblique_slices",
+    "paraview_exports",
+)
+
+
+def test_no_folder_the_app_writes_is_taken_for_a_layer(tmp_path):
+    """'aligned_volume_visualizations' sorts before 'layer__1', so the estimate
+    sized it, as well as the run listing every one of these as a layer without
+    a maps.h5."""
+    root = _trended_root(tmp_path)
+    for name in APP_FOLDERS:
+        (root / name).mkdir()
+        (root / name / "something.dat").write_text("")
+    res = _run(root, folder_pattern="*")
+    assert res.layers == ["layer__1", "layer__2"]
+    assert res.skipped == []
+    est = M.estimate({"mode": "batch", "root_folder": str(root), "folder_pattern": "*"})
+    assert est.shape == (2, 16, 20), est.note
+
+
 def test_a_map_that_is_not_2d_says_so(tmp_path):
     root = tmp_path / "root"
     _write_trended(str(root / "layer__1"), 0, chi=np.ones((1, 16, 20)))

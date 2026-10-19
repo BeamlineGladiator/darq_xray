@@ -914,10 +914,12 @@ Per-pixel axial strain (cot method) from darfix `maps.h5`, then stacked into a
 - **Input:** `maps.h5` per layer folder (under the processed root).
 - **Output:** per-layer diagnostic PNGs (`strain_maps/`, or the chosen *Output
   dir*) + `stacked_strain_volumes.h5` (always written to the input/root
-  folder, regardless of *Output dir*). The PNG folder is never mistaken for
-  a layer folder, even with the default pattern `*` and even after you
-  change *Output dir*: a folder holding strain PNGs but no `maps.h5` is
-  skipped silently.
+  folder, regardless of *Output dir*). The folders DARQ itself writes into
+  the root — `strain_maps/`, `mosaicity_detrend/`, `replots/`,
+  `aligned_volume_visualizations/`, `oblique_slices/`, `paraview_exports/`,
+  and your *Output dir* — are never mistaken for layer folders, even with the
+  default pattern `*`. Nor is a folder holding strain PNGs but no `maps.h5`,
+  so an old *Output dir* stays out too after you change it.
 
 **Essentials:** mode, input/root folder, ROI, output dir
 
@@ -1083,10 +1085,11 @@ map's median level kept. The FWHM maps are never detrended.
 - For each layer, a 3-panel diagnostic (original / arctan surface / detrended)
   is saved as `<layer>_chi_com_detrend_diag.png` (or `…_mu_com_…`) in
   **Output dir**, coloured with the *Mosa misorientation* colormap. The same
-  diagnostic appears in the stage's figure list for **Export…**. A folder of
-  diagnostics (one holding `*_detrend_diag.png` but no `maps.h5`) is never
-  mistaken for a layer folder, even with the pattern `*` and even after you
-  change **Output dir**.
+  diagnostic appears in the stage's figure list for **Export…**. Neither
+  **Output dir** nor any folder DARQ writes into the root by default (listed
+  under [Axial strain](#2-axial-strain)) is mistaken for a layer folder, even with the pattern
+  `*`; nor is a folder of diagnostics (one holding `*_detrend_diag.png` but
+  no `maps.h5`) after you change **Output dir**.
 - A map the fit cannot handle — not 2-D, all NaN, fewer than four columns or
   rows of data, or values the fit chokes on (e.g. `inf`) — is stored **as read**, left
   out of `detrended_z`, and named in the Results summary as a `note:`. The run

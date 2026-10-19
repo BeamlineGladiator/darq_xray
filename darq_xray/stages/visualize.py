@@ -37,7 +37,7 @@ from ..common.figures import FigureSpec, register
 from ..common.h5io import sum_dataset_bytes
 from ..common.plotting import GROUP_BY_KIND, apply_round_clim, resolve_cmap, style_from_params
 from ..common.raster import extract_motor_positions
-from ..common.sort import find_matching_folders
+from ..common.sort import VISUALIZE_DIR, find_matching_folders
 from ..config.models import CostEstimate, Param, ParamType, SeeAlso, StageSpec
 
 ProgressFn = Callable[[float, str], None]
@@ -2004,10 +2004,8 @@ def _default_out_dir(p: dict) -> str:
     for key in ("mosa_volume_file", "strain_volume_file", *raw_params):
         path = str(p.get(key) or "")
         if path:
-            return os.path.abspath(
-                os.path.join(os.path.dirname(path), "aligned_volume_visualizations")
-            )
-    return os.path.abspath("aligned_volume_visualizations")
+            return os.path.abspath(os.path.join(os.path.dirname(path), VISUALIZE_DIR))
+    return os.path.abspath(VISUALIZE_DIR)
 
 
 def run(params: dict, progress: ProgressFn | None = None) -> VisualizeResult:

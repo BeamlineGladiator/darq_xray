@@ -292,6 +292,36 @@ def test_the_roi_preview_skips_the_plot_folder(tmp_path):
     assert [label for label, _thunk in previews] == ["CoM map · maps.h5"]
 
 
+# Every folder the app writes into the processed root, which is the root strain
+# and mosaicity search for layers: each stage's own PNG folder, the replot
+# dialogs' default, and visualize / slices / paraview beside the stacked files.
+APP_FOLDERS = (
+    "strain_maps",
+    "mosaicity_detrend",
+    "replots",
+    "aligned_volume_visualizations",
+    "oblique_slices",
+    "paraview_exports",
+)
+
+
+def test_no_folder_the_app_writes_is_taken_for_a_layer(tmp_path):
+    """'aligned_volume_visualizations' sorts before 'layer__1', so the estimate
+    sized it and the ROI preview looked in it, as well as the run listing every
+    one of these as a layer without a maps.h5."""
+    root = _two_layer_root(tmp_path)
+    for name in APP_FOLDERS:
+        (root / name).mkdir()
+        (root / name / "something.dat").write_text("")
+    res = _run_star(root, save_plots=False)
+    assert [lr.name for lr in res.layers] == ["layer__1", "layer__2"]
+    assert res.skipped == []
+    est = _estimate_star(root)
+    assert est.shape == (2, 16, 20), est.note
+    previews = S.roi_previews({"mode": "batch", "root_folder": str(root), "folder_pattern": "*"})
+    assert len(previews) == 1
+
+
 def test_detrend_runs_before_roi(tmp_path):
     """ROI must crop the detrended map, not detrend a pre-cropped map."""
     ccmth = _synthetic_ccmth()

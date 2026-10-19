@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
+from darq_xray.common.sort import REPLOTS_DIR
 from darq_xray.stages import profiles as _pr
 
 from .busy import DialogBatchRunner
@@ -113,7 +114,7 @@ class ProfilesReplotDialog(QDialog):
     def _default_out_for(self, h5_path: str) -> str:
         if not h5_path:
             return ""
-        return os.path.join(os.path.dirname(os.path.abspath(h5_path)), "replots", self._ts)
+        return os.path.join(os.path.dirname(os.path.abspath(h5_path)), REPLOTS_DIR, self._ts)
 
     # -- population -----------------------------------------------------------
     def _reload(self) -> None:

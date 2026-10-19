@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
+from darq_xray.common.sort import REPLOTS_DIR
 from darq_xray.stages import slices as _sl
 
 from .busy import DialogBatchRunner
@@ -119,7 +120,7 @@ class SliceReplotDialog(QDialog):
         """Default output dir = a timestamped subfolder beside the loaded h5."""
         if not h5_path:
             return ""
-        return os.path.join(os.path.dirname(os.path.abspath(h5_path)), "replots", self._ts)
+        return os.path.join(os.path.dirname(os.path.abspath(h5_path)), REPLOTS_DIR, self._ts)
 
     def _on_out_edited(self, _text: str) -> None:
         self._out_pinned = True

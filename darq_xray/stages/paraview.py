@@ -26,7 +26,7 @@ from ..common import alignment as A
 from ..common import progress as _progress_mod
 from ..common.h5io import sum_dataset_bytes
 from ..common.raster import extract_motor_positions
-from ..common.sort import find_matching_folders
+from ..common.sort import PARAVIEW_DIR, find_matching_folders
 from ..config.models import CostEstimate, Param, ParamType, StageSpec
 
 ProgressFn = Callable[[float, str], None]
@@ -1673,7 +1673,7 @@ def run(params: dict, progress: ProgressFn | None = None) -> ParaviewResult:
     roi_x, roi_y = _parse_pair(p["roi_x"]), _parse_pair(p["roi_y"])
 
     out_dir = p["output_dir"] or os.path.join(
-        os.path.dirname(p["mosa_volume_file"] or p["strain_volume_file"] or "."), "paraview_exports"
+        os.path.dirname(p["mosa_volume_file"] or p["strain_volume_file"] or "."), PARAVIEW_DIR
     )
     os.makedirs(out_dir, exist_ok=True)
     budget_bytes = _run_budget_bytes(p, out_dir)

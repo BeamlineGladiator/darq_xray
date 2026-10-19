@@ -34,6 +34,7 @@ from darq_xray.common.advisory import HINT_3D_TEXTURE
 from darq_xray.common.eta import EtaEstimator
 from darq_xray.common.figures import FigureSpec, figures_for
 from darq_xray.common.plotting import PlotStyle
+from darq_xray.common.sort import SLICES_DIR
 from darq_xray.config.models import Experiment, StageSpec
 from darq_xray.runner import Done, Failed, Log, Progress, StageRunner
 from darq_xray.stages.registry import STAGE_TARGETS
@@ -791,7 +792,7 @@ class StageView(QWidget):
             os.path.dirname(
                 vals.get("mosa_volume_file", "") or vals.get("strain_volume_file", "") or "."
             ),
-            "oblique_slices",
+            SLICES_DIR,
         )
         h5 = os.path.join(out_dir, vals.get("output_h5_name", "") or "oblique_slices.h5")
 
@@ -858,7 +859,7 @@ class StageView(QWidget):
             os.path.dirname(
                 vals.get("mosa_volume_file", "") or vals.get("strain_volume_file", "") or "."
             ),
-            "oblique_slices",
+            SLICES_DIR,
         )
         return os.path.join(out_dir, vals.get("output_h5_name", "") or "oblique_slices.h5")
 

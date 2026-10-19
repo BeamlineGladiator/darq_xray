@@ -59,7 +59,7 @@ from ..common.plotting import (
     styled_figure,
 )
 from ..common.raster import extract_motor_positions
-from ..common.sort import find_matching_folders
+from ..common.sort import SLICES_DIR, find_matching_folders
 from ..config.models import CostEstimate, Param, ParamType, SeeAlso, StageSpec
 
 ProgressFn = Callable[[float, str], None]
@@ -2165,7 +2165,7 @@ def run(params: dict, progress: ProgressFn | None = None) -> SlicesResult:
     roi_x, roi_y = _parse_pair(p["align_roi_x"]), _parse_pair(p["align_roi_y"])
 
     out_dir = p["output_dir"] or os.path.join(
-        os.path.dirname(p["mosa_volume_file"] or p["strain_volume_file"] or "."), "oblique_slices"
+        os.path.dirname(p["mosa_volume_file"] or p["strain_volume_file"] or "."), SLICES_DIR
     )
     result = SlicesResult(output_dir=out_dir)
 

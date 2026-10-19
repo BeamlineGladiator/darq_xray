@@ -14,6 +14,7 @@ from __future__ import annotations
 import os
 
 from darq_xray.common.roi import analysis_detector_window, format_pair, parse_pair
+from darq_xray.common.sort import SLICES_DIR
 from darq_xray.config.models import Experiment, StageSpec
 from darq_xray.stages import (
     concat,
@@ -59,7 +60,7 @@ _STRAIN_VOLUME = "stacked_strain_volumes.h5"
 _MOSA_VOLUME = "stacked_volumes.h5"
 _ALIGNED_ROCKING = "aligned_raw_rocking_volumes.h5"
 _ALIGNED_MOSA = "aligned_raw_mosa_volumes.h5"
-_SLICES_SUBDIR = "oblique_slices"
+_SLICES_SUBDIR = SLICES_DIR
 _SLICES_H5 = "oblique_slices.h5"
 
 

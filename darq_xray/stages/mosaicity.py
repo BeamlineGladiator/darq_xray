@@ -44,7 +44,12 @@ from ..common.figures import (
 )
 from ..common.h5io import StackedVolumeFile
 from ..common.plotting import build_histogram, style_from_params
-from ..common.sort import drop_plot_dirs, find_matching_folders, resolve_layer_work
+from ..common.sort import (
+    MOSAICITY_DETREND_DIR,
+    drop_output_dirs,
+    find_matching_folders,
+    resolve_layer_work,
+)
 from ..config.models import CostEstimate, Param, ParamType, SeeAlso, StageSpec
 
 ProgressFn = Callable[[float, str], None]
@@ -82,22 +87,12 @@ _DETREND = (
 DETREND_LABELS: dict[str, str] = {d.out_key: d.label for d in _DETREND}
 
 # Default folder for the detrend diagnostic PNGs, inside the input/root folder.
-DETREND_DIR = "mosaicity_detrend"
+DETREND_DIR = MOSAICITY_DETREND_DIR
 
 
 def _plot_dir(p: dict, out_root: str) -> str:
     """Where the detrend diagnostics go: ``output_dir``, else ``<out_root>/mosaicity_detrend``."""
     return p["output_dir"] or os.path.join(out_root, DETREND_DIR)
-
-
-def _drop_plot_dirs(folders: list[str], p: dict, root: str) -> list[str]:
-    """*folders* without the detrend diagnostics folders (see :func:`drop_plot_dirs`)."""
-    return drop_plot_dirs(
-        folders,
-        plot_dirs=(os.path.join(root, DETREND_DIR), p.get("output_dir")),
-        maps_filename=str(p.get("maps_filename") or "maps.h5"),
-        markers=("_detrend_diag.png",),
-    )
 
 
 STAGE = StageSpec(
@@ -663,10 +658,6 @@ def estimate(params: dict) -> CostEstimate:
     p = {**STAGE.defaults(), **params}
     try:
         work = resolve_layer_work(p, maps_filename=str(p["maps_filename"] or "maps.h5"))
-        if p["mode"] != "single":
-            root = (p["root_folder"] or "").rstrip("/")
-            kept = set(_drop_plot_dirs([os.path.dirname(w) for w in work], p, root))
-            work = [w for w in work if os.path.dirname(w) in kept]
         if not work:
             return CostEstimate(0, 0, None, True, "no layer folders resolved yet")
         present = 0
@@ -743,7 +734,7 @@ def run(params: dict, progress: ProgressFn | None = None) -> MosaicityResult:
                     "'Root folder', or switch Mode to 'single'."
                 ),
             )
-        folders = _drop_plot_dirs(find_matching_folders(root, p["folder_pattern"]), p, root)
+        folders = drop_output_dirs(find_matching_folders(root, p["folder_pattern"]), p, root)
         if not folders:
             raise StageUserError(
                 f"no folders matching {p['folder_pattern']!r} in {root}",
