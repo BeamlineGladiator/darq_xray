@@ -105,7 +105,7 @@ def panel_group_hint(panel) -> str | None:
         stage = src.selector.get("stage")
         if stage == "strain":
             return "strain"
-        if stage == "rocking":
+        if stage in ("rocking", "raw"):
             return "raw"
         if stage == "mosaicity":
             return "mosa_fwhm" if "FWHM" in str(src.selector.get("dataset", "")) else "mosa_com"

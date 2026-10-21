@@ -554,3 +554,107 @@ def test_draw_panel_greyscale_image_drawn_as_stored_not_contrast_stretched(tmp_p
     im = ax.images[0]
     assert im.get_array().ndim == 2
     assert im.get_clim() == (0.0, 1.0)
+
+
+# -- raw scan frames (map_layer stage="raw") ---------------------------------
+def _write_raw_scan(path):
+    """A bliss-like raw scan: the camera stack lives under instrument/ and
+    measurement/ holds a SOFT LINK to it (as ESRF ID03 files do)."""
+    stack = np.arange(3 * 32 * 40, dtype="u2").reshape(3, 32, 40)
+    with h5py.File(path, "w") as f:
+        f.create_dataset("/1.1/instrument/cam/image", data=stack)
+        f["/1.1/measurement/cam"] = h5py.SoftLink("/1.1/instrument/cam/image")
+        f.create_dataset("/1.1/measurement/mu", data=np.linspace(0, 1, 3))
+        f.create_dataset("/1.1/instrument/positioners/table", data=np.zeros((3, 2)))
+        f.create_dataset("/1.2/instrument/still/image", data=np.ones((24, 20), "f4"))
+        f["/1.2/measurement/dangling"] = h5py.SoftLink("/nowhere")
+    return str(path), stack
+
+
+def test_raw_scan_catalog_lists_image_stacks_once_preferring_measurement(tmp_path):
+    from darq_xray.compose.adapters import raw_scan_catalog
+
+    h5, _stack = _write_raw_scan(tmp_path / "scan.h5")
+    cat = raw_scan_catalog(h5)
+    got = [(e.path, e.shape, e.dtype) for e in cat]
+    # the soft-linked camera appears ONCE, under its measurement/ name; 1-D
+    # counters, thin 2-D tables and dangling links are not images
+    assert got == [
+        ("/1.1/measurement/cam", (3, 32, 40), "uint16"),
+        ("/1.2/instrument/still/image", (24, 20), "float32"),
+    ]
+    assert cat[0].n_frames == 3 and cat[1].n_frames == 1
+
+
+def test_raw_scan_catalog_refuses_a_bliss_master_file_naming_a_scan_file(tmp_path):
+    from darq_xray.compose.adapters import raw_scan_catalog
+
+    # the collection file only links to per-scan files; the targets need not
+    # even exist, because none of them may be opened (there are thousands)
+    master = tmp_path / "ma1234_coll.h5"
+    with h5py.File(master, "w") as f:
+        f["coll_0001_1.1"] = h5py.ExternalLink("coll_0001/coll_0001.h5", "/1.1")
+        f["coll_0001_2.1"] = h5py.ExternalLink("coll_0001/coll_0001.h5", "/2.1")
+    with pytest.raises(StageUserError) as info:
+        raw_scan_catalog(str(master))
+    assert "2 scan(s)" in str(info.value)
+    assert str(tmp_path / "coll_0001" / "coll_0001.h5") in info.value.hint
+
+
+def test_raw_scan_catalog_root_with_a_real_group_is_not_a_master_file(tmp_path):
+    from darq_xray.compose.adapters import raw_scan_catalog
+
+    h5, _ = _write_raw_scan(tmp_path / "scan.h5")
+    with h5py.File(h5, "a") as f:
+        f["elsewhere"] = h5py.ExternalLink("missing.h5", "/1.1")
+    assert [e.path for e in raw_scan_catalog(h5)] == [
+        "/1.1/measurement/cam",
+        "/1.2/instrument/still/image",
+    ]
+
+
+def test_load_map_layer_raw_frame_extents_group_and_clim(tmp_path):
+    h5, stack = _write_raw_scan(tmp_path / "scan.h5")
+    sel = {"stage": "raw", "dataset": "/1.1/measurement/cam", "z": 1, "sx": 0.5, "sy": 0.25}
+    d = load_panel(PanelDef("r", PanelSource(h5, "map_layer", sel)))
+    assert d.kind == "map_layer" and d.group == "raw"
+    np.testing.assert_array_equal(d.payload["layer"], stack[1].astype("f4"))
+    assert d.ext_x_um == pytest.approx(40 * 0.5) and d.ext_y_um == pytest.approx(32 * 0.25)
+    assert d.payload["cmap"] == "gray" and d.payload["title"] == "cam frame 1"
+    assert d.payload["cbar"] == "Intensity"  # the raw group's "arb" format adds the units
+    lo, hi = np.percentile(stack[1], (1.0, 99.0))
+    assert (d.vmin, d.vmax) == (pytest.approx(lo), pytest.approx(hi))
+    # the ROI crops the frame like any map, pixel sizes carry through
+    c = load_panel(PanelDef("c", PanelSource(h5, "map_layer", sel), roi=(4, 20, 10, 30)))
+    assert c.payload["layer"].shape == (16, 20)
+    assert c.ext_x_um == pytest.approx(20 * 0.5) and c.ext_y_um == pytest.approx(16 * 0.25)
+
+
+def test_load_map_layer_raw_2d_dataset_ignores_frame(tmp_path):
+    h5, _ = _write_raw_scan(tmp_path / "scan.h5")
+    sel = {"stage": "raw", "dataset": "/1.2/instrument/still/image", "z": 0, "sx": 1, "sy": 1}
+    d = load_panel(PanelDef("r", PanelSource(h5, "map_layer", sel)))
+    assert d.kind == "map_layer" and d.payload["layer"].shape == (24, 20)
+
+
+def test_load_map_layer_raw_frame_out_of_range_is_placeholder(tmp_path):
+    h5, _ = _write_raw_scan(tmp_path / "scan.h5")
+    for z in (3, -1):
+        sel = {"stage": "raw", "dataset": "/1.1/measurement/cam", "z": z, "sx": 1, "sy": 1}
+        d = load_panel(PanelDef("r", PanelSource(h5, "map_layer", sel)))
+        assert d.kind == "placeholder" and "frame" in d.payload["reason"]
+
+
+def test_load_map_layer_raw_needs_dataset(tmp_path):
+    h5, _ = _write_raw_scan(tmp_path / "scan.h5")
+    with pytest.raises(StageUserError):
+        load_panel(PanelDef("r", PanelSource(h5, "map_layer", {"stage": "raw", "z": 0})))
+
+
+def test_panel_preview_raw_frame_is_full_frame_with_selector_pixel_sizes(tmp_path):
+    from darq_xray.compose.adapters import panel_preview
+
+    h5, _ = _write_raw_scan(tmp_path / "scan.h5")
+    sel = {"stage": "raw", "dataset": "/1.1/measurement/cam", "z": 2, "sx": 0.5, "sy": 0.25}
+    arr, sx, sy = panel_preview(PanelDef("r", PanelSource(h5, "map_layer", sel), roi=(0, 5, 0, 5)))
+    assert arr.shape == (32, 40) and (sx, sy) == (0.5, 0.25)

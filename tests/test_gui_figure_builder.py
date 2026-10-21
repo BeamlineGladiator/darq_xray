@@ -145,6 +145,145 @@ def test_save_open_round_trip_and_dirty_state(tmp_path):
     assert w2.recipe().name == "r"
 
 
+# -- New recipe -----------------------------------------------------------------
+def _answer(monkeypatch, button: str) -> list:
+    """Stub the Save/Discard/Cancel prompt with *button*; returns the call log."""
+    from PySide6.QtWidgets import QMessageBox
+
+    asked: list = []
+
+    def fake(*args, **kwargs):
+        asked.append(args)
+        return getattr(QMessageBox.StandardButton, button)
+
+    monkeypatch.setattr(QMessageBox, "question", fake)
+    return asked
+
+
+def test_new_recipe_resets_to_a_fresh_untitled_recipe(tmp_path, monkeypatch):
+    from darq_xray.compose.recipe import ComposeStyle
+
+    live = PlotStyle(scale_um_per_cm=25.0)  # the app's session style, changed since opening
+    w = _track(
+        FigureBuilderWindow(
+            lambda: {}, PlotStyle(scale_um_per_cm=10.0), style_provider=lambda: live
+        )
+    )
+    w.add_panels([_panel("a")])
+    w.recipe().compose.gutter_cm = 1.5
+    w.save_recipe_file(str(tmp_path / "r.json"))  # clean, and it has a path
+    w._export_dir, w._export_stem = str(tmp_path), "old_fig"
+    w._tree.setCurrentItem(w._tree.topLevelItem(0).child(0))  # panel inspector showing
+    asked = _answer(monkeypatch, "Cancel")
+
+    w._new_btn.click()
+
+    assert asked == []  # nothing unsaved: no prompt
+    r = w.recipe()
+    assert r.name == "untitled" and r.panels == [] and r.layout == Row([])
+    assert r.compose == ComposeStyle()
+    assert not w.is_dirty() and w._current_path is None
+    assert w.windowTitle().endswith("(unsaved)")
+    # a COPY of the live session style, never the session object itself
+    assert w._style.scale_um_per_cm == 25.0 and w._style is not live
+    assert r.style["scale_um_per_cm"] == 25.0
+    # the next export must not be pre-named after the previous figure
+    assert w._export_stem is None and w._export_dir == str(tmp_path)
+    assert w._override_panel is None and w._inspector.currentWidget() is w._page_hint
+    assert w._tree.topLevelItem(0).childCount() == 0
+    assert w._notes_label.text() == "add panels to preview"
+
+
+def test_new_recipe_without_style_provider_uses_the_opening_style(monkeypatch):
+    w = _win()  # opened with scale_um_per_cm=10.0
+    w._style.scale_um_per_cm = 99.0  # edited in the Style pane
+    assert w.new_recipe() is True
+    assert w._style.scale_um_per_cm == 10.0
+
+
+def test_new_recipe_cancel_keeps_unsaved_work(monkeypatch):
+    w = _win()
+    w.add_panels([_panel("a")])
+    w._debounce.stop()
+    asked = _answer(monkeypatch, "Cancel")
+    assert w.new_recipe() is False
+    assert len(asked) == 1
+    assert [p.id for p in w.recipe().panels] == ["a"] and w.is_dirty()
+
+
+def test_new_recipe_discard_drops_unsaved_work(monkeypatch):
+    w = _win()
+    w.add_panels([_panel("a")])
+    _answer(monkeypatch, "Discard")
+    assert w.new_recipe() is True
+    assert w.recipe().panels == [] and not w.is_dirty()
+
+
+def test_new_recipe_save_writes_the_old_recipe_first(tmp_path, monkeypatch):
+    from darq_xray.compose.recipe import recipe_from_json
+
+    w = _win()
+    w.add_panels([_panel("a")])
+    path = tmp_path / "r.json"
+    w.save_recipe_file(str(path))
+    w.add_panels([_panel("b")])  # unsaved edit on a recipe that has a file
+    _answer(monkeypatch, "Save")
+    assert w.new_recipe() is True
+    saved = recipe_from_json(path.read_text(), base_dir=str(tmp_path))
+    assert [p.id for p in saved.panels] == ["a", "b"]
+    assert w.recipe().panels == []
+
+
+def test_new_recipe_failed_save_warns_and_keeps_unsaved_work(tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+
+    w = _win()
+    w.add_panels([_panel("a")])
+    w.save_recipe_file(str(tmp_path / "r.json"))
+    w.add_panels([_panel("b")])
+    w._debounce.stop()
+    w._current_path = str(tmp_path / "gone" / "r.json")  # its folder has vanished
+    warned: list = []
+    monkeypatch.setattr(QMessageBox, "warning", lambda *a, **k: warned.append(a[1]))
+    _answer(monkeypatch, "Save")
+    assert w.new_recipe() is False  # no traceback out of the slot
+    assert warned == ["Save failed"]
+    assert [p.id for p in w.recipe().panels] == ["a", "b"] and w.is_dirty()
+
+
+def test_new_recipe_save_as_cancelled_keeps_unsaved_work(monkeypatch):
+    from PySide6.QtWidgets import QFileDialog
+
+    w = _win()
+    w.add_panels([_panel("a")])  # never saved: Save goes through Save as…
+    w._debounce.stop()
+    _answer(monkeypatch, "Save")
+    monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *a, **k: ("", ""))
+    assert w.new_recipe() is False
+    assert [p.id for p in w.recipe().panels] == ["a"] and w.is_dirty()
+
+
+def test_open_recipe_asks_before_discarding_unsaved_work(tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QFileDialog
+
+    other = _win()
+    other.add_panels([_panel("x")])
+    path = str(tmp_path / "other.json")
+    other.save_recipe_file(path)
+
+    w = _win()
+    w.add_panels([_panel("a")])
+    w._debounce.stop()
+    monkeypatch.setattr(QFileDialog, "getOpenFileName", lambda *a, **k: (path, ""))
+    asked = _answer(monkeypatch, "Cancel")
+    w._on_open()
+    assert len(asked) == 1
+    assert [p.id for p in w.recipe().panels] == ["a"] and w.is_dirty()
+    _answer(monkeypatch, "Discard")
+    w._on_open()
+    assert [p.id for p in w.recipe().panels] == ["x"] and not w.is_dirty()
+
+
 def test_set_selected_label_on_spacer_is_a_noop():
     w = _win()
     w.add_spacer()
@@ -202,6 +341,62 @@ def test_panel_picker_pins_loaded_h5_path_not_live_field_text(tmp_path):
     panels = dlg._build_panels()
     assert panels
     assert panels[0].source.h5_path == str(h5)
+
+
+def test_panel_picker_raw_scan_lists_frames_and_applies_pixel_sizes(tmp_path):
+    import h5py
+    import numpy as np
+    from PySide6.QtCore import Qt
+
+    from darq_xray.gui.widgets.panel_picker import RAW_SCAN, AddPanelDialog
+
+    h5 = tmp_path / "scan.h5"
+    with h5py.File(h5, "w") as f:
+        f.create_dataset("/1.1/instrument/cam/image", data=np.zeros((3, 32, 40), "u2"))
+        f["/1.1/measurement/cam"] = h5py.SoftLink("/1.1/instrument/cam/image")
+    dlg = AddPanelDialog({RAW_SCAN: {"h5": str(h5), "sx": 0.5, "sy": 0.25, "jobs": []}})
+    assert dlg._px_row.isHidden()  # pixel-size fields belong to raw scans only
+    dlg._stage.setCurrentText(RAW_SCAN)
+    assert not dlg._px_row.isHidden()
+    assert (dlg._sx.value(), dlg._sy.value()) == (0.5, 0.25)
+    assert dlg._tree.topLevelItemCount() == 1
+    top = dlg._tree.topLevelItem(0)
+    assert top.childCount() == 3
+    top.child(1).setCheckState(0, Qt.CheckState.Checked)
+    dlg._sx.setValue(0.2)  # edited after Load: read when the panels are built
+    panels = dlg._build_panels()
+    assert len(panels) == 1
+    p = panels[0]
+    assert p.id == "raw_scan_0" and p.source.kind == "map_layer"
+    assert p.source.h5_path == str(h5)
+    assert p.source.selector == {
+        "stage": "raw",
+        "dataset": "/1.1/measurement/cam",
+        "z": 1,
+        "sx": 0.2,
+        "sy": 0.25,
+    }
+    assert p.title == "scan: /1.1/measurement/cam / frame 1"
+    dlg._stage.setCurrentText("slices")
+    assert dlg._px_row.isHidden()
+    # a stage round-trip keeps the edited calibration, not the pre-fill
+    dlg._stage.setCurrentText(RAW_SCAN)
+    assert (dlg._sx.value(), dlg._sy.value()) == (0.2, 0.25)
+
+
+def test_panel_picker_raw_scan_master_file_shows_the_hint(tmp_path):
+    import h5py
+
+    from darq_xray.gui.widgets.panel_picker import RAW_SCAN, AddPanelDialog
+
+    master = tmp_path / "ma1234_coll.h5"
+    with h5py.File(master, "w") as f:
+        f["coll_0001_1.1"] = h5py.ExternalLink("coll_0001/coll_0001.h5", "/1.1")
+    dlg = AddPanelDialog({RAW_SCAN: {"h5": str(master), "sx": 0.5, "sy": 0.25, "jobs": []}})
+    dlg._stage.setCurrentText(RAW_SCAN)
+    assert dlg._tree.topLevelItemCount() == 0
+    text = dlg._status.text()
+    assert "1 scan(s)" in text and "coll_0001.h5" in text
 
 
 # -- preview + cache ----------------------------------------------------------
@@ -571,6 +766,19 @@ def test_main_window_launches_builder_non_modal():
     assert win._figure_builder is first
 
 
+def test_new_recipe_in_main_window_builder_takes_the_live_session_style():
+    from darq_xray.gui.main_window import MainWindow
+
+    win = MainWindow()
+    win._on_figure_builder()
+    b = win._figure_builder
+    win._plot_style.scale_um_per_cm = 42.0  # Publication style… edits it in place
+    assert b.new_recipe() is True
+    assert b._style.scale_um_per_cm == 42.0
+    assert b._style is not win._plot_style  # builder edits must never leak back
+    b.close()
+
+
 def test_builder_defaults_prefill_stage_output_h5_not_folder():
     """strain/mosaicity/rocking panel-picker defaults must be the stacked/
     aligned OUTPUT h5 the stage's catalog reads (mirroring how the stage's
@@ -595,6 +803,13 @@ def test_builder_defaults_prefill_stage_output_h5_not_folder():
     for stage in ("strain", "mosaicity", "rocking"):
         h5 = defaults[stage]["h5"]
         assert h5 == "" or h5.endswith(".h5"), f"{stage} default {h5!r} is not an h5 path"
+    # raw scans: no file to guess, Browse… starts in the experiment's raw root,
+    # pixel sizes from the experiment calibration
+    from darq_xray.gui.widgets.panel_picker import RAW_SCAN
+
+    raw = defaults[RAW_SCAN]
+    assert raw["h5"] == "" and raw["dir"] == "/data/raw"
+    assert (raw["sx"], raw["sy"]) == (exp.pixel_size_x_um, exp.pixel_size_y_um)
 
 
 # -- node inspector (T4) ------------------------------------------------------
@@ -1786,6 +2001,22 @@ def test_default_save_dir_prefers_current_path_then_panel_then_provider(tmp_path
         )
     )
     assert w2._default_save_dir() == str(data)
+
+
+def test_default_save_dir_skips_raw_scan_frames(tmp_path):
+    """A raw frame's file sits in RAW_DATA (read-only after the experiment):
+    the recipe goes beside the first STAGE output instead, or Qt's default."""
+    raw = tmp_path / "RAW_DATA" / "scan.h5"
+    out = tmp_path / "PROCESSED" / "stacked.h5"
+    for f in (raw, out):
+        f.parent.mkdir()
+        f.write_text("")
+    frame = {"stage": "raw", "dataset": "/1.1/measurement/cam", "z": 0, "sx": 1, "sy": 1}
+    w = _win()
+    w.add_panels([PanelDef("r", PanelSource(str(raw), "map_layer", frame))])
+    assert w._default_save_dir() == ""
+    w.add_panels([PanelDef("s", PanelSource(str(out), "map_layer", {"stage": "strain", "z": 0}))])
+    assert w._default_save_dir() == str(out.parent)
 
 
 def test_default_save_dir_survives_a_broken_defaults_provider():

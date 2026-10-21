@@ -3,8 +3,10 @@ checked leaves into :class:`~darq_xray.compose.recipe.PanelDef` instances for th
 figure builder.
 
 Consumes the same Qt-free catalog functions as the existing replot dialogs
-(``strain``/``mosaicity``/``rocking``/``slices``/``profiles``), so this is a
-thin shell — no figure-composition logic lives here.
+(``strain``/``mosaicity``/``rocking``/``slices``/``profiles``), plus
+:func:`~darq_xray.compose.adapters.raw_scan_catalog` for the ``raw scan``
+entry (detector frames straight out of a raw scan file), so this is a thin
+shell — no figure-composition logic lives here.
 """
 
 from __future__ import annotations
@@ -15,6 +17,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
+    QDoubleSpinBox,
     QFileDialog,
     QHBoxLayout,
     QLabel,
@@ -27,6 +30,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from darq_xray.compose.adapters import raw_scan_catalog
 from darq_xray.compose.gridmap import grid_to_layout, panel_group_hint
 from darq_xray.compose.recipe import PanelDef, PanelSource
 from darq_xray.stages import mosaicity, profiles, rocking, slices, strain
@@ -34,7 +38,8 @@ from darq_xray.stages import mosaicity, profiles, rocking, slices, strain
 from .layout_arranger import LayoutArranger
 
 _MAP_STAGES = {"strain": strain, "mosaicity": mosaicity, "rocking": rocking}
-_STAGES = ("strain", "mosaicity", "rocking", "slices", "profiles")
+RAW_SCAN = "raw scan"  # not a stage: any compatible scan h5 (detector frames)
+_STAGES = ("strain", "mosaicity", "rocking", "slices", "profiles", RAW_SCAN)
 
 
 class AddPanelDialog(QDialog):
@@ -42,8 +47,10 @@ class AddPanelDialog(QDialog):
 
     ``defaults`` is ``{stage: {"h5": str, "sx": float, "sy": float,
     "jobs": list[dict]}}`` — pre-fill data the main window builds from the
-    live experiment + stage forms. On accept, :attr:`selected_panels` holds
-    the built :class:`~darq_xray.compose.recipe.PanelDef` list.
+    live experiment + stage forms; the :data:`RAW_SCAN` entry may add
+    ``"dir"``, where Browse… starts when the file field is empty. On accept,
+    :attr:`selected_panels` holds the built
+    :class:`~darq_xray.compose.recipe.PanelDef` list.
     """
 
     def __init__(
@@ -79,6 +86,25 @@ class AddPanelDialog(QDialog):
         top_row.addWidget(browse_btn)
         top_row.addWidget(load_btn)
 
+        # raw scans only: the pixel sizes the frames are drawn (and scale-barred)
+        # with; read when the panels are built, so an edit after Load applies
+        self._sx = self._px_spin()
+        self._sy = self._px_spin()
+        self._px_prefilled = False  # pre-fill ONCE: a stage round-trip keeps your edit
+        self._px_row = QWidget()
+        px_layout = QHBoxLayout(self._px_row)
+        px_layout.setContentsMargins(0, 0, 0, 0)
+        px_layout.addWidget(QLabel("Pixel x (µm):"))
+        px_layout.addWidget(self._sx)
+        px_layout.addWidget(QLabel("Pixel y (µm):"))
+        px_layout.addWidget(self._sy)
+        px_layout.addStretch(1)
+        self._px_row.setToolTip(
+            "Sample-plane pixel sizes of the raw frames — pre-filled from the "
+            "experiment calibration; check them against your beamline setup."
+        )
+        self._px_row.setVisible(False)
+
         self._tree = QTreeWidget()
         self._tree.setHeaderLabels(["Item"])
 
@@ -97,6 +123,7 @@ class AddPanelDialog(QDialog):
         self._page0 = QWidget()
         layout0 = QVBoxLayout(self._page0)
         layout0.addLayout(top_row)
+        layout0.addWidget(self._px_row)
         layout0.addLayout(check_row)
         layout0.addWidget(self._tree, 1)
         layout0.addWidget(self._status)
@@ -135,14 +162,35 @@ class AddPanelDialog(QDialog):
         # pre-fill the h5 field for the initially-selected stage and load it.
         self._on_stage_changed(self._stage.currentText())
 
+    @staticmethod
+    def _px_spin() -> QDoubleSpinBox:
+        spin = QDoubleSpinBox()
+        spin.setDecimals(6)
+        spin.setRange(1e-6, 1e4)
+        spin.setSingleStep(0.001)
+        spin.setValue(1.0)  # the Experiment's own default until a pre-fill lands
+        return spin
+
     # -- population -----------------------------------------------------------
     def _on_stage_changed(self, stage: str) -> None:
         d = self._defaults.get(stage, {})
         self._h5_edit.setText(d.get("h5", "") or "")
+        self._px_row.setVisible(stage == RAW_SCAN)
+        if stage == RAW_SCAN and not self._px_prefilled:
+            self._px_prefilled = True
+            for spin, key in ((self._sx, "sx"), (self._sy, "sy")):
+                if d.get(key):
+                    spin.setValue(float(d[key]))
         self._reload()
 
     def _on_browse(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(self, "Open h5", "", "HDF5 (*.h5)")
+        current = self._h5_edit.text().strip()
+        start = os.path.dirname(current) if current else ""
+        if not start:
+            start = self._defaults.get(self._stage.currentText(), {}).get("dir", "") or ""
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Open h5", start, "HDF5 (*.h5 *.hdf5 *.nxs);;All files (*)"
+        )
         if path:
             self._h5_edit.setText(path)
             self._reload()
@@ -167,10 +215,14 @@ class AddPanelDialog(QDialog):
                 jobs = self._defaults.get("profiles", {}).get("jobs") or []
                 self._catalog = profiles.replot_catalog(h5, jobs)
                 self._build_profiles_tree(self._catalog, jobs)
+            elif stage == RAW_SCAN:
+                self._catalog = raw_scan_catalog(h5)
+                self._build_raw_tree(self._catalog, h5)
         except Exception as exc:  # noqa: BLE001 — catalog reload: show status, never crash
             self._catalog = []
             self._tree.clear()
-            self._status.setText(f"cannot read: {exc}")
+            hint = getattr(exc, "hint", "")
+            self._status.setText(f"cannot read: {exc}" + (f". {hint}" if hint else ""))
             return
         self._status.setText(f"{len(self._catalog)} item(s)")
 
@@ -278,6 +330,34 @@ class AddPanelDialog(QDialog):
             self._tree.addTopLevelItem(top)
             top.setExpanded(True)
 
+    def _build_raw_tree(self, catalog, h5: str) -> None:
+        stem = os.path.splitext(os.path.basename(h5))[0]
+        for e in catalog:
+            dims = "×".join(str(n) for n in e.shape)
+            top = QTreeWidgetItem([f"{e.path}   ({dims} {e.dtype})"])
+            top.setFlags(
+                top.flags() | Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsAutoTristate
+            )
+            top.setCheckState(0, Qt.CheckState.Unchecked)
+            for z in range(e.n_frames):
+                label = f"frame {z}" if len(e.shape) == 3 else "image"
+                child = QTreeWidgetItem([label])
+                child.setFlags(child.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+                child.setCheckState(0, Qt.CheckState.Unchecked)
+                child.setData(
+                    0,
+                    Qt.ItemDataRole.UserRole,
+                    {
+                        "kind": "map_layer",
+                        # sx/sy join at build time, from the pixel-size fields
+                        "selector": {"stage": "raw", "dataset": e.path, "z": z},
+                        "title": f"{stem}: {e.path} / {label}",
+                    },
+                )
+                top.addChild(child)
+            self._tree.addTopLevelItem(top)
+            top.setExpanded(True)
+
     # -- selection --------------------------------------------------------------
     def _check_all(self) -> None:
         self._set_all_leaves(Qt.CheckState.Checked)
@@ -305,6 +385,7 @@ class AddPanelDialog(QDialog):
         """
         h5 = self._loaded_h5
         stage = self._stage.currentText()
+        id_stem = stage.replace(" ", "_")
         panels: list[PanelDef] = []
 
         def walk(item):
@@ -313,9 +394,12 @@ class AddPanelDialog(QDialog):
                 if child.childCount() == 0 and child.checkState(0) == Qt.CheckState.Checked:
                     data = child.data(0, Qt.ItemDataRole.UserRole)
                     if data:
-                        pid = f"{stage}_{self._counter}"
+                        pid = f"{id_stem}_{self._counter}"
                         self._counter += 1
-                        src = PanelSource(h5_path=h5, kind=data["kind"], selector=data["selector"])
+                        selector = data["selector"]
+                        if selector.get("stage") == "raw":
+                            selector = dict(selector, sx=self._sx.value(), sy=self._sy.value())
+                        src = PanelSource(h5_path=h5, kind=data["kind"], selector=selector)
                         panels.append(PanelDef(id=pid, source=src, title=data.get("title")))
                 walk(child)
 
