@@ -490,7 +490,10 @@ def test_load_image_integer_formats_normalised_to_unit_floats(tmp_path, fmt):
     else:
         arr16 = np.linspace(0, 65535, 40).astype("u2")[None, :].repeat(20, axis=0)
         path = tmp_path / "ref.tif"
-        Image.fromarray(arr16, mode="I;16").save(str(path))
+        # frombytes, not fromarray(mode="I;16"): Pillow 13 removed that mode
+        # override, and without it older Pillows infer 32-bit "I" from uint16
+        h, w = arr16.shape
+        Image.frombytes("I;16", (w, h), arr16.astype("<u2").tobytes()).save(str(path))
         ndim = 2
     d = load_panel(PanelDef("i", PanelSource(str(path), "image", {})))
     assert d.kind == "image"
