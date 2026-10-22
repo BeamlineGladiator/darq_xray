@@ -37,9 +37,13 @@ from .widgets.param_form import ParamForm
 class ExperimentDialog(QDialog):
     """Modal editor for every experiment field (schema-driven)."""
 
-    def __init__(self, experiment: Experiment, parent: QWidget | None = None) -> None:
+    def __init__(
+        self, experiment: Experiment, parent: QWidget | None = None, *, new: bool = False
+    ) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Edit experiment")
+        # new=True: OK must save a fresh, uniquely named preset YAML (see _save_new).
+        self._new = new
+        self.setWindowTitle("New experiment" if new else "Edit experiment")
         self.resize(560, 640)
 
         self._form = ParamForm(EXPERIMENT_SCHEMA, experiment.to_dict())
@@ -63,6 +67,7 @@ class ExperimentDialog(QDialog):
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
         buttons.addButton(save_btn, QDialogButtonBox.ButtonRole.ActionRole)
+        save_btn.setVisible(not new)  # a new preset is saved by OK itself
         init_btn = QPushButton("Initialize from data…")
         init_btn.setToolTip("Scan the data roots and suggest patterns, calibration and ROI values")
         init_btn.clicked.connect(self._on_initialize_from_data)
@@ -149,6 +154,10 @@ class ExperimentDialog(QDialog):
     def _on_accept(self) -> None:
         if self._warn_roi_problems():
             return
+        if self._new:
+            if self._save_new():
+                self.accept()
+            return
         if self._applied_detections:
             self._applied_detections = False  # ask once per apply
             ret = QMessageBox.question(
@@ -163,14 +172,41 @@ class ExperimentDialog(QDialog):
         self.accept()
 
     def _on_save_as(self) -> None:
+        self._save_as()
+
+    def _save_as(self) -> str | None:
+        """Ask for a path and write the preset YAML; the path, or None if not saved."""
         if self._warn_roi_problems():
-            return
+            return None
         exp = self.experiment()
         start = os.fspath(presets.experiments_dir() / f"{exp.name or 'experiment'}.yaml")
         path, _ = QFileDialog.getSaveFileName(self, "Save preset", start, "YAML (*.yaml)")
-        if path:
-            presets.save_experiment(exp, path)
-            self._applied_detections = False  # just saved manually -> no need to re-prompt on OK
+        if not path:
+            return None
+        presets.save_experiment(exp, path)
+        self._applied_detections = False  # just saved manually -> no need to re-prompt on OK
+        return path
+
+    def _save_new(self) -> bool:
+        """OK on a new preset: needs a free name and a written YAML, else stays open."""
+        name = (self.experiment().name or "").strip()
+        if not name:
+            QMessageBox.warning(
+                self,
+                "New experiment",
+                "Give the preset a name first — it is what the experiment dropdown shows.",
+            )
+            return False
+        if name in presets.discover_experiments():
+            QMessageBox.warning(
+                self,
+                "New experiment",
+                f"A preset called '{name}' already exists — pick another name, "
+                "or close this and use Edit… on that preset.",
+            )
+            return False
+        self._form.set_values({"name": name})
+        return self._save_as() is not None
 
     def _apply_pixel_size(self, path: str):
         """Compute pixel sizes from *path* and write them into the form.
@@ -320,10 +356,12 @@ class ExperimentPanel(QWidget):
 
         self._combo = QComboBox()
         self._combo.currentTextChanged.connect(self._on_select)
-        reload_btn = QPushButton("↻")
+        reload_btn = QPushButton("Rescan")
         reload_btn.setToolTip("Rescan the experiments/ folder")
-        reload_btn.setFixedWidth(32)
         reload_btn.clicked.connect(self._reload_presets)
+        new_btn = QPushButton("New…")
+        new_btn.setToolTip("Start a new experiment preset from blank defaults")
+        new_btn.clicked.connect(self._on_new)
         edit_btn = QPushButton("Edit…")
         edit_btn.setToolTip("Open the full experiment editor")
         edit_btn.clicked.connect(self._on_edit)
@@ -332,6 +370,7 @@ class ExperimentPanel(QWidget):
         top.addWidget(QLabel("Experiment:"))
         top.addWidget(self._combo, 1)
         top.addWidget(reload_btn)
+        top.addWidget(new_btn)
         top.addWidget(edit_btn)
 
         self._summary = QLabel("")
@@ -382,9 +421,25 @@ class ExperimentPanel(QWidget):
         finally:
             dlg.deleteLater()
 
-    def _reload_combo_keep_selection(self) -> None:
-        """Pick up presets Save-as may have written, without re-emitting."""
-        current = self._combo.currentText()
+    def _make_new_dialog(self) -> ExperimentDialog:
+        return ExperimentDialog(Experiment(name=""), self, new=True)
+
+    def _on_new(self) -> None:
+        dlg = self._make_new_dialog()
+        try:
+            if dlg.exec():
+                exp = dlg.experiment()
+                self._set_experiment(exp)
+                self._reload_combo_keep_selection(select=exp.name)
+        finally:
+            dlg.deleteLater()
+
+    def _reload_combo_keep_selection(self, select: str | None = None) -> None:
+        """Pick up presets Save-as may have written, without re-emitting.
+
+        *select* names the preset to show instead of the current one (New…).
+        """
+        current = select or self._combo.currentText()
         self._presets = presets.discover_experiments()
         self._combo.blockSignals(True)
         self._combo.clear()

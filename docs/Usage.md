@@ -197,7 +197,8 @@ maps out. Later sections cover each step in full detail.
 2. **Choose an experiment.** The dropdown at the top of the left column lists
    the presets in `experiments/`; `STO2_overnight` ships with the app. The line
    beneath it summarises that preset's calibration. Click **Edit…** for the
-   full editor.
+   full editor, or **New…** to start a preset of your own from blank defaults
+   (see [Experiment presets](#experiment-presets)).
 
    > **Important**
    > The shipped preset's `raw_root` and `processed_root` are written as
@@ -263,8 +264,10 @@ pipeline order, each with a status glyph (— idle, ▶ running, ✓ ok, ✗ fai
 **Concat is marked (optional)** — skip it when your scans are already
 concatenated — and **darfix** appears as a greyed, non-clickable row right
 after concat because it runs outside the app. Above the rail, the experiment
-header shows the active preset and its calibration in one line; **Edit…**
-opens the full schema-driven editor (every field explained in its help panel).
+header shows the active preset and its calibration in one line; **Rescan**
+re-reads the `experiments/` folder, **New…** starts a new preset from blank
+defaults, and **Edit…** opens the full schema-driven editor (every field
+explained in its help panel).
 
 Each button below the rail — **Publication style…**, **Figure builder…**,
 **System check…** and the theme toggle — carries a tooltip saying what it opens,
@@ -349,6 +352,18 @@ An **experiment** captures everything shared across stages: data roots, folder
 glob patterns, calibration angles, pixel scales, and the beamline HDF5/motor
 paths. Define it once; every stage inherits it. Presets are YAML files in
 `experiments/` and are chosen from a dropdown.
+
+To start a new one, click **New…** beside the dropdown. It opens the same
+editor, titled *New experiment*, on blank defaults: data roots, patterns, ROIs
+and calibration are empty (ccmth 0°, pixel sizes 1 µm) so nothing from another
+sample carries over, while the beamline HDF5/motor paths keep their ID03
+defaults. Type a **Preset name**, fill in the data roots (then **Initialize
+from data…** does most of the rest) and press **OK**: it opens the save dialog
+at `experiments/<name>.yaml`, writes the file, adds it to the dropdown and
+makes it the active experiment. OK refuses a blank name or one another preset
+already uses — the dropdown lists presets by that name — and cancelling the
+save dialog leaves the editor open. **Rescan** re-reads `experiments/`, e.g.
+after you copy a preset YAML in by hand.
 
 > [!TIP]
 > Editing a calibration field updates only this session until you **Save as…**.
