@@ -665,7 +665,7 @@ def test_in_core_rung_keeps_the_streamed_writers_saving(tmp_path, monkeypatch):
     deterministic +174 MiB of float64 cleaned copies, an order of magnitude
     above the ~12 MiB run-to-run spread. The limit is kept high rather than
     centred so a heavier VTK build — the process image is ~229 MiB here and
-    `RSS_FLOOR_BYTES` declares 300 MB — does not flake it.
+    `RSS_FLOOR_BYTES` declares 352 MB — does not flake it.
 
     Deliberately *not* calibrated against the same run at `num_pieces_z = 1`
     (566.4 MiB): that is under the limit, so it witnesses nothing here. It is

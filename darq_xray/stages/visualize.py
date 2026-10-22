@@ -71,7 +71,7 @@ ProgressFn = Callable[[float, str], None]
 # budgets held RSS between 580.6 and 591.1 MiB while their traced peaks barely
 # moved, i.e. the whole of that figure is the process image.
 #
-# **Not paraview's 300 MB.** That stage imports VTK and never matplotlib; this
+# **Not paraview's 352 MB.** That stage imports VTK and never matplotlib; this
 # one imports both. Pasting its number here fails the assertion below rather
 # than silently over-stating the budget.
 #

@@ -91,7 +91,7 @@ MARKS_GROUP = "marks"
 # figure a run builds imports the whole of matplotlib's rendering stack, which
 # every volume after it then streams with resident.
 #
-# **Not visualize's 768 MB and not paraview's 300 MB.** Those two import
+# **Not visualize's 768 MB and not paraview's 352 MB.** Those two import
 # pyvista/VTK; this stage never does, so it sits below both, and pasting either
 # number fails the assertion rather than silently mis-sizing the budget.
 #
