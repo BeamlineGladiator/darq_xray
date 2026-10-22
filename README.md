@@ -292,8 +292,12 @@ you are pulling in.
 <details>
 <summary><b>How the supported dependency range is tested</b></summary>
 
-Only lower bounds are declared, and the suite is kept green across the span
-they allow. Both ends are exercised **by CI on every push**: one matrix leg
+Only lower bounds are declared, plus one exclusion: **PySide6 6.12.0**, which
+crashes the interpreter when DARQ quits after the Add panels dialog has been
+opened (a PySide6 regression; 6.11 is unaffected).
+`tests/test_gui_app_quit.py` reproduces it, so the exclusion can be lifted once
+that test passes on a later 6.12 release. The suite is kept green across the
+span they allow. Both ends are exercised **by CI on every push**: one matrix leg
 **pins the declared floor** — **numpy 1.26.4 / scipy 1.11.4 / matplotlib
 3.6.3** — and the other takes the newest compatible release, currently
 **numpy 2.5.2 / scipy 1.18.1 / matplotlib 3.11.1**.
