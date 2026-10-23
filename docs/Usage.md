@@ -363,7 +363,9 @@ at `experiments/<name>.yaml`, writes the file, adds it to the dropdown and
 makes it the active experiment. OK refuses a blank name or one another preset
 already uses — the dropdown lists presets by that name — and cancelling the
 save dialog leaves the editor open. **Rescan** re-reads `experiments/`, e.g.
-after you copy a preset YAML in by hand.
+after you copy a preset YAML in by hand. Git ignores every preset you add there
+(only the shipped `STO2_overnight.yaml` is tracked), so your data paths never
+end up in a commit.
 
 > [!TIP]
 > Editing a calibration field updates only this session until you **Save as…**.

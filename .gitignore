@@ -33,3 +33,8 @@ Thumbs.db
 *.vti
 *.mp4
 *.gif
+
+# user experiment presets (New… / Save as…) — machine-specific data paths;
+# only the shipped reference preset is tracked
+experiments/*.yaml
+!experiments/STO2_overnight.yaml
